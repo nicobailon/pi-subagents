@@ -323,6 +323,8 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				settingsManager,
 				noExtensions: !launch.ambientExtensions,
 				noSkills: launch.noSkills,
+				// Pi merges skills from extensions' resources_discover without checking noSkills.
+				skillsOverride: launch.noSkills ? (base) => ({ ...base, skills: [] }) : undefined,
 				noPromptTemplates: true,
 				noThemes: true,
 				noContextFiles: launch.noContextFiles,

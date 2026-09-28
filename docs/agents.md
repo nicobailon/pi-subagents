@@ -356,7 +356,7 @@ Field notes:
 | `systemPromptMode` | `replace` by default; `append` keeps Pi's base prompt. |
 | `inheritProjectContext` | Keeps or strips inherited repository instruction blocks. |
 | `inheritGlobalContext` | Keeps or strips the operator's global context file from the Pi config agent directory (e.g. `~/.pi/agent/AGENTS.md`). It has an effect only when `inheritProjectContext` is `true`; otherwise all context files are already disabled. Defaults to `false`. |
-| `inheritSkills` | Keeps or strips Pi's discovered skills catalog. |
+| `inheritSkills` | Keeps or strips Pi's discovered skills catalog, including skills that loaded extensions add. |
 | `defaultContext` | Optional `fresh` or `fork` launch-context preference. An implicit `fork` falls back to `fresh` when the parent has no persisted session file or current leaf; an explicit launch `context: "fork"` remains strict. |
 | `skills` | Selects specific skills for the child, regardless of `inheritSkills`. |
 | `skillPath` | Invocation-private skill files or discovery directories. Relative paths resolve from the agent definition file. Local matches take precedence, while unresolved or unreadable matches fall back to normal skill discovery. This field discovers candidates only; `skills` still selects what the child receives. |

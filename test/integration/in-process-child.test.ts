@@ -524,6 +524,28 @@ describe("default child session factory", () => {
 		assert.deepEqual(errors, ["<loader>"]);
 	});
 
+	it("drops skills that extensions add to a child when inheritSkills is false", async () => {
+		const host = await import("@earendil-works/pi-coding-agent");
+		const skillDir = createTempDir("pi-subagents-ext-skill-");
+		fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: ext-skill\ndescription: Contributed by an extension.\n---\nBody\n");
+		try {
+			for (const noSkills of [true, false]) {
+				let loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]> | undefined;
+				const pi = stubPi();
+				pi.SettingsManager = { create: () => host.SettingsManager.inMemory() } as unknown as PiCodingAgentModule["SettingsManager"];
+				pi.DefaultResourceLoader = class extends host.DefaultResourceLoader {
+					constructor(options: ConstructorParameters<PiCodingAgentModule["DefaultResourceLoader"]>[0]) { super(options); loader = this; }
+				};
+				await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi }).create({ ...stubLaunch, noSkills });
+				// The same call Pi's session makes with an extension's resources_discover skillPaths.
+				loader!.extendResources({ skillPaths: [{ path: skillDir, metadata: { source: "ext", scope: "temporary", origin: "top-level" } }] });
+				assert.deepEqual(loader!.getSkills().skills.map((skill) => skill.name), noSkills ? [] : ["ext-skill"]);
+			}
+		} finally {
+			removeTempDir(skillDir);
+		}
+	});
+
 	it("preserves an initialized parent theme when creating a child session", async () => {
 		const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");
 		const globals = globalThis as Record<symbol, unknown>;
