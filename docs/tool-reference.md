@@ -208,7 +208,7 @@ For a simple implementation challenge outside a workflow script, send the challe
 
 ### Guide
 
-`{ action: "guide" }` reads the packaged `README.md` from the installed version. Pass `topic` to read its packaged `docs/<topic>.md` file instead; see the `topic` parameter table for valid values. The `council` topic returns the packaged `skills/council-mode/SKILL.md` with the references it asks for, so `/council` works when Pi runs with `--no-skills`. Unknown topics list the valid values and do not change files. Use `/subagents-guide [topic]` for the slash equivalent. This reference documents the full tool; when [`disabledFeatures`](configuration.md#disabledfeatures) or `scheduledRuns.enabled: false` turns features off, the `tool-reference` topic starts with a notice listing the disabled options and actions.
+`{ action: "guide" }` reads the packaged `README.md` from the installed version. Pass `topic` to read its packaged `docs/<topic>.md` file instead; see the `topic` parameter table for valid values. The `council` topic returns the packaged `skills/council-mode/SKILL.md` with the references it asks for, so `/council` works when Pi runs with `--no-skills`. Unknown topics list the valid values and do not change files. Use `/subagents-guide [topic]` for the slash equivalent.
 
 Agent definitions are not loaded into context by default. Management actions let the LLM discover, inspect, create, update, and delete agents at runtime. An unknown action returns safe next steps (`status` and `list`) and may suggest a close non-destructive action. Destructive actions are only named for a near-complete one-character typo, and suggestions never execute an action.
 
