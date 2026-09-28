@@ -314,6 +314,14 @@ Package skill content.
 		assert.throws(() => loadConfig(), /config\.disabledFeatures entry "watchdogs" is not one of:/);
 	});
 
+	it("fails config load for invalid scheduledRuns because it controls the tool schema", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ scheduledRuns: { enabled: "false" } }));
+		assert.throws(() => loadConfig(), /config\.scheduledRuns\.enabled must be a boolean/);
+		writeFile(configPath, JSON.stringify({ scheduledRuns: { enabled: false, storeRoot: "relative" } }));
+		assert.throws(() => loadConfig(), /config\.scheduledRuns\.storeRoot must be an absolute path/);
+	});
+
 	it("loads exact model response aliases and preserves them during config updates", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		const modelResponseAliases = {

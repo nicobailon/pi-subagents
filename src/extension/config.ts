@@ -10,7 +10,11 @@ import { validatePermissionConfig } from "../runs/shared/permissions.ts";
 import { MAX_ABANDONED_SLOT_RELEASE_AFTER_MS, MIN_ABANDONED_SLOT_RELEASE_AFTER_MS } from "../runs/background/active-async-capacity.ts";
 import { normalizeWorktreeBranchPrefix } from "../runs/shared/worktree.ts";
 import { validateModelResponseAliases } from "../shared/model-response-aliases.ts";
-import { validateDisabledFeatures } from "./features.ts";
+import { validateDisabledFeatures } from "../shared/disabled-features.ts";
+
+// Explicit route identity, worktree, checkpoint, and tool-surface policies must not be silently
+// discarded and replaced by the built-in defaults after validation fails.
+const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns"];
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -56,6 +60,8 @@ export function resolveScheduledStoreRoot(value: string): string {
 function validateScheduledRunsConfig(value: unknown): void {
 	if (value === undefined) return;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.scheduledRuns must be a JSON object");
+	const enabled = (value as Record<string, unknown>).enabled;
+	if (enabled !== undefined && typeof enabled !== "boolean") throw new Error("config.scheduledRuns.enabled must be a boolean");
 	const storeRoot = (value as Record<string, unknown>).storeRoot;
 	if (storeRoot === undefined) return;
 	if (typeof storeRoot !== "string" || !storeRoot.trim()) throw new Error("config.scheduledRuns.storeRoot must be a non-empty string");
@@ -217,12 +223,9 @@ export function loadConfig(): ExtensionConfig {
 		return readConfigForUpdate(configPath);
 	} catch (error) {
 		if (error instanceof PrunedForkConfigError) throw error;
-		// Explicit route identity, worktree, checkpoint, and disabled-feature policies must not be silently
-		// discarded and replaced by the built-in defaults after validation fails.
 		try {
 			const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
-			if (raw && typeof raw === "object" && !Array.isArray(raw)
-				&& (Object.hasOwn(raw, "worktreeProvider") || Object.hasOwn(raw, "worktreeBranchPrefix") || Object.hasOwn(raw, "modelResponseAliases") || Object.hasOwn(raw, "modelExclusions") || Object.hasOwn(raw, "checkpointBeforeDeadlineMs") || Object.hasOwn(raw, "disabledFeatures"))) throw error;
+			if (raw && typeof raw === "object" && !Array.isArray(raw) && FAIL_CLOSED_CONFIG_KEYS.some((key) => Object.hasOwn(raw, key))) throw error;
 		} catch (readError) {
 			if (readError === error) throw error;
 		}

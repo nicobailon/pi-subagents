@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionConfig, ToolDescriptionMode } from "../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
+import { resolveDisabledFeatureSurface, type DisabledFeatureSurface, type SubagentSurfaceFeature } from "../shared/disabled-features.ts";
 
 const CUSTOM_TOOL_DESCRIPTION_FILE = "subagent-tool-description.md";
 const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
@@ -20,13 +21,39 @@ export const SUBAGENT_SAFETY_GUIDANCE = `SAFETY-CRITICAL SUBAGENT GUIDANCE:
 • Named resources own authority; raw workflowScript/workflowScriptPath cannot use runs.host. Granted commands/relative outputs use workflow cwd, never per-step cwd.
 • Inspect asyncId/asyncDir (status.json, events.jsonl, logs) with status/debug.run; control with interrupt/stop/resume/steer. Read {action:"guide",topic:"tool-reference"} for controls/evidence gates.`;
 
-const EXECUTION_GUIDANCE = `Delegate one child with {agent,task?}; otherwise choose exactly one of {workflowScript,args?}, {workflowScriptPath,args?} or {workflow,args}. agent/task exclude workflow inputs; task excludes action. agent may target management actions. action is management/control; validate accepts either script without launching. workflowScriptPath loads from request cwd before sandbox execution.
+type FeatureText = (feature: SubagentSurfaceFeature, text: string) => string;
+
+function featureText(disabled: DisabledFeatureSurface): FeatureText {
+	return (feature, text) => disabled.features.has(feature) ? "" : text;
+}
+
+const executionGuidance = (on: FeatureText) => `Delegate one child with {agent,task?}; otherwise choose exactly one of {workflowScript,args?}, {workflowScriptPath,args?} or {workflow,args}. agent/task exclude workflow inputs; task excludes action. agent may target management actions. action is management/control; validate accepts either script without launching. workflowScriptPath loads from request cwd before sandbox execution.
 Scripts: JavaScript statement bodies with explicit return, top-level await, plain helpers/Promise chains; nested async function/arrow/method helpers are rejected. Await runs.run('key',{agent,task}) before .output; await runs.all([{key,agent,task},...]) for an ordered array, not a key map. Observe every stored run promise with direct await, Promise.race or Promise.all. Await/return runs.steer(key,message,options?) for a prior key, never raw run ids; queued/delivered/missed/failed receipts are not compliance proof.
-Before advanced orchestration (runs.lanes, rolling fanout, mission state, handoffs), read {action:"guide",topic:"workflows"} or the pi-subagents skill. Raw-script sandboxes add deeply frozen args; all sandboxes provide runs, emit, console, JavaScript and enabled mission state, with no filesystem/shell/Pi tools/host globals. External CLI agents support native options only when their runner declares them; read guide tool-reference before passing model, structured output, acceptance/agentContract, tool budget, fast, fork context or skills/tools.
-Model override: first call {action:"models"}; copy exact provider/id, not agent names. Thinking uses model suffix, not watchdog-only thinking.
+Before advanced orchestration (runs.lanes, rolling fanout, mission state, handoffs), read {action:"guide",topic:"workflows"} or the pi-subagents skill. Raw-script sandboxes add deeply frozen args; all sandboxes provide runs, emit, console, JavaScript and enabled mission state, with no filesystem/shell/Pi tools/host globals. External CLI agents support native options only when their runner declares them; read guide tool-reference before passing model, structured output, acceptance/agentContract, ${on("tool-budgets", "tool budget, ")}fast, fork context or skills/tools.
+Model override: first call {action:"models"}; copy exact provider/id, not agent names. Thinking uses model suffix${on("watchdog", ", not watchdog-only thinking")}.
 Named resources: {workflow:'review',args:{task:'...'}} or {workflow:'run-ci',args:{command:'npm test'}}. Raw scripts also accept bounded plain-data args; raw-script args persist as evidence, so never include secrets. worktree:true requires clean source; baseRef defaults to HEAD at allocation or a supported named ref, never full 40/64-character commit IDs or revision expressions.`;
 
-export const DEFAULT_SUBAGENT_TOOL_DESCRIPTION = `${EXECUTION_GUIDANCE}\n\n${SUBAGENT_SAFETY_GUIDANCE}`;
+const defaultDescription = (on: FeatureText) => `${executionGuidance(on)}\n\n${SUBAGENT_SAFETY_GUIDANCE}`;
+
+const managementDiscovery = (on: FeatureText) => [
+	["list/get/models/guide"],
+	[on("agent-management", "create/update/delete/eject/disable/enable/reset/refine")],
+	[on("missions", "mission.*"), on("schedules", "schedule.*"), on("watchdog", "watchdog.*"), on("panes", "inspector.*, project.*"), on("lane-management", "lane.status/recordMerge/recordSupersession")],
+	[on("lane-management", "worktree.discard and plan-only worktree.cleanup")],
+	[`doctor${on("spawn-budget-grants", " and grant-spawn-budget")}`],
+].map((group) => group.filter(Boolean).join(", ")).filter(Boolean).join("; ");
+
+const fullDescription = (on: FeatureText) => `${defaultDescription(on)}
+
+WORKFLOW DETAILS:
+• runs.lanes([{key,stages:[{key,agent,task},{key,resume:'previous',task}]}]) runs first stages together, later stages sequentially per lane. Failures stay lane-local; only explicit structuredOutput.verdict === 'blocked' blocks a successful stage, never reviewer prose.
+• Workflow child controls default onto runs.run/runs.all items; child fields override them. worktree:true isolates each child and returns handoff artifacts.${on("usage-budgets", " usageBudget is shared across the workflow; already-running children are not stopped.")}
+• Missions auto-attach${on("missions", " unless mission:false")}; await state.get(key)/state.set(key,JSONValue) requires a mission. See guide topic missions. Omit acceptance for reviewer/read-only calls; acceptance.review.required requests independent writer review.
+• Management discovery: ${managementDiscovery(on)}. Use guide topics agents, missions, observability, tool-reference, configuration, models, watchdog or extension-api for exact action fields.${on("schedules", " Schedules take script inputs, not direct children; recipes live in the missions guide.")}`;
+
+const allEnabled = featureText(resolveDisabledFeatureSurface({}));
+
+export const DEFAULT_SUBAGENT_TOOL_DESCRIPTION = defaultDescription(allEnabled);
 
 export const SUBAGENT_TOOL_PROMPT_SNIPPET = "For operator-requested delegation, use subagents; compose multi-child work in one workflow call.";
 export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
@@ -35,13 +62,7 @@ export const SUBAGENT_TOOL_PROMPT_GUIDELINES = [
 
 export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = DEFAULT_SUBAGENT_TOOL_DESCRIPTION;
 
-export const FULL_SUBAGENT_TOOL_DESCRIPTION = `${DEFAULT_SUBAGENT_TOOL_DESCRIPTION}
-
-WORKFLOW DETAILS:
-• runs.lanes([{key,stages:[{key,agent,task},{key,resume:'previous',task}]}]) runs first stages together, later stages sequentially per lane. Failures stay lane-local; only explicit structuredOutput.verdict === 'blocked' blocks a successful stage, never reviewer prose.
-• Workflow child controls default onto runs.run/runs.all items; child fields override them. worktree:true isolates each child and returns handoff artifacts. usageBudget is shared across the workflow; already-running children are not stopped.
-• Missions auto-attach unless mission:false; await state.get(key)/state.set(key,JSONValue) requires a mission. See guide topic missions. Omit acceptance for reviewer/read-only calls; acceptance.review.required requests independent writer review.
-• Management discovery: list/get/models/guide; create/update/delete/eject/disable/enable/reset/refine; mission.*, schedule.*, watchdog.*, inspector.*, project.*, lane.status/recordMerge/recordSupersession; worktree.discard and plan-only worktree.cleanup; doctor and grant-spawn-budget. Use guide topics agents, missions, observability, tool-reference, configuration, models, watchdog or extension-api for exact action fields. Schedules take script inputs, not direct children; recipes live in the missions guide.`;
+export const FULL_SUBAGENT_TOOL_DESCRIPTION = fullDescription(allEnabled);
 
 function isToolDescriptionMode(value: unknown): value is ToolDescriptionMode {
 	return value === "full" || value === "compact" || value === "custom";
@@ -55,6 +76,8 @@ export interface ToolDescriptionOptions {
 	cwd?: string;
 	agentDir?: string;
 	warn?: (message: string) => void;
+	/** Removes lines for disabled features from the default and full descriptions; custom descriptions are unchanged. */
+	disabledFeatures?: DisabledFeatureSurface;
 }
 
 export interface SubagentToolPromptMetadata {
@@ -159,17 +182,18 @@ function withMandatorySafetyGuidance(description: string): string {
 }
 
 export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
-	if (config.toolDescriptionMode === undefined) return DEFAULT_SUBAGENT_TOOL_DESCRIPTION;
+	const on = options?.disabledFeatures ? featureText(options.disabledFeatures) : allEnabled;
+	if (config.toolDescriptionMode === undefined) return defaultDescription(on);
 	const mode = resolveToolDescriptionMode(config, options);
 	let description: string;
-	if (mode === "compact") description = COMPACT_SUBAGENT_TOOL_DESCRIPTION;
+	if (mode === "compact") description = defaultDescription(on);
 	else if (mode === "custom") {
 		const custom = loadCustomToolDescription(options);
 		if (custom) description = withMandatorySafetyGuidance(custom);
 		else {
 			warn(options, `${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using full description.`);
-			description = FULL_SUBAGENT_TOOL_DESCRIPTION;
+			description = fullDescription(on);
 		}
-	} else description = FULL_SUBAGENT_TOOL_DESCRIPTION;
+	} else description = fullDescription(on);
 	return description;
 }

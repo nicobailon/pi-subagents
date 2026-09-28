@@ -3,15 +3,45 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { SUBAGENT_FEATURES, resolveDisabledFeatureSurface, validateDisabledFeatures, type SubagentFeature } from "../../src/extension/features.ts";
+import { SUBAGENT_FEATURES, resolveDisabledFeatureSurface, validateDisabledFeatures, type SubagentFeature } from "../../src/shared/disabled-features.ts";
 import { SubagentParams, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
+import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
+import { readSubagentGuide } from "../../src/extension/subagent-guide.ts";
+import { buildSubagentToolDescription, SUBAGENT_SAFETY_GUIDANCE } from "../../src/extension/tool-description.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import { SUBAGENT_ACTIONS, type ExtensionConfig, type SubagentState } from "../../src/shared/types.ts";
+import type { ExtensionConfig, SubagentState } from "../../src/shared/types.ts";
 
 const ALL_FEATURES = Object.keys(SUBAGENT_FEATURES) as SubagentFeature[];
+const ALL_DISABLED: ExtensionConfig = { disabledFeatures: ALL_FEATURES, scheduledRuns: { enabled: false } };
 
-function schemaProperties(schema: unknown): Record<string, unknown> {
-	return (schema as { properties: Record<string, unknown> }).properties;
+const GROUPS: Array<{ name: string; config: ExtensionConfig; setting: string; params: string[]; actions: string[] }> = [
+	...([
+		["agent-management", ["config"], ["create", "update", "delete", "eject", "disable", "enable", "reset", "refine", "refine.show", "refine.rollback"]],
+		["watchdog", ["scope", "target", "thinking"], ["watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model"]],
+		["panes", ["focus"], ["inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close"]],
+		["missions", ["mission", "missionUpdate", "missionStatus", "missionScope", "missionId", "runMode", "runStatus", "summary"], ["mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close"]],
+		["lane-management", ["handoffPath", "laneId", "merge", "supersession", "repo", "planId"], ["lane.status", "lane.recordMerge", "lane.recordSupersession", "worktree.discard", "worktree.cleanup"]],
+		["spawn-budget-grants", ["additional"], ["grant-spawn-budget"]],
+		["preflight", ["preflight"], []],
+		["lane-metadata", ["lane"], []],
+		["gates", ["gate"], []],
+		["usage-budgets", ["usageBudget"], []],
+		["tool-budgets", ["toolBudget"], []],
+		["control-overrides", ["control"], []],
+		["extension-bindings", ["extensionBindings"], []],
+		["external-machines", ["machine"], []],
+	] as const).map(([name, params, actions]) => ({ name, config: { disabledFeatures: [name] }, setting: `disabledFeatures "${name}"`, params: [...params], actions: [...actions] })),
+	{
+		name: "schedules",
+		config: { scheduledRuns: { enabled: false } },
+		setting: "scheduledRuns.enabled=false",
+		params: ["name", "at", "every", "sessionOnly", "quiet", "on", "timezone", "overlap", "catchUp"],
+		actions: ["schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"],
+	},
+];
+
+function schemaKeys(config: ExtensionConfig): string[] {
+	return Object.keys((createSubagentParamsSchema(resolveDisabledFeatureSurface(config)) as { properties: Record<string, unknown> }).properties);
 }
 
 function createState(): SubagentState {
@@ -46,7 +76,7 @@ function createExecutor(config: ExtensionConfig) {
 	});
 }
 
-function ctx(cwd: string) {
+function ctx(cwd = os.tmpdir()) {
 	return {
 		cwd,
 		hasUI: false,
@@ -61,28 +91,12 @@ function resultText(result: { content: Array<{ type: string; text?: string }> })
 	return result.content.map((part) => part.text ?? "").join("\n");
 }
 
-describe("disabled feature registry", () => {
-	it("names only public parameters and actions, and gives each one a single owner", () => {
-		const properties = schemaProperties(SubagentParams);
-		const owners = new Map<string, string>();
-		for (const [feature, surface] of Object.entries(SUBAGENT_FEATURES)) {
-			for (const param of surface.params) {
-				assert.ok(Object.hasOwn(properties, param), `${feature} names unknown parameter ${param}`);
-				assert.equal(owners.get(`param:${param}`), undefined, `${param} has two owners`);
-				owners.set(`param:${param}`, feature);
-			}
-			for (const action of surface.actions) {
-				assert.ok((SUBAGENT_ACTIONS as readonly string[]).includes(action), `${feature} names unknown action ${action}`);
-				assert.equal(owners.get(`action:${action}`), undefined, `${action} has two owners`);
-				owners.set(`action:${action}`, feature);
-			}
-		}
-		const schedules = resolveDisabledFeatureSurface({ scheduledRuns: { enabled: false } });
-		for (const param of schedules.params.keys()) assert.ok(Object.hasOwn(properties, param), `schedules names unknown parameter ${param}`);
-		for (const action of schedules.actions.keys()) assert.ok((SUBAGENT_ACTIONS as readonly string[]).includes(action), `schedules names unknown action ${action}`);
+describe("disabledFeatures config", () => {
+	it("covers every registered feature in this test table", () => {
+		assert.deepEqual(GROUPS.map((group) => group.name).filter((name) => name !== "schedules").sort(), [...ALL_FEATURES].sort());
 	});
 
-	it("rejects unknown, duplicate, and schedule entries in config", () => {
+	it("rejects unknown, duplicate, and schedule entries", () => {
 		assert.doesNotThrow(() => validateDisabledFeatures(ALL_FEATURES));
 		assert.throws(() => validateDisabledFeatures("watchdog"), /must be an array/);
 		assert.throws(() => validateDisabledFeatures(["watchdogs"]), /"watchdogs" is not one of/);
@@ -91,68 +105,52 @@ describe("disabled feature registry", () => {
 	});
 });
 
-describe("disabled feature schema", () => {
-	it("keeps the registered schema unchanged when nothing is disabled", () => {
-		assert.equal(createSubagentParamsSchema(), SubagentParams);
+describe("disabled feature groups", () => {
+	const fullKeys = schemaKeys({});
+
+	it("keeps the registered schema object when nothing is disabled", () => {
 		assert.equal(createSubagentParamsSchema(resolveDisabledFeatureSurface({})), SubagentParams);
 		assert.equal(createSubagentParamsSchema(resolveDisabledFeatureSurface({ scheduledRuns: { enabled: true } })), SubagentParams);
 	});
 
-	it("removes exactly the disabled parameters and leaves every other parameter identical", () => {
-		const surface = resolveDisabledFeatureSurface({ disabledFeatures: ALL_FEATURES, scheduledRuns: { enabled: false } });
-		const full = schemaProperties(SubagentParams);
-		const reduced = schemaProperties(createSubagentParamsSchema(surface));
-		assert.deepEqual(Object.keys(reduced), Object.keys(full).filter((name) => !surface.params.has(name)));
-		for (const [name, schema] of Object.entries(reduced)) assert.deepEqual(schema, full[name], `${name} changed`);
-	});
+	for (const group of GROUPS) {
+		it(`${group.name}: removes exactly its parameters from the schema`, () => {
+			for (const param of group.params) assert.ok(fullKeys.includes(param), `${param} is not a schema parameter`);
+			assert.deepEqual(schemaKeys(group.config), fullKeys.filter((key) => !group.params.includes(key)));
+		});
 
-	it("hides one feature without hiding another", () => {
-		const reduced = schemaProperties(createSubagentParamsSchema(resolveDisabledFeatureSurface({ disabledFeatures: ["gates"] })));
-		assert.equal(Object.hasOwn(reduced, "gate"), false);
-		assert.equal(Object.hasOwn(reduced, "toolBudget"), true);
-		assert.equal(Object.hasOwn(reduced, "at"), true);
-	});
+		it(`${group.name}: rejects its actions and parameters with the setting name`, async () => {
+			const executor = createExecutor(group.config);
+			for (const action of group.actions) {
+				const result = await executor.executePublic("disabled-action", { action }, new AbortController().signal, undefined, ctx());
+				assert.equal(result.isError, true);
+				assert.equal(resultText(result), `subagent action '${action}' is disabled by config ${group.setting}.`);
+				assert.equal(result.details.mode, "management");
+			}
+			const param = group.params[0]!;
+			const result = await executor.executePublic("disabled-option", { agent: "worker", task: "scan", [param]: "x" }, new AbortController().signal, undefined, ctx());
+			assert.equal(result.isError, true);
+			assert.equal(resultText(result), `subagent option '${param}' is disabled by config ${group.setting}.`);
+			assert.equal(result.details.mode, "single");
+		});
+	}
 });
 
-describe("disabled feature execution boundary", () => {
-	it("rejects a disabled action before management dispatch", async () => {
-		const result = await createExecutor({ disabledFeatures: ["watchdog"] }).executePublic("disabled-action", { action: "watchdog.status" }, new AbortController().signal, undefined, ctx(os.tmpdir()));
-		assert.equal(result.isError, true);
-		assert.equal(resultText(result), `subagent action 'watchdog.status' is disabled by config disabledFeatures "watchdog".`);
-	});
-
-	it("rejects schedule actions through the existing scheduledRuns switch", async () => {
-		const result = await createExecutor({ scheduledRuns: { enabled: false } }).executePublic("disabled-schedule", { action: "schedule.list" }, new AbortController().signal, undefined, ctx(os.tmpdir()));
-		assert.equal(result.isError, true);
-		assert.equal(resultText(result), "subagent action 'schedule.list' is disabled by config scheduledRuns.enabled=false.");
-	});
-
-	it("rejects a disabled option on a public single-child launch", async () => {
-		const result = await createExecutor({ disabledFeatures: ["tool-budgets"] }).executePublic("disabled-option", { agent: "worker", task: "scan", toolBudget: { hard: 3 } }, new AbortController().signal, undefined, ctx(os.tmpdir()));
-		assert.equal(result.isError, true);
-		assert.equal(resultText(result), `subagent option 'toolBudget' is disabled by config disabledFeatures "tool-budgets".`);
-	});
-
-	it("names the disabled setting before request normalization can reject the option", async () => {
-		const result = await createExecutor({ disabledFeatures: ["preflight"] }).executePublic("disabled-before-normalize", { agent: "worker", task: "scan", preflight: { version: 1, lanes: [] } }, new AbortController().signal, undefined, ctx(os.tmpdir()));
-		assert.equal(result.isError, true);
-		assert.equal(resultText(result), `subagent option 'preflight' is disabled by config disabledFeatures "preflight".`);
-	});
-
+describe("disabled feature execution boundaries", () => {
 	it("rejects a disabled option on delegated execution", async () => {
-		const result = await createExecutor({ disabledFeatures: ["gates"] }).executeDelegated("disabled-delegated", { agent: "worker", task: "scan", gate: "npm test" }, new AbortController().signal, undefined, ctx(os.tmpdir()));
+		const result = await createExecutor({ disabledFeatures: ["gates"] }).executeDelegated("disabled-delegated", { agent: "worker", task: "scan", gate: "npm test" }, new AbortController().signal, undefined, ctx());
 		assert.equal(result.isError, true);
 		assert.equal(resultText(result), `subagent option 'gate' is disabled by config disabledFeatures "gates".`);
 	});
 
-	it("rejects a disabled option on a workflow child before it launches", async () => {
+	it("rejects a disabled option on a runs.all workflow child before it launches", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-disabled-features-workflow-"));
 		try {
-			const result = await createExecutor({ disabledFeatures: ["tool-budgets"] }).executePublic(
+			const result = await createExecutor({ disabledFeatures: ["external-machines"] }).executePublic(
 				"disabled-workflow-child",
 				{
-					// A non-literal agent reaches runtime admission instead of static script validation.
-					workflowScript: `const agent = "worker"; return await runs.run("scan", { agent, task: "scan", toolBudget: { hard: 3 } });`,
+					// A non-literal agent skips static agent validation and reaches launch admission.
+					workflowScript: `const agent = "worker"; return await runs.all([{ key: "local", agent, task: "scan" }, { key: "remote", agent, task: "scan", machine: "box" }]);`,
 					async: false,
 					chatProgress: "off",
 				},
@@ -160,10 +158,90 @@ describe("disabled feature execution boundary", () => {
 				undefined,
 				ctx(root),
 			);
-			assert.equal(result.isError, true);
-			assert.match(resultText(result), /runs\.run\('scan'\) option 'toolBudget' is disabled by config disabledFeatures "tool-budgets"\./);
+			// runs.all admits the batch together, so neither child launches.
+			const error = `workflow child 'remote' option 'machine' is disabled by config disabledFeatures "external-machines".`;
+			assert.deepEqual((result.details.workflow?.value as Array<{ key: string; ok: boolean; error?: string }>).map(({ key, ok, error }) => ({ key, ok, error })), [
+				{ key: "local", ok: false, error },
+				{ key: "remote", ok: false, error },
+			]);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("disabled feature discovery", () => {
+	const featureText = [
+		"not watchdog-only thinking",
+		"tool budget, fast",
+		"usageBudget is shared",
+		"unless mission:false",
+		"create/update/delete",
+		"mission.*",
+		"schedule.*",
+		"watchdog.*",
+		"inspector.*",
+		"lane.status",
+		"worktree.discard",
+		"grant-spawn-budget",
+		"Schedules take script inputs",
+	];
+
+	it("removes disabled-feature text from the built-in descriptions and keeps the safety guidance", () => {
+		const enabled = buildSubagentToolDescription({ toolDescriptionMode: "full" });
+		for (const text of featureText) assert.ok(enabled.includes(text), `enabled description lacks ${text}`);
+		assert.match(enabled, /Management discovery: list\/get\/models\/guide; create\/update\/delete\/eject\/disable\/enable\/reset\/refine; mission\.\*, schedule\.\*, watchdog\.\*, inspector\.\*, project\.\*, lane\.status\/recordMerge\/recordSupersession; worktree\.discard and plan-only worktree\.cleanup; doctor and grant-spawn-budget\. /);
+
+		const disabledFeatures = resolveDisabledFeatureSurface(ALL_DISABLED);
+		for (const toolDescriptionMode of [undefined, "full"] as const) {
+			const description = buildSubagentToolDescription({ toolDescriptionMode }, { disabledFeatures });
+			for (const text of featureText) assert.ok(!description.includes(text), `${toolDescriptionMode ?? "default"} description still has ${text}`);
+			assert.ok(description.includes(SUBAGENT_SAFETY_GUIDANCE));
+			assert.match(description, /Thinking uses model suffix\./);
+		}
+		assert.match(buildSubagentToolDescription({ toolDescriptionMode: "full" }, { disabledFeatures }), /Management discovery: list\/get\/models\/guide; doctor\. /);
+	});
+
+	it("lists only enabled actions for an unknown action", async () => {
+		const result = await createExecutor({ disabledFeatures: ["watchdog"], scheduledRuns: { enabled: false } }).executePublic("unknown-action", { action: "statsu" }, new AbortController().signal, undefined, ctx());
+		assert.equal(result.isError, true);
+		assert.match(resultText(result), /Did you mean status\?.*Valid: .*doctor/);
+		assert.doesNotMatch(resultText(result), /watchdog\.|schedule\./);
+	});
+
+	it("prepends a disabled-feature notice to the tool reference guide", async () => {
+		const guide = readSubagentGuide("tool-reference");
+		const request = { action: "guide", topic: "tool-reference" };
+		const enabled = await createExecutor({}).executePublic("guide", request, new AbortController().signal, undefined, ctx());
+		assert.equal(resultText(enabled), guide);
+		const disabled = resultText(await createExecutor({ disabledFeatures: ["watchdog"] }).executePublic("guide", request, new AbortController().signal, undefined, ctx()));
+		assert.ok(disabled.endsWith(guide));
+		assert.match(disabled.slice(0, -guide.length), /^Disabled by config[^\n]*\n- disabledFeatures "watchdog": options scope, target, thinking; actions watchdog\.status, watchdog\.check, watchdog\.configure, watchdog\.recommend-model\n\n$/);
+	});
+
+	it("advertises only enabled RPC management actions", async () => {
+		const handlers: Array<(data: unknown) => void> = [];
+		const replies = new Map<string, unknown>();
+		const events = {
+			on(event: string, handler: (data: unknown) => void) {
+				if (event === SUBAGENT_RPC_REQUEST_EVENT) handlers.push(handler);
+				return () => {};
+			},
+			emit(event: string, data: unknown) {
+				replies.set(event, data);
+			},
+		};
+		registerSubagentRpcBridge({
+			events: events as never,
+			getContext: () => ctx(),
+			execute: async () => assert.fail("disabled RPC actions must not execute"),
+			disabledFeatures: resolveDisabledFeatureSurface({ scheduledRuns: { enabled: false } }),
+		});
+		const request = async (requestId: string, method: string, params?: unknown) => {
+			for (const handler of handlers) await handler({ version: SUBAGENT_RPC_PROTOCOL_VERSION, requestId, method, params });
+			return replies.get(subagentRpcReplyEvent(requestId)) as { success: boolean; data?: { capabilities: { managementActions: string[] } }; error?: { message: string } };
+		};
+		assert.deepEqual((await request("ping", "ping")).data?.capabilities.managementActions, []);
+		assert.equal((await request("manage", "manage", { action: "schedule.bogus" })).error?.message, "RPC manage actions are all disabled by config.");
 	});
 });

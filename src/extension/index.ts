@@ -36,7 +36,7 @@ import { getInspectorPlugins, registerInspectorEventListener } from "../inspecto
 import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
 import { readMainThinkingLevel, setMainThinkingLevelSource } from "../tui/running-tone.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
-import { resolveDisabledFeatureSurface } from "./features.ts";
+import { resolveDisabledFeatureSurface } from "../shared/disabled-features.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
@@ -803,19 +803,21 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	const disabledFeatures = resolveDisabledFeatureSurface(config);
 	const rpcBridge = registerSubagentRpcBridge({
 		events: pi.events,
 		getContext: () => state.lastUiContext,
 		execute: executeSubagentReady,
 		state,
+		disabledFeatures,
 	});
 
 
-	const parameters = createSubagentParamsSchema(resolveDisabledFeatureSurface(config));
+	const parameters = createSubagentParamsSchema(disabledFeatures);
 	const tool: ToolDefinition<typeof parameters, Details> = {
 		name: "subagent",
 		label: "Subagent",
-		description: buildSubagentToolDescription(config),
+		description: buildSubagentToolDescription(config, { disabledFeatures }),
 		...buildSubagentToolPromptMetadata(config),
 		parameters,
 
@@ -823,7 +825,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			return finalizeToolResult(await executeSubagentCollapsed(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx));
 		},
 
-		renderCall(args, theme) {
+		renderCall(rawArgs, theme) {
+			const args = rawArgs as SubagentParamsLike;
 			const gap = " ".repeat(config.mainWindowRenderer?.horizontalSpacing ?? 1);
 			const title = theme.fg("toolTitle", theme.bold("subagent"));
 			if (args.action) {

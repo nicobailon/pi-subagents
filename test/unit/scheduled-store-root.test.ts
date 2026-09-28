@@ -45,13 +45,7 @@ describe("config.scheduledRuns.storeRoot", () => {
 
 	it("rejects project-relative paths during config load", () => {
 		saveConfig({ scheduledRuns: { storeRoot: "schedules" } });
-		const originalError = console.error;
-		console.error = () => {};
-		try {
-			assert.deepEqual(loadConfig(), {});
-		} finally {
-			console.error = originalError;
-		}
+		assert.throws(() => loadConfig(), /absolute path/);
 	});
 
 	it("rejects project-relative paths during config update", () => {

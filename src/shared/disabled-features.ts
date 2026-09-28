@@ -1,5 +1,3 @@
-import type { ExtensionConfig } from "../shared/types.ts";
-
 /**
  * Opt-in feature groups an operator can remove from the parent-facing `subagent` tool.
  * Each group owns parameters and actions that no other feature uses, so hiding them
@@ -19,6 +17,14 @@ export const SUBAGENT_FEATURES = {
 		actions: ["inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close"],
 		params: ["focus"],
 	},
+	missions: {
+		actions: ["mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close"],
+		params: ["mission", "missionUpdate", "missionStatus", "missionScope", "missionId", "runMode", "runStatus", "summary"],
+	},
+	"lane-management": {
+		actions: ["lane.status", "lane.recordMerge", "lane.recordSupersession", "worktree.discard", "worktree.cleanup"],
+		params: ["handoffPath", "laneId", "merge", "supersession", "repo", "planId"],
+	},
 	"spawn-budget-grants": { actions: ["grant-spawn-budget"], params: ["additional"] },
 	preflight: { actions: [], params: ["preflight"] },
 	"lane-metadata": { actions: [], params: ["lane"] },
@@ -27,16 +33,18 @@ export const SUBAGENT_FEATURES = {
 	"tool-budgets": { actions: [], params: ["toolBudget"] },
 	"control-overrides": { actions: [], params: ["control"] },
 	"extension-bindings": { actions: [], params: ["extensionBindings"] },
+	"external-machines": { actions: [], params: ["machine"] },
 } as const satisfies Record<string, { actions: readonly string[]; params: readonly string[] }>;
 
 export type SubagentFeature = keyof typeof SUBAGENT_FEATURES;
+
+/** Schedules are turned off by `scheduledRuns.enabled: false`, not by `disabledFeatures`. */
+export type SubagentSurfaceFeature = SubagentFeature | "schedules";
 
 const SCHEDULE_SURFACE = {
 	actions: ["schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"],
 	params: ["name", "at", "every", "sessionOnly", "quiet", "on", "timezone", "overlap", "catchUp"],
 } as const;
-
-const SCHEDULES_DISABLED_BY = "scheduledRuns.enabled=false";
 
 function isSubagentFeature(value: string): value is SubagentFeature {
 	return Object.hasOwn(SUBAGENT_FEATURES, value);
@@ -56,25 +64,34 @@ export function validateDisabledFeatures(value: unknown): void {
 	}
 }
 
-/** Maps each disabled parameter and action to the setting that disabled it. */
+/** Disabled features, and each disabled parameter and action mapped to the setting that disabled it. */
 export interface DisabledFeatureSurface {
+	features: ReadonlySet<SubagentSurfaceFeature>;
 	params: ReadonlyMap<string, string>;
 	actions: ReadonlyMap<string, string>;
 }
 
-export function resolveDisabledFeatureSurface(config: Pick<ExtensionConfig, "disabledFeatures" | "scheduledRuns">): DisabledFeatureSurface {
+interface FeatureConfig {
+	disabledFeatures?: readonly SubagentFeature[];
+	scheduledRuns?: { enabled?: boolean };
+}
+
+function featureSurface(feature: SubagentSurfaceFeature): { actions: readonly string[]; params: readonly string[]; disabledBy: string } {
+	if (feature === "schedules") return { ...SCHEDULE_SURFACE, disabledBy: "scheduledRuns.enabled=false" };
+	return { ...SUBAGENT_FEATURES[feature], disabledBy: `disabledFeatures "${feature}"` };
+}
+
+export function resolveDisabledFeatureSurface(config: FeatureConfig): DisabledFeatureSurface {
+	const features = new Set<SubagentSurfaceFeature>(config.disabledFeatures);
+	if (config.scheduledRuns?.enabled === false) features.add("schedules");
 	const params = new Map<string, string>();
 	const actions = new Map<string, string>();
-	for (const feature of config.disabledFeatures ?? []) {
-		const disabledBy = `disabledFeatures "${feature}"`;
-		for (const param of SUBAGENT_FEATURES[feature].params) params.set(param, disabledBy);
-		for (const action of SUBAGENT_FEATURES[feature].actions) actions.set(action, disabledBy);
+	for (const feature of features) {
+		const surface = featureSurface(feature);
+		for (const param of surface.params) params.set(param, surface.disabledBy);
+		for (const action of surface.actions) actions.set(action, surface.disabledBy);
 	}
-	if (config.scheduledRuns?.enabled === false) {
-		for (const param of SCHEDULE_SURFACE.params) params.set(param, SCHEDULES_DISABLED_BY);
-		for (const action of SCHEDULE_SURFACE.actions) actions.set(action, SCHEDULES_DISABLED_BY);
-	}
-	return { params, actions };
+	return { features, params, actions };
 }
 
 /** Returns why a request uses a disabled feature, or undefined when every requested field is enabled. */
@@ -87,4 +104,15 @@ export function disabledFeatureUseError(request: object, surface: DisabledFeatur
 		if (params[param] !== undefined) return `${label} option '${param}' is disabled by config ${disabledBy}.`;
 	}
 	return undefined;
+}
+
+/** Lists what config disabled, for prepending to static reference docs that describe the full tool. */
+export function disabledFeatureNotice(surface: DisabledFeatureSurface): string | undefined {
+	if (surface.features.size === 0) return undefined;
+	const lines = [...surface.features].map((feature) => {
+		const { actions, params, disabledBy } = featureSurface(feature);
+		const parts = [`options ${params.join(", ")}`, ...(actions.length > 0 ? [`actions ${actions.join(", ")}`] : [])];
+		return `- ${disabledBy}: ${parts.join("; ")}`;
+	});
+	return `Disabled by config in this session. The reference below still lists these, but calls that use them are rejected:\n${lines.join("\n")}`;
 }

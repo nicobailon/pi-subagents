@@ -100,13 +100,15 @@ Controls the parent-facing `subagent` tool description registered at startup. Th
 { "disabledFeatures": ["watchdog", "panes", "preflight", "lane-metadata", "gates"] }
 ```
 
-Removes feature groups you do not use from the `subagent` tool. Each listed feature loses its parameters from the model-facing schema, and any request that still uses one of its parameters or actions fails with an error naming this setting. The check covers the parent tool, fanout-child tools, RPC, slash commands, prompt templates, scheduled launches, delegated launches, and workflow `runs.run`/`runs.all` children, which are rejected before they launch. Nothing is disabled by default, and the default schema is unchanged. An unknown or duplicate feature name fails config loading rather than silently re-enabling every feature.
+Removes feature groups you do not use from the `subagent` tool. Each listed feature loses its parameters from the model-facing schema, and any request that still uses one of its parameters or actions fails with an error naming this setting. The check covers the parent tool, fanout-child tools, RPC, slash commands, prompt templates, scheduled launches, delegated launches, and workflow `runs.run`/`runs.all`/`runs.lanes` children, which are rejected before they launch. The built-in tool descriptions, the unknown-action list, the fanout-child tool description, and RPC `ping` no longer mention disabled features, and `{ action: "guide", topic: "tool-reference" }` starts with a notice listing what is disabled. Custom tool descriptions are not changed. Nothing is disabled by default, and the default schema and description are unchanged. An unknown or duplicate feature name fails config loading rather than silently re-enabling every feature.
 
 | Feature | Parameters removed | Actions rejected |
 |---|---|---|
 | `agent-management` | `config` | `create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset`, `refine`, `refine.show`, `refine.rollback` |
 | `watchdog` | `scope`, `target`, `thinking` | `watchdog.status`, `watchdog.check`, `watchdog.configure`, `watchdog.recommend-model` |
 | `panes` | `focus` | `inspector.*`, `project.*` |
+| `missions` | `mission`, `missionUpdate`, `missionStatus`, `missionScope`, `missionId`, `runMode`, `runStatus`, `summary` | `mission.*` |
+| `lane-management` | `handoffPath`, `laneId`, `merge`, `supersession`, `repo`, `planId` | `lane.status`, `lane.recordMerge`, `lane.recordSupersession`, `worktree.discard`, `worktree.cleanup` |
 | `spawn-budget-grants` | `additional` | `grant-spawn-budget` |
 | `preflight` | `preflight` | |
 | `lane-metadata` | `lane` | |
@@ -115,10 +117,11 @@ Removes feature groups you do not use from the `subagent` tool. Each listed feat
 | `tool-budgets` | `toolBudget` | |
 | `control-overrides` | `control` | |
 | `extension-bindings` | `extensionBindings` | |
+| `external-machines` | `machine` | |
 
-Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, and the watchdog still follows its own settings. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged.
+Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, the watchdog still follows its own settings, missions still attach automatically when [`missions`](#missions) enables them, and agents with a `machine` in their definition still run there. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged.
 
-To disable schedules, set [`scheduledRuns.enabled`](#scheduledruns) to `false`; it removes the schedule parameters the same way. With every feature and schedules disabled, the default `subagent` tool declaration shrinks from 18,319 to 13,133 characters (82 to 60 parameters). Restart Pi after changing this setting.
+To disable schedules, set [`scheduledRuns.enabled`](#scheduledruns) to `false`; it removes the schedule parameters the same way. With every feature and schedules disabled, the default `subagent` tool declaration (name, description, and parameter schema as JSON) shrinks from 18,319 to 11,570 characters (82 to 45 parameters). Restart Pi after changing this setting.
 
 ## `inlineToolDisplay`
 
