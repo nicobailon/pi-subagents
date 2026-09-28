@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
+import { writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
+import { createMission, missionRecordPath, resolveMissionStoreLocation, updateMission } from "../../src/missions/store.ts";
 import { ASYNC_RETENTION_BATCH_SIZE, cleanupAsyncRetention } from "../../src/runs/background/async-retention.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -217,6 +219,76 @@ describe("async retention cleanup", () => {
 			assert.equal(result.skipped["handoff-reference"], 1);
 			assert.equal(result.skipped["wait-reference"], 1);
 			assert.equal(result.skipped["runtime-reference"], 1);
+		} finally {
+			fs.rmSync(roots.root, { recursive: true, force: true });
+		}
+	});
+
+	it("reclaims runs bound to terminal or pruned missions and fails closed for worn bindings", async () => {
+		const roots = makeRoots();
+		try {
+			const projectRoot = path.join(roots.root, "project");
+			const agentDir = path.join(roots.root, "agent");
+			const location = resolveMissionStoreLocation({ projectRoot, agentDir });
+			const bindMission = (runDir: string, missionId: string): void => {
+				writeMissionAsyncBinding(runDir, { missionId, location, autoCreated: true });
+				fs.utimesSync(runDir, OLD / 1000, OLD / 1000);
+			};
+
+			const terminalMission = createMission(location, { title: "Closed mission", objective: "Deliver and close" });
+			updateMission(location, terminalMission.id, { status: "completed" });
+			const terminalRun = writeOldRun(roots.asyncDirRoot, "terminal-mission-run");
+			bindMission(terminalRun, terminalMission.id);
+
+			const activeMission = createMission(location, { title: "Open mission", objective: "Still running" });
+			updateMission(location, activeMission.id, { status: "active" });
+			const activeRun = writeOldRun(roots.asyncDirRoot, "active-mission-run");
+			bindMission(activeRun, activeMission.id);
+
+			const prunedRun = writeOldRun(roots.asyncDirRoot, "pruned-mission-run");
+			bindMission(prunedRun, "mission-record-pruned-by-retention");
+
+			const wornRun = writeOldRun(roots.asyncDirRoot, "worn-binding-run");
+			fs.writeFileSync(path.join(wornRun, "mission.json"), "{ worn binding");
+			fs.utimesSync(wornRun, OLD / 1000, OLD / 1000);
+
+			const corruptMission = createMission(location, { title: "Corrupt record", objective: "Unreadable on disk" });
+			fs.writeFileSync(missionRecordPath(location, corruptMission.id), "{ corrupt record");
+			const corruptRun = writeOldRun(roots.asyncDirRoot, "corrupt-record-run");
+			bindMission(corruptRun, corruptMission.id);
+
+			const result = await cleanupAsyncRetention(cleanupOptions(roots));
+
+			assert.equal(fs.existsSync(terminalRun), false);
+			assert.equal(fs.existsSync(prunedRun), false);
+			assert.equal(fs.existsSync(activeRun), true);
+			assert.equal(fs.existsSync(wornRun), true);
+			assert.equal(fs.existsSync(corruptRun), true);
+			assert.equal(result.deletedRuns, 2);
+			assert.equal(result.skipped["mission-reference"], 3);
+		} finally {
+			fs.rmSync(roots.root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a terminal-mission run while its mission sync is still pending", async () => {
+		const roots = makeRoots();
+		try {
+			const location = resolveMissionStoreLocation({ projectRoot: path.join(roots.root, "project"), agentDir: path.join(roots.root, "agent") });
+			const mission = createMission(location, { title: "Closed mission", objective: "Deliver and close" });
+			updateMission(location, mission.id, { status: "completed" });
+			const pendingRun = writeOldRun(roots.asyncDirRoot, "pending-sync-run");
+			writeMissionAsyncBinding(pendingRun, { missionId: mission.id, location, autoCreated: true });
+			fs.utimesSync(pendingRun, OLD / 1000, OLD / 1000);
+			const observerDir = path.join(roots.resultsDir, "result-index", "observers", "mission");
+			fs.mkdirSync(observerDir, { recursive: true });
+			fs.writeFileSync(path.join(observerDir, "pending-sync-run.json"), "{}");
+
+			const result = await cleanupAsyncRetention(cleanupOptions(roots));
+
+			assert.equal(fs.existsSync(pendingRun), true);
+			assert.equal(result.deletedRuns, 0);
+			assert.equal(result.skipped["mission-reference"], 1);
 		} finally {
 			fs.rmSync(roots.root, { recursive: true, force: true });
 		}

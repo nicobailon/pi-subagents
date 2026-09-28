@@ -967,7 +967,10 @@ async function runSingleAttempt(
 			jsonlWriter.writeLine(JSON.stringify(projectChildSessionEventForJson(evt)));
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
-			if (evt.type === "compaction_start") compactionStartedReceived = true;
+			if (evt.type === "compaction_start") {
+				compactionStartedReceived = true;
+				if (agentSettledReceived) afterCompactionSettlement = true;
+			}
 			if (evt.type === "compaction_end" && evt.willRetry === true) {
 				compactionStartedReceived = false;
 				afterCompactionSettlement = false;

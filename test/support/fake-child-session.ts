@@ -23,6 +23,8 @@ export interface FakeChildResponse {
 	waitForPath?: string;
 	keepAliveAfterFinalMessageMs?: number;
 	jsonl?: unknown[];
+	/** Leaves terminal lifecycle events to the scripted JSONL, for ordering-sensitive tests. */
+	omitImplicitFinalEvents?: boolean;
 	/** Raw JSON lines; parsed into events for the in-process child without acceptance-report injection. */
 	stdoutRaw?: string;
 	steps?: Array<{ delay?: number; waitForPath?: string; jsonl?: unknown[]; stdoutRaw?: string }>;
@@ -398,8 +400,10 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 					emit({ type: "tool_execution_end", toolName: "structured_output" });
 				}
 				if (record.aborted) return;
-				emit({ type: "agent_end", messages: [...messages], willRetry: false });
-				emit({ type: "agent_settled" });
+				if (!response.omitImplicitFinalEvents) {
+					emit({ type: "agent_end", messages: [...messages], willRetry: false });
+					emit({ type: "agent_settled" });
+				}
 				boundaryOpen = true;
 				markScriptedFinal();
 				if (response.holdQueuedMessagesUntilAbort) {

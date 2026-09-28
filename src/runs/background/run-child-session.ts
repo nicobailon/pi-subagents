@@ -414,7 +414,10 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			const event = raw as ChildSessionEvent & ChildEvent;
 			appendChildEvent(projectChildSessionEventForJson(raw) as Record<string, unknown>);
 			input.transcriptWriter?.writeChildEvent(projectChildSessionEventForJson(raw) as ChildEvent);
-			if (event.type === "compaction_start") compactionStartedReceived = true;
+			if (event.type === "compaction_start") {
+				compactionStartedReceived = true;
+				if (agentSettledReceived) afterCompactionSettlement = true;
+			}
 			if (event.type === "compaction_end" && event.willRetry === true) {
 				compactionStartedReceived = false;
 				afterCompactionSettlement = false;
