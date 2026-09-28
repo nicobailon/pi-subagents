@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { registerWorkflowResource, type WorkflowResourceDefinition } from "../../src/api/workflow-resources.ts";
+import {
+	getWorkflowResourceIdentity,
+	registerWorkflowResource,
+	type WorkflowResourceDefinition,
+} from "../../src/api/workflow-resources.ts";
 import {
 	authorizeWorkflowResourceHost,
 	consumeWorkflowResourcePermit,
@@ -52,6 +56,30 @@ describe("named workflow resources", () => {
 				assert.match(consumeWorkflowResourcePermit(resolved.resource.permit, resolved.resource.script) as string, /already consumed/);
 			} finally { replacement.dispose(); }
 		} finally { registration.dispose(); other.dispose(); }
+	});
+
+	it("exposes a session-scoped named-resource identity without resolving or issuing authority", () => {
+		assert.deepEqual(getWorkflowResourceIdentity("review"), {
+			kind: "builtin",
+			name: "review",
+			version: 1,
+		});
+		assert.equal(getWorkflowResourceIdentity("acme.policy", "session"), undefined);
+		assert.equal(getWorkflowResourceIdentity("not a resource", "session"), undefined);
+
+		const registration = registerWorkflowResource({
+			sessionId: "session",
+			definition: { name: "acme.policy", version: 3, resolve: () => ({ script: "return true;" }) },
+		});
+		try {
+			const identity = getWorkflowResourceIdentity("acme.policy", "session");
+			assert.deepEqual(identity, { kind: "extension", name: "acme.policy", version: 3 });
+			assert.equal(Object.isFrozen(identity), true);
+			assert.equal(getWorkflowResourceIdentity("acme.policy", "other-session"), undefined);
+		} finally {
+			registration.dispose();
+		}
+		assert.equal(getWorkflowResourceIdentity("acme.policy", "session"), undefined);
 	});
 
 	it("lets trusted validation select fixed commands while task text remains data", async () => {
