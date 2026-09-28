@@ -158,7 +158,8 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof externalRuns.unregisterExternalRun, "function");
 	const capability = await import("pi-subagents/capability-ceiling");
 	const workflowResources = await import("pi-subagents/workflow-resources");
-	assert.deepEqual(Object.keys(workflowResources), ["registerWorkflowResource"]);
+	assert.deepEqual(Object.keys(workflowResources).sort(), ["getWorkflowResourceIdentity", "registerWorkflowResource"]);
+	assert.equal(typeof workflowResources.getWorkflowResourceIdentity, "function");
 	assert.equal(typeof workflowResources.registerWorkflowResource, "function");
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_VERSION, 1);
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");

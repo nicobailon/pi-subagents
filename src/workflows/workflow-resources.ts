@@ -32,6 +32,17 @@ export interface WorkflowResourceRegistration {
 	dispose(): void;
 }
 
+/**
+ * Read-only identity for policy extensions that need to distinguish a registered
+ * named workflow from raw model-authored workflow input before execution.
+ * This is not a permit and does not invoke the resource resolver.
+ */
+export interface WorkflowResourceIdentity {
+	kind: "builtin" | "extension";
+	name: string;
+	version: number;
+}
+
 export interface RegisterWorkflowResourceInput {
 	sessionId: string;
 	definition: WorkflowResourceDefinition;
@@ -82,6 +93,21 @@ export function registerWorkflowResource(input: RegisterWorkflowResourceInput): 
 			if (bucket.size === 0 && current.bySession.get(sessionId) === bucket) current.bySession.delete(sessionId);
 		},
 	};
+}
+
+/**
+ * Returns identity only for a builtin resource or one registered in the given
+ * session. It intentionally does not validate resource-specific args, invoke
+ * resolve, or issue workflow authority; execution remains the enforcement point.
+ */
+export function getWorkflowResourceIdentity(nameValue: unknown, sessionId?: string): WorkflowResourceIdentity | undefined {
+	if (typeof nameValue !== "string") return undefined;
+	const name = nameValue.trim();
+	if (!RESOURCE_NAME_PATTERN.test(name)) return undefined;
+	const builtin = findWorkflowResource(name);
+	if (builtin) return Object.freeze({ kind: "builtin", name: builtin.name, version: builtin.version });
+	const extension = typeof sessionId === "string" ? registry().bySession.get(sessionId)?.get(name) : undefined;
+	return extension ? Object.freeze({ kind: "extension", name: extension.name, version: extension.version }) : undefined;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

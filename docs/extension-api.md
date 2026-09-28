@@ -25,6 +25,8 @@ Register in `session_start` using **`ctx.sessionManager.getSessionId()`**, not t
 
 `resolve` must do synchronous, bounded validation and string construction, without I/O, SDK calls, timers or process work. Core deep-copies plain JSON args: at most 16 KiB encoded, nesting depth 8, 16 fields per object, 64 items per array, finite numbers, and nonempty strings of at most 16 KiB. The extension must additionally reject unsupported fields and validate resource-specific semantics. Throws, promises/thenables and malformed expansions fail before authority is issued; errors are bounded to 4096 characters.
 
+A policy extension that runs before the `subagent` executor may call `getWorkflowResourceIdentity(name, sessionId)`. It returns a frozen `{ kind, name, version }` identity only when the name is a builtin resource or is registered for that session. It does **not** validate resource-specific args, run `resolve`, issue a permit, or grant host authority. Use it to distinguish registered named resources from raw workflow input; leave argument validation and authority enforcement to normal named-resource resolution.
+
 Host grants bind **exact key/trimmed-command pairs**, not independent sets of keys and commands. At most 32 grants are accepted, with unique safe workflow keys and nonempty commands bounded to 16 KiB without NUL. Omitted grants give no host authority. Core snapshots the expansion and grants at resolution. Disposing stops future lookup, but already-admitted workflows retain captured grants, even after replacement. Use existing stop/deadline controls for cancellation; this does not promise survival of host shutdown or durable named scheduling. Existing child admission and capability ceilings still apply.
 
 ### Mixed child and finite host example
