@@ -83,6 +83,17 @@ describe("MCP direct-tool resolution config sources", () => {
 		assert.deepEqual(resolution.unresolvedSelectors, []);
 	});
 
+	it("computes config hashes identical to pi-mcp-adapter 3.1.0 for stdio servers", () => {
+		// Golden values computed by pi-mcp-adapter 3.1.0's computeServerHash
+		// (metadata-cache.ts), which since PR #683 adds inheritEnv/literalEnv to
+		// a stdio server's hash identity. These values were reproduced against
+		// the real adapter cache (~/.pi/agent/mcp-cache.json) for the same
+		// codegraph definition. If this test fails after an adapter upgrade,
+		// subagent MCP direct-tool resolution breaks for every stdio server.
+		assert.equal(computeMcpServerHash(CURRENT_DEFINITION), "d2b80559f0b1c85ccc625a4c7f875f64e0defc60648f56d2a51cbe5dfa3d967e");
+		assert.equal(computeMcpServerHash({ ...CURRENT_DEFINITION, inheritEnv: false }), "345b359732aa3ece7fdf8b98b9927809243685846c2b375e98a312a80e89e333");
+	});
+
 	it("ignores Pi's own mcp.json files, which the adapter no longer reads", () => {
 		writeServerConfig(path.join(agentDir, "mcp.json"), CURRENT_DEFINITION);
 		writeServerConfig(path.join(getProjectConfigDir(projectDir), "mcp.json"), CURRENT_DEFINITION);
