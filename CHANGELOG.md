@@ -10,6 +10,10 @@
 
 - The `subagents_enable` result told the model to wait for the next prompt on some providers, even when `subagent` was already available in the current turn. It now tells the model to check its tool list: if a `subagent` tool is there, use it; if not, wait for the next user prompt instead of retrying. The `--exclude-tools subagents_enable` hint for operators is unchanged.
 
+### Fixed
+
+- Machine-generated worktree patches now use explicit `a/` and `b/` prefixes instead of Git's newer `--default-prefix` option, so diff capture works on older Git releases while still overriding `diff.noprefix`. Thanks to [@quifox](https://github.com/quifox) for [#2527](https://github.com/nicobailon/pi-subagents/pull/2527).
+
 ## [0.73.1] - 2026-09-27
 
 ### Highlights
