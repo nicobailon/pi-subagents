@@ -94,6 +94,32 @@ Controls the parent-facing `subagent` tool description registered at startup. Th
 
 `custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.pi/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file.
 
+## `disabledFeatures`
+
+```json
+{ "disabledFeatures": ["watchdog", "panes", "preflight", "lane-metadata", "gates"] }
+```
+
+Removes feature groups you do not use from the `subagent` tool. Each listed feature loses its parameters from the model-facing schema, and any request that still uses one of its parameters or actions fails with an error naming this setting. The check covers the parent tool, fanout-child tools, RPC, slash commands, prompt templates, scheduled launches, delegated launches, and workflow `runs.run`/`runs.all` children, which are rejected before they launch. Nothing is disabled by default, and the default schema is unchanged.
+
+| Feature | Parameters removed | Actions rejected |
+|---|---|---|
+| `agent-management` | `config` | `create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset`, `refine`, `refine.show`, `refine.rollback` |
+| `watchdog` | `scope`, `target`, `thinking` | `watchdog.status`, `watchdog.check`, `watchdog.configure`, `watchdog.recommend-model` |
+| `panes` | `focus` | `inspector.*`, `project.*` |
+| `spawn-budget-grants` | `additional` | `grant-spawn-budget` |
+| `preflight` | `preflight` | |
+| `lane-metadata` | `lane` | |
+| `gates` | `gate` | |
+| `usage-budgets` | `usageBudget` | |
+| `tool-budgets` | `toolBudget` | |
+| `control-overrides` | `control` | |
+| `extension-bindings` | `extensionBindings` | |
+
+Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, and the watchdog still follows its own settings. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged.
+
+To disable schedules, set [`scheduledRuns.enabled`](#scheduledruns) to `false`; it removes the schedule parameters the same way. With every feature and schedules disabled, the default `subagent` tool declaration shrinks from 18,319 to 13,133 characters (82 to 60 parameters). Restart Pi after changing this setting.
+
 ## `inlineToolDisplay`
 
 ```json
@@ -363,7 +389,7 @@ This limit bounds current top-level async load. It is separate from cumulative `
 { "scheduledRuns": { "enabled": false, "maxPending": 20 } }
 ```
 
-Durable schedules are enabled by default and stored per project under `.pi/subagents/schedules/<id>/`. See [missions.md](missions.md#schedules) for usage.
+Durable schedules are enabled by default and stored per project under `.pi/subagents/schedules/<id>/`. See [missions.md](missions.md#schedules) for usage. Setting `enabled` to `false` also removes the schedule parameters (`name`, `at`, `every`, `sessionOnly`, `quiet`, `on`, `timezone`, `overlap`, `catchUp`) from the `subagent` tool and rejects `schedule.*` actions from every entry point. Saved schedules are kept and become manageable again when you re-enable schedules.
 
 Set `storeRoot` to keep durable schedules outside project repositories. It must be an absolute path or a `~/` path, which expands from the user home directory. Each project is stored under a hash of its resolved working directory, so projects do not share schedules.
 

@@ -13,6 +13,7 @@ import { createNativeSupervisorChannel, NATIVE_SUPERVISOR_TOOL_NAME, resolveSupe
 import { readStatus } from "../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
+import { resolveDisabledFeatureSurface } from "./features.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, type AsyncStartedEvent, type Details, type SubagentState } from "../shared/types.ts";
@@ -210,7 +211,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		findPendingAsks: supervisorChannel.findPendingAsks,
 	});
 
-	const params = createSubagentParamsSchema();
+	const params = createSubagentParamsSchema(resolveDisabledFeatureSurface(config));
 	const tool: ToolDefinition<typeof params, Details> = {
 		name: "subagent",
 		label: "Subagent",
