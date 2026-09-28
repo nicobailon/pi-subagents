@@ -51,6 +51,9 @@ jobs:
       - name: Typecheck
         if: matrix.typecheck
         run: npm run typecheck
+      - name: Native tool activation schema budgets
+        if: matrix.typecheck
+        run: npm run test:smoke:tool-activation
       - name: Unit tests
         run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test ${{ matrix.testArgs }} test/unit/*.test.ts
       - name: Integration tests
