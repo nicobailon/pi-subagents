@@ -7804,13 +7804,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
+		const disabledFeatureError = disabledFeatureUseError(params, disabledFeatures);
+		if (disabledFeatureError) {
+			return Promise.resolve({ content: [{ type: "text", text: disabledFeatureError }], isError: true, details: { mode: params.action === undefined ? "workflow" : "management", results: [] } });
+		}
 		const normalized = normalizePublicSubagentExecution(params);
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
-		}
-		const disabledFeatureError = disabledFeatureUseError(normalized.params, disabledFeatures);
-		if (disabledFeatureError) {
-			return Promise.resolve({ content: [{ type: "text", text: disabledFeatureError }], isError: true, details: { mode: normalized.params.action === undefined ? "workflow" : "management", results: [] } });
 		}
 		let publicParams = normalized.params as SubagentParamsLike;
 		if (publicParams.workflow !== undefined) {

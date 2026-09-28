@@ -133,6 +133,12 @@ describe("disabled feature execution boundary", () => {
 		assert.equal(resultText(result), `subagent option 'toolBudget' is disabled by config disabledFeatures "tool-budgets".`);
 	});
 
+	it("names the disabled setting before request normalization can reject the option", async () => {
+		const result = await createExecutor({ disabledFeatures: ["preflight"] }).executePublic("disabled-before-normalize", { agent: "worker", task: "scan", preflight: { version: 1, lanes: [] } }, new AbortController().signal, undefined, ctx(os.tmpdir()));
+		assert.equal(result.isError, true);
+		assert.equal(resultText(result), `subagent option 'preflight' is disabled by config disabledFeatures "preflight".`);
+	});
+
 	it("rejects a disabled option on delegated execution", async () => {
 		const result = await createExecutor({ disabledFeatures: ["gates"] }).executeDelegated("disabled-delegated", { agent: "worker", task: "scan", gate: "npm test" }, new AbortController().signal, undefined, ctx(os.tmpdir()));
 		assert.equal(result.isError, true);
