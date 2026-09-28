@@ -5,6 +5,7 @@
 ### Added
 
 - After you upgrade pi-subagents, your first interactive session shows a short notice with the highlights of each new version and a link to the changelog. It is shown once and never enters the conversation, so it does not change the model's context or prompt cache. A fresh install and child sessions show nothing.
+- `subagents.agentOverrides.<name>.advertise` adds an agent to the parent-prompt catalog from settings, so you no longer have to copy a builtin agent file just to advertise it. Runtime-registered agents still cannot be advertised. Thanks to [@strive-run](https://github.com/strive-run) for [#2534](https://github.com/nicobailon/pi-subagents/pull/2534).
 
 ### Changed
 
