@@ -100,7 +100,7 @@ Controls the parent-facing `subagent` tool description registered at startup. Th
 { "disabledFeatures": ["watchdog", "panes", "preflight", "lane-metadata", "gates"] }
 ```
 
-Removes feature groups you do not use from the `subagent` tool. Each listed feature loses its parameters from the model-facing schema, and any request that still uses one of its parameters or actions fails with an error naming this setting. The check covers the parent tool, fanout-child tools, RPC, slash commands, prompt templates, scheduled launches, delegated launches, and workflow `runs.run`/`runs.all` children, which are rejected before they launch. Nothing is disabled by default, and the default schema is unchanged.
+Removes feature groups you do not use from the `subagent` tool. Each listed feature loses its parameters from the model-facing schema, and any request that still uses one of its parameters or actions fails with an error naming this setting. The check covers the parent tool, fanout-child tools, RPC, slash commands, prompt templates, scheduled launches, delegated launches, and workflow `runs.run`/`runs.all` children, which are rejected before they launch. Nothing is disabled by default, and the default schema is unchanged. An unknown or duplicate feature name fails config loading rather than silently re-enabling every feature.
 
 | Feature | Parameters removed | Actions rejected |
 |---|---|---|

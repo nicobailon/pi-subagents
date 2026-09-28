@@ -217,12 +217,12 @@ export function loadConfig(): ExtensionConfig {
 		return readConfigForUpdate(configPath);
 	} catch (error) {
 		if (error instanceof PrunedForkConfigError) throw error;
-		// Explicit route identity, worktree, and checkpoint policies must not be silently
+		// Explicit route identity, worktree, checkpoint, and disabled-feature policies must not be silently
 		// discarded and replaced by the built-in defaults after validation fails.
 		try {
 			const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
 			if (raw && typeof raw === "object" && !Array.isArray(raw)
-				&& (Object.hasOwn(raw, "worktreeProvider") || Object.hasOwn(raw, "worktreeBranchPrefix") || Object.hasOwn(raw, "modelResponseAliases") || Object.hasOwn(raw, "modelExclusions") || Object.hasOwn(raw, "checkpointBeforeDeadlineMs"))) throw error;
+				&& (Object.hasOwn(raw, "worktreeProvider") || Object.hasOwn(raw, "worktreeBranchPrefix") || Object.hasOwn(raw, "modelResponseAliases") || Object.hasOwn(raw, "modelExclusions") || Object.hasOwn(raw, "checkpointBeforeDeadlineMs") || Object.hasOwn(raw, "disabledFeatures"))) throw error;
 		} catch (readError) {
 			if (readError === error) throw error;
 		}
