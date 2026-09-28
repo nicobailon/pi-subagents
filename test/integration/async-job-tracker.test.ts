@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { afterEach, describe, it, mock } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
-import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { SUBAGENT_CHILD_STATUS_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_CONTROL_INTERCOM_EVENT, type ControlEvent } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
@@ -172,8 +171,8 @@ function createNativeSupervisorHarness(sessionId: string) {
 	return { channel, tools, sent };
 }
 
-/** Runs one native supervisor attention record through the tracker into the parent notice handler. Requires mock timers. */
-function startSupervisorAttentionRun(asyncRoot: string, runId: string) {
+/** Starts a run whose events.jsonl holds one native supervisor attention record. Requires mock timers. */
+function startSupervisorAttentionRun(asyncRoot: string, runId: string, timers: { tick(ms: number): void }) {
 	const runDir = path.join(asyncRoot, runId);
 	writeRunningAsyncStatus(runDir, runId, "session-grace");
 	fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
@@ -183,31 +182,12 @@ function startSupervisorAttentionRun(asyncRoot: string, runId: string) {
 		intercom: { to: "main", message: "SUBAGENT NEEDS ATTENTION: worker" },
 	})}\n`, "utf-8");
 	let answered = false;
-	const statusEvents: unknown[] = [];
-	const intercomCopies: unknown[] = [];
-	const parentTurns: Array<{ customType?: string; triggerTurn?: boolean }> = [];
-	const state = createState();
-	const visibleControlNotices = new Set<string>();
-	const parent = {
-		sendMessage: (message: { customType?: string }, options?: { triggerTurn?: boolean }) => {
-			parentTurns.push({ customType: message.customType, triggerTurn: options?.triggerTurn });
-		},
-	};
-	const pi = {
-		events: {
-			emit(channel: string, data: unknown) {
-				if (channel === SUBAGENT_CONTROL_INTERCOM_EVENT) intercomCopies.push(data);
-				if (channel !== SUBAGENT_CONTROL_EVENT) return;
-				statusEvents.push(data);
-				// SAFETY: the doubles provide the sendMessage and state fields the handler reads, and data is the tracker's control payload.
-				handleSubagentControlNotice({ pi: parent as never, state: state as never, visibleControlNotices, details: data as never });
-			},
-		},
-	};
-	const tracker = createTracker(pi, state as never, asyncRoot, { supervisorRequestState: () => answered ? "resolved" : "pending" });
+	const recorder = createEventRecorder();
+	const tracker = createTracker(recorder.pi, createState() as never, asyncRoot, { supervisorRequestState: () => answered ? "resolved" : "pending" });
 	tracker.handleStarted({ id: runId, asyncDir: runDir, agent: "worker", sessionId: "session-grace" });
-	mock.timers.tick(25); // the tracker's event-refresh debounce
-	return { tracker, answer: () => { answered = true; }, statusEvents, intercomCopies, parentTurns };
+	timers.tick(25); // the tracker's event-refresh debounce
+	assert.deepEqual(recorder.events.map((entry) => [entry.channel, (entry.data as { noticeDeferred?: boolean }).noticeDeferred]), [[SUBAGENT_CONTROL_EVENT, true]], "status consumers see the request immediately, marked deferred");
+	return { tracker, answer: () => { answered = true; }, events: recorder.events };
 }
 
 function pidGone(): never {
@@ -1757,66 +1737,43 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("sends no parent notice for a supervisor request answered within the grace period", () => {
+	it("sends no parent notice for a supervisor request answered within the grace period", (t) => {
 		const asyncRoot = createTempDir("pi-async-job-supervisor-grace-answered-");
-		mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-		let tracker: AsyncJobTracker | undefined;
+		t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 		try {
-			const run = startSupervisorAttentionRun(asyncRoot, "run-grace-answered");
-			tracker = run.tracker;
-			assert.equal(run.statusEvents.length, 1, "status consumers still see the request immediately");
-			assert.deepEqual(run.parentTurns, []);
-			assert.deepEqual(run.intercomCopies, []);
-
+			const run = startSupervisorAttentionRun(asyncRoot, "run-grace-answered", t.mock.timers);
 			run.answer();
-			mock.timers.tick(60_000);
-			assert.deepEqual(run.parentTurns, []);
-			assert.deepEqual(run.intercomCopies, []);
+			t.mock.timers.tick(60_000);
+			assert.equal(run.events.length, 1);
 		} finally {
-			tracker?.resetJobs();
-			mock.timers.reset();
 			removeTempDir(asyncRoot);
 		}
 	});
 
-	it("escalates a supervisor request still unanswered after the grace period once", () => {
+	it("escalates a supervisor request still unanswered after the grace period once", (t) => {
 		const asyncRoot = createTempDir("pi-async-job-supervisor-grace-pending-");
-		mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-		let tracker: AsyncJobTracker | undefined;
+		t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 		try {
-			const run = startSupervisorAttentionRun(asyncRoot, "run-grace-pending");
-			tracker = run.tracker;
-			assert.equal(run.statusEvents.length, 1);
-			mock.timers.tick(59_000);
-			assert.deepEqual(run.parentTurns, []);
-			assert.deepEqual(run.intercomCopies, []);
-
-			mock.timers.tick(1_000);
-			mock.timers.tick(120_000);
-			assert.deepEqual(run.parentTurns, [{ customType: "subagent_control_notice", triggerTurn: true }]);
-			assert.equal(run.intercomCopies.length, 1);
+			const run = startSupervisorAttentionRun(asyncRoot, "run-grace-pending", t.mock.timers);
+			t.mock.timers.tick(59_000);
+			assert.equal(run.events.length, 1);
+			t.mock.timers.tick(1_000);
+			t.mock.timers.tick(120_000);
+			assert.deepEqual(run.events.slice(1).map((entry) => [entry.channel, (entry.data as { noticeDeferred?: boolean }).noticeDeferred]), [[SUBAGENT_CONTROL_EVENT, undefined], [SUBAGENT_CONTROL_INTERCOM_EVENT, undefined]]);
 		} finally {
-			tracker?.resetJobs();
-			mock.timers.reset();
 			removeTempDir(asyncRoot);
 		}
 	});
 
-	it("drops a pending supervisor notice when the run finishes during the grace period", () => {
+	it("drops a pending supervisor notice when the run finishes during the grace period", (t) => {
 		const asyncRoot = createTempDir("pi-async-job-supervisor-grace-finished-");
-		mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
-		let tracker: AsyncJobTracker | undefined;
+		t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 		try {
-			const run = startSupervisorAttentionRun(asyncRoot, "run-grace-finished");
-			tracker = run.tracker;
-			assert.equal(run.statusEvents.length, 1);
-			tracker.handleComplete({ id: "run-grace-finished", success: true });
-			mock.timers.tick(60_000);
-			assert.deepEqual(run.parentTurns, []);
-			assert.deepEqual(run.intercomCopies, []);
+			const run = startSupervisorAttentionRun(asyncRoot, "run-grace-finished", t.mock.timers);
+			run.tracker.handleComplete({ id: "run-grace-finished", success: true });
+			t.mock.timers.tick(60_000);
+			assert.equal(run.events.filter((entry) => entry.channel === SUBAGENT_CONTROL_EVENT || entry.channel === SUBAGENT_CONTROL_INTERCOM_EVENT).length, 1);
 		} finally {
-			tracker?.resetJobs();
-			mock.timers.reset();
 			removeTempDir(asyncRoot);
 		}
 	});

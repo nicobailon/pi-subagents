@@ -383,11 +383,8 @@ function isServerCacheValid(entry: ServerCacheEntry | undefined, definition: Ser
 }
 
 export function computeMcpServerHash(definition: ServerEntry): string {
-	// Matches pi-mcp-adapter's computeServerHash (metadata-cache.ts). Since
-	// adapter 3.1.0, a stdio server's identity includes inheritEnv and
-	// literalEnv, and a literal-env server keeps its env verbatim. A hash
-	// mismatch invalidates the cached metadata and turns every direct-tool
-	// selector for that server unresolved, so the identity must stay aligned.
+	// Aligned with pi-mcp-adapter's computeServerHash; since 3.1.0 stdio hashes include
+	// inheritEnv/literalEnv. A mismatch leaves that server's cached direct-tool selectors unresolved.
 	const isStdio = definition.command !== undefined;
 	const literalEnv = isStdio && definition.literalEnv === true;
 	const identity: Record<string, unknown> = {

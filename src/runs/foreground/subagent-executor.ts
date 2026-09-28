@@ -533,7 +533,6 @@ interface ExecutionContextData {
 	contextPolicy: AgentDefaultContextPolicy;
 	modelScope?: ModelScopeConfig;
 	parentModel?: ParentModel;
-	/** Scoped-model snapshot captured with parentModel; drives the `scoped` allow token. */
 	scopedModelIds?: string[];
 	parentSessionId: string | null;
 	parentPiSessionId?: string;

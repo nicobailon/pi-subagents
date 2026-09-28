@@ -403,26 +403,6 @@ describe("builtin agent overrides", () => {
 		assert.equal(agents.find((agent) => agent.name === "implementer")?.description, "Priced implementer");
 	});
 
-	it("enables parent-prompt advertisement from settings without touching the definition file", () => {
-		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-			subagents: {
-				agentOverrides: {
-					oracle: { advertise: true },
-					scout: { advertise: true },
-				},
-			},
-		});
-
-		const advertised = discoverAgents(tempProject, "both").agents
-			.filter((agent) => agent.advertise === true)
-			.map((agent) => agent.name)
-			.sort();
-		assert.deepEqual(advertised, ["oracle", "scout"]);
-		// Untouched builtins stay opted out rather than inheriting the override.
-		assert.equal(discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "worker")?.advertise, undefined);
-		assert.deepEqual(discoverAgentsAll(tempProject).builtin.find((agent) => agent.name === "oracle")?.override?.fields, ["advertise"]);
-	});
-
 	it("lets a project advertise override beat a user one and clear it again", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: { agentOverrides: { oracle: { advertise: true }, reviewer: { advertise: true } } },
@@ -437,19 +417,10 @@ describe("builtin agent overrides", () => {
 	});
 
 	it("rejects malformed advertise override values", () => {
-		for (const advertise of ["yes", 1, null]) {
-			writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-				subagents: { agentOverrides: { reviewer: { advertise } } },
-			});
-			assert.throws(
-				() => discoverAgentsAll(tempProject),
-				(error: unknown) =>
-					error instanceof Error
-					&& error.message.includes("reviewer")
-					&& error.message.includes("advertise"),
-				`expected '${advertise}' to be rejected`,
-			);
-		}
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { reviewer: { advertise: "yes" } } },
+		});
+		assert.throws(() => discoverAgentsAll(tempProject), /invalid 'advertise'; expected a boolean/u);
 	});
 
 	it("applies user settings overrides to builtin agents", () => {

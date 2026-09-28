@@ -49,7 +49,7 @@ WORKFLOW DETAILS:
 • runs.lanes([{key,stages:[{key,agent,task},{key,resume:'previous',task}]}]) runs first stages together, later stages sequentially per lane. Failures stay lane-local; only explicit structuredOutput.verdict === 'blocked' blocks a successful stage, never reviewer prose.
 • Workflow child controls default onto runs.run/runs.all items; child fields override them. worktree:true isolates each child and returns handoff artifacts.${on("usage-budgets", " usageBudget is shared across the workflow; already-running children are not stopped.")}
 • Missions auto-attach${on("missions", " unless mission:false")}; await state.get(key)/state.set(key,JSONValue) requires a mission. See guide topic missions. Omit acceptance for reviewer/read-only calls; acceptance.review.required requests independent writer review.
-• Management discovery: ${managementDiscovery(on)}. Use guide topics agents, missions, observability, tool-reference, configuration, models, watchdog or extension-api for exact action fields.${on("schedules", " Schedules take script inputs, not direct children; recipes live in the missions guide.")}`;
+• Management discovery: ${managementDiscovery(on)}. Use guide topics agents, ${on("missions", "missions, ")}observability, tool-reference, configuration, models${on("watchdog", ", watchdog")} or extension-api for exact action fields.${on("schedules", " Schedules take script inputs, not direct children; recipes live in the missions guide.")}`;
 
 const allEnabled = featureText(resolveDisabledFeatureSurface({}));
 

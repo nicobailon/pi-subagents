@@ -9,7 +9,9 @@ import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSuba
 import { readSubagentGuide } from "../../src/extension/subagent-guide.ts";
 import { buildSubagentToolDescription, SUBAGENT_SAFETY_GUIDANCE } from "../../src/extension/tool-description.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import type { ExtensionConfig, SubagentState } from "../../src/shared/types.ts";
+import { createChildSafeState } from "../../src/extension/fanout-child.ts";
+import type { ExtensionConfig } from "../../src/shared/types.ts";
+import { makeMinimalCtx } from "../support/helpers.ts";
 
 const ALL_FEATURES = Object.keys(SUBAGENT_FEATURES) as SubagentFeature[];
 const ALL_DISABLED: ExtensionConfig = { disabledFeatures: ALL_FEATURES, scheduledRuns: { enabled: false } };
@@ -41,32 +43,13 @@ const GROUPS: Array<{ name: string; config: ExtensionConfig; setting: string; pa
 ];
 
 function schemaKeys(config: ExtensionConfig): string[] {
-	return Object.keys((createSubagentParamsSchema(resolveDisabledFeatureSurface(config)) as { properties: Record<string, unknown> }).properties);
-}
-
-function createState(): SubagentState {
-	return {
-		baseCwd: "",
-		currentSessionId: null,
-		asyncJobs: new Map(),
-		foregroundRuns: new Map(),
-		foregroundControls: new Map(),
-		lastForegroundControlId: null,
-		pendingForegroundControlNotices: new Map(),
-		cleanupTimers: new Map(),
-		lastUiContext: null,
-		poller: null,
-		completionSeen: new Map(),
-		watcher: null,
-		watcherRestartTimer: null,
-		resultFileCoalescer: { schedule: () => false, clear: () => {} },
-	};
+	return Object.keys(createSubagentParamsSchema(resolveDisabledFeatureSurface(config)).properties);
 }
 
 function createExecutor(config: ExtensionConfig) {
 	return createSubagentExecutor({
 		pi: { events: { emit() {}, on() { return () => {}; } }, getSessionName() { return "parent"; } } as never,
-		state: createState(),
+		state: createChildSafeState(),
 		config: { maxSubagentDepth: 2, control: {}, intercomBridge: {}, ...config } as never,
 		asyncByDefault: false,
 		tempArtifactsDir: os.tmpdir(),
@@ -77,14 +60,7 @@ function createExecutor(config: ExtensionConfig) {
 }
 
 function ctx(cwd = os.tmpdir()) {
-	return {
-		cwd,
-		hasUI: false,
-		ui: {},
-		sessionManager: { getSessionId() { return "session-disabled-features"; }, getSessionFile() { return null; } },
-		modelRegistry: { getAvailable() { return []; } },
-		model: { provider: "test", id: "test-model" },
-	} as never;
+	return makeMinimalCtx(cwd) as never;
 }
 
 function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -199,7 +175,7 @@ describe("disabled feature discovery", () => {
 			assert.ok(description.includes(SUBAGENT_SAFETY_GUIDANCE));
 			assert.match(description, /Thinking uses model suffix\./);
 		}
-		assert.match(buildSubagentToolDescription({ toolDescriptionMode: "full" }, { disabledFeatures }), /Management discovery: list\/get\/models\/guide; doctor\. /);
+		assert.match(buildSubagentToolDescription({ toolDescriptionMode: "full" }, { disabledFeatures }), /Management discovery: list\/get\/models\/guide; doctor\. Use guide topics agents, observability, tool-reference, configuration, models or extension-api for/);
 	});
 
 	it("lists only enabled actions for an unknown action", async () => {

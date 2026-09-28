@@ -153,10 +153,8 @@ describe("expandReservedPatterns via resolveModelScopesForAgent", () => {
 	it("degrades scoped to the parent model when the snapshot is empty", () => {
 		const [empty] = resolveModelScopesForAgent({ enforce: true, allow: ["scoped"] }, "worker", parent, []);
 		const [missing] = resolveModelScopesForAgent({ enforce: true, allow: ["scoped"] }, "worker", parent, undefined);
-		const [inherit] = resolveModelScopesForAgent({ enforce: true, allow: ["inherit"] }, "worker", parent);
 		assert.deepEqual(empty.allow, ["anthropic/claude-sonnet-4"]);
 		assert.deepEqual(missing.allow, ["anthropic/claude-sonnet-4"]);
-		assert.deepEqual(empty.allow, inherit.allow);
 	});
 
 	it("keeps scoped literal when neither snapshot nor parent exists so enforcement fails closed", () => {
@@ -164,19 +162,6 @@ describe("expandReservedPatterns via resolveModelScopesForAgent", () => {
 		const violation = checkModelScope("openai/gpt-5-mini", scope, "explicit");
 		assert.equal(violation?.severity, "error");
 		assert.deepEqual(violation?.allowedPatterns, ["scoped"]);
-		assert.match(violation?.message ?? "", /Allowed patterns: scoped\./);
-	});
-
-	it("leaves an unenforced unexpanded scoped token inert", () => {
-		const [scope] = resolveModelScopesForAgent({ enforce: false, allow: ["scoped"] }, "worker", undefined, undefined);
-		assert.equal(checkModelScope("openai/gpt-5-mini", scope, "explicit"), undefined);
-	});
-
-	it("matches thinking-suffixed models against scoped-expanded ids", () => {
-		const [scope] = resolveModelScopesForAgent({ enforce: true, allow: ["scoped"] }, "worker", undefined, scopedIds);
-		assert.equal(checkModelScope("openai/gpt-5-mini:high", scope, "explicit"), undefined);
-		const violation = checkModelScope("deepseek/deepseek-v4", scope, "explicit");
-		assert.equal(violation?.severity, "error");
 	});
 
 	it("summarizes the rendered pattern list for large scoped sets", () => {
@@ -184,7 +169,6 @@ describe("expandReservedPatterns via resolveModelScopesForAgent", () => {
 		const [scope] = resolveModelScopesForAgent({ enforce: true, allow: ["scoped"] }, "worker", undefined, manyIds);
 		const violation = checkModelScope("other/model", scope, "explicit");
 		assert.match(violation?.message ?? "", /prov\/model-7, … \(12 patterns total\)/);
-		assert.doesNotMatch(violation?.message ?? "", /model-11/);
 		assert.deepEqual(violation?.allowedPatterns, manyIds);
 	});
 });

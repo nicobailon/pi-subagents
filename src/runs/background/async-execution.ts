@@ -176,7 +176,6 @@ interface AsyncExecutionContext {
 	permissions?: PermissionConfig;
 	currentModelProvider?: string;
 	currentModel?: ParentModel;
-	/** Scoped-model snapshot captured with currentModel; drives the `scoped` allow token. */
 	scopedModelIds?: string[];
 	/** Optional model-scope enforcement resolved from subagent settings. */
 	modelScope?: ModelScopeConfig;

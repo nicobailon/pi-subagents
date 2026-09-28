@@ -2,7 +2,7 @@
  * TypeBox schemas for subagent tool parameters
  */
 
-import { Type, type TObject } from "typebox";
+import { Type } from "typebox";
 import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
 
 function keepTopLevelParameterDescriptions<T>(schema: T): T {
@@ -403,11 +403,11 @@ const SubagentParamsSchema = Type.Object(SubagentParamProperties);
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
 
-/** Properties depend on config, so callers read arguments as SubagentParamsLike; the executor rejects disabled options. */
-export function createSubagentParamsSchema(disabled?: DisabledFeatureSurface): TObject {
+export function createSubagentParamsSchema(disabled?: DisabledFeatureSurface): typeof SubagentParams {
 	if (!disabled || disabled.params.size === 0) return SubagentParams;
 	const enabledProperties = Object.fromEntries(Object.entries(SubagentParamProperties).filter(([name]) => !disabled.params.has(name)));
-	return keepTopLevelParameterDescriptions(Type.Object(enabledProperties));
+	// SAFETY: only optional properties are dropped; the executor rejects disabled options at runtime.
+	return keepTopLevelParameterDescriptions(Type.Object(enabledProperties)) as typeof SubagentParams;
 }
 
 const SubagentWaitParamsSchema = Type.Object({

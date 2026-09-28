@@ -77,6 +77,12 @@ describe("subagent control notice delivery", () => {
 		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: false });
 	});
 
+	it("sends nothing for a deferred supervisor-request status event", () => {
+		const recorder = makeRecorder();
+		handleSubagentControlNotice({ pi: recorder.pi, state: makeState(), visibleControlNotices: new Set(), details: { source: "async", event: needsAttentionEvent({ reason: "supervisor_request" }), noticeDeferred: true } });
+		assert.deepEqual(recorder.sent, []);
+	});
+
 	it("does not queue a foreground notice that Pi could flush after completion", () => {
 		const state = makeState();
 		state.foregroundControls.set("run-1", {

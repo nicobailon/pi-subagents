@@ -48,10 +48,8 @@ export interface ModelScopeViolation {
 	origin: string;
 }
 
-/** Reserved allow-pattern token expanding to the parent session's scoped-model set (pi's `/scoped-models`). */
 export const SCOPED_PATTERN = "scoped";
 
-/** Maximum number of patterns rendered in a violation message before the list is summarized. */
 const MAX_RENDERED_PATTERNS = 8;
 
 function stripThinkingSuffix(model: string): string {
@@ -106,19 +104,7 @@ export function checkModelScope(
 	};
 }
 
-/**
- * Expand reserved allow-pattern tokens into concrete `provider/id` patterns.
- *
- * - `inherit` expands to the parent session's current model.
- * - `scoped` expands to the parent session's scoped-model snapshot (pi's
- *   `/scoped-models`); when no scoping is configured the snapshot is empty and
- *   the token degrades to `inherit` semantics.
- * - Any other pattern is returned unchanged.
- *
- * When neither input is available the token is returned unexpanded so the
- * enforced-inherit fail-closed path in model-resolution.ts can reject it;
- * unenforced configs never reach the matcher, so the literal stays inert.
- */
+/** An empty scoped snapshot degrades `scoped` to `inherit`; absent inputs stay literal so enforced resolution fails closed. */
 function expandReservedPatterns(
 	pattern: string,
 	parentModel: { provider: string; id: string } | undefined,

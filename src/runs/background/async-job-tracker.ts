@@ -340,7 +340,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				if ((parsed as { type?: unknown }).type !== "subagent.control") return;
 				const candidate = parsed as Partial<ControlRecord>;
 				if (!candidate.event || !Array.isArray(candidate.channels)) return;
-				// SAFETY: event and channels were checked above; every other ControlRecord field is optional.
+				// SAFETY: event is present and channels is an array; every other ControlRecord field is optional.
 				const record = candidate as ControlRecord;
 				const supervisorRequest = record.event.type === "needs_attention" && record.event.reason === "supervisor_request" && options.supervisorRequestState !== undefined;
 				if (supervisorRequest && readSupervisorRequestState(record.event, job.asyncDir) === "resolved") return;

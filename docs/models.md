@@ -206,7 +206,7 @@ To keep subagents inside a budget or compliance profile, enforce a model scope. 
 }
 ```
 
-- `allow` is a list of glob patterns matched against the resolved `provider/id` (only `*` is special, case-insensitive). The literal `inherit` means the current parent session model. The literal `scoped` means every model in the parent session's scoped-model set (pi's `/scoped-models`); when that set is empty, it means the same as `inherit`.
+- `allow` is a list of glob patterns matched against the resolved `provider/id` (only `*` is special, case-insensitive). The literal `inherit` means the current parent session model. The literal `scoped` means every model in the parent session's scoped-model set (pi's `/scoped-models`); when that set is empty, it means the same as `inherit`. Because `scoped` is reserved, it cannot match a provider literally named `scoped`.
 - `agents.<name>` adds a second allow-list for that agent. The model must pass both the global list and the matching agent list, so an agent rule cannot weaken the global rule. Agent rules inherit `enforce` and `strict` when those fields are absent.
 - A top-level `enforce: true` with only agent allow-lists restricts only those named agents. Unknown names are allowed so settings can be shared across projects and machines.
 - Models you pass explicitly — the tool-call `model`, `--model`, or a clarify pick — error and abort the run.
@@ -219,8 +219,6 @@ Model scope is policy only. It rejects or warns; it does not select a cheaper mo
 `inherit` and `scoped` expand in the parent process at each launch. They are never sent to the child as model ids. A nested child therefore inherits its immediate parent's current model, not the original top-level model. `scoped` uses the scoped-model set at launch, so a mid-session `/scoped-models` change applies to the next child; background runs keep the set captured when the run started. Pi reports an empty set when the session is unscoped, either because nothing is configured or because no configured pattern matches an available model, and then lets the parent use every model. In that case `scoped` behaves exactly as `inherit`, which is narrower. If no parent model is available, an enforced `inherit` or `scoped` entry does not match and fails closed.
 
 Project `modelScope` settings replace the complete user `modelScope`, as with the existing project-over-user settings precedence. Project settings are trusted and can therefore replace user restrictions.
-
-`scoped` is a reserved token: an `allow` entry spelled `scoped` can no longer match a model whose provider is literally named `scoped`.
 
 ## Profiles and provider model catalogs
 

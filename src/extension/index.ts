@@ -825,8 +825,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			return finalizeToolResult(await executeSubagentCollapsed(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx));
 		},
 
-		renderCall(rawArgs, theme) {
-			const args = rawArgs as SubagentParamsLike;
+		renderCall(args, theme) {
 			const gap = " ".repeat(config.mainWindowRenderer?.horizontalSpacing ?? 1);
 			const title = theme.fg("toolTitle", theme.bold("subagent"));
 			if (args.action) {

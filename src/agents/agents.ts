@@ -1012,11 +1012,8 @@ function parseBuiltinOverrideEntry(
 	}
 
 	if ("advertise" in input) {
-		if (typeof input.advertise === "boolean") {
-			override.advertise = input.advertise;
-		} else {
-			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'advertise'; expected a boolean.`);
-		}
+		if (typeof input.advertise === "boolean") override.advertise = input.advertise;
+		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'advertise'; expected a boolean.`);
 	}
 
 	if ("output" in input) {

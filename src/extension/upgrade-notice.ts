@@ -10,7 +10,6 @@ const versionNumber = (version: unknown) => typeof version === "string" && /^\d+
 	? version.split(".").reduce((total, part) => total * 1e6 + Number(part), 0)
 	: undefined;
 
-/** Notifies the Highlights of every version since the last one seen. Never enters the conversation. */
 export async function showUpgradeNotice(
 	ctx: { hasUI: boolean; ui: { notify(message: string, type: "info"): void } },
 	stateDir = path.join(getAgentDir(), "pi-subagents"),
