@@ -10,6 +10,8 @@ export interface SubagentControlMessageDetails {
 	asyncDir?: string;
 	childIntercomTarget?: string;
 	noticeText?: string;
+	/** Status-only copy of a supervisor request; the tracker sends the notice later if the request is still unanswered. */
+	noticeDeferred?: boolean;
 }
 
 export function controlNoticeTarget(details: SubagentControlMessageDetails): string | undefined {
@@ -48,6 +50,7 @@ export function handleSubagentControlNotice(input: {
 	details: SubagentControlMessageDetails;
 }): void {
 	if (!input.details?.event || input.details.event.type === "active_long_running") return;
+	if (input.details.noticeDeferred) return;
 	if (input.details.source === "foreground") {
 		// A foreground tool blocks Pi from displaying this message. The run can
 		// finish before Pi flushes it, and queued messages cannot be withdrawn.
