@@ -245,13 +245,13 @@ function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, names: readonly st
 }
 
 /** MCP connects after `session_start`, so the selected tools register some time after the session binds. */
-async function missingBuiltinMcpTools(session: { getAllTools(): Array<{ name: string }>; getActiveToolNames(): string[] }, names: readonly string[], timeoutMs: number): Promise<string[]> {
+async function missingBuiltinMcpTools(session: { getAllTools(): Array<{ name: string }>; getActiveToolNames(): string[] }, names: readonly string[], timeoutMs: number, stopped: () => boolean): Promise<string[]> {
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
 		const active = new Set(session.getActiveToolNames());
 		const direct = new Set(session.getAllTools().filter((tool) => (tool as { exposure?: string }).exposure === "direct").map(({ name }) => name));
 		const missing = names.filter((name) => !active.has(name) || !direct.has(name));
-		if (missing.length === 0 || Date.now() >= deadline) return missing;
+		if (missing.length === 0 || stopped() || Date.now() >= deadline) return missing;
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 }
@@ -341,6 +341,9 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	const live = new Set<ChildSession>();
 	/** Extension shutdowns still running for disposed children; `dispose()` waits for them. */
 	const shutdowns = new Set<Promise<void>>();
+	/** Launches still waiting for their MCP tools; `dispose()` ends the wait and waits for their shutdown. */
+	const mcpWaits = new Set<Promise<void>>();
+	let disposals = 0;
 	const sharedRuntime = async (pi: PiCodingAgentModule) => {
 		runtime ??= pi.ModelRuntime.create().catch((error: unknown) => {
 			runtime = undefined;
@@ -350,6 +353,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	};
 	return {
 		async create(launch) {
+			const disposalsAtStart = disposals;
 			const pi = await loadPiCodingAgent();
 			const builtinMcpTools = launch.builtinMcpTools ?? [];
 			const builtinMcp = builtinMcpTools.length ? selectedBuiltinMcpExtension(pi, builtinMcpTools) : undefined;
@@ -457,10 +461,17 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				}
 			};
 			// Outside the launch lock: MCP servers connect after `session_start` without reading the per-launch env.
-			const missingMcpTools = builtinMcpTools.length ? await missingBuiltinMcpTools(session, builtinMcpTools, builtinMcpToolWaitMs) : [];
-			if (missingMcpTools.length) {
-				await shutdown();
-				throw new Error(`Selected built-in MCP tools did not register in the child session: ${missingMcpTools.join(", ")}. The MCP server may have failed to connect; check it with /mcp.`);
+			if (builtinMcpTools.length) {
+				const disposed = () => disposals !== disposalsAtStart;
+				const ready = missingBuiltinMcpTools(session, builtinMcpTools, builtinMcpToolWaitMs, disposed).then(async (missing) => {
+					if (!missing.length && !disposed()) return;
+					await shutdown();
+					throw new Error(disposed()
+						? "The child session factory was disposed while the child waited for its MCP tools."
+						: `Selected built-in MCP tools did not register in the child session: ${missing.join(", ")}. The MCP server may have failed to connect; check it with /mcp.`);
+				});
+				mcpWaits.add(ready);
+				try { await ready; } finally { mcpWaits.delete(ready); }
 			}
 			const child: ChildSession = {
 				subscribe: (listener) => session.subscribe((event) => listener(event as unknown as ChildSessionEvent)),
@@ -489,13 +500,14 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			return child;
 		},
 		async dispose() {
+			disposals += 1;
 			const children = [...live].filter((child) => !child.detached);
 			for (const child of children) child.shutDown = true;
 			await Promise.allSettled(children.map((child) => child.abort()));
 			for (const child of children) {
 				try { void child.dispose(); } catch { /* best effort */ }
 			}
-			await Promise.allSettled([...shutdowns]);
+			await Promise.allSettled([...shutdowns, ...mcpWaits]);
 			if (live.size === 0) runtime = undefined;
 		},
 	};

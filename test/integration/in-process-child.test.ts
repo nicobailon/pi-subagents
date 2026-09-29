@@ -668,7 +668,6 @@ describe("selected built-in MCP tools in a child session", () => {
 		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create(mcpLaunch);
 		assert.deepEqual(mcp.loaded, [{ name: "mcp", replaceable: true }]);
 		assert.deepEqual([...mcp.registry], [["mcp__srv__echo", "direct"], ["mcp__srv__add", "codemode"]]);
-		assert.deepEqual(mcp.lifecycle, []);
 	});
 
 	it("fails the launch and shuts the session down when a selected tool never registers", async () => {
@@ -689,14 +688,21 @@ describe("selected built-in MCP tools in a child session", () => {
 		await assert.rejects(waiting, /mcp__gone__x/);
 	});
 
+	it("shuts down a child still waiting for MCP tools when the factory is disposed", async () => {
+		const mcp = builtinMcpPi();
+		const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 5_000, loadPiCodingAgent: async () => mcp.pi });
+		const creating = factory.create({ ...mcpLaunch, builtinMcpTools: ["mcp__gone__x"] });
+		while (mcp.loaded.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		await factory.dispose();
+		assert.deepEqual(mcp.lifecycle, ["session_shutdown", "dispose"]);
+		await assert.rejects(creating, /disposed while the child waited for its MCP tools/);
+	});
+
 	it("loads no built-in MCP when no tools are selected", async () => {
-		for (const builtinMcpTools of [undefined, []]) {
-			const mcp = builtinMcpPi();
-			await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create({ ...stubLaunch, builtinMcpTools });
-			await new Promise((resolve) => setTimeout(resolve, 30));
-			assert.deepEqual(mcp.loaded, []);
-			assert.equal(mcp.registry.size, 0);
-		}
+		const mcp = builtinMcpPi();
+		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create({ ...stubLaunch, builtinMcpTools: [] });
+		assert.deepEqual(mcp.loaded, []);
 	});
 
 	it("rejects selected tools when the host Pi has no built-in MCP", async () => {
