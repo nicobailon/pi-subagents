@@ -788,7 +788,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		if (poller) return;
 		poller = timers.setInterval(() => {
 			poll();
-			if (!useNativeWatcher() && (platform === "darwin" || deps.getChannelDirs) && !hasTransportDemand()) {
+			if (!useNativeWatcher() && !hasTransportDemand()) {
 				if (poller) timers.clearInterval(poller);
 				poller = undefined;
 			}

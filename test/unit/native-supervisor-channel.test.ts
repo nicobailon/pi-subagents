@@ -328,11 +328,13 @@ describe("native supervisor channel", () => {
 			cwd: process.cwd(), hasUI: false,
 			sessionManager: { getSessionId: () => currentSessionId, getSessionFile: () => null, getEntries: () => [] },
 		};
+		const state = makeState(currentSessionId, ctx);
+		state.foregroundControls.set("run-a", { runId: "run-a" } as never);
 		const channel = createNativeSupervisorChannel({
 			getAllTools: () => [], registerTool: () => {},
 			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
 			getSessionName: () => "shared-name",
-		} as never, makeState(currentSessionId, ctx), {
+		} as never, state, {
 			platform: "win32",
 			timers: {
 				setInterval: ((callback: () => void) => { tick = callback; return 1; }) as never,
@@ -364,6 +366,28 @@ describe("native supervisor channel", () => {
 			fsDefault.readdirSync = readdir;
 			syncBuiltinESMExports();
 		}
+	});
+
+	it("stops idle Windows polling and restarts it on transport demand", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const state = makeState(currentSessionId, { sessionManager: { getSessionId: () => currentSessionId } });
+		let tick: (() => void) | undefined;
+		const channel = createNativeSupervisorChannel({ getAllTools: () => [], registerTool: () => {}, sendMessage: () => {} } as never, state, {
+			platform: "win32",
+			timers: {
+				setInterval: ((callback: () => void) => { tick = callback; return 1; }) as never,
+				clearInterval: (() => { tick = undefined; }) as never,
+				setImmediate, clearImmediate,
+			},
+		});
+		try {
+			channel.start();
+			tick!();
+			assert.equal(tick, undefined, "an idle parent stops polling");
+			state.foregroundControls.set("run-a", { runId: "run-a" } as never);
+			channel.activateTransport();
+			assert.equal(typeof tick, "function", "demand restarts polling");
+		} finally { channel.dispose(); }
 	});
 
 	it("does not classify UNKNOWN as a missing supervisor directory off Windows", () => {
