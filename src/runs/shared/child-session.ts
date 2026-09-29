@@ -66,6 +66,8 @@ export interface ChildSessionLaunch {
 	model?: string;
 	/** Explicit tool allowlist; undefined keeps pi's defaults. */
 	tools?: string[];
+	/** Tools of Pi's built-in MCP extension the child must declare to its model directly; `tools` names them too. */
+	builtinMcpTools?: string[];
 	excludeTools?: string[];
 	/** Extension files loaded for this child in addition to the inline hooks. */
 	extensionPaths: string[];
@@ -143,6 +145,8 @@ export interface DefaultChildSessionFactoryOptions {
 	loadPiCodingAgent?: () => Promise<PiCodingAgentModule>;
 	/** Upper bound on a disposed child's `session_shutdown` handlers before the session is dropped anyway. */
 	shutdownTimeoutMs?: number;
+	/** Upper bound on the wait for selected built-in MCP tools to register after the session starts. */
+	builtinMcpToolWaitMs?: number;
 }
 
 type ModelRuntimeInstance = Awaited<ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]>>;
@@ -211,6 +215,44 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
 	for (const [name, value] of Object.entries(values)) {
 		if (value === undefined) delete process.env[name];
 		else process.env[name] = value;
+	}
+}
+
+/**
+ * Pi's built-in MCP extension registers server tools with the configured exposure, `codemode` by
+ * default, which the child's `tools` allowlist cannot declare. Registering the selected names as
+ * `direct` makes them model-declared and callable; `hidden` stays hidden. The `builtin` entry loads
+ * through the explicit `builtin:mcp` path even with `noExtensions`, and `replaceable` lets an
+ * ambient MCP extension that registers `/mcp` replace it, as in the parent.
+ */
+function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, names: readonly string[]): ChildHookExtension & { builtin: true; replaceable: true } {
+	// Pi 0.99 export; the pinned SDK types predate it.
+	const createMcpExtension = (pi as { createMcpExtension?: () => (api: ExtensionAPI) => void | Promise<void> }).createMcpExtension;
+	if (typeof createMcpExtension !== "function") throw new Error(`Selected built-in MCP tools (${names.join(", ")}) need a Pi version with built-in MCP.`);
+	const selected = new Set(names);
+	const mcp = createMcpExtension();
+	const factory = (api: ExtensionAPI) => mcp(new Proxy(api, {
+		get(target, prop) {
+			if (prop === "registerTool") {
+				return (tool: Parameters<ExtensionAPI["registerTool"]>[0] & { exposure?: string }) =>
+					target.registerTool(selected.has(tool.name) && tool.exposure !== "hidden" ? { ...tool, exposure: "direct" } : tool);
+			}
+			const value = Reflect.get(target, prop, target);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	}));
+	return { name: "mcp", factory, builtin: true, replaceable: true };
+}
+
+/** MCP connects after `session_start`, so the selected tools register some time after the session binds. */
+async function missingBuiltinMcpTools(session: { getAllTools(): Array<{ name: string }>; getActiveToolNames(): string[] }, names: readonly string[], timeoutMs: number): Promise<string[]> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const active = new Set(session.getActiveToolNames());
+		const direct = new Set(session.getAllTools().filter((tool) => (tool as { exposure?: string }).exposure === "direct").map(({ name }) => name));
+		const missing = names.filter((name) => !active.has(name) || !direct.has(name));
+		if (missing.length === 0 || Date.now() >= deadline) return missing;
+		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 }
 
@@ -294,6 +336,7 @@ function isUnknownRecord(value: unknown): value is Record<string, unknown> {
 export function createDefaultChildSessionFactory(options: DefaultChildSessionFactoryOptions = {}): ChildSessionFactory {
 	const loadPiCodingAgent = options.loadPiCodingAgent ?? loadHostPiCodingAgent;
 	const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
+	const builtinMcpToolWaitMs = options.builtinMcpToolWaitMs ?? 10_000;
 	let runtime: ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]> | undefined;
 	const live = new Set<ChildSession>();
 	/** Extension shutdowns still running for disposed children; `dispose()` waits for them. */
@@ -308,6 +351,8 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	return {
 		async create(launch) {
 			const pi = await loadPiCodingAgent();
+			const builtinMcpTools = launch.builtinMcpTools ?? [];
+			const builtinMcp = builtinMcpTools.length ? selectedBuiltinMcpExtension(pi, builtinMcpTools) : undefined;
 			const modelRuntime = launch.parentProviderRegistry
 				? await pi.ModelRuntime.create()
 				: await sharedRuntime(pi);
@@ -330,12 +375,27 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				noPromptTemplates: true,
 				noThemes: true,
 				noContextFiles: launch.noContextFiles,
-				additionalExtensionPaths: launch.extensionPaths,
-				extensionFactories: launch.hooks,
+				additionalExtensionPaths: builtinMcp ? [...launch.extensionPaths, "builtin:mcp"] : launch.extensionPaths,
+				extensionFactories: builtinMcp ? [...launch.hooks, builtinMcp] : launch.hooks,
 				extensionsOverride: prioritizeChildPromptRuntime,
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});
+			// pi's own hosts emit `session_shutdown` before disposing a session so the
+			// extensions loaded into it (ambient extensions included) release their
+			// watchers, servers, and timers. Do the same, then dispose.
+			const shutdown = async (session: Awaited<ReturnType<PiCodingAgentModule["createAgentSession"]>>["session"]): Promise<void> => {
+				try {
+					const runner = session.extensionRunner;
+					if (runner.hasHandlers("session_shutdown")) {
+						await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }), new Promise<void>((resolve) => setTimeout(resolve, shutdownTimeoutMs).unref?.())]);
+					}
+				} catch (error) {
+					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
+				} finally {
+					session.dispose();
+				}
+			};
 			const open = async () => {
 				const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
 				applyProcessEnv(launch.processEnv);
@@ -390,27 +450,17 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					session.dispose();
 					throw error;
 				}
+				const missingMcpTools = builtinMcpTools.length ? await missingBuiltinMcpTools(session, builtinMcpTools, builtinMcpToolWaitMs) : [];
+				if (missingMcpTools.length) {
+					await shutdown(session);
+					throw new Error(`Selected built-in MCP tools did not register in the child session: ${missingMcpTools.join(", ")}. The MCP server may have failed to connect; check it with /mcp.`);
+				}
 				return session;
 			};
 			const opened = loading.catch(() => {}).then(open);
 			loading = opened;
 			const session = await opened;
 			let pending: Promise<void> | undefined;
-			// pi's own hosts emit `session_shutdown` before disposing a session so the
-			// extensions loaded into it (ambient extensions included) release their
-			// watchers, servers, and timers. Do the same, then dispose.
-			const shutdown = async (): Promise<void> => {
-				try {
-					const runner = session.extensionRunner;
-					if (runner.hasHandlers("session_shutdown")) {
-						await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }), new Promise<void>((resolve) => setTimeout(resolve, shutdownTimeoutMs).unref?.())]);
-					}
-				} catch (error) {
-					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
-				} finally {
-					session.dispose();
-				}
-			};
 			const child: ChildSession = {
 				subscribe: (listener) => session.subscribe((event) => listener(event as unknown as ChildSessionEvent)),
 				prompt: (text) => session.prompt(text),
@@ -421,7 +471,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				dispose: () => {
 					if (!pending) {
 						live.delete(child);
-						const shutdownDone = shutdown();
+						const shutdownDone = shutdown(session);
 						pending = shutdownDone;
 						shutdowns.add(shutdownDone);
 						void shutdownDone.finally(() => shutdowns.delete(shutdownDone));

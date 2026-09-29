@@ -632,3 +632,63 @@ describe("default child session factory", () => {
 		await factory.dispose();
 	});
 });
+
+/** Pi 0.99's built-in MCP seam: MCP registers `mcp__srv__*` as `codemode` after the session starts, `builtin:` entries load only when their path is requested, and `tools` declares allowlisted direct tools. */
+function builtinMcpPi() {
+	const registry = new Map<string, string>();
+	const loaded: Array<{ name: string; replaceable?: boolean }> = [];
+	const lifecycle: string[] = [];
+	let allowlist: string[] = [];
+	const pi = stubPi({ extensionRunner: { hasHandlers: () => true, emit: async () => { lifecycle.push("session_shutdown"); } }, dispose: () => { lifecycle.push("dispose"); }, getAllTools: () => [...registry].map(([name, exposure]) => ({ name, exposure })).filter(({ name }) => allowlist.includes(name)), getActiveToolNames: () => [...registry].filter(([name, exposure]) => exposure === "direct" && allowlist.includes(name)).map(([name]) => name) });
+	Object.assign(pi, { createMcpExtension: () => (api: { registerTool(tool: { name: string; exposure: string }): void }) => {
+		setTimeout(() => { for (const name of ["mcp__srv__echo", "mcp__srv__add"]) api.registerTool({ name, exposure: "codemode" }); }, 20);
+	} });
+	type Entry = { name: string; factory: (api: unknown) => unknown; builtin?: boolean; replaceable?: boolean };
+	pi.DefaultResourceLoader = class {
+		private readonly options: { additionalExtensionPaths: string[]; extensionFactories: Entry[] };
+		constructor(options: typeof this.options) { this.options = options; }
+		async reload() {
+			for (const entry of this.options.extensionFactories) {
+				if (!entry.builtin || !this.options.additionalExtensionPaths.includes(`builtin:${entry.name}`)) continue;
+				loaded.push({ name: entry.name, replaceable: entry.replaceable });
+				await entry.factory({ registerTool: (tool: { name: string; exposure: string }) => { registry.set(tool.name, tool.exposure); } });
+			}
+		}
+	} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+	const createSession = pi.createAgentSession;
+	pi.createAgentSession = ((options: { tools?: string[] }) => { allowlist = options.tools ?? []; return createSession(options); }) as PiCodingAgentModule["createAgentSession"];
+	return { pi, registry, loaded, lifecycle };
+}
+
+describe("selected built-in MCP tools in a child session", () => {
+	const mcpLaunch: ChildSessionLaunch = { ...stubLaunch, tools: ["read", "mcp__srv__echo"], builtinMcpTools: ["mcp__srv__echo"] };
+
+	it("declares exactly the selected tools as direct once MCP registers them", async () => {
+		const mcp = builtinMcpPi();
+		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create(mcpLaunch);
+		assert.deepEqual(mcp.loaded, [{ name: "mcp", replaceable: true }]);
+		assert.deepEqual([...mcp.registry], [["mcp__srv__echo", "direct"], ["mcp__srv__add", "codemode"]]);
+		assert.deepEqual(mcp.lifecycle, []);
+	});
+
+	it("fails the launch and shuts the session down when a selected tool never registers", async () => {
+		const mcp = builtinMcpPi();
+		const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 30, loadPiCodingAgent: async () => mcp.pi });
+		await assert.rejects(factory.create({ ...mcpLaunch, tools: [...mcpLaunch.tools!, "mcp__gone__x"], builtinMcpTools: ["mcp__srv__echo", "mcp__gone__x"] }), /did not register in the child session: mcp__gone__x\. The MCP server may have failed to connect/);
+		assert.deepEqual(mcp.lifecycle, ["session_shutdown", "dispose"]);
+	});
+
+	it("loads no built-in MCP when no tools are selected", async () => {
+		for (const builtinMcpTools of [undefined, []]) {
+			const mcp = builtinMcpPi();
+			await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create({ ...stubLaunch, builtinMcpTools });
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			assert.deepEqual(mcp.loaded, []);
+			assert.equal(mcp.registry.size, 0);
+		}
+	});
+
+	it("rejects selected tools when the host Pi has no built-in MCP", async () => {
+		await assert.rejects(createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() }).create(mcpLaunch), /mcp__srv__echo\) need a Pi version with built-in MCP/);
+	});
+});
