@@ -192,14 +192,15 @@ export function formatUnresolvedBuiltinMcpSelectors(agentName: string | undefine
 
 /**
  * Selected servers that only an extension registered, which a child without ambient extensions
- * never has. A server of the same name in Pi's `mcp.json` takes precedence; the project file counts
- * even when untrusted, since this only picks the error to show.
+ * never has. A server of the same name in an `mcp.json` the child reads takes precedence; like Pi,
+ * the project file is read only when the project is trusted.
  */
-export function extensionOnlyMcpServers(selections: readonly ResolvedMcpDirectToolSelection[], host: McpRuntimeSnapshotHost, cwd: string): string[] {
+export function extensionOnlyMcpServers(selections: readonly ResolvedMcpDirectToolSelection[], host: McpRuntimeSnapshotHost, cwd: string, projectTrusted: boolean): string[] {
 	const registered = new Set(host.getMcpServers?.().map(({ name }) => name));
 	const servers = [...new Set(selections.map(({ selector }) => selector.split("/")[0]!))].filter((server) => registered.has(server));
 	if (servers.length === 0) return [];
-	const configured = new Set([path.join(getAgentDir(), "mcp.json"), path.join(cwd, ".pi", "mcp.json")].flatMap((file) => {
+	const files = [path.join(getAgentDir(), "mcp.json"), ...(projectTrusted ? [path.join(cwd, ".pi", "mcp.json")] : [])];
+	const configured = new Set(files.flatMap((file) => {
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(fs.readFileSync(file, "utf-8"));

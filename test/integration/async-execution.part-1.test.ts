@@ -618,7 +618,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			getAllTools: () => [["docs", "search"], ["docs", "fetch"], ["ext", "ping"]].map(([server, tool]) => ({ name: `mcp__${server}__${tool}`, exposure: "codemode", namespace: { name: `mcp__${server}` } })),
 			getMcpServers: () => [{ name: "ext" }],
 		};
-		const runForeground = (agent: ReturnType<typeof makeAgent>) => runSync(tempDir, [agent], agent.name, "Use MCP", { runtimeSnapshotHost: host, acceptance: false });
+		const runForeground = (agent: ReturnType<typeof makeAgent>, projectTrusted?: boolean) => runSync(tempDir, [agent], agent.name, "Use MCP", { runtimeSnapshotHost: host, acceptance: false, projectTrusted });
 		const runBackground = async (agent: ReturnType<typeof makeAgent>) => {
 			const id = `async-builtin-mcp-${Date.now().toString(36)}`;
 			executeAsyncSingle(id, {
@@ -655,6 +655,15 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const background = await runBackground(agent);
 			assert.deepEqual(background.builtinMcpTools, ["mcp__ext__ping"]);
 			assert.equal(background.ambientExtensions, true);
+		});
+
+		it("counts a project's .pi/mcp.json for foreground children only when the project is trusted", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+			const agent = makeAgent("worker", { tools: ["read"], mcpDirectTools: ["ext"] });
+			fs.mkdirSync(path.join(tempDir, ".pi"), { recursive: true });
+			fs.writeFileSync(path.join(tempDir, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { ext: { command: "ext-mcp" } } }));
+			await assert.rejects(runForeground(agent, false), /extensions registered \(ext\)/);
+			mockPi.onCall({ output: "foreground done" });
+			assert.equal((await runForeground(agent, true)).exitCode, 0);
 		});
 	});
 

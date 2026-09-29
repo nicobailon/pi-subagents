@@ -217,8 +217,9 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 	});
 	// Foreground children load no ambient extensions, so an extension's registerMcpServer() never runs in them.
 	if (input.host === "parent" && input.runtimeSnapshotHost && toolPlan.builtinMcpTools?.length) {
-		const servers = extensionOnlyMcpServers(toolPlan.effectiveMcpSelections, input.runtimeSnapshotHost, input.cwd);
-		if (servers.length) throw new Error(`Agent '${input.childAgentName}' selects MCP tools from servers that extensions registered (${servers.join(", ")}). Only background children (async: true) load those extensions; run the agent in the background or add the server to mcp.json.`);
+		// Pi treats a session without a trust decision as trusted.
+		const servers = extensionOnlyMcpServers(toolPlan.effectiveMcpSelections, input.runtimeSnapshotHost, input.cwd, input.projectTrusted !== false);
+		if (servers.length) throw new Error(`Agent '${input.childAgentName}' selects MCP tools from servers that extensions registered (${servers.join(", ")}). Only background children (async: true) load those extensions; run the agent in the background or add the server to the global mcp.json or a trusted project's .pi/mcp.json.`);
 	}
 	toolPlan.capabilityCeiling = intersectSubagentCapabilityCeilings(toolPlan.capabilityCeiling, agentCapabilityCeiling);
 	if (toolPlan.capabilityAudit && toolPlan.capabilityCeiling) {
