@@ -1520,6 +1520,12 @@ export interface Details {
 		failureKind?: WorkflowScriptFailureKind;
 		args?: Record<string, unknown>;
 		argsDigest?: string;
+		/** SHA-256 of the workflow script source (async workflows). */
+		scriptDigest?: string;
+		/** Structured stop cause; set only when the owning extension runtime was replaced. */
+		stopCause?: "runtime-replaced";
+		/** Runtime-replaced workflow run whose finished children this run reused. */
+		reusedFrom?: string;
 		resource?: WorkflowResourceProvenance;
 		preflightWarnings?: string[];
 		trace: Array<{
@@ -1535,6 +1541,8 @@ export interface Details {
 			generatedLaneKey?: string;
 			warning?: string;
 			error?: string;
+			/** Settled from a previous run's journal without launching. */
+			reused?: boolean;
 		}>;
 		emits: unknown[];
 		console: Array<{ level: "log" | "info" | "warn" | "error"; text: string }>;
@@ -1969,6 +1977,8 @@ export interface AsyncStatus {
 		outputName?: string;
 		structured?: boolean;
 		status: "pending" | "running" | "complete" | "completed" | "failed" | "partial" | "paused" | "stopped" | "rejected";
+		/** Workflow child result reused from a previous runtime-replaced run; the child was not re-run. */
+		reused?: boolean;
 		stopRequested?: boolean;
 		stopRequestedAt?: number;
 		children?: NestedRunSummary[];

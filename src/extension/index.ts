@@ -77,6 +77,7 @@ import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./config.ts";
 import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
 import { formatWorkflowPreflightSummary, normalizeWorkflowPreflight } from "../workflows/workflow-preflight.ts";
+import { runtimeReplacedAbortReason } from "../workflows/workflow-reuse.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
 import { restoreForegroundRunHistory } from "../runs/foreground/foreground-history.ts";
@@ -1086,7 +1087,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			// Workflow continuations retain their launch context; abort them before
 			// teardown so a reload cannot launch through a stale context.
 			for (const controller of state.workflowControllers?.values() ?? []) {
-				if (!controller.signal.aborted) controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+				if (!controller.signal.aborted) controller.abort(runtimeReplacedAbortReason());
 			}
 			state.workflowControllers?.clear();
 			state.workflowChildStops?.clear();

@@ -1121,6 +1121,8 @@ export interface WorkflowScriptChildResult {
 	continuation?: { runIds: string[] };
 	artifactPaths: string[];
 	results?: SingleResult[];
+	/** Returned from the journal of a runtime-replaced run of the same script and args, without launching. */
+	reused?: boolean;
 }
 
 export interface WorkflowScriptTraceEntry {
@@ -1138,6 +1140,8 @@ export interface WorkflowScriptTraceEntry {
 	generatedLaneKey?: string;
 	lane?: import("../shared/types.ts").WorkflowLaneMetadata;
 	warning?: string;
+	/** The settled result came from a previous run of the same script and args; no child was launched. */
+	reused?: boolean;
 }
 
 /** Bounded plan metadata emitted when a workflow materializes a runs.lanes graph. */
@@ -1220,6 +1224,8 @@ export interface WorkflowChildSettledNotification {
 	outputReference?: string;
 	error?: string;
 	workflowRunning: boolean;
+	/** The script-visible result, exactly as returned to the script. */
+	result: WorkflowScriptChildResult;
 }
 
 export interface RunWorkflowScriptOptions {
@@ -1526,6 +1532,11 @@ function canonicalRunParams(params: Record<string, unknown>): Record<string, unk
 	if (params.gate === undefined || params.acceptance !== false) return params;
 	const { acceptance: _acceptance, ...withoutAcceptance } = params;
 	return withoutAcceptance;
+}
+
+/** Canonical launch-params identity; matches the worker's stableRunJson(canonicalRunParams(params)). */
+export function workflowRunParamsFingerprint(params: Record<string, unknown>): string {
+	return stableJson(canonicalRunParams(params));
 }
 
 function validateKey(value: unknown, owner = "runs.run"): string {
@@ -2223,6 +2234,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				...(outputReference ? { outputReference } : {}),
 				...(!result.ok && result.error ? { error: result.error } : {}),
 				workflowRunning: !settled && !finishing,
+				result,
 			});
 		} catch (error) {
 			console.error("Workflow onChildSettled callback failed:", error);
@@ -2545,7 +2557,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					}
 					return result;
 				});
-			const fingerprint = stableJson(canonicalRunParams(params));
+			const fingerprint = workflowRunParamsFingerprint(params);
 			const existing = launches.get(key);
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
@@ -2678,7 +2690,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				children.set(key, normalized);
 				recordAcceptanceRecoveryBarrier(key, normalized);
 				const state = normalized.state === "running" ? "started" : normalized.ok ? "completed" : normalized.stopped ? "stopped" : normalized.detached ? "detached" : "failed";
-				trace.push({ operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok && normalized.state !== "running" ? { error: normalized.error ?? normalized.output } : {}) });
+				trace.push({ operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok && normalized.state !== "running" ? { error: normalized.error ?? normalized.output } : {}), ...(normalized.reused ? { reused: true } : {}) });
 				traceChanged();
 				notifyChildSettled(key, normalized);
 				return normalized;

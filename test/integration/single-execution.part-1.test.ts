@@ -22,6 +22,7 @@ import fsDefault, * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	createEventBus,
 	makeAgentConfigs,
@@ -65,6 +66,7 @@ import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../sr
 import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
+import { runtimeReplacedAbortReason, WORKFLOW_CHILD_JOURNAL_FILE } from "../../src/workflows/workflow-reuse.ts";
 
 describe("single sync execution", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installSingleExecutionHooks();
@@ -1725,7 +1727,7 @@ Answer only from the supplied synthetic text.
 		assert.equal(childCompleted, true, "expected the child to settle before simulating session cleanup");
 		const controller = workflowControllers.get(workflowRunId);
 		assert.ok(controller, "expected a live workflow controller before simulated cleanup");
-		controller.abort(new Error("Workflow stopped because the extension session was replaced or reloaded."));
+		controller.abort(runtimeReplacedAbortReason());
 		workflowControllers.clear();
 		asyncJobs.clear();
 
@@ -1743,6 +1745,111 @@ Answer only from the supplied synthetic text.
 		assert.deepEqual(result.workflow?.value, finalStatus.workflow?.value);
 		fs.rmSync(asyncDir, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
+	});
+
+	describe("relaunching a runtime-replaced workflow", () => {
+		type ReuseStatus = AsyncStatus & { workflow?: NonNullable<AsyncStatus["workflow"]> };
+		const terminalStates = ["complete", "failed", "partial", "paused", "stopped", "rejected"];
+		const setup = () => {
+			const workflowControllers = new Map<string, AbortController>();
+			const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), workflowControllers, undefined, undefined, undefined, undefined, () => {});
+			const launch = async (params: Record<string, unknown>): Promise<string> => {
+				const started = await executor.execute(`workflow-reuse-${Date.now()}-${Math.random().toString(16).slice(2)}`, { async: true, mission: false, ...params }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+				assert.equal(started.isError, undefined, started.content[0]?.text ?? "workflow launch failed");
+				return started.details.asyncId!;
+			};
+			const waitFor = async (runId: string, predicate: (status: ReuseStatus) => boolean) => await waitForAsyncState(runId, (status) => predicate(status as ReuseStatus), 30_000) as ReuseStatus;
+			const settled = async (runId: string) => {
+				const status = await waitFor(runId, (candidate) => terminalStates.includes(candidate.state));
+				await waitForAsyncResultFile(runId, 30_000);
+				return status;
+			};
+			const stopWhenStage2Starts = async (runId: string, reason: Error) => {
+				await waitFor(runId, (status) => status.workflow?.trace.some((entry) => entry.key === "stage2" && entry.state === "started") ?? false);
+				workflowControllers.get(runId)!.abort(reason);
+				return await settled(runId);
+			};
+			return { launch, waitFor, settled, stopWhenStage2Starts };
+		};
+		const summaryOf = (runId: string) => (JSON.parse(fs.readFileSync(path.join(DIRS.results, `${runId}.json`), "utf-8")) as { summary?: string }).summary ?? "";
+
+		it("records the stop cause and script digest, then reuses the finished stage on relaunch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `reuse-${Date.now()}`;
+			const script = `const first = await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); const second = await runs.run("stage2", { agent: "echo", task: "Stage two ${nonce}" }); return { first: first.output, second: second.output, reused: first.reused === true };`;
+			const args = { nonce };
+			const { launch, settled, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, hangUntilAbort: true });
+			const firstId = await launch({ workflowScript: script, args });
+			const stopped = await stopWhenStage2Starts(firstId, runtimeReplacedAbortReason());
+			assert.equal(stopped.state, "stopped");
+			assert.equal(stopped.workflow?.stopCause, "runtime-replaced");
+			assert.equal(stopped.workflow?.scriptDigest, createHash("sha256").update(script).digest("hex"));
+			assert.match(summaryOf(firstId), /Relaunch the same workflowScript with the same args to reuse the children that already finished\./);
+			const stage1RunId = stopped.steps?.find((step) => step.workflowKey === "stage1")?.runId;
+			assert.ok(stage1RunId);
+			const journal = fs.readFileSync(path.join(DIRS.async, firstId, WORKFLOW_CHILD_JOURNAL_FILE), "utf-8").trim().split("\n").map((line) => JSON.parse(line) as { type: string; key: string; fingerprint: string; runId?: string; result?: { ok: boolean; runId?: string; output: string } });
+			assert.deepEqual(journal.map(({ type, key }) => `${type}:${key}`), ["start:stage1", "settle:stage1", "start:stage2"]);
+			assert.equal(journal[0]?.runId, stage1RunId);
+			assert.equal(journal[1]?.fingerprint, journal[0]?.fingerprint);
+			assert.deepEqual([journal[1]?.result?.ok, journal[1]?.result?.runId, journal[1]?.result?.output], [true, stage1RunId, "stage one done"]);
+			const callsAfterStop = mockPi.callCount();
+
+			for (const variant of [{ workflowScript: script, args: { nonce, changed: true } }, { workflowScript: `${script}\n// changed`, args }]) {
+				mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one again" });
+				mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
+				const status = await settled(await launch(variant));
+				assert.equal(status.state, "complete");
+				assert.equal(status.workflow?.reusedFrom, undefined);
+				assert.equal(status.steps?.some((step) => step.reused), false);
+			}
+			assert.equal(mockPi.callCount(), callsAfterStop + 4, "different args or script must launch every child");
+
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
+			const relaunched = await settled(await launch({ workflowScript: script, args }));
+			assert.equal(relaunched.state, "complete");
+			assert.equal(mockPi.callCount(), callsAfterStop + 5, "only stage2 launches");
+			assert.equal(relaunched.workflow?.reusedFrom, firstId);
+			assert.equal(relaunched.workflow?.stopCause, undefined);
+			assert.deepEqual(relaunched.workflow?.value, { first: "stage one done", second: "stage two done", reused: true });
+			const steps = relaunched.steps ?? [];
+			assert.deepEqual(steps.map(({ workflowKey, status, reused }) => ({ workflowKey, status, reused })), [
+				{ workflowKey: "stage1", status: "completed", reused: true },
+				{ workflowKey: "stage2", status: "completed", reused: undefined },
+			]);
+			assert.equal(steps[0]?.runId, stage1RunId);
+			assert.ok(relaunched.workflow?.trace.some((entry) => entry.key === "stage1" && entry.state === "completed" && entry.reused === true && entry.runId === stage1RunId));
+		});
+
+		it("relaunches failed children, and a user stop records no stop cause and ends reuse", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `reuse-failed-${Date.now()}`;
+			const script = `let first = null; try { first = await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); } catch {} const second = await runs.run("stage2", { agent: "echo", task: "Stage two ${nonce}" }); return { first: first?.output ?? null, second: second.output };`;
+			const args = { nonce };
+			const { launch, settled, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, exitCode: 1, stderr: "stage one broke" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, hangUntilAbort: true });
+			const firstId = await launch({ workflowScript: script, args });
+			assert.equal((await stopWhenStage2Starts(firstId, runtimeReplacedAbortReason())).workflow?.stopCause, "runtime-replaced");
+			const callsAfterStop = mockPi.callCount();
+
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one fixed" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, hangUntilAbort: true });
+			const secondId = await launch({ workflowScript: script, args });
+			const userStopped = await stopWhenStage2Starts(secondId, new Error("Stopped by user."));
+			assert.equal(mockPi.callCount(), callsAfterStop + 2, "the failed stage1 launches again");
+			assert.equal(userStopped.workflow?.reusedFrom, firstId);
+			assert.equal(userStopped.steps?.some((step) => step.reused), false);
+			assert.equal(userStopped.state, "stopped");
+			assert.equal(userStopped.workflow?.stopCause, undefined);
+			assert.doesNotMatch(summaryOf(secondId), /Relaunch the same workflowScript/);
+
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one fixed" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
+			const third = await settled(await launch({ workflowScript: script, args }));
+			assert.equal(third.state, "complete");
+			assert.equal(third.workflow?.reusedFrom, undefined, "the newest same-script run was user-stopped");
+			assert.equal(mockPi.callCount(), callsAfterStop + 4);
+		});
 	});
 
 	it("delivers a terminal Darwin workflow failure after demand disappears", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
