@@ -103,10 +103,189 @@ describe("Herdr status bridge", () => {
 
 		assert.deepEqual(projectActiveHerdrRuns(state), [{
 			id: "workflow-1",
+			coordinator: true,
 			agents: ["reviewer"],
 			taskLabel: "Review auth",
 			needsAttention: true,
 		}]);
+	});
+
+	it("counts a workflow async child once instead of also counting the coordinator", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			agents: ["workflow"],
+			steps: [],
+		});
+		state.asyncJobs.set("child-1", {
+			asyncId: "child-1",
+			asyncDir: "/tmp/child-1",
+			status: "running",
+			mode: "single",
+			agents: ["reviewer"],
+			parentWorkflowRunId: "workflow-1",
+		});
+
+		assert.deepEqual(projectActiveHerdrRuns(state), [
+			{ id: "workflow-1", coordinator: true, agents: [], needsAttention: false },
+			{ id: "child-1", agents: ["reviewer"], needsAttention: false },
+		]);
+	});
+
+	it("drops a finished reviewer from the workflow count while a second reviewer keeps running", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			agents: ["workflow"],
+			steps: [],
+		});
+		state.asyncJobs.set("child-1", {
+			asyncId: "child-1",
+			asyncDir: "/tmp/child-1",
+			status: "running",
+			mode: "single",
+			agents: ["reviewer-a"],
+			parentWorkflowRunId: "workflow-1",
+		});
+		state.asyncJobs.set("child-2", {
+			asyncId: "child-2",
+			asyncDir: "/tmp/child-2",
+			status: "complete",
+			mode: "single",
+			agents: ["reviewer-b"],
+			parentWorkflowRunId: "workflow-1",
+		});
+
+		assert.deepEqual(projectActiveHerdrRuns(state), [
+			{ id: "workflow-1", coordinator: true, agents: [], needsAttention: false },
+			{ id: "child-1", agents: ["reviewer-a"], needsAttention: false },
+		]);
+	});
+
+	it("keeps a foreground workflow child counted once alongside a pending next step", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			agents: ["workflow"],
+			steps: [
+				{ agent: "reviewer", status: "running", label: "Review auth" },
+				{ agent: "publisher", status: "pending", label: "Publish" },
+			],
+		});
+		state.foregroundControls.set("child-1", {
+			runId: "child-1",
+			parentWorkflowRunId: "workflow-1",
+			workflowKey: "review",
+			mode: "single",
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([[0, {
+				index: 0,
+				agent: "reviewer",
+				startedAt: 10,
+				updatedAt: 20,
+			}]]),
+		});
+
+		assert.deepEqual(projectActiveHerdrRuns(state), [{
+			id: "workflow-1",
+			coordinator: true,
+			agents: ["reviewer"],
+			taskLabel: "Review auth",
+			needsAttention: false,
+		}]);
+	});
+
+	it("projects an idle workflow coordinator as zero leaves and recovers once a leaf starts", () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1",
+			asyncDir: "/tmp/workflow-1",
+			status: "running",
+			mode: "workflow",
+			agents: ["workflow"],
+			steps: [],
+		});
+
+		assert.deepEqual(projectActiveHerdrRuns(state), [{
+			id: "workflow-1",
+			coordinator: true,
+			agents: [],
+			needsAttention: false,
+		}]);
+
+		state.asyncJobs.set("child-1", {
+			asyncId: "child-1",
+			asyncDir: "/tmp/child-1",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			parentWorkflowRunId: "workflow-1",
+		});
+
+		assert.deepEqual(projectActiveHerdrRuns(state), [
+			{ id: "workflow-1", coordinator: true, agents: [], needsAttention: false },
+			{ id: "child-1", agents: ["worker"], needsAttention: false },
+		]);
+	});
+
+	it("keeps child IDs live for attention and completion after a workflow refresh", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const blocked: unknown[] = [];
+		const coordinator = { id: "workflow-1", coordinator: true as const, agents: [] };
+		const child = { id: "child-1", agents: ["reviewer"] };
+		let authoritativeRuns: HerdrStatusRun[] = [coordinator];
+		events.on("herdr:blocked", (event) => blocked.push(event));
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			getRuns: () => authoritativeRuns,
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: [coordinator] });
+		authoritativeRuns = [coordinator, child];
+		bridge.syncRuns();
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (reviewer)"));
+		events.emit(SUBAGENT_CONTROL_EVENT, {
+			source: "async", noticeText: "reviewer needs attention",
+			event: { type: "needs_attention", runId: "child-1" },
+		});
+		assert.deepEqual(blocked, [{ active: true, label: "reviewer needs attention" }]);
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "child-1" });
+		authoritativeRuns = [coordinator];
+		await bridge.flush();
+		assert.deepEqual(blocked, [
+			{ active: true, label: "reviewer needs attention" }, { active: false },
+		]);
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 0 subagents"));
+		bridge.dispose();
+	});
+
+	it("keeps the minimum count for an ordinary run with no agent details", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: [{ id: "single-1", agents: [] }] });
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent"));
+		bridge.dispose();
 	});
 
 	it("synchronizes runs discovered outside lifecycle events", async () => {
@@ -126,6 +305,36 @@ describe("Herdr status bridge", () => {
 
 		assert.equal(commands.length, 1);
 		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker)"));
+
+		bridge.dispose();
+	});
+
+	it("does not count the workflow coordinator's own start event as a running leaf", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const busyEvents: unknown[] = [];
+		events.on("herdr:busy", (payload) => busyEvents.push(payload));
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: [] });
+
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "workflow-1", mode: "workflow", agent: "workflow" });
+		await bridge.flush();
+
+		// The coordinator is active (busy stays raised) but contributes zero leaves.
+		assert.deepEqual(busyEvents, [{ active: true, label: "⏳ 0 subagents" }]);
+		assert.ok(commands[0]?.includes("summary=⏳ 0 subagents"));
+		assert.ok(!commands[0]?.join(" ").includes("workflow"));
+
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "child-1", agent: "reviewer" });
+		await bridge.flush();
+
+		assert.deepEqual(busyEvents.at(-1), { active: true, label: "⏳ 1 subagent (reviewer)" });
+		assert.ok(commands[1]?.includes("summary=⏳ 1 subagent (reviewer)"));
 
 		bridge.dispose();
 	});

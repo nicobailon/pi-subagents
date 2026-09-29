@@ -413,18 +413,31 @@ export function projectActiveHerdrRuns(state: SubagentState): HerdrStatusRun[] {
 		existing.push(...children);
 		foregroundChildrenByWorkflow.set(control.parentWorkflowRunId, existing);
 	}
+
+	// Keep each async child under its own ID: completion and attention events
+	// address that ID directly. The workflow row accounts only for foreground
+	// children; its own coordinator and step summaries are not leaf agents.
 	return [...state.asyncJobs.values()]
 		.filter((job) => active(job.status))
 		.map((job) => {
-			const children = job.mode === "workflow" ? foregroundChildrenByWorkflow.get(job.asyncId) : undefined;
 			const currentStep = job.steps?.find((step) => step.status === "running")
 				?? (job.currentStep !== undefined ? job.steps?.[job.currentStep] : undefined)
 				?? job.steps?.find((step) => step.status === "pending");
+			if (job.mode === "workflow") {
+				const children = foregroundChildrenByWorkflow.get(job.asyncId) ?? [];
+				return {
+					id: job.asyncId,
+					coordinator: true as const,
+					agents: children.map((child) => child.agent),
+					...(currentStep?.label ? { taskLabel: currentStep.label } : {}),
+					needsAttention: job.activityState === "needs_attention" || children.some((child) => child.needsAttention),
+				};
+			}
 			return {
 				id: job.asyncId,
-				agents: children?.length ? children.map((child) => child.agent) : job.agents,
+				agents: job.agents,
 				...(currentStep?.label ? { taskLabel: currentStep.label } : {}),
-				needsAttention: job.activityState === "needs_attention" || children?.some((child) => child.needsAttention),
+				needsAttention: job.activityState === "needs_attention",
 			};
 		});
 }

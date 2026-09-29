@@ -29,6 +29,8 @@ export interface HerdrStatusRun {
 	id: string;
 	agent?: string;
 	agents?: string[];
+	/** A workflow owns busy state but is not itself a child agent. */
+	coordinator?: true;
 	/** Explicit launch/workflow label only; raw prompts never enter pane metadata. */
 	taskLabel?: string;
 	needsAttention?: boolean;
@@ -100,10 +102,17 @@ function workflowTaskLabel(data: Record<string, unknown>): string | undefined {
 function startedRun(data: unknown): HerdrStatusRun | undefined {
 	if (!isRecord(data) || typeof data.id !== "string" || !data.id) return undefined;
 	const taskLabel = workflowTaskLabel(data);
+	// The workflow coordinator itself is not a running leaf: it starts with its
+	// own `agent: "workflow"` identity, but its actual leaves each publish their
+	// own start event separately. Counting the coordinator here would double it.
+	const isWorkflowCoordinator = data.mode === "workflow";
 	return {
 		id: data.id,
-		...(typeof data.agent === "string" ? { agent: data.agent } : {}),
-		...(Array.isArray(data.agents) && data.agents.every((agent) => typeof agent === "string") ? { agents: data.agents as string[] } : {}),
+		...(isWorkflowCoordinator ? { coordinator: true as const } : {}),
+		...(!isWorkflowCoordinator && typeof data.agent === "string" ? { agent: data.agent } : {}),
+		...(isWorkflowCoordinator
+			? { agents: [] }
+			: Array.isArray(data.agents) && data.agents.every((agent) => typeof agent === "string") ? { agents: data.agents as string[] } : {}),
 		...(taskLabel ? { taskLabel } : {}),
 	};
 }
@@ -150,7 +159,10 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 	let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
 	const activeAgentNames = (): string[] => [...new Set([...runs.values()].flatMap((run) => run.agents?.length ? run.agents : run.agent ? [run.agent] : []))];
-	const activeSubagentCount = (): number => [...runs.values()].reduce((total, run) => total + Math.max(1, run.agents?.length ?? (run.agent ? 1 : 0)), 0);
+	// Preserve the minimum count for ordinary runs with incomplete status;
+	// only an empty workflow coordinator contributes zero child agents.
+	const activeSubagentCount = (): number => [...runs.values()].reduce((total, run) =>
+		total + (run.coordinator && !run.agents?.length ? 0 : Math.max(1, run.agents?.length ?? (run.agent ? 1 : 0))), 0);
 	const activeTaskLabel = (): string | undefined => [...runs.values()].reverse().find((run) => run.taskLabel)?.taskLabel;
 
 	const label = (includeAttention = false): string => {
