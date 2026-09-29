@@ -140,6 +140,21 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(childMessages().every(({ options }) => options?.triggerTurn === false));
 	});
 
+	it("reports async workflow siblings stopped by a failed script as stopped", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "Slow sibling", hangUntilAbort: true });
+		mockPi.onCall({ matchArgIncludes: "Fails at launch", createError: "launch failed" });
+		const sent: Array<{ customType?: string; content?: string }> = [];
+		const executor = makeExecutor([makeAgent("echo")], {}, true, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, (message: unknown) => sent.push(message as { customType?: string; content?: string }));
+		const launch = await executor.execute("workflow-sibling-stop", {
+			async: true,
+			workflowScript: `await Promise.all([runs.run("a", { agent: "echo", task: "Slow sibling" }), runs.run("b", { agent: "echo", task: "Fails at launch" })]);`,
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
+		const notice = () => sent.find((message) => message.customType === "subagent-incremental-child-notify" && message.content?.includes("**a**"));
+		for (let attempt = 0; attempt < 250 && !notice(); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.match(notice()?.content ?? "", /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Workflow stopped before async child completed\.\nStatus: workflow finished$/);
+	});
+
 	it("spawns agent and captures output", async () => {
 		mockPi.onCall({ output: "Hello from mock agent" });
 		const agents = makeAgentConfigs(["echo"]);
@@ -2614,7 +2629,8 @@ Answer only from the supplied synthetic text.
 			assert.equal(result.details.asyncDir, childDir);
 			assert.equal(result.details.results.length, 1);
 			assert.equal(result.details.results[0]?.exitCode, 1);
-			assert.equal(result.details.results[0]?.timedOut, true);
+			assert.equal(result.details.results[0]?.stopped, true);
+			assert.equal(result.details.results[0]?.timedOut, undefined);
 			assert.equal(result.details.results[0]?.error, "Workflow stopped before async child completed.");
 			assert.equal(result.details.results[0]?.finalOutput, "Workflow stopped before async child completed.");
 			assert.doesNotMatch(result.content[0]?.text ?? "", /recoverable publication—not imported/);
