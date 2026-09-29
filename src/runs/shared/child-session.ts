@@ -55,6 +55,8 @@ export interface ChildSessionLaunch {
 	cwd: string;
 	/** Resolved pane-native placement. Local launches omit this field. */
 	machine?: HerdrMachineReference;
+	/** The launching session's project trust; undefined keeps Pi's default for hosts without trust. */
+	projectTrusted?: boolean;
 	/** Process-local provider source owned by the invoking foreground parent. */
 	parentProviderRegistry?: ParentProviderRegistry;
 	/** Logical names resolved only by the remote ambient package. */
@@ -310,7 +312,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				? await pi.ModelRuntime.create()
 				: await sharedRuntime(pi);
 			const agentDir = getAgentDir();
-			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir);
+			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir, { projectTrusted: launch.projectTrusted });
 			// Foreground children share Pi's global theme with the parent, so reinitializing it
 			// would overwrite the parent's active light/dark appearance. Detached runners have
 			// no initialized theme and must initialize one for headless extension renderers.

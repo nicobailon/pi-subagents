@@ -474,6 +474,7 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 							noSkills: launch.noSkills,
 							noContextFiles: launch.noContextFiles,
 							processEnv: launch.processEnv,
+							projectTrusted: launch.projectTrusted,
 						},
 						runtime: { ...launch.runtime, structuredOutput: launch.runtime.structuredOutput ? { schema: launch.runtime.structuredOutput.schema, acceptanceReport: launch.runtime.structuredOutput.acceptanceReport } : undefined },
 					}), "utf-8");

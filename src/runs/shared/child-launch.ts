@@ -88,6 +88,8 @@ export interface BuildInProcessChildLaunchInput {
 	extensionBindings?: ExtensionBindings;
 	cwd: string;
 	intercomSessionName?: string;
+	/** The launching session's project trust; undefined when the host has no trust concept. */
+	projectTrusted?: boolean;
 	sessionName?: string;
 	orchestratorIntercomTarget?: string;
 	runId?: string;
@@ -312,6 +314,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 	const session: Omit<ChildSessionLaunch, "onExtensionError"> = {
 		cwd: input.cwd,
 		...(input.machine ? { machine: input.machine } : {}),
+		...(input.projectTrusted !== undefined ? { projectTrusted: input.projectTrusted } : {}),
 		...(input.machine ? { remoteResources: { agent: input.childAgentName, ...(input.remoteSkillNames ? { skills: input.remoteSkillNames } : {}), ...(input.remoteReads !== undefined ? { reads: input.remoteReads } : {}), ...(toolPlan.explicitToolAllowlist ? { toolCeiling: [...toolPlan.effectiveToolAllowlist] } : toolPlan.capabilityCeiling?.allowedTools ? { toolCeiling: [...toolPlan.capabilityCeiling.allowedTools] } : {}) } } : {}),
 		storage: childStorage(input),
 		...(input.model ? { model: input.model } : {}),

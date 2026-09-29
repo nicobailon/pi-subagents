@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- Subagent children now follow the parent session's project trust. Before, a child of an untrusted project still read that project's settings, system prompt files, skills and, for background children, its extensions. Fixes [#2569](https://github.com/nicobailon/pi-subagents/issues/2569).
 - On Windows, the pi TUI froze for about 0.45 seconds once per process when background run cleanup first looked up the process start time, because it waited on a PowerShell query. The query now runs without blocking the interface. Thanks to [@localhedge](https://github.com/localhedge) for reporting [#2559](https://github.com/nicobailon/pi-subagents/issues/2559).
 - On Windows, an idle parent session no longer checks the supervisor channel every 250 ms for its whole lifetime. Polling now stops when no subagent work or supervisor request is pending and starts again when new work begins, as it already did on macOS. Thanks to [@localhedge](https://github.com/localhedge) for reporting [#2558](https://github.com/nicobailon/pi-subagents/issues/2558).
 - When an async `workflowScript` failed and stopped its still-running async children, each of those children got a "Workflow child failed" notice whose error was the "Run fan-out: N/M used, K remaining" line. The notice now says the child was stopped and shows only the stop reason. Fixes [#2562](https://github.com/nicobailon/pi-subagents/issues/2562).

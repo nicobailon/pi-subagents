@@ -546,6 +546,27 @@ describe("default child session factory", () => {
 		}
 	});
 
+	it("reads project resources only when the launching session trusts the project", async () => {
+		const host = await import("@earendil-works/pi-coding-agent");
+		const projectDir = createTempDir("pi-subagents-project-trust-");
+		fs.mkdirSync(path.join(projectDir, ".pi"));
+		fs.writeFileSync(path.join(projectDir, ".pi", "SYSTEM.md"), "project system prompt");
+		try {
+			for (const projectTrusted of [true, false]) {
+				let loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]> | undefined;
+				const pi = stubPi();
+				pi.SettingsManager = host.SettingsManager;
+				pi.DefaultResourceLoader = class extends host.DefaultResourceLoader {
+					constructor(options: ConstructorParameters<PiCodingAgentModule["DefaultResourceLoader"]>[0]) { super(options); loader = this; }
+				};
+				await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi }).create({ ...stubLaunch, cwd: projectDir, projectTrusted });
+				assert.equal(loader!.getSystemPrompt() === "project system prompt", projectTrusted);
+			}
+		} finally {
+			removeTempDir(projectDir);
+		}
+	});
+
 	it("preserves an initialized parent theme when creating a child session", async () => {
 		const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");
 		const globals = globalThis as Record<symbol, unknown>;

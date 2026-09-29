@@ -642,6 +642,11 @@ function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps)
 	return [...new Set(roots)];
 }
 
+/** Children follow the launching session's trust; hosts older than Pi's trust concept keep Pi's default. */
+function sessionProjectTrust(ctx: ExtensionContext): boolean | undefined {
+	return typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;
+}
+
 function spawnBudgetErrorResult(message: string, mode: "single" | "parallel" | "chain"): AgentToolResult<Details> {
 	return {
 		content: [{ type: "text", text: message }],
@@ -1810,6 +1815,7 @@ async function resumeExternalJobFollowUp(input: {
 			interactive: input.ctx.hasUI,
 			permissions: input.deps.config.permissions,
 			childRuntime: input.deps.childRuntime,
+			projectTrusted: sessionProjectTrust(input.ctx),
 		}),
 		cwd: input.effectiveCwd,
 		artifactsDir,
@@ -2080,6 +2086,7 @@ async function resumeAsyncRun(input: {
 				interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
 		childRuntime: input.deps.childRuntime,
+		projectTrusted: sessionProjectTrust(input.ctx),
 			}),
 			availableModels,
 			cwd: effectiveCwd,
@@ -2209,6 +2216,7 @@ async function resumeAsyncRun(input: {
 			interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
 		childRuntime: input.deps.childRuntime,
+		projectTrusted: sessionProjectTrust(input.ctx),
 		}),
 		cwd: effectiveCwd,
 		maxOutput: input.params.maxOutput ?? recoveryDescriptor?.maxOutput,
@@ -3476,6 +3484,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		interactive: ctx.hasUI,
 		permissions: deps.config.permissions,
 		childRuntime: deps.childRuntime,
+		projectTrusted: sessionProjectTrust(ctx),
 	});
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth, deps.childRuntime);
@@ -4219,6 +4228,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		const launched = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			machine: foregroundMachine,
 			parentProviderRegistry: ctx.modelRegistry,
+			projectTrusted: sessionProjectTrust(ctx),
 			remoteReads: foregroundMachine ? readsOverride : undefined,
 			permissions: deps.config.permissions,
 			runtimeSnapshotHost: deps.pi,

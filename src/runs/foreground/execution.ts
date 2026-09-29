@@ -408,6 +408,7 @@ async function runSingleAttempt(
 		mcpDirectTools: agent.mcpDirectTools,
 		cwd: options.cwd ?? runtimeCwd,
 		intercomSessionName: options.intercomSessionName,
+		projectTrusted: options.projectTrusted,
 		sessionName: childSessionName,
 		orchestratorIntercomTarget: options.orchestratorIntercomTarget,
 		runId: options.runId,

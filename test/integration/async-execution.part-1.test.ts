@@ -992,6 +992,20 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi/subagents", "artifacts")), false);
 	});
 
+	it("launches foreground and background children with the parent session's project trust", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
+		const ctx = { ...makeMinimalCtx(tempDir), isProjectTrusted: () => false };
+		mockPi.onCall({ output: "foreground done" });
+		const foreground = await executor.execute("trust-foreground", { agent: "worker", task: "Inspect", acceptance: false }, new AbortController().signal, undefined, ctx);
+		assert.equal(foreground.isError, undefined, foreground.content[0]?.text);
+		mockPi.onCall({ output: "background done" });
+		const background = await executor.execute("trust-background", { agent: "worker", task: "Inspect", async: true, acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+		await readAsyncPayload(background.details.asyncId!);
+		const trust = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+			.map((name) => JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")).launch.projectTrusted);
+		assert.deepEqual(trust, [false, false]);
+	});
+
 	it("persists async capability ceiling audit to status, results, events, and metadata", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "restricted async done" });
 		const sessionId = `session-capability-${Date.now().toString(36)}`;
