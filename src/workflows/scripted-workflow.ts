@@ -1121,7 +1121,7 @@ export interface WorkflowScriptChildResult {
 	continuation?: { runIds: string[] };
 	artifactPaths: string[];
 	results?: SingleResult[];
-	/** Returned from the journal of a runtime-replaced run of the same script and args, without launching. */
+	/** Came from a runtime-replaced run of the same script and args (its saved result, or its still-running child re-attached); this run launched nothing. */
 	reused?: boolean;
 }
 
@@ -2690,7 +2690,9 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				children.set(key, normalized);
 				recordAcceptanceRecoveryBarrier(key, normalized);
 				const state = normalized.state === "running" ? "started" : normalized.ok ? "completed" : normalized.stopped ? "stopped" : normalized.detached ? "detached" : "failed";
-				trace.push({ operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok && normalized.state !== "running" ? { error: normalized.error ?? normalized.output } : {}), ...(normalized.reused ? { reused: true } : {}) });
+				const settledEntry: WorkflowScriptTraceEntry = { operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok && normalized.state !== "running" ? { error: normalized.error ?? normalized.output } : {}) };
+				if (normalized.reused) settledEntry.reused = true;
+				trace.push(settledEntry);
 				traceChanged();
 				notifyChildSettled(key, normalized);
 				return normalized;

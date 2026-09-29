@@ -6,10 +6,10 @@ import { readStatus } from "../shared/utils.ts";
 import { workflowRunParamsFingerprint, type WorkflowScriptChildResult } from "./scripted-workflow.ts";
 
 /** Stop cause recorded when the extension runtime that owned the workflow was replaced (/reload, resume, project switch). */
-export const WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED = "runtime-replaced";
-export type WorkflowStopCause = typeof WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED;
+const WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED = "runtime-replaced";
+type WorkflowStopCause = typeof WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED;
 
-export const WORKFLOW_CHILD_JOURNAL_FILE = "workflow-children.jsonl";
+const WORKFLOW_CHILD_JOURNAL_FILE = "workflow-children.jsonl";
 
 export const WORKFLOW_RUNTIME_REPLACED_RELAUNCH_NOTICE = "Async children that were still running keep running; relaunch the same workflowScript with the same args to reuse finished children and re-attach to running ones.";
 
@@ -19,7 +19,7 @@ export function runtimeReplacedAbortReason(): Error {
 }
 
 export function workflowStopCause(reason: unknown): WorkflowStopCause | undefined {
-	return reason instanceof Error && (reason as { workflowStopCause?: unknown }).workflowStopCause === WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED
+	return reason instanceof Error && "workflowStopCause" in reason && reason.workflowStopCause === WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED
 		? WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED
 		: undefined;
 }
@@ -37,7 +37,7 @@ export function workflowChildFingerprint(params: Record<string, unknown>): strin
 	return sha256(workflowRunParamsFingerprint(params));
 }
 
-export type WorkflowChildJournalRecord =
+type WorkflowChildJournalRecord =
 	| { type: "start"; key: string; fingerprint: string; runId: string }
 	| { type: "settle"; key: string; fingerprint: string; result: WorkflowScriptChildResult };
 
@@ -51,13 +51,13 @@ export function appendWorkflowChildJournal(workflowAsyncDir: string, record: Wor
 	}
 }
 
-export interface WorkflowReuseSource {
+interface WorkflowReuseSource {
 	runId: string;
 	started: Map<string, { fingerprint: string; runId: string }>;
 	settled: Map<string, { fingerprint: string; result: WorkflowScriptChildResult }>;
 }
 
-export type WorkflowReuseMatch =
+type WorkflowReuseMatch =
 	| { kind: "settled"; result: WorkflowScriptChildResult }
 	| { kind: "started"; runId: string };
 
@@ -72,6 +72,7 @@ function readWorkflowChildJournal(runId: string, workflowAsyncDir: string): Work
 	for (const line of text.split("\n")) {
 		let record: Partial<WorkflowChildJournalRecord> | undefined;
 		try {
+			// SAFETY: every field is type-checked below before a record is stored.
 			record = line.trim() ? JSON.parse(line) as Partial<WorkflowChildJournalRecord> : undefined;
 		} catch {
 			continue;
@@ -114,7 +115,7 @@ export function findWorkflowReuseSource(asyncDirRoot: string, sessionId: string,
 /** A settled match is reusable only when that child succeeded; failed or stopped children run again. */
 export function matchWorkflowReuse(source: WorkflowReuseSource, key: string, fingerprint: string): WorkflowReuseMatch | undefined {
 	const settled = source.settled.get(key);
-	if (settled) return settled.fingerprint === fingerprint && settled.result.ok === true && settled.result.state !== "running" ? { kind: "settled", result: settled.result } : undefined;
+	if (settled) return settled.fingerprint === fingerprint && settled.result.ok ? { kind: "settled", result: settled.result } : undefined;
 	const started = source.started.get(key);
 	return started?.fingerprint === fingerprint ? { kind: "started", runId: started.runId } : undefined;
 }

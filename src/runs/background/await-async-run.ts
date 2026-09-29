@@ -6,7 +6,7 @@ import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import { checkPidLiveness } from "./stale-run-reconciler.ts";
 
-export type ExistingAsyncRunOutcome =
+type ExistingAsyncRunOutcome =
 	| { status: "settled"; result: ImportedAsyncRootResult }
 	| { status: "unavailable"; reason: string };
 
