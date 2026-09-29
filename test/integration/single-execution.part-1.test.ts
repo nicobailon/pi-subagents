@@ -66,7 +66,8 @@ import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../sr
 import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
-import { runtimeReplacedAbortReason, WORKFLOW_CHILD_JOURNAL_FILE } from "../../src/workflows/workflow-reuse.ts";
+import { runtimeReplacedAbortReason, workflowChildFingerprint, WORKFLOW_CHILD_JOURNAL_FILE } from "../../src/workflows/workflow-reuse.ts";
+import { updateTerminalRunIndex } from "../../src/runs/background/terminal-run-index.ts";
 
 describe("single sync execution", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installSingleExecutionHooks();
@@ -1902,6 +1903,51 @@ Answer only from the supplied synthetic text.
 			assert.ok(stage2RunId);
 			const child = await waitForAsyncState(stage2RunId, (status) => terminalStates.includes(status.state ?? ""), 30_000);
 			assert.equal(child.state, "stopped");
+		});
+
+		it("ends the wait on a revived awaited child when the runtime is replaced, leaving its result for the relaunch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `revived-${Date.now()}`;
+			const release = path.join(tempDir, `${nonce}.release`);
+			mockPi.onCall({ exitCode: 1, jsonl: [{ type: "message_end", message: { role: "assistant", content: [], model: "openai-codex/gpt-5.6-luna", stopReason: "error", errorMessage: "This operation was aborted", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } }] });
+			mockPi.onCall({ waitForPath: release, output: "revived done" });
+			const callsBefore = mockPi.callCount();
+			const { launch, stopWhenStage2Starts } = setup();
+			const runId = await launch({ workflowScript: `await runs.run("stage2", { agent: "echo", task: "Revive ${nonce}" });` });
+			const stopped = await stopWhenStage2Starts(runId, runtimeReplacedAbortReason(), (status) => mockPi.callCount() >= callsBefore + 2 && Boolean(status.steps?.find((step) => step.workflowKey === "stage2")?.async));
+			assert.equal(stopped.workflow?.stopCause, "runtime-replaced");
+			const revivedId = stopped.steps?.find((step) => step.workflowKey === "stage2")?.runId;
+			assert.ok(revivedId);
+			await new Promise((resolve) => setTimeout(resolve, 700));
+			fs.writeFileSync(release, "go");
+			await waitForAsyncState(revivedId, (status) => status.state === "complete", 30_000);
+			await new Promise((resolve) => setTimeout(resolve, 1_200));
+			assert.equal(fs.existsSync(path.join(DIRS.async, revivedId, "workflow-result.json")), true, "the stopped run must not import the revived child's result");
+		});
+
+		it("lets exactly one of two concurrent relaunches import a finished child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `claim-${Date.now()}`;
+			const script = `const work = await runs.run("work", { agent: "echo", task: "Seeded ${nonce}" }); return { output: work.output, reused: work.reused === true };`;
+			const args = { nonce };
+			const sessionId = "session-123";
+			const priorDir = path.join(DIRS.async, `prior-${nonce}`);
+			const childDir = path.join(DIRS.async, `child-${nonce}`);
+			const priorStatus = { runId: path.basename(priorDir), mode: "workflow", sessionId, state: "stopped", startedAt: 1, endedAt: Date.now(), steps: [], workflow: { trace: [], emits: [], console: [], args, argsDigest: stableJsonDigest(args), scriptDigest: createHash("sha256").update(script).digest("hex"), stopCause: "runtime-replaced" } } satisfies AsyncStatus;
+			fs.mkdirSync(priorDir, { recursive: true });
+			fs.writeFileSync(path.join(priorDir, "status.json"), JSON.stringify(priorStatus));
+			fs.writeFileSync(path.join(priorDir, WORKFLOW_CHILD_JOURNAL_FILE), `${JSON.stringify({ type: "start", key: "work", fingerprint: workflowChildFingerprint({ agent: "echo", task: `Seeded ${nonce}` }), runId: path.basename(childDir) })}\n`);
+			updateTerminalRunIndex(priorDir, priorStatus);
+			fs.mkdirSync(childDir, { recursive: true });
+			fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({ runId: path.basename(childDir), mode: "single", sessionId, parentWorkflowRunId: priorStatus.runId, state: "complete", startedAt: 1, steps: [{ agent: "echo", status: "complete" }] }));
+			writeAsyncResultFile(path.join(childDir, "workflow-result.json"), { id: path.basename(childDir), runId: path.basename(childDir), sessionId, toolCallId: "seeded-call", asyncDir: childDir, state: "complete", success: true, results: [{ agent: "echo", output: "seeded output", success: true }] });
+			mockPi.onCall({ matchArgIncludes: `Seeded ${nonce}`, output: "fresh output" });
+			const callsBefore = mockPi.callCount();
+			const { launch, settled } = setup();
+			const relaunched = await Promise.all([launch({ workflowScript: script, args }), launch({ workflowScript: script, args })].map(async (id) => await settled(await id)));
+			assert.deepEqual(relaunched.map((status) => status.workflow?.value).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))), [
+				{ output: "fresh output", reused: false },
+				{ output: "seeded output", reused: true },
+			]);
+			assert.equal(mockPi.callCount(), callsBefore + 1);
 		});
 	});
 

@@ -38,14 +38,14 @@ export function workflowChildFingerprint(params: Record<string, unknown>): strin
 }
 
 export type WorkflowChildJournalRecord =
-	| { type: "start"; key: string; fingerprint: string; runId?: string; asyncDir?: string }
+	| { type: "start"; key: string; fingerprint: string; runId: string }
 	| { type: "settle"; key: string; fingerprint: string; result: WorkflowScriptChildResult };
 
 /** Appends synchronously. A lost record only means a later relaunch runs that child again. */
 export function appendWorkflowChildJournal(workflowAsyncDir: string, record: WorkflowChildJournalRecord): void {
 	const journalPath = path.join(workflowAsyncDir, WORKFLOW_CHILD_JOURNAL_FILE);
 	try {
-		fs.appendFileSync(journalPath, `${JSON.stringify({ ts: Date.now(), ...record })}\n`, "utf-8");
+		fs.appendFileSync(journalPath, `${JSON.stringify(record)}\n`, "utf-8");
 	} catch (error) {
 		console.error(`Failed to append workflow child journal '${journalPath}':`, error);
 	}
@@ -53,13 +53,13 @@ export function appendWorkflowChildJournal(workflowAsyncDir: string, record: Wor
 
 export interface WorkflowReuseSource {
 	runId: string;
-	started: Map<string, { fingerprint: string; runId?: string; asyncDir?: string }>;
+	started: Map<string, { fingerprint: string; runId: string }>;
 	settled: Map<string, { fingerprint: string; result: WorkflowScriptChildResult }>;
 }
 
 export type WorkflowReuseMatch =
 	| { kind: "settled"; result: WorkflowScriptChildResult }
-	| { kind: "started"; runId?: string; asyncDir?: string };
+	| { kind: "started"; runId: string };
 
 function readWorkflowChildJournal(runId: string, workflowAsyncDir: string): WorkflowReuseSource {
 	const source: WorkflowReuseSource = { runId, started: new Map(), settled: new Map() };
@@ -77,8 +77,8 @@ function readWorkflowChildJournal(runId: string, workflowAsyncDir: string): Work
 			continue;
 		}
 		if (!record || typeof record.key !== "string" || typeof record.fingerprint !== "string") continue;
-		if (record.type === "start") {
-			source.started.set(record.key, { fingerprint: record.fingerprint, ...(typeof record.runId === "string" ? { runId: record.runId } : {}), ...(typeof record.asyncDir === "string" ? { asyncDir: record.asyncDir } : {}) });
+		if (record.type === "start" && typeof record.runId === "string") {
+			source.started.set(record.key, { fingerprint: record.fingerprint, runId: record.runId });
 		} else if (record.type === "settle" && record.result && typeof record.result === "object") {
 			source.settled.set(record.key, { fingerprint: record.fingerprint, result: record.result });
 		}
@@ -116,5 +116,5 @@ export function matchWorkflowReuse(source: WorkflowReuseSource, key: string, fin
 	const settled = source.settled.get(key);
 	if (settled) return settled.fingerprint === fingerprint && settled.result.ok === true && settled.result.state !== "running" ? { kind: "settled", result: settled.result } : undefined;
 	const started = source.started.get(key);
-	return started?.fingerprint === fingerprint ? { kind: "started", ...(started.runId ? { runId: started.runId } : {}), ...(started.asyncDir ? { asyncDir: started.asyncDir } : {}) } : undefined;
+	return started?.fingerprint === fingerprint ? { kind: "started", runId: started.runId } : undefined;
 }

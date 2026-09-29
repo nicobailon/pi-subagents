@@ -60,3 +60,17 @@ export async function awaitExistingAsyncRun(asyncDir: string, runId: string, sig
 	if (!completed.importedPublication) return { status: "unavailable", reason: `Async run '${runId}' ended without a result file at ${resultPath}.` };
 	return { status: "settled", result: completed };
 }
+
+/**
+ * Renames the published result to a file owned by `claimant`. Only one of several
+ * concurrent importers can win the rename; the others get undefined and launch fresh.
+ */
+export function claimWorkflowAwaitedResult(asyncDir: string, claimant: string): string | undefined {
+	const claimedPath = `${workflowAwaitedAsyncResultPath(asyncDir)}.${claimant}.claimed`;
+	try {
+		fs.renameSync(workflowAwaitedAsyncResultPath(asyncDir), claimedPath);
+		return claimedPath;
+	} catch {
+		return undefined;
+	}
+}
