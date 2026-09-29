@@ -147,6 +147,7 @@ interface MockPiCallRecord {
 	effectiveArgs?: string[];
 	systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
 	requiredChildTools?: string[];
+	launch?: { tools?: string[]; builtinMcpTools?: string[]; ambientExtensions?: boolean; processEnv?: Record<string, string> };
 	/** The `ChildRuntimeConfig` the scripted child session was launched with. */
 	runtime?: Record<string, unknown>;
 }

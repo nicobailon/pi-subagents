@@ -151,6 +151,8 @@ export interface ResolvePiLaunchToolPlanInput {
 	agentName?: string;
 	permissionRules?: PermissionRules;
 	runtimeSnapshotHost?: McpRuntimeSnapshotHost;
+	/** Tool names the parent resolved against Pi's built-in MCP; the background runner has no host to resolve selectors against. */
+	builtinMcpTools?: string[];
 }
 
 export interface PiLaunchToolPlan {
@@ -162,8 +164,8 @@ export interface PiLaunchToolPlan {
 	resolvedMcpSelections: ResolvedMcpDirectToolSelection[];
 	effectiveMcpSelections: ResolvedMcpDirectToolSelection[];
 	effectiveMcpTools: string[];
-	/** Effective tool names granted from Pi's built-in MCP; empty when pi-mcp-adapter owns MCP. */
-	builtinMcpTools: string[];
+	/** Effective tool names granted from Pi's built-in MCP; undefined when the selectors did not resolve against it. */
+	builtinMcpTools?: string[];
 	explicitToolAllowlist: boolean;
 	internalTools: string[];
 	effectiveToolAllowlist: string[];
@@ -353,7 +355,10 @@ export function resolvePiLaunchToolPlan(
 			);
 	const mcpResolution = capabilityCeiling?.denyExtensions
 		? { selections: [], unresolvedSelectors: [] }
-		: resolveMcpDirectToolResolution(input.mcpDirectTools, input.cwd, input.runtimeSnapshotHost);
+		: input.builtinMcpTools
+			// The runner applies the same ceilings again, so only the names matter here.
+			? { selections: input.builtinMcpTools.map((name) => ({ name, selector: name })), unresolvedSelectors: [], builtin: true as const }
+			: resolveMcpDirectToolResolution(input.mcpDirectTools, input.cwd, input.runtimeSnapshotHost);
 	if (mcpResolution.runtimeServerNames?.length) {
 		throw new Error(formatRuntimeSnapshotMcpServersError(input.agentName, mcpResolution.runtimeServerNames));
 	}
@@ -374,7 +379,7 @@ export function resolvePiLaunchToolPlan(
 	const effectiveMcpTools = effectiveMcpSelections.map(
 		(selection) => selection.name,
 	);
-	const builtinMcpTools = mcpResolution.builtin ? effectiveMcpTools : [];
+	const builtinMcpTools = mcpResolution.builtin ? effectiveMcpTools : undefined;
 	const explicitToolAllowlist =
 		input.tools !== undefined ||
 		(input.mcpDirectTools?.length ?? 0) > 0 ||

@@ -56,6 +56,8 @@ export interface RunnerSubagentStep {
 	/** Private immutable host policy snapshot serialized to the native runner. */
 	requiredExtensions?: import("../../shared/required-child-extensions.ts").RequiredChildExtensionSnapshot;
 	mcpDirectTools?: string[];
+	/** The parent's resolution of `mcpDirectTools` against Pi's built-in MCP; the runner has no host to repeat it. */
+	builtinMcpTools?: string[];
 	mutationTools?: string[];
 	systemPrompt?: string | null;
 	systemPromptMode?: "append" | "replace";

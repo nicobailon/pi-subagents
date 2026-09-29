@@ -69,6 +69,8 @@ export interface McpRuntimeSnapshotHost {
 	};
 	getAllTools?(): readonly McpHostToolInfo[];
 	getCommands?(): readonly { name: string; sourceInfo: { path: string } }[];
+	/** Pi 0.99: servers extensions added with `pi.registerMcpServer()`. */
+	getMcpServers?(): readonly { name: string }[];
 }
 
 /** A `pi.getAllTools()` entry; `exposure` and `namespace` exist only from Pi 0.99. */
@@ -190,6 +192,28 @@ function resolveBuiltinMcpSelections(selectors: string[], tools: readonly McpHos
 export function formatUnresolvedBuiltinMcpSelectors(agentName: string | undefined, selectors: readonly string[]): string {
 	const subject = agentName ? `Agent '${agentName}'` : "Subagent";
 	return `${subject} selects MCP tools that Pi's built-in MCP does not offer: ${selectors.map((selector) => `mcp:${selector}`).join(", ")}. The server may be missing, disconnected, still connecting, or its tools hidden; check /mcp.`;
+}
+
+/**
+ * Servers of built-in MCP selections that only an extension registered. A child without ambient
+ * extensions never registers them. A server of the same name in Pi's `mcp.json` takes precedence;
+ * the project file counts even before the project is trusted, so this never rejects a server the
+ * child might read.
+ */
+export function extensionOnlyMcpServers(selections: readonly ResolvedMcpDirectToolSelection[], host: McpRuntimeSnapshotHost, cwd: string): string[] {
+	const registered = new Set(host.getMcpServers?.().map(({ name }) => name));
+	if (registered.size === 0) return [];
+	const configured = new Set([path.join(getAgentDir(), "mcp.json"), path.join(cwd, ".pi", "mcp.json")].flatMap((file) => {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
+		} catch {
+			return [];
+		}
+		return isRecord(parsed) && isRecord(parsed.mcpServers) ? Object.keys(parsed.mcpServers) : [];
+	}));
+	const servers = selections.map(({ selector }) => selector.split("/")[0]!);
+	return [...new Set(servers)].filter((server) => registered.has(server) && !configured.has(server));
 }
 
 function loadMetadataCache(): MetadataCache | null {

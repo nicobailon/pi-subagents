@@ -59,6 +59,7 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		systemPrompt: acceptancePrompt ? `${step.systemPrompt ?? ""}\n${acceptancePrompt}` : step.systemPrompt ?? "",
 		systemPromptMode: step.systemPromptMode,
 		mcpDirectTools: step.mcpDirectTools,
+		builtinMcpTools: step.builtinMcpTools,
 		extensionBindings: normalizeExtensionBindings(step.extensionBindings)?.value,
 		capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
 		cwd: step.cwd ?? ctx.cwd,

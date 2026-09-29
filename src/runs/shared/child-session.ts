@@ -381,21 +381,6 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});
-			// pi's own hosts emit `session_shutdown` before disposing a session so the
-			// extensions loaded into it (ambient extensions included) release their
-			// watchers, servers, and timers. Do the same, then dispose.
-			const shutdown = async (session: Awaited<ReturnType<PiCodingAgentModule["createAgentSession"]>>["session"]): Promise<void> => {
-				try {
-					const runner = session.extensionRunner;
-					if (runner.hasHandlers("session_shutdown")) {
-						await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }), new Promise<void>((resolve) => setTimeout(resolve, shutdownTimeoutMs).unref?.())]);
-					}
-				} catch (error) {
-					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
-				} finally {
-					session.dispose();
-				}
-			};
 			const open = async () => {
 				const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
 				applyProcessEnv(launch.processEnv);
@@ -450,17 +435,33 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					session.dispose();
 					throw error;
 				}
-				const missingMcpTools = builtinMcpTools.length ? await missingBuiltinMcpTools(session, builtinMcpTools, builtinMcpToolWaitMs) : [];
-				if (missingMcpTools.length) {
-					await shutdown(session);
-					throw new Error(`Selected built-in MCP tools did not register in the child session: ${missingMcpTools.join(", ")}. The MCP server may have failed to connect; check it with /mcp.`);
-				}
 				return session;
 			};
 			const opened = loading.catch(() => {}).then(open);
 			loading = opened;
 			const session = await opened;
 			let pending: Promise<void> | undefined;
+			// pi's own hosts emit `session_shutdown` before disposing a session so the
+			// extensions loaded into it (ambient extensions included) release their
+			// watchers, servers, and timers. Do the same, then dispose.
+			const shutdown = async (): Promise<void> => {
+				try {
+					const runner = session.extensionRunner;
+					if (runner.hasHandlers("session_shutdown")) {
+						await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }), new Promise<void>((resolve) => setTimeout(resolve, shutdownTimeoutMs).unref?.())]);
+					}
+				} catch (error) {
+					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
+				} finally {
+					session.dispose();
+				}
+			};
+			// Outside the launch lock: MCP servers connect after `session_start` without reading the per-launch env.
+			const missingMcpTools = builtinMcpTools.length ? await missingBuiltinMcpTools(session, builtinMcpTools, builtinMcpToolWaitMs) : [];
+			if (missingMcpTools.length) {
+				await shutdown();
+				throw new Error(`Selected built-in MCP tools did not register in the child session: ${missingMcpTools.join(", ")}. The MCP server may have failed to connect; check it with /mcp.`);
+			}
 			const child: ChildSession = {
 				subscribe: (listener) => session.subscribe((event) => listener(event as unknown as ChildSessionEvent)),
 				prompt: (text) => session.prompt(text),
@@ -471,7 +472,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				dispose: () => {
 					if (!pending) {
 						live.delete(child);
-						const shutdownDone = shutdown(session);
+						const shutdownDone = shutdown();
 						pending = shutdownDone;
 						shutdowns.add(shutdownDone);
 						void shutdownDone.finally(() => shutdowns.delete(shutdownDone));

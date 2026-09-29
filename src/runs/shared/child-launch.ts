@@ -17,7 +17,7 @@ import {
 	type HerdrMachineReference,
 } from "../../shared/types.ts";
 import type { NestedPathEntry } from "./nested-path.ts";
-import type { McpRuntimeSnapshotHost } from "./mcp-direct-tool-allowlist.ts";
+import { extensionOnlyMcpServers, type McpRuntimeSnapshotHost } from "./mcp-direct-tool-allowlist.ts";
 import type { PermissionRules } from "./permissions.ts";
 import type { StructuredOutputRuntime } from "./structured-output.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
@@ -85,6 +85,8 @@ export interface BuildInProcessChildLaunchInput {
 	requiredExtensions?: RequiredChildExtensionSnapshot;
 	systemPrompt?: string | null;
 	mcpDirectTools?: string[];
+	/** Tool names the parent resolved against Pi's built-in MCP, carried to the runner. */
+	builtinMcpTools?: string[];
 	extensionBindings?: ExtensionBindings;
 	cwd: string;
 	intercomSessionName?: string;
@@ -162,7 +164,9 @@ function inheritedCapabilityCeiling(inherited: InheritedChildRuntime | undefined
 function childProcessEnv(input: BuildInProcessChildLaunchInput, toolPlan: PiLaunchToolPlan): Record<string, string | undefined> {
 	const env: Record<string, string | undefined> = {};
 	env[PI_SUBAGENT_EXTENSION_BINDINGS_ENV] = encodeExtensionBindings(input.extensionBindings);
-	if (!toolPlan.capabilityCeiling && input.mcpDirectTools?.length) env[MCP_DIRECT_TOOLS_ENV] = input.mcpDirectTools.join(",");
+	// Selectors resolved against Pi's built-in MCP never reach an adapter.
+	if (toolPlan.builtinMcpTools) env[MCP_DIRECT_TOOLS_ENV] = "__none__";
+	else if (!toolPlan.capabilityCeiling && input.mcpDirectTools?.length) env[MCP_DIRECT_TOOLS_ENV] = input.mcpDirectTools.join(",");
 	else if (toolPlan.capabilityCeiling && toolPlan.effectiveMcpSelections.length && !toolPlan.capabilityCeiling.denyExtensions) {
 		env[MCP_DIRECT_TOOLS_ENV] = toolPlan.effectiveMcpSelections.map((selection) => selection.selector).join(",");
 	} else env[MCP_DIRECT_TOOLS_ENV] = "__none__";
@@ -199,6 +203,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		subagentOnlyExtensions: input.subagentOnlyExtensions,
 		requiredExtensions,
 		mcpDirectTools: input.mcpDirectTools,
+		builtinMcpTools: input.builtinMcpTools,
 		cwd: input.cwd,
 		requireReadTool: input.requireReadTool,
 		structuredOutput: Boolean(input.structuredOutput),
@@ -210,6 +215,11 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		permissionRules: input.permissionRules,
 		runtimeSnapshotHost: input.runtimeSnapshotHost,
 	});
+	// Foreground children load no ambient extensions, so an extension's registerMcpServer() never runs in them.
+	if (input.host === "parent" && input.runtimeSnapshotHost && toolPlan.builtinMcpTools?.length) {
+		const servers = extensionOnlyMcpServers(toolPlan.effectiveMcpSelections, input.runtimeSnapshotHost, input.cwd);
+		if (servers.length) throw new Error(`Agent '${input.childAgentName}' selects MCP tools from servers that extensions registered (${servers.join(", ")}). Only background children (async: true) load those extensions; run the agent in the background or add the server to mcp.json.`);
+	}
 	toolPlan.capabilityCeiling = intersectSubagentCapabilityCeilings(toolPlan.capabilityCeiling, agentCapabilityCeiling);
 	if (toolPlan.capabilityAudit && toolPlan.capabilityCeiling) {
 		toolPlan.capabilityAudit = { ...toolPlan.capabilityAudit, ceiling: toolPlan.capabilityCeiling };
@@ -319,6 +329,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		storage: childStorage(input),
 		...(input.model ? { model: input.model } : {}),
 		...(toolPlan.explicitToolAllowlist ? { tools: toolPlan.effectiveToolAllowlist } : {}),
+		...(toolPlan.builtinMcpTools?.length ? { builtinMcpTools: toolPlan.builtinMcpTools } : {}),
 		...(!toolPlan.explicitToolAllowlist && toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
 		extensionPaths,
 		requiredExtensions: toolPlan.requiredExtensions,

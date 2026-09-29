@@ -611,6 +611,53 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		}
 	});
 
+	describe("with Pi's built-in MCP", () => {
+		const host = {
+			events: { emit() {} },
+			getCommands: () => [{ name: "mcp", sourceInfo: { path: "builtin:mcp" } }],
+			getAllTools: () => [["docs", "search"], ["docs", "fetch"], ["ext", "ping"]].map(([server, tool]) => ({ name: `mcp__${server}__${tool}`, exposure: "codemode", namespace: { name: `mcp__${server}` } })),
+			getMcpServers: () => [{ name: "ext" }],
+		};
+		const runForeground = (agent: ReturnType<typeof makeAgent>) => runSync(tempDir, [agent], agent.name, "Use MCP", { runtimeSnapshotHost: host, acceptance: false });
+		const runBackground = async (agent: ReturnType<typeof makeAgent>) => {
+			const id = `async-builtin-mcp-${Date.now().toString(36)}`;
+			executeAsyncSingle(id, {
+				agent: agent.name, task: "Use MCP", agentConfig: agent,
+				ctx: { pi: host, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2, acceptance: false,
+			});
+			assert.equal((await readAsyncPayload(id)).success, true);
+			const callFile = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-") && name.endsWith(".json")).sort().at(-1)!;
+			return (JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord).launch!;
+		};
+
+		it("gives foreground and background children exactly the selected tools", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+			const agent = makeAgent("worker", { tools: ["read"], mcpDirectTools: ["docs/search"] });
+			mockPi.onCall({ output: "foreground done" });
+			assert.equal((await runForeground(agent)).exitCode, 0);
+			const foreground = mockPi.sessions.at(-1)!.launch;
+			assert.deepEqual(foreground.builtinMcpTools, ["mcp__docs__search"]);
+			assert.ok(foreground.tools?.includes("mcp__docs__search"));
+
+			mockPi.onCall({ output: "background done" });
+			const background = await runBackground(agent);
+			assert.deepEqual(background.builtinMcpTools, ["mcp__docs__search"]);
+			assert.ok(background.tools?.includes("mcp__docs__search"));
+			assert.equal(background.processEnv?.MCP_DIRECT_TOOLS, "__none__");
+		});
+
+		it("grants extension-registered servers only to background children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+			const agent = makeAgent("worker", { tools: ["read"], mcpDirectTools: ["ext"] });
+			await assert.rejects(runForeground(agent), /extensions registered \(ext\)\. Only background children \(async: true\) load those extensions/);
+
+			mockPi.onCall({ output: "background done" });
+			const background = await runBackground(agent);
+			assert.deepEqual(background.builtinMcpTools, ["mcp__ext__ping"]);
+			assert.equal(background.ambientExtensions, true);
+		});
+	});
+
 	it("matches preflight launch and definition digests for executor-launched async runs with the Intercom bridge active", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const agentName = `bridge-async-${Date.now().toString(36)}`;
 		const task = "Compare bridged async launch identity.";

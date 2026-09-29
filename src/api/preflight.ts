@@ -15,7 +15,7 @@ import { assertThinkingWithinCeiling, intersectThinkingCeilings, type ThinkingLe
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, type ArtifactDirPreference, type ArtifactPaths, type IntercomBridgeConfig, type IntercomBridgeMode, type JsonSchemaObject, type OutputMode } from "../shared/types.ts";
 import { capabilityCeilingAgentRestrictionMessage, intersectSubagentCapabilityCeilings, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
 import { resolvePermissionRules } from "../runs/shared/permissions.ts";
-import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
+import type { McpRuntimeSnapshotHost, ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
 import { resolveStepBehavior } from "../shared/settings.ts";
 import { canPreferForkFromSnapshot, resolveSubagentLaunchContext } from "../shared/fork-context.ts";
 import { loadConfig } from "../extension/config.ts";
@@ -92,6 +92,8 @@ export interface SubagentLaunchContractInput {
 	nestedRootRunId?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	inheritedCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	/** The calling extension's `pi`, so `mcp:` selectors resolve against the MCP the launch uses. */
+	runtimeSnapshotHost?: McpRuntimeSnapshotHost;
 	/** Per-launch bridge config; replaces the global `intercomBridge` config exactly as the tool and delegation overrides do. */
 	intercomBridge?: IntercomBridgeConfig;
 	/**
@@ -418,6 +420,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			capabilityCeiling: effectiveCapabilityCeiling,
 			agentName: agent.name,
 			permissionRules,
+			runtimeSnapshotHost: input.runtimeSnapshotHost,
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);

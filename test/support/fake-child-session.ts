@@ -467,6 +467,7 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 							storage: launch.storage,
 							model: launch.model,
 							tools: launch.tools,
+							builtinMcpTools: launch.builtinMcpTools,
 							excludeTools: launch.excludeTools,
 							extensionPaths: launch.extensionPaths,
 							ambientExtensions: launch.ambientExtensions,

@@ -678,6 +678,17 @@ describe("selected built-in MCP tools in a child session", () => {
 		assert.deepEqual(mcp.lifecycle, ["session_shutdown", "dispose"]);
 	});
 
+	it("does not hold other child launches while it waits for MCP tools", async () => {
+		const mcp = builtinMcpPi();
+		let waitEnded = false;
+		const waiting = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 500, loadPiCodingAgent: async () => mcp.pi })
+			.create({ ...mcpLaunch, builtinMcpTools: ["mcp__gone__x"] }).finally(() => { waitEnded = true; });
+		while (mcp.loaded.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() }).create(stubLaunch);
+		assert.equal(waitEnded, false);
+		await assert.rejects(waiting, /mcp__gone__x/);
+	});
+
 	it("loads no built-in MCP when no tools are selected", async () => {
 		for (const builtinMcpTools of [undefined, []]) {
 			const mcp = builtinMcpPi();
