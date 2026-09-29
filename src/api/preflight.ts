@@ -92,7 +92,7 @@ export interface SubagentLaunchContractInput {
 	nestedRootRunId?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	inheritedCapabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	/** The calling extension's `pi`, so `mcp:` selectors resolve against the MCP the launch uses. */
+	/** The calling extension's `pi`, so `mcp:` selectors resolve against the MCP the launch uses. Without it, preflight cannot see Pi's built-in MCP and resolves through pi-mcp-adapter's configuration. */
 	runtimeSnapshotHost?: McpRuntimeSnapshotHost;
 	/** Per-launch bridge config; replaces the global `intercomBridge` config exactly as the tool and delegation overrides do. */
 	intercomBridge?: IntercomBridgeConfig;

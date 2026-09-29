@@ -119,8 +119,9 @@ export function resolveMcpDirectToolResolution(
 ): McpDirectToolResolution {
 	const selectors = normalizeMcpDirectToolSelectors(mcpDirectTools);
 	if (selectors.length === 0) return { selections: [], unresolvedSelectors: [] };
-	if (isBuiltinMcpActive(runtimeSnapshotHost)) {
-		return resolveBuiltinMcpSelections(selectors, runtimeSnapshotHost?.getAllTools?.() ?? []);
+	// An installed pi-mcp-adapter takes /mcp over from Pi's built-in MCP and keeps priority.
+	if (runtimeSnapshotHost?.getCommands?.().find((command) => command.name === "mcp")?.sourceInfo.path === "builtin:mcp") {
+		return resolveBuiltinMcpSelections(selectors, runtimeSnapshotHost.getAllTools?.() ?? []);
 	}
 
 	const config = configOverride ?? loadMcpConfig(cwd);
@@ -162,11 +163,6 @@ export function resolveMcpDirectToolSelections(
 	return resolveMcpDirectToolResolution(mcpDirectTools, cwd, runtimeSnapshotHost).selections;
 }
 
-/** An installed pi-mcp-adapter takes /mcp over from Pi's built-in MCP and keeps priority. */
-function isBuiltinMcpActive(host: McpRuntimeSnapshotHost | undefined): boolean {
-	return host?.getCommands?.().find((command) => command.name === "mcp")?.sourceInfo.path === "builtin:mcp";
-}
-
 /**
  * Pi names built-in MCP tools `mcp__<server>__<tool>` with invalid characters replaced by `_`,
  * in the namespace `mcp__<server>`. Overlong or colliding names get a hash suffix, so those
@@ -195,14 +191,14 @@ export function formatUnresolvedBuiltinMcpSelectors(agentName: string | undefine
 }
 
 /**
- * Servers of built-in MCP selections that only an extension registered. A child without ambient
- * extensions never registers them. A server of the same name in Pi's `mcp.json` takes precedence;
- * the project file counts even before the project is trusted, so this never rejects a server the
- * child might read.
+ * Selected servers that only an extension registered, which a child without ambient extensions
+ * never has. A server of the same name in Pi's `mcp.json` takes precedence; the project file counts
+ * even when untrusted, since this only picks the error to show.
  */
 export function extensionOnlyMcpServers(selections: readonly ResolvedMcpDirectToolSelection[], host: McpRuntimeSnapshotHost, cwd: string): string[] {
 	const registered = new Set(host.getMcpServers?.().map(({ name }) => name));
-	if (registered.size === 0) return [];
+	const servers = [...new Set(selections.map(({ selector }) => selector.split("/")[0]!))].filter((server) => registered.has(server));
+	if (servers.length === 0) return [];
 	const configured = new Set([path.join(getAgentDir(), "mcp.json"), path.join(cwd, ".pi", "mcp.json")].flatMap((file) => {
 		let parsed: unknown;
 		try {
@@ -212,8 +208,7 @@ export function extensionOnlyMcpServers(selections: readonly ResolvedMcpDirectTo
 		}
 		return isRecord(parsed) && isRecord(parsed.mcpServers) ? Object.keys(parsed.mcpServers) : [];
 	}));
-	const servers = selections.map(({ selector }) => selector.split("/")[0]!);
-	return [...new Set(servers)].filter((server) => registered.has(server) && !configured.has(server));
+	return servers.filter((server) => !configured.has(server));
 }
 
 function loadMetadataCache(): MetadataCache | null {

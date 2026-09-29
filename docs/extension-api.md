@@ -262,7 +262,7 @@ Preflight covers ordinary single-agent launch resolution:
 
 - Selected agent identity and shadowed candidates.
 - A parsed-definition digest, including system prompt and launch-affecting model, tool, skill, extension, output, and memory fields. Runtime overlays such as the Intercom bridge never change it.
-- Fresh/fork context, effective model and thinking, skill and tool resolution, direct MCP selections, runtime/configured extensions.
+- Fresh/fork context, effective model and thinking, skill and tool resolution, direct MCP selections, runtime/configured extensions. Pass your extension's `pi` as `runtimeSnapshotHost` so `mcp:` selections resolve against Pi's built-in MCP the way a launch does. Without it, preflight cannot see built-in MCP and resolves `mcp:` selections through pi-mcp-adapter's configuration, as before.
 - Model scope allow lists accept the reserved tokens `inherit` and `scoped`; `scoped` expands to the caller-supplied `scopedModelIds` snapshot, degrading to `inherit` when it is omitted. Callers whose `modelScope.allow` uses `scoped` must pass `scopedModelIds` (the session's `/scoped-models` snapshot) alongside `parentModel`, otherwise preflight resolves it as `inherit` and may reject models the actual launch allows.
 - The resolved Intercom bridge state (`intercomBridge.mode` and `intercomBridge.active`). An active bridge appends the bridge instruction to the child prompt and adds `contact_supervisor` to a declared tool list, exactly as execution does.
 - Artifact/session paths, async lifecycle/status/result/event/process-terminal paths, package/lifecycle versions, capability-ceiling audit data, and stable digests.
