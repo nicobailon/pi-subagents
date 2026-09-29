@@ -66,8 +66,8 @@ export interface ChildSessionLaunch {
 	model?: string;
 	/** Explicit tool allowlist; undefined keeps pi's defaults. */
 	tools?: string[];
-	/** Tools of Pi's built-in MCP extension the child must declare to its model directly; `tools` names them too. */
-	builtinMcpTools?: string[];
+	/** Tools of Pi's built-in MCP extension the child must declare to its model directly, with the `mcp:` selector that granted each; `tools` names them too. */
+	builtinMcpTools?: Array<{ name: string; selector: string }>;
 	excludeTools?: string[];
 	/** Extension files loaded for this child in addition to the inline hooks. */
 	extensionPaths: string[];
@@ -221,23 +221,30 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
 /**
  * Pi's built-in MCP extension registers server tools with the configured exposure, `codemode` by
  * default, which the child's `tools` allowlist cannot declare. Registering the selected names as
- * `direct` makes them model-declared and callable; `hidden` stays hidden. Every other tool the
- * extension registers becomes `hidden`, so neither codemode nor `ctx.executeTool()` can call it,
- * independent of the `tools` allowlist. The `builtin` entry loads
+ * `direct` makes them model-declared and callable; `hidden` stays hidden. A name counts only when
+ * the tool's raw identity, its `<server>/<tool>` label, matches the granting selector: Pi can give
+ * the sanitized name of `srv/a.b` to `srv/a_b`. Every other tool the extension registers becomes
+ * `hidden`, so neither codemode nor `ctx.executeTool()` can call it, independent of the `tools`
+ * allowlist. The `builtin` entry loads
  * through the explicit `builtin:mcp` path even with `noExtensions`, and `replaceable` lets an
  * ambient MCP extension that registers `/mcp` replace it, as in the parent.
  */
-function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, names: readonly string[]): ChildHookExtension & { builtin: true; replaceable: true } {
+function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, selections: ReadonlyArray<{ name: string; selector: string }>): ChildHookExtension & { builtin: true; replaceable: true } {
 	// Pi 0.99 export; the pinned SDK types predate it.
 	const createMcpExtension = (pi as { createMcpExtension?: () => (api: ExtensionAPI) => void | Promise<void> }).createMcpExtension;
-	if (typeof createMcpExtension !== "function") throw new Error(`Selected built-in MCP tools (${names.join(", ")}) need a Pi version with built-in MCP.`);
-	const selected = new Set(names);
+	if (typeof createMcpExtension !== "function") throw new Error(`Selected built-in MCP tools (${selections.map(({ name }) => name).join(", ")}) need a Pi version with built-in MCP.`);
+	const selectors = new Map(selections.map(({ name, selector }) => [name, selector]));
+	const granted = (tool: { name: string; label?: string; exposure?: string }) => {
+		const selector = selectors.get(tool.name);
+		if (selector === undefined || tool.exposure === "hidden" || tool.label === undefined) return false;
+		return selector.includes("/") ? tool.label === selector : tool.label.startsWith(`${selector}/`);
+	};
 	const mcp = createMcpExtension();
 	const factory = (api: ExtensionAPI) => mcp(new Proxy(api, {
 		get(target, prop) {
 			if (prop === "registerTool") {
 				return (tool: Parameters<ExtensionAPI["registerTool"]>[0] & { exposure?: string }) =>
-					target.registerTool({ ...tool, exposure: selected.has(tool.name) && tool.exposure !== "hidden" ? "direct" : "hidden" } as typeof tool);
+					target.registerTool({ ...tool, exposure: granted(tool) ? "direct" : "hidden" } as typeof tool);
 			}
 			const value = Reflect.get(target, prop, target);
 			return typeof value === "function" ? value.bind(target) : value;
@@ -465,12 +472,12 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			// Outside the launch lock: MCP servers connect after `session_start` without reading the per-launch env.
 			if (builtinMcpTools.length) {
 				const disposed = () => disposals !== disposalsAtStart;
-				const ready = missingBuiltinMcpTools(session, builtinMcpTools, builtinMcpToolWaitMs, disposed).then(async (missing) => {
+				const ready = missingBuiltinMcpTools(session, builtinMcpTools.map(({ name }) => name), builtinMcpToolWaitMs, disposed).then(async (missing) => {
 					if (!missing.length && !disposed()) return;
 					await shutdown();
 					throw new Error(disposed()
 						? "The child session factory was disposed while the child waited for its MCP tools."
-						: `Selected built-in MCP tools did not register in the child session: ${missing.join(", ")}. The MCP server may have failed to connect; check it with /mcp.`);
+						: `Selected built-in MCP tools did not register in the child session: ${missing.join(", ")}. The MCP server may have failed to connect, or the name belongs to a different tool than the selector names; check it with /mcp.`);
 				});
 				mcpWaits.add(ready);
 				try { await ready; } finally { mcpWaits.delete(ready); }

@@ -41,14 +41,22 @@ describe("child tool plan with Pi built-in MCP", () => {
 	it("grants every non-hidden tool of a selected server as a required child tool", () => {
 		const plan = resolvePiLaunchToolPlan({ tools: ["read"], mcpDirectTools: ["docs"], runtimeSnapshotHost: host });
 		const granted = ["mcp__docs__search_pages", "mcp__docs__fetch"];
-		assert.deepEqual(plan.builtinMcpTools, granted);
+		assert.deepEqual(plan.builtinMcpTools, granted.map((name) => ({ name, selector: "docs" })));
 		assert.deepEqual(plan.effectiveToolAllowlist, ["read", ...granted]);
 		assert.deepEqual(plan.requiredChildTools, ["read", ...granted]);
 	});
 
 	it("grants one tool for a tool selector and applies exclusions", () => {
 		const plan = resolvePiLaunchToolPlan({ mcpDirectTools: ["docs/search.pages", "docs/fetch"], excludeTools: ["mcp__docs__fetch"], runtimeSnapshotHost: host });
-		assert.deepEqual(plan.builtinMcpTools, ["mcp__docs__search_pages"]);
+		assert.deepEqual(plan.builtinMcpTools, [{ name: "mcp__docs__search_pages", selector: "docs/search.pages" }]);
+	});
+
+	it("grants the hash-suffixed name Pi gives a tool whose sanitized name another tool took", () => {
+		const plan = resolvePiLaunchToolPlan({ mcpDirectTools: ["srv/a.b"], runtimeSnapshotHost: mcpHost("builtin:mcp", [
+			{ name: "mcp__srv__a_b", exposure: "codemode", namespace: { name: "mcp__srv" } },
+			{ name: "mcp__srv__a_b_df0974cd", exposure: "codemode", namespace: { name: "mcp__srv" } },
+		]) });
+		assert.deepEqual(plan.effectiveMcpTools, ["mcp__srv__a_b_df0974cd"]);
 	});
 
 	it("does not apply the adapter's legacy underscore ceiling names to built-in tools", () => {

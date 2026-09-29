@@ -637,12 +637,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			mockPi.onCall({ output: "foreground done" });
 			assert.equal((await runForeground(agent)).exitCode, 0);
 			const foreground = mockPi.sessions.at(-1)!.launch;
-			assert.deepEqual(foreground.builtinMcpTools, ["mcp__docs__search"]);
+			assert.deepEqual(foreground.builtinMcpTools, [{ name: "mcp__docs__search", selector: "docs/search" }]);
 			assert.ok(foreground.tools?.includes("mcp__docs__search"));
 
 			mockPi.onCall({ output: "background done" });
 			const background = await runBackground(agent);
-			assert.deepEqual(background.builtinMcpTools, ["mcp__docs__search"]);
+			assert.deepEqual(background.builtinMcpTools, [{ name: "mcp__docs__search", selector: "docs/search" }]);
 			assert.ok(background.tools?.includes("mcp__docs__search"));
 			assert.equal(background.processEnv?.MCP_DIRECT_TOOLS, "__none__");
 		});
@@ -653,7 +653,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 			mockPi.onCall({ output: "background done" });
 			const background = await runBackground(agent);
-			assert.deepEqual(background.builtinMcpTools, ["mcp__ext__ping"]);
+			assert.deepEqual(background.builtinMcpTools, [{ name: "mcp__ext__ping", selector: "ext" }]);
 			assert.equal(background.ambientExtensions, true);
 		});
 

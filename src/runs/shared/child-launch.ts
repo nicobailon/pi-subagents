@@ -17,7 +17,7 @@ import {
 	type HerdrMachineReference,
 } from "../../shared/types.ts";
 import type { NestedPathEntry } from "./nested-path.ts";
-import { extensionOnlyMcpServers, type McpRuntimeSnapshotHost } from "./mcp-direct-tool-allowlist.ts";
+import { extensionOnlyMcpServers, type McpRuntimeSnapshotHost, type ResolvedMcpDirectToolSelection } from "./mcp-direct-tool-allowlist.ts";
 import type { PermissionRules } from "./permissions.ts";
 import type { StructuredOutputRuntime } from "./structured-output.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
@@ -85,8 +85,8 @@ export interface BuildInProcessChildLaunchInput {
 	requiredExtensions?: RequiredChildExtensionSnapshot;
 	systemPrompt?: string | null;
 	mcpDirectTools?: string[];
-	/** Tool names the parent resolved against Pi's built-in MCP, carried to the runner. */
-	builtinMcpTools?: string[];
+	/** Selections the parent resolved against Pi's built-in MCP, carried to the runner. */
+	builtinMcpTools?: ResolvedMcpDirectToolSelection[];
 	extensionBindings?: ExtensionBindings;
 	cwd: string;
 	intercomSessionName?: string;
