@@ -212,6 +212,11 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
 	}
 }
 
+function snapshotProcessEnv(values: Record<string, string | undefined> | undefined): NodeJS.ProcessEnv | undefined {
+	if (!values) return undefined;
+	return Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
+}
+
 function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]>, modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined, requiredPaths: ReadonlySet<string>): { claimedProviderIds: Set<string>; registered: boolean } {
 	const claimedProviderIds = new Set<string>();
 	if (!("getExtensions" in loader) || typeof loader.getExtensions !== "function") return { claimedProviderIds, registered: false };
@@ -334,9 +339,8 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});
-			const open = async () => {
+			const openWithProcessEnv = async () => {
 				const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
-				applyProcessEnv(launch.processEnv);
 				if (!resetExtensionCacheOnReload(loader) && (launch.ambientExtensions || launch.extensionPaths.length)) launch.onExtensionError?.({ extensionPath: "<loader>", event: "load", error: new Error("pi's extension cache reset is unavailable; extensions loaded into this child share module state with other sessions in this process.") });
 				await loader.reload();
 				const loadErrors = requiredPaths.size > 0
@@ -389,6 +393,15 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					throw error;
 				}
 				return session;
+			};
+			const open = async () => {
+				const previousProcessEnv = snapshotProcessEnv(launch.processEnv);
+				applyProcessEnv(launch.processEnv);
+				try {
+					return await openWithProcessEnv();
+				} finally {
+					applyProcessEnv(previousProcessEnv);
+				}
 			};
 			const opened = loading.catch(() => {}).then(open);
 			loading = opened;

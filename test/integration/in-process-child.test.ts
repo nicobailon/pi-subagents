@@ -348,18 +348,43 @@ function stubPi(session: Record<string, unknown> = {}, onReload?: () => void): P
 const stubLaunch: ChildSessionLaunch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] };
 
 describe("default child session factory", () => {
-	it("serializes process env through extension loading and session start across concurrent launches", async () => {
+	it("serializes and restores process env through extension loading and session start across concurrent launches", async () => {
 		const seen: string[] = [];
 		const bound: string[] = [];
+		process.env.PI_SUBAGENT_TEST_ENV = "parent";
 		const bindExtensions = async () => { await new Promise((resolve) => setTimeout(resolve, 10)); bound.push(process.env.PI_SUBAGENT_TEST_ENV ?? ""); };
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi({ bindExtensions }, () => { seen.push(process.env.PI_SUBAGENT_TEST_ENV ?? ""); }) });
 		await Promise.all([
 			factory.create({ ...stubLaunch, processEnv: { PI_SUBAGENT_TEST_ENV: "a" } }),
 			factory.create({ ...stubLaunch, processEnv: { PI_SUBAGENT_TEST_ENV: "b" } }),
 		]);
-		delete process.env.PI_SUBAGENT_TEST_ENV;
 		assert.deepEqual(seen, ["a", "b"]);
 		assert.deepEqual(bound, ["a", "b"]);
+		assert.equal(process.env.PI_SUBAGENT_TEST_ENV, "parent");
+		delete process.env.PI_SUBAGENT_TEST_ENV;
+	});
+
+	it("removes child process env keys that were absent before launch", async () => {
+		delete process.env.PI_SUBAGENT_TEST_ENV;
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() });
+		await factory.create({ ...stubLaunch, processEnv: { PI_SUBAGENT_TEST_ENV: "child" } });
+		assert.equal(process.env.PI_SUBAGENT_TEST_ENV, undefined);
+	});
+
+	it("restores process env when child extension loading fails", async () => {
+		process.env.PI_SUBAGENT_TEST_ENV = "parent";
+		const pi = stubPi();
+		pi.DefaultResourceLoader = class {
+			loaded = false;
+			async reload() { throw new Error("reload failed"); }
+		} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		await assert.rejects(
+			factory.create({ ...stubLaunch, processEnv: { PI_SUBAGENT_TEST_ENV: "child" } }),
+			/reload failed/,
+		);
+		assert.equal(process.env.PI_SUBAGENT_TEST_ENV, "parent");
+		delete process.env.PI_SUBAGENT_TEST_ENV;
 	});
 
 	it("marks each child's loader as reloaded so pi resets its extension cache", async () => {
@@ -583,11 +608,14 @@ describe("default child session factory", () => {
 		}
 	});
 
-	it("disposes the session when bindExtensions rejects", async () => {
+	it("disposes the session and restores process env when bindExtensions rejects", async () => {
 		let disposed = 0;
+		process.env.PI_SUBAGENT_TEST_ENV = "parent";
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi({ bindExtensions: async () => { throw new Error("bind failed"); }, dispose: () => { disposed += 1; } }) });
-		await assert.rejects(factory.create(stubLaunch), /bind failed/);
+		await assert.rejects(factory.create({ ...stubLaunch, processEnv: { PI_SUBAGENT_TEST_ENV: "child" } }), /bind failed/);
 		assert.equal(disposed, 1);
+		assert.equal(process.env.PI_SUBAGENT_TEST_ENV, "parent");
+		delete process.env.PI_SUBAGENT_TEST_ENV;
 	});
 
 	it("leaves detached children running on dispose and keeps the shared runtime", async () => {
