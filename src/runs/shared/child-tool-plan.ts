@@ -9,6 +9,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+	formatUnresolvedBuiltinMcpSelectors,
 	formatUnresolvedMcpDirectToolSelectors,
 	resolveMcpDirectToolResolution,
 	type McpRuntimeSnapshotHost,
@@ -161,6 +162,8 @@ export interface PiLaunchToolPlan {
 	resolvedMcpSelections: ResolvedMcpDirectToolSelection[];
 	effectiveMcpSelections: ResolvedMcpDirectToolSelection[];
 	effectiveMcpTools: string[];
+	/** Effective tool names granted from Pi's built-in MCP; empty when pi-mcp-adapter owns MCP. */
+	builtinMcpTools: string[];
 	explicitToolAllowlist: boolean;
 	internalTools: string[];
 	effectiveToolAllowlist: string[];
@@ -355,11 +358,13 @@ export function resolvePiLaunchToolPlan(
 		throw new Error(formatRuntimeSnapshotMcpServersError(input.agentName, mcpResolution.runtimeServerNames));
 	}
 	if (mcpResolution.unresolvedSelectors.length > 0) {
-		throw new Error(formatUnresolvedMcpDirectToolSelectors(mcpResolution.unresolvedSelectors));
+		throw new Error(mcpResolution.builtin
+			? formatUnresolvedBuiltinMcpSelectors(input.agentName, mcpResolution.unresolvedSelectors)
+			: formatUnresolvedMcpDirectToolSelectors(mcpResolution.unresolvedSelectors));
 	}
 	const resolvedMcpSelections = mcpResolution.selections;
 	const resolvedMcpNames = new Set(resolvedMcpSelections.map((selection) => selection.name));
-	const legacyMcpNameCounts = countLegacyUnderscoreMcpToolNames(resolvedMcpSelections);
+	const legacyMcpNameCounts = mcpResolution.builtin ? new Map<string, number>() : countLegacyUnderscoreMcpToolNames(resolvedMcpSelections);
 	const effectiveMcpSelections = resolvedMcpSelections.filter(
 		(selection) =>
 			!allowedToolSet ||
@@ -369,6 +374,7 @@ export function resolvePiLaunchToolPlan(
 	const effectiveMcpTools = effectiveMcpSelections.map(
 		(selection) => selection.name,
 	);
+	const builtinMcpTools = mcpResolution.builtin ? effectiveMcpTools : [];
 	const explicitToolAllowlist =
 		input.tools !== undefined ||
 		(input.mcpDirectTools?.length ?? 0) > 0 ||
@@ -498,6 +504,7 @@ export function resolvePiLaunchToolPlan(
 		resolvedMcpSelections,
 		effectiveMcpSelections,
 		effectiveMcpTools,
+		builtinMcpTools,
 		explicitToolAllowlist,
 		internalTools,
 		effectiveToolAllowlist,

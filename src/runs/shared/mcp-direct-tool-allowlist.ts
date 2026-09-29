@@ -67,6 +67,15 @@ export interface McpRuntimeSnapshotHost {
 	events: {
 		emit(event: string, request: McpRuntimeSnapshotRequest): void;
 	};
+	getAllTools?(): readonly McpHostToolInfo[];
+	getCommands?(): readonly { name: string; sourceInfo: { path: string } }[];
+}
+
+/** A `pi.getAllTools()` entry; `exposure` and `namespace` exist only from Pi 0.99. */
+export interface McpHostToolInfo {
+	name: string;
+	exposure?: string;
+	namespace?: { name: string };
 }
 
 interface CachedTool {
@@ -96,6 +105,8 @@ export interface McpDirectToolResolution {
 	/** Normal loaded config plus the selected runtime server definitions. */
 	mcpConfig?: McpConfig;
 	runtimeServerNames?: string[];
+	/** Set when the selectors were resolved against Pi's built-in MCP instead of pi-mcp-adapter. */
+	builtin?: true;
 }
 
 export function resolveMcpDirectToolResolution(
@@ -106,6 +117,9 @@ export function resolveMcpDirectToolResolution(
 ): McpDirectToolResolution {
 	const selectors = normalizeMcpDirectToolSelectors(mcpDirectTools);
 	if (selectors.length === 0) return { selections: [], unresolvedSelectors: [] };
+	if (isBuiltinMcpActive(runtimeSnapshotHost)) {
+		return resolveBuiltinMcpSelections(selectors, runtimeSnapshotHost?.getAllTools?.() ?? []);
+	}
 
 	const config = configOverride ?? loadMcpConfig(cwd);
 	const { servers: selectedServers, tools: selectedTools } = parseMcpDirectToolSelectors(selectors);
@@ -144,6 +158,38 @@ export function resolveMcpDirectToolSelections(
 	runtimeSnapshotHost?: McpRuntimeSnapshotHost,
 ): ResolvedMcpDirectToolSelection[] {
 	return resolveMcpDirectToolResolution(mcpDirectTools, cwd, runtimeSnapshotHost).selections;
+}
+
+/** An installed pi-mcp-adapter takes /mcp over from Pi's built-in MCP and keeps priority. */
+function isBuiltinMcpActive(host: McpRuntimeSnapshotHost | undefined): boolean {
+	return host?.getCommands?.().find((command) => command.name === "mcp")?.sourceInfo.path === "builtin:mcp";
+}
+
+/**
+ * Pi names built-in MCP tools `mcp__<server>__<tool>` with invalid characters replaced by `_`,
+ * in the namespace `mcp__<server>`. Overlong or colliding names get a hash suffix, so those
+ * tools are reachable only through a whole-server selector.
+ */
+function resolveBuiltinMcpSelections(selectors: string[], tools: readonly McpHostToolInfo[]): McpDirectToolResolution {
+	const selections: ResolvedMcpDirectToolSelection[] = [];
+	const unresolvedSelectors: string[] = [];
+	for (const selector of selectors) {
+		const slash = selector.indexOf("/");
+		const server = slash === -1 ? selector : selector.slice(0, slash);
+		const toolName = slash === -1 ? undefined : `mcp__${selector}`.replace("/", "__").replace(/[^A-Za-z0-9_-]/g, "_");
+		const matches = tools.filter((tool) =>
+			tool.namespace?.name === `mcp__${server}` && tool.exposure !== "hidden" && (toolName === undefined || tool.name === toolName));
+		if (matches.length === 0) unresolvedSelectors.push(selector);
+		for (const tool of matches) {
+			if (!selections.some((selection) => selection.name === tool.name)) selections.push({ name: tool.name, selector });
+		}
+	}
+	return { selections, unresolvedSelectors, builtin: true };
+}
+
+export function formatUnresolvedBuiltinMcpSelectors(agentName: string | undefined, selectors: readonly string[]): string {
+	const subject = agentName ? `Agent '${agentName}'` : "Subagent";
+	return `${subject} selects MCP tools that Pi's built-in MCP does not offer: ${selectors.map((selector) => `mcp:${selector}`).join(", ")}. The server may be missing, disconnected, still connecting, or its tools hidden; check /mcp.`;
 }
 
 function loadMetadataCache(): MetadataCache | null {

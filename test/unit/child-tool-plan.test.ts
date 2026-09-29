@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
-import { MCP_RUNTIME_SNAPSHOT_EVENT, MCP_RUNTIME_SNAPSHOT_VERSION, type McpRuntimeSnapshotHost } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
+import { MCP_RUNTIME_SNAPSHOT_EVENT, MCP_RUNTIME_SNAPSHOT_VERSION, type McpHostToolInfo, type McpRuntimeSnapshotHost } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 
 /** A parent whose pi-mcp-adapter answers snapshot requests for one runtime-only server. */
 function runtimeSnapshotHost(serverName: string): McpRuntimeSnapshotHost {
@@ -18,6 +18,67 @@ function runtimeSnapshotHost(serverName: string): McpRuntimeSnapshotHost {
 		},
 	};
 }
+
+/** A parent whose /mcp is owned by `mcpOwner` and whose tool registry holds `tools`. */
+function mcpHost(mcpOwner: string, tools: McpHostToolInfo[]): McpRuntimeSnapshotHost {
+	return {
+		events: { emit() {} },
+		getCommands: () => [{ name: "mcp", sourceInfo: { path: mcpOwner } }],
+		getAllTools: () => tools,
+	};
+}
+
+const BUILTIN_MCP_TOOLS: McpHostToolInfo[] = [
+	{ name: "mcp__docs__search_pages", exposure: "codemode", namespace: { name: "mcp__docs" } },
+	{ name: "mcp__docs__fetch", exposure: "direct", namespace: { name: "mcp__docs" } },
+	{ name: "mcp__docs__admin", exposure: "hidden", namespace: { name: "mcp__docs" } },
+	{ name: "mcp__other__fetch", exposure: "codemode", namespace: { name: "mcp__other" } },
+];
+
+describe("child tool plan with Pi built-in MCP", () => {
+	const host = mcpHost("builtin:mcp", BUILTIN_MCP_TOOLS);
+
+	it("grants every non-hidden tool of a selected server as a required child tool", () => {
+		const plan = resolvePiLaunchToolPlan({ tools: ["read"], mcpDirectTools: ["docs"], runtimeSnapshotHost: host });
+		const granted = ["mcp__docs__search_pages", "mcp__docs__fetch"];
+		assert.deepEqual(plan.builtinMcpTools, granted);
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read", ...granted]);
+		assert.deepEqual(plan.requiredChildTools, ["read", ...granted]);
+	});
+
+	it("grants one tool for a tool selector and applies exclusions", () => {
+		const plan = resolvePiLaunchToolPlan({ mcpDirectTools: ["docs/search.pages", "docs/fetch"], excludeTools: ["mcp__docs__fetch"], runtimeSnapshotHost: host });
+		assert.deepEqual(plan.builtinMcpTools, ["mcp__docs__search_pages"]);
+	});
+
+	it("does not apply the adapter's legacy underscore ceiling names to built-in tools", () => {
+		const plan = resolvePiLaunchToolPlan({
+			mcpDirectTools: ["my-docs/fetch"],
+			capabilityCeiling: { version: 1, allowedTools: ["mcp__my_docs__fetch"], sources: ["test"] },
+			runtimeSnapshotHost: mcpHost("builtin:mcp", [{ name: "mcp__my-docs__fetch", exposure: "codemode", namespace: { name: "mcp__my-docs" } }]),
+		});
+		assert.deepEqual(plan.builtinMcpTools, []);
+	});
+
+	it("fails a launch whose selector matches no offered tool", () => {
+		assert.throws(
+			() => resolvePiLaunchToolPlan({ mcpDirectTools: ["docs/admin", "gone"], agentName: "browser", runtimeSnapshotHost: host }),
+			/Agent 'browser' selects MCP tools that Pi's built-in MCP does not offer: mcp:docs\/admin, mcp:gone\. The server may be missing, disconnected, still connecting, or its tools hidden; check \/mcp\./,
+		);
+	});
+
+	it("keeps the pi-mcp-adapter path when the adapter owns /mcp", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-adapter-mcp-"));
+		try {
+			assert.throws(
+				() => resolvePiLaunchToolPlan({ mcpDirectTools: ["docs"], cwd, runtimeSnapshotHost: mcpHost("/ext/pi-mcp-adapter/index.ts", BUILTIN_MCP_TOOLS) }),
+				/Unresolved MCP direct-tool selectors: docs\. Direct MCP tools require a matching configured server/,
+			);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});
 
 describe("child tool plan", () => {
 	it("does not grant watchdog_diff unless an agent explicitly requests it", () => {
