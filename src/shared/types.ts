@@ -2469,6 +2469,8 @@ export interface RunSyncOptions {
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
 	signal?: AbortSignal;
+	/** Report a child ended by `signal` as stopped; set for workflow children, whose signal is the workflow's. */
+	abortedAsStopped?: boolean;
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
 	deadlineAt?: number;

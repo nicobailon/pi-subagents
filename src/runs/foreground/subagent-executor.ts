@@ -4214,6 +4214,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			cwd: singleCwd,
 			requestedCwd: data.requestedCwd,
 			signal,
+			abortedAsStopped: params.workflowParentRunId !== undefined,
 			interruptSignal: interruptController.signal,
 			allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
 			intercomEvents: deps.pi.events,
@@ -4524,16 +4525,19 @@ function workflowChildResult(
 		? result.details.results[0].finalOutput
 		: receiptOutput;
 	const childError = result.details.results.map((child) => child.error).find((error): error is string => Boolean(error));
-	const failureErrorBase = childError && receiptOutput
-		? receiptOutput.includes(childError) ? receiptOutput : `${childError}\n\n${receiptOutput}`
-		: childError || receiptOutput || output || "Child run failed.";
+	const stopped = result.details.results.some((child) => child.stopped);
+	// A stopped child's receipt text carries the run fan-out annotation; report the structured stop reason instead.
+	const failureErrorBase = stopped && childError
+		? childError
+		: childError && receiptOutput
+			? receiptOutput.includes(childError) ? receiptOutput : `${childError}\n\n${receiptOutput}`
+			: childError || receiptOutput || output || "Child run failed.";
 	const savedOutputEvidence = [...new Set(result.details.results.map((child) => child.savedOutputPath).filter((value): value is string => Boolean(value)))]
 		.filter((savedOutputPath) => !failureErrorBase.includes(savedOutputPath))
 		.map((savedOutputPath) => `Saved output: ${savedOutputPath}`);
 	const failureError = [failureErrorBase, ...savedOutputEvidence].join("\n");
 	const detached = result.details.results.some((child) => child.detached);
 	const interrupted = result.details.results.some((child) => child.interrupted);
-	const stopped = result.details.results.some((child) => child.stopped);
 	const terminalOutcome = forcedTerminalOutcome
 		?? (result.details.results.some((child) => child.timedOut)
 			? { state: "partial" as const, reason: "timeout" as const }
