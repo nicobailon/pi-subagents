@@ -6081,8 +6081,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									const claimedPath = reattached.status === "settled" ? claimWorkflowAwaitedResult(priorAsyncDir, workflowRunId) : undefined;
 									if (reattached.status === "settled" && claimedPath) {
 										const imported = importWorkflowAwaitedChildResult(reattached.result, { runId: priorRunId, asyncDir: priorAsyncDir, resultPath: claimedPath, task: typeof childParams.task === "string" ? childParams.task : "", parentWorkflowRunId: workflowReuseSource?.runId, details: { mode: "single", asyncId: priorRunId, asyncDir: priorAsyncDir, results: [] }, state: deps.state, pi: deps.pi });
-										workflowChildRunIds.set(key, priorRunId);
-										return { ...workflowChildResult(key, imported, childParams, deps.state), reused: true };
+										const reattachedResult = workflowChildResult(key, imported, childParams, deps.state);
+										// Like a settled journal match: only a successful child is reused; a failed or stopped one launches fresh.
+										if (reattachedResult.ok) {
+											workflowChildRunIds.set(key, priorRunId);
+											return { ...reattachedResult, reused: true };
+										}
 									}
 								}
 								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."), childParams, deps.state);
