@@ -87,8 +87,15 @@ describe("orchestration mode", () => {
 		assert.match(prompt.systemPrompt, /do not delegate merely because a semantic role exists/i);
 		assert.match(prompt.systemPrompt, /do not treat a launch or dispatch receipt as completion/i);
 		assert.match(prompt.systemPrompt, /worker remains the sole implementation writer/i);
+		assert.match(prompt.systemPrompt, /resume the most recent writer by default/i);
 		assert.match(prompt.systemPrompt, /do not add review ceremony solely because a mutation occurred/i);
 		assert.match(prompt.systemPrompt, /re-establish affected evidence after repair/i);
+		assert.match(prompt.systemPrompt, /semantic mechanism, contract, evidence generator, validation boundary, or population\/coverage assumption/i);
+		assert.match(prompt.systemPrompt, /mechanical rerun alone is insufficient/i);
+
+		const guideInput: Record<string, unknown> = { action: "guide", topic: "workflows" };
+		assert.equal((await emit(h, "tool_call", { toolName: "subagent", input: guideInput }))[0], undefined);
+		assert.equal(guideInput.topic, "orchestration");
 
 		const directInput: Record<string, unknown> = { agent: "worker", task: "Implement the bounded fix" };
 		assert.equal((await emit(h, "tool_call", { toolName: "subagent", input: directInput }))[0], undefined);

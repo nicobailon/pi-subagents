@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 export const SUBAGENT_GUIDE_TOPICS = [
 	"overview",
 	"workflows",
+	"orchestration",
 	"agents",
 	"missions",
 	"observability",

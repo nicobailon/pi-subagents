@@ -22,6 +22,17 @@ describe("subagent guide", () => {
 		assert.ok(SUBAGENT_ACTIONS.includes("guide"));
 	});
 
+	it("serves an evidence-driven orchestration guide without forbidden workflow machinery", () => {
+		const guide = readSubagentGuide("orchestration");
+
+		assert.match(guide, /understand -> act -> prove -> challenge when warranted -> repair until proven/i);
+		assert.match(guide, /resume the most recent writer by default/i);
+		assert.match(guide, /semantic mechanism, contract, evidence generator, validation boundary, or population\/coverage assumption/i);
+		assert.match(guide, /mechanical checks is not enough/i);
+		assert.match(guide, /dispatch or launch receipt is never completion evidence/i);
+		assert.doesNotMatch(guide, /workflowScriptPath|runs\.lanes|runs\.host/);
+	});
+
 	it("serves the council protocol and its references without loaded skills", () => {
 		const guide = readSubagentGuide("council");
 
