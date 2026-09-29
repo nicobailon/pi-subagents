@@ -221,7 +221,9 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
 /**
  * Pi's built-in MCP extension registers server tools with the configured exposure, `codemode` by
  * default, which the child's `tools` allowlist cannot declare. Registering the selected names as
- * `direct` makes them model-declared and callable; `hidden` stays hidden. The `builtin` entry loads
+ * `direct` makes them model-declared and callable; `hidden` stays hidden. Every other tool the
+ * extension registers becomes `hidden`, so neither codemode nor `ctx.executeTool()` can call it,
+ * independent of the `tools` allowlist. The `builtin` entry loads
  * through the explicit `builtin:mcp` path even with `noExtensions`, and `replaceable` lets an
  * ambient MCP extension that registers `/mcp` replace it, as in the parent.
  */
@@ -235,7 +237,7 @@ function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, names: readonly st
 		get(target, prop) {
 			if (prop === "registerTool") {
 				return (tool: Parameters<ExtensionAPI["registerTool"]>[0] & { exposure?: string }) =>
-					target.registerTool(selected.has(tool.name) && tool.exposure !== "hidden" ? { ...tool, exposure: "direct" } : tool);
+					target.registerTool({ ...tool, exposure: selected.has(tool.name) && tool.exposure !== "hidden" ? "direct" : "hidden" } as typeof tool);
 			}
 			const value = Reflect.get(target, prop, target);
 			return typeof value === "function" ? value.bind(target) : value;

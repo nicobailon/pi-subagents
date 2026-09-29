@@ -663,11 +663,11 @@ function builtinMcpPi() {
 describe("selected built-in MCP tools in a child session", () => {
 	const mcpLaunch: ChildSessionLaunch = { ...stubLaunch, tools: ["read", "mcp__srv__echo"], builtinMcpTools: ["mcp__srv__echo"] };
 
-	it("declares exactly the selected tools as direct once MCP registers them", async () => {
+	it("declares exactly the selected tools as direct and hides the other MCP tools", async () => {
 		const mcp = builtinMcpPi();
 		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create(mcpLaunch);
 		assert.deepEqual(mcp.loaded, [{ name: "mcp", replaceable: true }]);
-		assert.deepEqual([...mcp.registry], [["mcp__srv__echo", "direct"], ["mcp__srv__add", "codemode"]]);
+		assert.deepEqual([...mcp.registry], [["mcp__srv__echo", "direct"], ["mcp__srv__add", "hidden"]]);
 	});
 
 	it("fails the launch and shuts the session down when a selected tool never registers", async () => {
