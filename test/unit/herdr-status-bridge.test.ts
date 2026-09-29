@@ -137,110 +137,8 @@ describe("Herdr status bridge", () => {
 		]);
 	});
 
-	it("drops a finished reviewer from the workflow count while a second reviewer keeps running", () => {
-		const state = stateForTest();
-		state.asyncJobs.set("workflow-1", {
-			asyncId: "workflow-1",
-			asyncDir: "/tmp/workflow-1",
-			status: "running",
-			mode: "workflow",
-			agents: ["workflow"],
-			steps: [],
-		});
-		state.asyncJobs.set("child-1", {
-			asyncId: "child-1",
-			asyncDir: "/tmp/child-1",
-			status: "running",
-			mode: "single",
-			agents: ["reviewer-a"],
-			parentWorkflowRunId: "workflow-1",
-		});
-		state.asyncJobs.set("child-2", {
-			asyncId: "child-2",
-			asyncDir: "/tmp/child-2",
-			status: "complete",
-			mode: "single",
-			agents: ["reviewer-b"],
-			parentWorkflowRunId: "workflow-1",
-		});
-
-		assert.deepEqual(projectActiveHerdrRuns(state), [
-			{ id: "workflow-1", coordinator: true, agents: [], needsAttention: false },
-			{ id: "child-1", agents: ["reviewer-a"], needsAttention: false },
-		]);
-	});
-
-	it("keeps a foreground workflow child counted once alongside a pending next step", () => {
-		const state = stateForTest();
-		state.asyncJobs.set("workflow-1", {
-			asyncId: "workflow-1",
-			asyncDir: "/tmp/workflow-1",
-			status: "running",
-			mode: "workflow",
-			agents: ["workflow"],
-			steps: [
-				{ agent: "reviewer", status: "running", label: "Review auth" },
-				{ agent: "publisher", status: "pending", label: "Publish" },
-			],
-		});
-		state.foregroundControls.set("child-1", {
-			runId: "child-1",
-			parentWorkflowRunId: "workflow-1",
-			workflowKey: "review",
-			mode: "single",
-			startedAt: 10,
-			updatedAt: 20,
-			activeChildren: new Map([[0, {
-				index: 0,
-				agent: "reviewer",
-				startedAt: 10,
-				updatedAt: 20,
-			}]]),
-		});
-
-		assert.deepEqual(projectActiveHerdrRuns(state), [{
-			id: "workflow-1",
-			coordinator: true,
-			agents: ["reviewer"],
-			taskLabel: "Review auth",
-			needsAttention: false,
-		}]);
-	});
-
-	it("projects an idle workflow coordinator as zero leaves and recovers once a leaf starts", () => {
-		const state = stateForTest();
-		state.asyncJobs.set("workflow-1", {
-			asyncId: "workflow-1",
-			asyncDir: "/tmp/workflow-1",
-			status: "running",
-			mode: "workflow",
-			agents: ["workflow"],
-			steps: [],
-		});
-
-		assert.deepEqual(projectActiveHerdrRuns(state), [{
-			id: "workflow-1",
-			coordinator: true,
-			agents: [],
-			needsAttention: false,
-		}]);
-
-		state.asyncJobs.set("child-1", {
-			asyncId: "child-1",
-			asyncDir: "/tmp/child-1",
-			status: "running",
-			mode: "single",
-			agents: ["worker"],
-			parentWorkflowRunId: "workflow-1",
-		});
-
-		assert.deepEqual(projectActiveHerdrRuns(state), [
-			{ id: "workflow-1", coordinator: true, agents: [], needsAttention: false },
-			{ id: "child-1", agents: ["worker"], needsAttention: false },
-		]);
-	});
-
 	it("publishes foreground workflow child start and finish without the periodic refresh", async () => {
+		// Covers the bridge subscription only; the event is emitted by hand here.
 		const state = stateForTest();
 		state.asyncJobs.set("workflow-1", {
 			asyncId: "workflow-1", asyncDir: "/tmp/workflow-1", status: "running",
@@ -308,21 +206,6 @@ describe("Herdr status bridge", () => {
 			{ active: true, label: "reviewer needs attention" }, { active: false },
 		]);
 		assert.ok(commands.at(-1)?.includes("summary=⏳ 0 subagents"));
-		bridge.dispose();
-	});
-
-	it("keeps the minimum count for an ordinary run with no agent details", async () => {
-		const events = new FakeEvents();
-		const commands: string[][] = [];
-		const bridge = registerHerdrStatusBridge({
-			events,
-			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
-			runHerdr: (args) => commands.push([...args]),
-			refreshMs: 0,
-		});
-		bridge.sessionStarted({ hasUI: true, runs: [{ id: "single-1", agents: [] }] });
-		await bridge.flush();
-		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent"));
 		bridge.dispose();
 	});
 

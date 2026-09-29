@@ -28,6 +28,7 @@
 - Async run retention now removes old runs whose mission has finished or was deleted, instead of keeping every mission-bound run forever. Runs whose mission update has not been synced yet are still kept. Fixes [#2535](https://github.com/nicobailon/pi-subagents/issues/2535). Thanks to [@LCorleone](https://github.com/LCorleone) for [#2536](https://github.com/nicobailon/pi-subagents/pull/2536).
 - The broad package-discovery unit test no longer fails when the system temp directory sits inside a Pi project. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for [#2553](https://github.com/nicobailon/pi-subagents/pull/2553).
 - Starting, reloading, resuming, or forking a session no longer pauses Pi while the watchdog records the Git HEAD it later diffs against (about 50 ms per session start on Windows, even with the watchdog off). The Git check now runs in the background as one process, and a watchdog review waits for it, so the watchdog still compares against HEAD at session start. Thanks to [@localhedge](https://github.com/localhedge) for reporting [#2560](https://github.com/nicobailon/pi-subagents/issues/2560).
+- Herdr's subagent count no longer counts a workflow coordinator as a child, and it updates as soon as a foreground workflow child starts or finishes instead of up to 45 seconds later. Thanks to [@xadips](https://github.com/xadips) for [#2556](https://github.com/nicobailon/pi-subagents/pull/2556).
 
 ## [0.73.1] - 2026-09-27
 
