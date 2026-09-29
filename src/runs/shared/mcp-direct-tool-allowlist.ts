@@ -119,8 +119,7 @@ export function resolveMcpDirectToolResolution(
 ): McpDirectToolResolution {
 	const selectors = normalizeMcpDirectToolSelectors(mcpDirectTools);
 	if (selectors.length === 0) return { selections: [], unresolvedSelectors: [] };
-	// An installed pi-mcp-adapter takes /mcp over from Pi's built-in MCP and keeps priority.
-	if (runtimeSnapshotHost?.getCommands?.().find((command) => command.name === "mcp")?.sourceInfo.path === "builtin:mcp") {
+	if (usesBuiltinMcp(runtimeSnapshotHost)) {
 		return resolveBuiltinMcpSelections(selectors, runtimeSnapshotHost.getAllTools?.() ?? []);
 	}
 
@@ -161,6 +160,16 @@ export function resolveMcpDirectToolSelections(
 	runtimeSnapshotHost?: McpRuntimeSnapshotHost,
 ): ResolvedMcpDirectToolSelection[] {
 	return resolveMcpDirectToolResolution(mcpDirectTools, cwd, runtimeSnapshotHost).selections;
+}
+
+/**
+ * pi-mcp-adapter keeps priority whenever it is loaded. 2.x registers /mcp, so Pi does not load its
+ * built-in MCP. 3.x always registers /mcp-adapter and leaves /mcp to the built-in MCP.
+ */
+function usesBuiltinMcp(host: McpRuntimeSnapshotHost | undefined): host is McpRuntimeSnapshotHost {
+	const commands = host?.getCommands?.() ?? [];
+	return commands.find((command) => command.name === "mcp")?.sourceInfo.path === "builtin:mcp"
+		&& !commands.some((command) => /^mcp-adapter(?::\d+)?$/.test(command.name));
 }
 
 /**

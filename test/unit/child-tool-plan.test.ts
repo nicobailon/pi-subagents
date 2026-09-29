@@ -86,6 +86,25 @@ describe("child tool plan with Pi built-in MCP", () => {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
 	});
+
+	it("keeps the pi-mcp-adapter path when adapter 3.x loads next to Pi's built-in /mcp", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-adapter3-mcp-"));
+		const host: McpRuntimeSnapshotHost = {
+			...mcpHost("builtin:mcp", BUILTIN_MCP_TOOLS),
+			getCommands: () => [
+				{ name: "mcp", sourceInfo: { path: "builtin:mcp" } },
+				{ name: "mcp-adapter", sourceInfo: { path: "/ext/pi-mcp-adapter/index.ts" } },
+			],
+		};
+		try {
+			assert.throws(
+				() => resolvePiLaunchToolPlan({ mcpDirectTools: ["docs"], cwd, runtimeSnapshotHost: host }),
+				/Unresolved MCP direct-tool selectors: docs\. Direct MCP tools require a matching configured server/,
+			);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("child tool plan", () => {

@@ -16,6 +16,7 @@
 - CI now runs the native tool-activation smoke test on the existing Ubuntu typecheck leg, so dynamic activation and schema-budget regressions are covered by required checks. Thanks to [@quifox](https://github.com/quifox) for [#2528](https://github.com/nicobailon/pi-subagents/pull/2528).
 
 ### Fixed
+- With pi-mcp-adapter 3.x installed on Pi 0.99 or later, `mcp:` entries in an agent's `tools` resolved against Pi's built-in MCP instead of the adapter, so selecting an adapter server failed the launch. pi-subagents decided by who owns `/mcp`, and adapter 3.x leaves `/mcp` to Pi and registers `/mcp-adapter`. The adapter now keeps priority whenever it is loaded. Fixes [#2575](https://github.com/nicobailon/pi-subagents/issues/2575).
 - Stopping an async `workflowScript` by a shortened id, its tool-call id, its run directory, or from the Fleet view did nothing: the stop request was written to a file the workflow never reads, so the workflow and its running children kept going. These stops now stop the workflow and its running children, and its status ends as stopped. Fixes [#2571](https://github.com/nicobailon/pi-subagents/issues/2571).
 
 - Subagent children now follow the parent session's project trust. Before, a child of an untrusted project still read that project's settings, system prompt files, skills and, for background children, its extensions. Fixes [#2569](https://github.com/nicobailon/pi-subagents/issues/2569).
