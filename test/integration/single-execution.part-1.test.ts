@@ -1804,7 +1804,11 @@ Answer only from the supplied synthetic text.
 				workflowControllers.get(runId)!.abort(reason);
 				return await settled(runId);
 			};
-			const stopAction = (target: { id: string } | { dir: string }) => executor.execute(`workflow-stop-${Date.now()}`, { action: "stop", ...target }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			const stopAction = (target: { id: string } | { dir: string }, sessionId?: string) => {
+				const ctx = makeMinimalCtx(tempDir);
+				if (sessionId) ctx.sessionManager.getSessionId = () => sessionId;
+				return executor.execute(`workflow-stop-${Date.now()}`, { action: "stop", ...target }, new AbortController().signal, undefined, ctx);
+			};
 			return { launch, waitFor, settled, stopWhenStage2Starts, stopAction };
 		};
 		const resultFileText = (runId: string) => fs.readFileSync(path.join(DIRS.results, `${runId}.json`), "utf-8");
@@ -1963,7 +1967,11 @@ Answer only from the supplied synthetic text.
 				const bgRunId = running.steps?.find((step) => step.workflowKey === "bg")?.runId;
 				assert.ok(bgRunId);
 
-				const result = await stopAction(form === "prefix" ? { id: runId.slice(0, 8) } : { dir: path.join(DIRS.async, runId) });
+				const target = form === "prefix" ? { id: runId.slice(0, 8) } : { dir: path.join(DIRS.async, runId) };
+				const foreign = await stopAction(target, "other-session");
+				assert.equal(foreign.isError, true, `${form}: another session cannot stop the workflow`);
+				assert.equal(readStatusFile(runId).state, "running", form);
+				const result = await stopAction(target);
 				assert.equal(result.isError, undefined, result.content[0]?.text);
 				assert.equal(result.content[0]?.text, `Stop requested for async workflow ${runId}.`, form);
 				const stopped = await settled(runId);

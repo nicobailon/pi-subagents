@@ -112,9 +112,11 @@ export function stopAsyncRun(
 	// An async workflow runs in this process: it has no runner to read a stop request, so stop it through its controller.
 	const workflowRunId = target?.asyncId ?? runId;
 	const workflowController = childId === undefined && workflowRunId ? state.workflowControllers?.get(workflowRunId) : undefined;
-	if (workflowController && workflowRunId) {
-		const workflowAsyncDir = target?.asyncDir ?? state.asyncJobs.get(workflowRunId)?.asyncDir;
-		const workflowStatus = workflowAsyncDir ? readStatus(workflowAsyncDir) : undefined;
+	const workflowAsyncDir = workflowController && workflowRunId ? target?.asyncDir ?? state.asyncJobs.get(workflowRunId)?.asyncDir : undefined;
+	const workflowStatus = workflowAsyncDir ? readStatus(workflowAsyncDir) : undefined;
+	// Controllers outlive a session switch; a workflow owned by another session falls through to the ownership check below.
+	const foreignWorkflow = Boolean(state.currentSessionId && workflowStatus && workflowStatus.sessionId !== state.currentSessionId);
+	if (workflowController && workflowRunId && !foreignWorkflow) {
 		if (workflowStatus) stopStoppableAsyncStatusChildren(workflowStatus, state.workflowChildStops?.get(workflowRunId), "Workflow stopped.");
 		workflowController.abort(new Error("Workflow stopped."));
 		return { content: [{ type: "text", text: `Stop requested for async workflow ${workflowRunId}.` }], details: { mode: "management", results: [] } };
