@@ -25,6 +25,7 @@
 - Answering a background subagent's supervisor request no longer wakes the parent again with a stale needs-attention notice and intercom copy. The attention notice now waits 60 seconds and is sent only if the request is still unanswered and the run is still active. Status displays and waits still react to the request immediately.
 - `inheritSkills: false` now also removes skills that extensions add to an in-process child session (for example from `subagents.defaultExtensions`), so they no longer show up in the child's prompt next to the agent's own skills. Thanks to [@zeezooz](https://github.com/zeezooz) for [#2540](https://github.com/nicobailon/pi-subagents/issues/2540).
 - Async run retention now removes old runs whose mission has finished or was deleted, instead of keeping every mission-bound run forever. Runs whose mission update has not been synced yet are still kept. Fixes [#2535](https://github.com/nicobailon/pi-subagents/issues/2535). Thanks to [@LCorleone](https://github.com/LCorleone) for [#2536](https://github.com/nicobailon/pi-subagents/pull/2536).
+- The broad package-discovery unit test no longer fails when the system temp directory sits inside a Pi project. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for [#2553](https://github.com/nicobailon/pi-subagents/pull/2553).
 
 ## [0.73.1] - 2026-09-27
 
