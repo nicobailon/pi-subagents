@@ -40,9 +40,9 @@ export async function awaitExistingAsyncRun(asyncDir: string, runId: string, sig
 	}
 	if (!status) return { status: "unavailable", reason: `No async status exists for run '${runId}' at ${asyncDir}.` };
 	if (status.runId !== runId) return { status: "unavailable", reason: `Async status at ${asyncDir} belongs to run '${status.runId}', not '${runId}'.` };
-	if (status.mode !== "single" || !status.parentWorkflowRunId) {
-		return { status: "unavailable", reason: `Async run '${runId}' is not a workflow-awaited single child.` };
-	}
+	// The launcher's initial status has no workflow identity until the runner starts, so only the
+	// mode is checked here; a run that does not publish to the workflow result path stays unavailable.
+	if (status.mode !== "single") return { status: "unavailable", reason: `Async run '${runId}' is not a single-agent run.` };
 	const resultPath = workflowAwaitedAsyncResultPath(asyncDir);
 	let runnerExited = false;
 	let completed: ImportedAsyncRootResult;

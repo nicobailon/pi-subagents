@@ -1752,7 +1752,7 @@ Answer only from the supplied synthetic text.
 		const terminalStates = ["complete", "failed", "partial", "paused", "stopped", "rejected"];
 		const setup = () => {
 			const workflowControllers = new Map<string, AbortController>();
-			const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), workflowControllers, undefined, undefined, undefined, undefined, () => {});
+			const executor = makeExecutor([makeAgent("echo"), makeAgent("bg", { defaultAsync: true })], {}, false, undefined, true, new Map(), workflowControllers, undefined, undefined, undefined, undefined, () => {});
 			const launch = async (params: Record<string, unknown>): Promise<string> => {
 				const started = await executor.execute(`workflow-reuse-${Date.now()}-${Math.random().toString(16).slice(2)}`, { async: true, mission: false, ...params }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 				assert.equal(started.isError, undefined, started.content[0]?.text ?? "workflow launch failed");
@@ -1764,8 +1764,8 @@ Answer only from the supplied synthetic text.
 				await waitForAsyncResultFile(runId, 30_000);
 				return status;
 			};
-			const stopWhenStage2Starts = async (runId: string, reason: Error) => {
-				await waitFor(runId, (status) => status.workflow?.trace.some((entry) => entry.key === "stage2" && entry.state === "started") ?? false);
+			const stopWhenStage2Starts = async (runId: string, reason: Error, ready = (status: ReuseStatus) => status.workflow?.trace.some((entry) => entry.key === "stage2" && entry.state === "started") ?? false) => {
+				await waitFor(runId, ready);
 				workflowControllers.get(runId)!.abort(reason);
 				return await settled(runId);
 			};
@@ -1785,7 +1785,7 @@ Answer only from the supplied synthetic text.
 			assert.equal(stopped.state, "stopped");
 			assert.equal(stopped.workflow?.stopCause, "runtime-replaced");
 			assert.equal(stopped.workflow?.scriptDigest, createHash("sha256").update(script).digest("hex"));
-			assert.match(summaryOf(firstId), /Relaunch the same workflowScript with the same args to reuse the children that already finished\./);
+			assert.match(summaryOf(firstId), /Async children that were still running keep running; relaunch the same workflowScript with the same args to reuse finished children and re-attach to running ones\./);
 			const stage1RunId = stopped.steps?.find((step) => step.workflowKey === "stage1")?.runId;
 			assert.ok(stage1RunId);
 			const journal = fs.readFileSync(path.join(DIRS.async, firstId, WORKFLOW_CHILD_JOURNAL_FILE), "utf-8").trim().split("\n").map((line) => JSON.parse(line) as { type: string; key: string; fingerprint: string; runId?: string; result?: { ok: boolean; runId?: string; output: string } });
@@ -1841,7 +1841,7 @@ Answer only from the supplied synthetic text.
 			assert.equal(userStopped.steps?.some((step) => step.reused), false);
 			assert.equal(userStopped.state, "stopped");
 			assert.equal(userStopped.workflow?.stopCause, undefined);
-			assert.doesNotMatch(summaryOf(secondId), /Relaunch the same workflowScript/);
+			assert.doesNotMatch(summaryOf(secondId), /relaunch the same workflowScript/);
 
 			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one fixed" });
 			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
@@ -1849,6 +1849,59 @@ Answer only from the supplied synthetic text.
 			assert.equal(third.state, "complete");
 			assert.equal(third.workflow?.reusedFrom, undefined, "the newest same-script run was user-stopped");
 			assert.equal(mockPi.callCount(), callsAfterStop + 4);
+		});
+
+		const awaitedStage2Ready = (status: ReuseStatus) => Boolean(status.steps?.find((step) => step.workflowKey === "stage2" && step.async === true)?.runId);
+		const childStatus = (runId: string) => JSON.parse(fs.readFileSync(path.join(DIRS.async, runId, "status.json"), "utf-8")) as AsyncStatus;
+
+		it("keeps a running awaited async child alive and re-attaches to it on relaunch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `reattach-${Date.now()}`;
+			const release = path.join(tempDir, `${nonce}.release`);
+			const script = `const first = await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); const second = await runs.run("stage2", { agent: "bg", task: "Stage two ${nonce}" }); const third = await runs.run("stage3", { agent: "echo", task: "Stage three ${nonce}" }); return { first: first.output, second: second.output, secondReused: second.reused === true, third: third.output };`;
+			const args = { nonce };
+			const { launch, waitFor, settled, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, waitForPath: release, output: "stage two done" });
+			const callsBefore = mockPi.callCount();
+			const firstId = await launch({ workflowScript: script, args });
+			const stopped = await stopWhenStage2Starts(firstId, runtimeReplacedAbortReason(), awaitedStage2Ready);
+			assert.equal(stopped.workflow?.stopCause, "runtime-replaced");
+			const stage2RunId = stopped.steps?.find((step) => step.workflowKey === "stage2")?.runId;
+			assert.ok(stage2RunId);
+			for (const deadline = Date.now() + 15_000; mockPi.callCount() < callsBefore + 2 && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 50));
+			assert.equal(mockPi.callCount(), callsBefore + 2, "the awaited child's runner starts its prompt after the abort");
+			assert.equal(childStatus(stage2RunId).state, "running", "a runtime-replaced abort must not stop the awaited child");
+
+			mockPi.onCall({ matchArgIncludes: `Stage three ${nonce}`, output: "stage three done" });
+			const relaunchId = await launch({ workflowScript: script, args });
+			await waitFor(relaunchId, (status) => status.workflow?.trace.some((entry) => entry.key === "stage2" && entry.state === "started") ?? false);
+			fs.writeFileSync(release, "go");
+			const relaunched = await settled(relaunchId);
+			assert.equal(relaunched.state, "complete", relaunched.error);
+			assert.equal(mockPi.callCount(), callsBefore + 3, "only stage3 launches after the relaunch");
+			assert.equal(relaunched.workflow?.reusedFrom, firstId);
+			assert.deepEqual(relaunched.workflow?.value, { first: "stage one done", second: "stage two done", secondReused: true, third: "stage three done" });
+			assert.deepEqual(relaunched.steps?.map(({ workflowKey, reused }) => ({ workflowKey, reused })), [
+				{ workflowKey: "stage1", reused: true },
+				{ workflowKey: "stage2", reused: true },
+				{ workflowKey: "stage3", reused: undefined },
+			]);
+			assert.equal(relaunched.steps?.[1]?.runId, stage2RunId);
+			assert.equal(childStatus(stage2RunId).state, "complete");
+			assert.equal(fs.existsSync(path.join(DIRS.async, stage2RunId, "workflow-result.json")), false, "the relaunch consumes the awaited result like the normal path");
+		});
+
+		it("still stops a running awaited async child when the user stops the workflow", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `user-stop-awaited-${Date.now()}`;
+			const { launch, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, waitForPath: path.join(tempDir, `${nonce}.never`), output: "never" });
+			const runId = await launch({ workflowScript: `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); await runs.run("stage2", { agent: "bg", task: "Stage two ${nonce}" });` });
+			const stopped = await stopWhenStage2Starts(runId, new Error("Stopped by user."), awaitedStage2Ready);
+			const stage2RunId = stopped.steps?.find((step) => step.workflowKey === "stage2")?.runId;
+			assert.ok(stage2RunId);
+			const child = await waitForAsyncState(stage2RunId, (status) => terminalStates.includes(status.state ?? ""), 30_000);
+			assert.equal(child.state, "stopped");
 		});
 	});
 

@@ -99,6 +99,7 @@ import { dismissRecoveredWorkflow } from "./async-dismiss-action.ts";
 import { promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletion } from "./workflow-detach-reconcile.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
+import { awaitExistingAsyncRun } from "../background/await-async-run.ts";
 import { fallbackResultPayloadPathForSessionRun, removeResultIndex, resultFilePath, writeAsyncResultFile } from "../background/result-files.ts";
 import { attachRootChildrenToSteps, createNestedRoute, findNestedControlResult, inheritedNestedParentAddressOf, inheritedNestedRouteOf, nestedRunScope, resolveNestedAsyncDir, retainNestedLookupRoute, snapshotNestedEventFiles, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, type NestedParentAddress, type NestedRoute, type NestedRunResolutionScope } from "../shared/nested-events.ts";
 import type { ChildRuntimeConfig } from "../shared/child-runtime-config.ts";
@@ -2301,7 +2302,7 @@ async function resumeAsyncRun(input: {
 	if (input.params.workflowParentRunId !== undefined && result.details.asyncDir) {
 		const asyncDir = result.details.asyncDir;
 		const resultPath = workflowAwaitedAsyncResultPath(asyncDir);
-		const stopOnAbort = () => { stopAsyncRun(input.deps.state, revivedId, input.deps.kill, { asyncDir, resolvedId: revivedId }); };
+		const stopOnAbort = () => { if (!workflowStopCause(input.signal?.reason)) stopAsyncRun(input.deps.state, revivedId, input.deps.kill, { asyncDir, resolvedId: revivedId }); };
 		if (input.signal?.aborted) stopOnAbort();
 		else input.signal?.addEventListener("abort", stopOnAbort, { once: true });
 		let completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>;
@@ -3386,28 +3387,13 @@ function emitWorkflowAwaitedChildComplete(
 	});
 }
 
-async function waitForWorkflowAsyncSingleResult(
-	params: SubagentParamsLike,
-	launchResult: AgentToolResult<Details>,
-	options: { runId: string; task: string; signal?: AbortSignal; state: SubagentState; pi: ExtensionAPI; kill?: ExecutorDeps["kill"] },
-): Promise<AgentToolResult<Details>> {
-	if (params.workflowAwaitAsync !== true || !launchResult.details.asyncDir) return launchResult;
-	const asyncDir = launchResult.details.asyncDir;
-	const resultPath = workflowAwaitedAsyncResultPath(asyncDir);
-	const stopOnAbort = () => { stopAsyncRun(options.state, options.runId, options.kill, { asyncDir, resolvedId: options.runId }); };
-	if (options.signal?.aborted) stopOnAbort();
-	else options.signal?.addEventListener("abort", stopOnAbort, { once: true });
-	let completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>;
-	try {
-		completed = await waitForImportedAsyncRoot({ runId: options.runId, asyncDir, resultPath, index: 0 }, omitUndefinedProperties({
-			shouldAbort: () => options.signal?.aborted === true,
-			timeoutMessage: "Workflow stopped before async child completed.",
-		}));
-	} finally {
-		options.signal?.removeEventListener("abort", stopOnAbort);
-	}
-	if (completed.importedPublication) removeWorkflowAwaitedResult(asyncDir, resultPath, options.runId, completed.importedPublication);
-	emitWorkflowAwaitedChildComplete(options.pi, options.state, options.runId, asyncDir, params.workflowParentRunId, completed);
+/** Consumes an awaited workflow child's published result: clears the payload, announces completion, and builds the tool result. */
+function importWorkflowAwaitedChildResult(
+	completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>,
+	options: { runId: string; asyncDir: string; task: string; parentWorkflowRunId: string | undefined; details: Details; state: SubagentState; pi: ExtensionAPI },
+): AgentToolResult<Details> {
+	if (completed.importedPublication) removeWorkflowAwaitedResult(options.asyncDir, workflowAwaitedAsyncResultPath(options.asyncDir), options.runId, completed.importedPublication);
+	emitWorkflowAwaitedChildComplete(options.pi, options.state, options.runId, options.asyncDir, options.parentWorkflowRunId, completed);
 	const usage = importedAsyncRootUsage(completed);
 	const childResult: SingleResult = omitUndefinedProperties({
 		index: 0,
@@ -3439,11 +3425,35 @@ async function waitForWorkflowAsyncSingleResult(
 		content: [{ type: "text", text: completed.success ? completed.output || completed.error || `Async workflow child ${options.runId} completed without output.` : completed.error || completed.output || `Async workflow child ${options.runId} completed without output.` }],
 		...(completed.success ? {} : { isError: true }),
 		details: {
-			...launchResult.details,
+			...options.details,
 			runId: options.runId,
 			results: [childResult],
 		},
 	};
+}
+
+async function waitForWorkflowAsyncSingleResult(
+	params: SubagentParamsLike,
+	launchResult: AgentToolResult<Details>,
+	options: { runId: string; task: string; signal?: AbortSignal; state: SubagentState; pi: ExtensionAPI; kill?: ExecutorDeps["kill"] },
+): Promise<AgentToolResult<Details>> {
+	if (params.workflowAwaitAsync !== true || !launchResult.details.asyncDir) return launchResult;
+	const asyncDir = launchResult.details.asyncDir;
+	const resultPath = workflowAwaitedAsyncResultPath(asyncDir);
+	// A replaced runtime leaves the child running so a relaunch of the workflow can re-attach to it.
+	const stopOnAbort = () => { if (!workflowStopCause(options.signal?.reason)) stopAsyncRun(options.state, options.runId, options.kill, { asyncDir, resolvedId: options.runId }); };
+	if (options.signal?.aborted) stopOnAbort();
+	else options.signal?.addEventListener("abort", stopOnAbort, { once: true });
+	let completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>;
+	try {
+		completed = await waitForImportedAsyncRoot({ runId: options.runId, asyncDir, resultPath, index: 0 }, omitUndefinedProperties({
+			shouldAbort: () => options.signal?.aborted === true,
+			timeoutMessage: "Workflow stopped before async child completed.",
+		}));
+	} finally {
+		options.signal?.removeEventListener("abort", stopOnAbort);
+	}
+	return importWorkflowAwaitedChildResult(completed, { runId: options.runId, asyncDir, task: options.task, parentWorkflowRunId: params.workflowParentRunId, details: launchResult.details, state: options.state, pi: options.pi });
 }
 
 async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details> | null> {
@@ -6090,8 +6100,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									if (priorChild.result.runId) workflowChildRunIds.set(key, priorChild.result.runId);
 									return { ...priorChild.result, reused: true };
 								}
-								// priorChild.kind === "started": the previous run launched this child but never recorded its
-								// result. Re-attaching by exact runId belongs here; until then it launches fresh.
+								if (priorChild?.kind === "started" && priorChild.runId && priorChild.asyncDir) {
+									// The previous run's awaited async child may still be running: wait for that exact run
+									// instead of launching again. Journal it first so another reload can re-attach too.
+									const { runId: priorRunId, asyncDir: priorAsyncDir } = priorChild;
+									appendWorkflowChildJournal(asyncDir, { type: "start", key, fingerprint: journalFingerprint, runId: priorRunId, asyncDir: priorAsyncDir });
+									const reattached = await awaitExistingAsyncRun(priorAsyncDir, priorRunId, workflowSignal);
+									if (reattached.status === "settled") {
+										const imported = importWorkflowAwaitedChildResult(reattached.result, { runId: priorRunId, asyncDir: priorAsyncDir, task: typeof childParams.task === "string" ? childParams.task : "", parentWorkflowRunId: workflowReuseSource?.runId, details: { mode: "single", runId: priorRunId, asyncId: priorRunId, asyncDir: priorAsyncDir, results: [] }, state: deps.state, pi: deps.pi });
+										workflowChildRunIds.set(key, priorRunId);
+										return { ...workflowChildResult(key, imported, childParams, deps.state), reused: true };
+									}
+								}
 								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."), childParams, deps.state);
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)), childParams, deps.state, { state: "partial", reason: "budget_exhausted" });
