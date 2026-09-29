@@ -5,6 +5,7 @@ import {
 } from "../shared/types.ts";
 import { previewDisplayText, sanitizeDisplayText } from "../shared/display-text.ts";
 
+export const HERDR_FOREGROUND_CONTROL_CHANGED_EVENT = "pi-subagents:herdr:foreground-control-changed";
 const DEFAULT_SOURCE = "pi-subagents:herdr";
 const DEFAULT_TTL_MS = 120_000;
 const DEFAULT_REFRESH_MS = 45_000;
@@ -352,6 +353,9 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 	};
 
 	if (enabled) {
+		subscribe(HERDR_FOREGROUND_CONTROL_CHANGED_EVENT, () => {
+			if (rootSession && options.getRuns) refresh();
+		});
 		subscribe(SUBAGENT_ASYNC_STARTED_EVENT, (data) => {
 			if (!rootSession) return;
 			const run = startedRun(data);

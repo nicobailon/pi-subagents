@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+	HERDR_FOREGROUND_CONTROL_CHANGED_EVENT,
 	registerHerdrStatusBridge,
 	type HerdrStatusBridgeEvents,
 	type HerdrStatusRun,
 } from "../../src/integrations/herdr-status.ts";
 import { projectActiveHerdrRuns } from "../../src/extension/index.ts";
+import { beginForegroundChild, finishForegroundChild } from "../../src/runs/foreground/foreground-control.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -236,6 +238,42 @@ describe("Herdr status bridge", () => {
 			{ id: "workflow-1", coordinator: true, agents: [], needsAttention: false },
 			{ id: "child-1", agents: ["worker"], needsAttention: false },
 		]);
+	});
+
+	it("publishes foreground workflow child start and finish without the periodic refresh", async () => {
+		const state = stateForTest();
+		state.asyncJobs.set("workflow-1", {
+			asyncId: "workflow-1", asyncDir: "/tmp/workflow-1", status: "running",
+			mode: "workflow", agents: ["workflow"],
+		});
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			getRuns: () => projectActiveHerdrRuns(state),
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: projectActiveHerdrRuns(state) });
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 0 subagents"));
+
+		state.foregroundControls.set("child-1", {
+			runId: "child-1", parentWorkflowRunId: "workflow-1", mode: "single",
+			startedAt: 10, updatedAt: 10,
+		});
+		const control = state.foregroundControls.get("child-1")!;
+		beginForegroundChild(control, { index: 0, agent: "reviewer", authoredTask: "review", effectivePrompt: "review", interrupt: () => true });
+		events.emit(HERDR_FOREGROUND_CONTROL_CHANGED_EVENT, { runId: "workflow-1" });
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (reviewer)"));
+
+		finishForegroundChild(control, 0);
+		events.emit(HERDR_FOREGROUND_CONTROL_CHANGED_EVENT, { runId: "workflow-1" });
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 0 subagents"));
+		bridge.dispose();
 	});
 
 	it("keeps child IDs live for attention and completion after a workflow refresh", async () => {
