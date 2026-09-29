@@ -26,6 +26,7 @@
 - `inheritSkills: false` now also removes skills that extensions add to an in-process child session (for example from `subagents.defaultExtensions`), so they no longer show up in the child's prompt next to the agent's own skills. Thanks to [@zeezooz](https://github.com/zeezooz) for [#2540](https://github.com/nicobailon/pi-subagents/issues/2540).
 - Async run retention now removes old runs whose mission has finished or was deleted, instead of keeping every mission-bound run forever. Runs whose mission update has not been synced yet are still kept. Fixes [#2535](https://github.com/nicobailon/pi-subagents/issues/2535). Thanks to [@LCorleone](https://github.com/LCorleone) for [#2536](https://github.com/nicobailon/pi-subagents/pull/2536).
 - The broad package-discovery unit test no longer fails when the system temp directory sits inside a Pi project. Thanks to [@abdwhb-png](https://github.com/abdwhb-png) for [#2553](https://github.com/nicobailon/pi-subagents/pull/2553).
+- Starting, reloading, resuming, or forking a session no longer pauses Pi while the watchdog records the Git HEAD it later diffs against (about 50 ms per session start on Windows, even with the watchdog off). The Git check now runs in the background as one process, and a watchdog review waits for it, so the watchdog still compares against HEAD at session start. Thanks to [@localhedge](https://github.com/localhedge) for reporting [#2560](https://github.com/nicobailon/pi-subagents/issues/2560).
 
 ## [0.73.1] - 2026-09-27
 

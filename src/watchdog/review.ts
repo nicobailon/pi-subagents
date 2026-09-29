@@ -56,7 +56,7 @@ export interface CreateMainWatchdogReviewOptions {
 	streamFn?: StreamFn;
 	createReadOnlyTools?: (cwd: string) => AgentTool[];
 	getThinkingLevel?: () => ThinkingLevel | undefined;
-	diffBaseline?: () => WatchdogDiffBaseline | undefined;
+	diffBaseline?: () => Promise<WatchdogDiffBaseline | undefined> | undefined;
 }
 
 function fullModelId(model: Pick<RegistryModel, "provider" | "id">): string {
@@ -290,7 +290,7 @@ async function runWatchdogAttempt(ctx: ExtensionContext, request: WatchdogReview
 			headers: { ...opencodeSessionHeaders(model, sessionId), ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
 		});
 	};
-	const diffBaseline = options.diffBaseline?.();
+	const diffBaseline = await options.diffBaseline?.();
 	let clarification: { question: string; evidence: string } | undefined;
 	let warned = false;
 	let toolCount = 0;

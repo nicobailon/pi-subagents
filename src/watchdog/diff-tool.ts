@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
@@ -25,15 +25,29 @@ function runGit(root: string, args: string[]): { ok: boolean; stdout: string; st
 	return { ok: result.status === 0, stdout: result.stdout ?? "", stderr: (result.stderr ?? "").trim() };
 }
 
-/** HEAD at session start, so later child commits still show in the diff. */
-export function captureWatchdogDiffBaseline(cwd: string): WatchdogDiffBaseline | undefined {
-	const toplevel = runGit(cwd, ["rev-parse", "--show-toplevel"]);
-	if (!toplevel.ok) return undefined;
-	const head = runGit(cwd, ["rev-parse", "HEAD"]);
-	if (!head.ok) return undefined;
-	const root = toplevel.stdout.trim();
-	const ref = head.stdout.trim();
+const BASELINE_ARGS = ["rev-parse", "--show-toplevel", "HEAD"];
+
+function parseBaseline(stdout: string): WatchdogDiffBaseline | undefined {
+	// HEAD is the last line; the repository path itself may contain newlines.
+	const lines = stdout.trim().split(/\r?\n/);
+	const ref = lines.pop();
+	const root = lines.join("\n");
 	return root && ref ? { root, ref } : undefined;
+}
+
+/** HEAD at reviewer launch, for tools that must be registered synchronously. */
+export function captureWatchdogDiffBaseline(cwd: string): WatchdogDiffBaseline | undefined {
+	const result = runGit(cwd, BASELINE_ARGS);
+	return result.ok ? parseBaseline(result.stdout) : undefined;
+}
+
+/** HEAD at session start, so later child commits still show in the diff. Does not block the event loop. */
+export function startWatchdogDiffBaselineCapture(cwd: string): Promise<WatchdogDiffBaseline | undefined> {
+	return new Promise((resolve) => {
+		execFile("git", ["-C", cwd, ...BASELINE_ARGS], { encoding: "utf-8", windowsHide: true }, (error, stdout) => {
+			resolve(error ? undefined : parseBaseline(stdout));
+		});
+	});
 }
 
 function validatePath(value: string | undefined): string | undefined {

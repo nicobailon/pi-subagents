@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { captureWatchdogDiffBaseline, type WatchdogDiffBaseline } from "./diff-tool.ts";
+import { startWatchdogDiffBaselineCapture, type WatchdogDiffBaseline } from "./diff-tool.ts";
 import { MainWatchdogRuntime } from "./runtime.ts";
 import { createMainWatchdogReview } from "./review.ts";
 import { DEFAULT_WATCHDOG_CONFIG } from "./settings.ts";
@@ -57,7 +57,7 @@ export function registerChildWatchdog(
 	if (!childConfig) return undefined;
 	if (!writeStatus) throw new Error("Child watchdog status sink is missing; the host must pass ChildRuntimeConfig.watchdogStatus.");
 	let currentContext: ExtensionContext | undefined;
-	let diffBaseline: WatchdogDiffBaseline | undefined;
+	let diffBaseline: Promise<WatchdogDiffBaseline | undefined> | undefined;
 	let agentSettled = false;
 	let seq = 0;
 	const emitStatus = (phase: ChildWatchdogPhase, reason?: string, warning?: ChildWatchdogWarningSummary): void => {
@@ -98,7 +98,7 @@ export function registerChildWatchdog(
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => void;
 	onRuntimeEvent("session_start", (_event, ctx) => {
 		rememberContext(ctx);
-		diffBaseline = captureWatchdogDiffBaseline(ctx.cwd);
+		diffBaseline = startWatchdogDiffBaselineCapture(ctx.cwd);
 		runtime.bindSession(ctx);
 		emitStatus("idle");
 	});

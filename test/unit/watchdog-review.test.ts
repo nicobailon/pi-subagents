@@ -356,12 +356,12 @@ describe("main watchdog review adapter", () => {
 		const current = model("openai", "gpt-diff");
 		const ctx = createCtx({ current });
 		const withBaseline = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
-		await createMainWatchdogReview(ctx, { streamFn: withBaseline.streamFn, diffBaseline: () => ({ root: "/tmp/watchdog-review", ref: "abc123" }) })(request(enabledConfig(), []));
+		await createMainWatchdogReview(ctx, { streamFn: withBaseline.streamFn, diffBaseline: async () => ({ root: "/tmp/watchdog-review", ref: "abc123" }) })(request(enabledConfig(), []));
 		assert.deepEqual(getCurrentTools(withBaseline.calls[0]!.context.messages).map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_diff", "watchdog_warn"]);
 		assert.match(getCurrentSystemPrompt(withBaseline.calls[0]!.context.messages), /watchdog_diff/);
 
 		const without = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
-		await createMainWatchdogReview(ctx, { streamFn: without.streamFn, diffBaseline: () => undefined })(request(enabledConfig(), []));
+		await createMainWatchdogReview(ctx, { streamFn: without.streamFn, diffBaseline: async () => undefined })(request(enabledConfig(), []));
 		const tools = getCurrentTools(without.calls[0]!.context.messages);
 		assert.deepEqual(tools.map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_warn"]);
 		assert.doesNotMatch(getCurrentSystemPrompt(without.calls[0]!.context.messages), /watchdog_diff/);

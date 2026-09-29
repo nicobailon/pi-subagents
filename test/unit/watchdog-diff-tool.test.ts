@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { captureWatchdogDiffBaseline, createWatchdogDiffTool, WATCHDOG_DIFF_MAX_CHARS } from "../../src/watchdog/diff-tool.ts";
+import { captureWatchdogDiffBaseline, createWatchdogDiffTool, startWatchdogDiffBaselineCapture, WATCHDOG_DIFF_MAX_CHARS } from "../../src/watchdog/diff-tool.ts";
 
 let repo = "";
 
@@ -35,12 +35,16 @@ describe("watchdog diff tool", () => {
 	});
 
 	it("captures the session baseline and reports no changes when clean", async () => {
-		const baseline = captureWatchdogDiffBaseline(path.join(repo, "src"));
+		const baseline = await startWatchdogDiffBaselineCapture(path.join(repo, "src"));
 		assert.ok(baseline);
 		assert.equal(fs.realpathSync.native(baseline.root), fs.realpathSync.native(repo), "git expands Windows 8.3 short names; compare native real paths");
 		assert.equal(baseline.ref, git("rev-parse", "HEAD").trim());
 		assert.match(await run(createWatchdogDiffTool(baseline)), /^No changes since baseline/);
-		assert.equal(captureWatchdogDiffBaseline(os.tmpdir()), undefined);
+		assert.equal(await startWatchdogDiffBaselineCapture(os.tmpdir()), undefined);
+		const empty = fs.mkdtempSync(path.join(os.tmpdir(), "watchdog-diff-empty-"));
+		execFileSync("git", ["init", "-q"], { cwd: empty });
+		assert.equal(await startWatchdogDiffBaselineCapture(empty), undefined, "a repo without commits has no baseline");
+		fs.rmSync(empty, { recursive: true, force: true });
 	});
 
 	it("shows tracked changes since the baseline, including later commits, and lists untracked paths", async () => {
