@@ -1,8 +1,9 @@
 /**
  * Opt-in feature groups an operator can remove from the parent-facing `subagent` tool.
- * Each group owns parameters and actions that no other feature uses, so hiding them
- * cannot remove a field that enabled behavior still needs. Per-call options disable
- * only the per-call override; configured defaults keep applying.
+ * Groups own parameters and actions that enabled features do not need, so hiding them
+ * cannot remove a field that enabled behavior still needs. `preflight` is the one shared
+ * parameter: it is script-only, so `workflow-scripts` removes it too. Per-call options
+ * disable only the per-call override; configured defaults keep applying.
  */
 export const SUBAGENT_FEATURES = {
 	"agent-management": {
@@ -34,6 +35,7 @@ export const SUBAGENT_FEATURES = {
 	"control-overrides": { actions: [], params: ["control"] },
 	"extension-bindings": { actions: [], params: ["extensionBindings"] },
 	"external-machines": { actions: [], params: ["machine"] },
+	"workflow-scripts": { actions: ["validate"], params: ["workflow", "args", "preflight", "globalConcurrencyLimit", "maxSubagentSpawnsPerRun"] },
 } as const satisfies Record<string, { actions: readonly string[]; params: readonly string[] }>;
 
 export type SubagentFeature = keyof typeof SUBAGENT_FEATURES;
@@ -88,7 +90,9 @@ export function resolveDisabledFeatureSurface(config: FeatureConfig): DisabledFe
 	const actions = new Map<string, string>();
 	for (const feature of features) {
 		const surface = featureSurface(feature);
-		for (const param of surface.params) params.set(param, surface.disabledBy);
+		// A parameter shared with workflow-scripts is always attributed to workflow-scripts,
+		// whatever order the config lists the features in.
+		for (const param of surface.params) if (feature === "workflow-scripts" || !params.has(param)) params.set(param, surface.disabledBy);
 		for (const action of surface.actions) actions.set(action, surface.disabledBy);
 	}
 	return { features, params, actions };
@@ -103,7 +107,17 @@ export function disabledFeatureUseError(request: object, surface: DisabledFeatur
 	for (const [param, disabledBy] of surface.params) {
 		if (params[param] !== undefined) return `${label} option '${param}' is disabled by config ${disabledBy}.`;
 	}
+	// workflowScript is the internal carrier for slash, prompt-workflow, RPC, and scheduled scripts.
+	// Callers check the original request, before the package lowers chain/tasks into its own script.
+	if (params.workflowScript !== undefined && surface.features.has("workflow-scripts")) {
+		return `${label} workflow scripts are disabled by config ${featureSurface("workflow-scripts").disabledBy}.`;
+	}
 	return undefined;
+}
+
+/** True when chain/tasks replace workflow scripts on the public tool. */
+export function structuredWorkflowsEnabled(surface: DisabledFeatureSurface): boolean {
+	return surface.features.has("workflow-scripts");
 }
 
 /** Lists what config disabled, for prepending to static reference docs that describe the full tool. */

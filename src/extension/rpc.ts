@@ -22,7 +22,7 @@ import {
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
-import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
+import { disabledFeatureUseError, structuredWorkflowsEnabled, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
 import { collectSubagentCost, SUBAGENT_COST_REPORT_VERSION } from "../slash/subagent-cost.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
@@ -520,7 +520,7 @@ function manageParams(params: unknown, options: RegisterSubagentRpcBridgeOptions
 	return output;
 }
 
-function spawnParams(params: unknown): SubagentParamsLike {
+function spawnParams(params: unknown, options: RegisterSubagentRpcBridgeOptions): SubagentParamsLike {
 	const { script, ...input } = assertRecordParams(params, "spawn");
 	if (Object.hasOwn(input, "workflowScript")) throw new SubagentRpcError("invalid_params", "RPC spawn workflowScript was removed; pass inline script text as script.");
 	if (Object.hasOwn(input, "workflowScriptPath")) throw new SubagentRpcError("invalid_params", "RPC spawn workflowScriptPath was removed; pass the file as workflow: \"./path/to/script.js\".");
@@ -531,6 +531,9 @@ function spawnParams(params: unknown): SubagentParamsLike {
 		// The executor's internal carrier; the model-facing tool cannot set it.
 		input.workflowScript = script;
 	}
+	// With workflow scripts disabled, name the setting before normalization can report a script-shape error instead.
+	const disabledFeatureError = options.disabledFeatures && structuredWorkflowsEnabled(options.disabledFeatures) ? disabledFeatureUseError(input, options.disabledFeatures, "RPC spawn") : undefined;
+	if (disabledFeatureError) throw new SubagentRpcError("invalid_params", disabledFeatureError);
 	const normalized = normalizePublicSubagentExecution(input);
 	if (!normalized.ok) throw new SubagentRpcError("invalid_params", normalized.error);
 	if (normalized.params.action !== undefined) {
@@ -731,7 +734,7 @@ async function handleRequest(
 		return executeChecked(options, ctx, request.requestId, request.method, manageParams(request.params, options));
 	}
 	if (request.method === "spawn") {
-		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params));
+		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params, options));
 	}
 	if (request.method === "status") {
 		const statusParams = normalizeStatusParams(request.params);

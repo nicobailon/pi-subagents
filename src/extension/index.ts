@@ -700,7 +700,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		...MODEL_ONLY_TOOL,
 		label: "Subagent",
 		description: buildSubagentToolDescription(config, { disabledFeatures }),
-		...buildSubagentToolPromptMetadata(config),
+		...buildSubagentToolPromptMetadata(config, disabledFeatures),
 		parameters,
 
 		async execute(id, params, signal, onUpdate, ctx) {
@@ -782,6 +782,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const disposeSlashCommands = registerSlashCommands(pi, state, {
 		fleetKeybindings: config.fleetKeybindings,
 		foregroundDetachShortcut: config.foregroundDetachShortcut,
+		workflowScriptsDisabled: disabledFeatures.features.has("workflow-scripts"),
 	});
 
 	let visibleControlNotices = new Set<string>();

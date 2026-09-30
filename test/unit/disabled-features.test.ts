@@ -32,6 +32,7 @@ const GROUPS: Array<{ name: string; config: ExtensionConfig; setting: string; pa
 		["control-overrides", ["control"], []],
 		["extension-bindings", ["extensionBindings"], []],
 		["external-machines", ["machine"], []],
+		["workflow-scripts", ["workflow", "args", "preflight", "globalConcurrencyLimit", "maxSubagentSpawnsPerRun"], ["validate"]],
 	] as const).map(([name, params, actions]) => ({ name, config: { disabledFeatures: [name] }, setting: `disabledFeatures "${name}"`, params: [...params], actions: [...actions] })),
 	{
 		name: "schedules",
@@ -92,7 +93,9 @@ describe("disabled feature groups", () => {
 	for (const group of GROUPS) {
 		it(`${group.name}: removes exactly its parameters from the schema`, () => {
 			for (const param of group.params) assert.ok(fullKeys.includes(param), `${param} is not a schema parameter`);
-			assert.deepEqual(schemaKeys(group.config), fullKeys.filter((key) => !group.params.includes(key)));
+			// workflow-scripts replaces the removed script parameters with chain/tasks after task.
+			const added = group.name === "workflow-scripts" ? ["tasks", "chain"] : [];
+			assert.deepEqual(schemaKeys(group.config), fullKeys.filter((key) => !group.params.includes(key)).flatMap((key) => key === "task" ? [key, ...added] : [key]));
 		});
 
 		it(`${group.name}: rejects its actions and parameters with the setting name`, async () => {
@@ -107,7 +110,7 @@ describe("disabled feature groups", () => {
 			const result = await executor.executePublic("disabled-option", { agent: "worker", task: "scan", [param]: "x" }, new AbortController().signal, undefined, ctx());
 			assert.equal(result.isError, true);
 			assert.equal(resultText(result), `subagent option '${param}' is disabled by config ${group.setting}.`);
-			assert.equal(result.details.mode, "single");
+			assert.equal(result.details.mode, param === "workflow" ? "workflow" : "single");
 		});
 	}
 });
@@ -172,7 +175,8 @@ describe("disabled feature discovery", () => {
 		for (const toolDescriptionMode of [undefined, "full"] as const) {
 			const description = buildSubagentToolDescription({ toolDescriptionMode }, { disabledFeatures });
 			for (const text of featureText) assert.ok(!description.includes(text), `${toolDescriptionMode ?? "default"} description still has ${text}`);
-			assert.ok(description.includes(SUBAGENT_SAFETY_GUIDANCE));
+			// Every safety line stays; with workflow-scripts disabled only the script-writing wording changes.
+			for (const line of SUBAGENT_SAFETY_GUIDANCE.split("\n").filter((text) => !/runs\.|workflow call/.test(text))) assert.ok(description.includes(line), `${toolDescriptionMode ?? "default"} description lacks safety line ${line}`);
 			assert.match(description, /Thinking uses model suffix\./);
 		}
 		assert.match(buildSubagentToolDescription({ toolDescriptionMode: "full" }, { disabledFeatures }), /Management discovery: list\/get\/models\/guide; doctor\. Use guide topics agents, observability, tool-reference, configuration, models or extension-api for/);

@@ -182,10 +182,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(validator.Check({ ...base, outputSchema: { type: "object" } }), true);
 		assert.equal(validator.Check({ ...base, outputSchema: false }), true);
 		assert.equal(validator.Check({ ...base, outputSchema: null }), false);
-		assert.equal(validator.Check({ task: "work", chain: [{ agent: "worker", outputSchema: false }] }), true);
-		const collectSchema = schemas.DynamicCollectSchema;
-		assert.ok(collectSchema);
-		assert.equal(CompileSchema!(collectSchema).Check({ as: "all", outputSchema: false }), false);
 	});
 
 	it("includes context field and default precedence for fresh/fork execution mode", () => {

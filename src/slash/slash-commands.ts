@@ -599,7 +599,12 @@ function slashRunWorkflowScript(key: string, child: Record<string, unknown>): st
 export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
-	options: { fleetKeybindings?: FleetKeybindingsConfig; foregroundDetachShortcut?: string } = {},
+	options: {
+		fleetKeybindings?: FleetKeybindingsConfig;
+		foregroundDetachShortcut?: string;
+		/** disabledFeatures "workflow-scripts": /run launches its one child directly instead of through a script. */
+		workflowScriptsDisabled?: boolean;
+	} = {},
 ): { dispose: () => void } {
 	let fleetOpen = false;
 	let disposed = false;
@@ -673,7 +678,8 @@ export function registerSlashCommands(
 			if (inline.skill !== undefined) child.skill = inline.skill;
 			if (inline.model) child.model = inline.model;
 			if (fork) child.context = "fork";
-			launchCommand(ctx, { workflowScript: slashRunWorkflowScript("run", child), async: bg ? true : false });
+			const async = bg ? true : false;
+			launchCommand(ctx, options.workflowScriptsDisabled ? { ...child, async } as SubagentParamsLike : { workflowScript: slashRunWorkflowScript("run", child), async });
 		},
 	});
 
