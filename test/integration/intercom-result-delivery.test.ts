@@ -1113,6 +1113,73 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
+	it("resume action on a failed workflow child makes the revival that key's latest run", async () => {
+		mockPi.onCall({ output: "revived memory report" });
+		const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+		const workflowRunId = `revive-workflow-${suffix}`;
+		const childRunId = `revive-workflow-child-${suffix}`;
+		const workflowDir = path.join(ASYNC_DIR, workflowRunId);
+		const childDir = path.join(ASYNC_DIR, childRunId);
+		const sessionFile = path.join(tempDir, "memory-child.jsonl");
+		const cleanup = [workflowDir, childDir];
+		try {
+			fs.mkdirSync(workflowDir, { recursive: true });
+			fs.mkdirSync(childDir, { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(workflowDir, "status.json"), JSON.stringify({
+				runId: workflowRunId, sessionId: "session-123", mode: "workflow", state: "complete", startedAt: 100, endedAt: 300, cwd: tempDir,
+				steps: [{ agent: "worker", workflowKey: "memory", runId: childRunId, status: "failed", error: "429 rate limit" }],
+			}), "utf-8");
+			fs.writeFileSync(path.join(workflowDir, "workflow-receipt.json"), JSON.stringify({
+				version: 1, workflowRunId, state: "complete", createdAt: 300,
+				entries: { memory: { key: "memory", agent: "worker", latestRunId: childRunId, continuation: { runIds: [childRunId] }, resumability: { state: "resumable" } } },
+			}), "utf-8");
+			fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({
+				runId: childRunId, sessionId: "session-123", mode: "single", state: "failed", startedAt: 100, endedAt: 200, cwd: tempDir,
+				parentWorkflowRunId: workflowRunId, workflowKey: "memory", sessionFile,
+				steps: [{ agent: "worker", status: "failed", sessionFile, error: "429 rate limit" }],
+			}), "utf-8");
+			writeRecoveryDescriptor(childDir, childRunId);
+			const { executor } = makeExecutor();
+
+			const revived = await executor.execute("revive-workflow-child", { action: "resume", id: childRunId, message: "Retry after the rate limit." }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(revived.isError, undefined, revived.content[0]?.text);
+			const revivedId = revived.details?.asyncId;
+			assert.ok(revivedId, "expected revived async id");
+			cleanup.push(path.join(ASYNC_DIR, revivedId), path.join(RESULTS_DIR, `${revivedId}.json`));
+			await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`));
+			const revivedStatusPath = path.join(ASYNC_DIR, revivedId, "status.json");
+			const statusDeadline = Date.now() + 10_000;
+			while (JSON.parse(fs.readFileSync(revivedStatusPath, "utf-8")).state !== "complete") {
+				if (Date.now() > statusDeadline) assert.fail("revived run did not reach complete status");
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+
+			const status = await executor.execute("workflow-status", { action: "status", id: workflowRunId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.match(status.content[0]?.text ?? "", new RegExp(`Child run: ${childRunId}\\n {2}Revived → ${revivedId}: completed`));
+
+			mockPi.onCall({ output: "follow-up summary" });
+			const continued = await executor.execute(
+				"continue-workflow-key",
+				{ async: false, workflowScript: `return runs.run("memory-followup", { resume: { workflowRunId: ${JSON.stringify(workflowRunId)}, key: "memory", latest: true }, task: "Summarize the report.", output: false });` },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(continued.isError, undefined, continued.content[0]?.text);
+			const child = continued.details!.workflow!.value as { runId: string; continuation: { runIds: string[] } };
+			cleanup.push(path.join(ASYNC_DIR, child.runId), path.join(RESULTS_DIR, `${child.runId}.json`));
+			assert.deepEqual(child.continuation.runIds, [childRunId, revivedId, child.runId]);
+
+			const revivedStatus = JSON.parse(fs.readFileSync(revivedStatusPath, "utf-8"));
+			fs.writeFileSync(revivedStatusPath, JSON.stringify({ ...revivedStatus, state: "running", endedAt: undefined }), "utf-8");
+			const runningStatus = await executor.execute("workflow-status-running", { action: "status", id: workflowRunId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.match(runningStatus.content[0]?.text ?? "", new RegExp(`Revived → ${revivedId}: running`));
+		} finally {
+			for (const target of cleanup) fs.rmSync(target, { recursive: true, force: true });
+		}
+	});
+
 	it("resume action runs retained children in a managed worktree when requested", async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });

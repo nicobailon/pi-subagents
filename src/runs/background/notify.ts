@@ -27,6 +27,8 @@ export interface SubagentNotifyChildOutput {
 	runId?: string;
 	agent?: string;
 	status: string;
+	/** Latest detached revival of this failed child, e.g. `Revived → <run>: completed`. */
+	revival?: string;
 	savedOutputPath?: string;
 	outputArtifactPath?: string;
 	structuredOutputPath?: string;
@@ -93,6 +95,7 @@ export interface CompletionNotification {
 		agent?: string;
 		status?: string;
 		state?: string;
+		revival?: string;
 		success?: boolean;
 		output?: string;
 		structuredOutput?: unknown;
@@ -269,6 +272,7 @@ function formatChildOutputBlock(children: SubagentNotifyChildOutput[] | undefine
 		const runId = child.runId ? boundedSafeText(child.runId) : "unavailable";
 		const status = boundedSafeText(child.status) || "unavailable";
 		lines.push(`- key=${key} run=${runId} status=${status}`);
+		if (child.revival) lines.push(`  ${boundedSafeText(child.revival)}`);
 		lines.push(`  Saved output: ${child.savedOutputPath ? boundedSafeText(child.savedOutputPath) : "unavailable"}`);
 		if (child.outputArtifactPath) lines.push(`  Output artifact (retention-managed): ${boundedSafeText(child.outputArtifactPath)}`);
 		if (child.structuredOutputPath) lines.push(`  Structured output (retention-managed): ${boundedSafeText(child.structuredOutputPath)}`);
@@ -696,6 +700,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 				...(runId ? { runId } : {}),
 				...(typeof child.agent === "string" ? { agent: child.agent } : {}),
 				status: childStatus(child, result.state),
+				...(typeof child.revival === "string" && child.revival ? { revival: child.revival } : {}),
 				...(savedOutputPath ? { savedOutputPath } : {}),
 				...(outputArtifact.status === "verified" ? { outputArtifactPath: outputArtifact.path } : {}),
 				...(structuredOutput.status === "verified" ? { structuredOutputPath: structuredOutput.path } : {}),

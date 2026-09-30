@@ -6,6 +6,7 @@ import type { WorkflowReceiptResumeReference, WorkflowScriptChildResult } from "
 import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 import { HOST_STEP_MAX_COUNT, assertUniqueHostStepIds, parseHostStepNode } from "../runs/shared/host-step-status.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../runs/shared/lane-metadata.ts";
+import { projectWorkflowKeyRevival } from "./workflow-revival.ts";
 
 export type { WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
 
@@ -362,8 +363,13 @@ export function resolveWorkflowReceiptResumeEntry(input: {
 	if (input.reference.latest !== true) throw new Error("Keyed workflow receipt resume requires latest: true.");
 	const key = assertKey(input.reference.key, "keyed resume key");
 	const receipt = readWorkflowReceipt(input.asyncDirRoot, input.reference.workflowRunId.trim());
-	const entry = receipt.entries[key];
-	if (!entry) throw new Error(`Workflow receipt '${receipt.workflowRunId}' has no child key '${key}'.`);
+	const recorded = receipt.entries[key];
+	if (!recorded) throw new Error(`Workflow receipt '${receipt.workflowRunId}' has no child key '${key}'.`);
+	// A detached top-level revival after the receipt was written continues this key's lineage.
+	const revival = recorded.latestRunId ? projectWorkflowKeyRevival(input.asyncDirRoot, receipt.workflowRunId, key, recorded.latestRunId) : undefined;
+	const entry = revival
+		? { ...recorded, latestRunId: revival.latestRunId, continuation: { runIds: [...recorded.continuation.runIds, ...revival.revivedRunIds] } }
+		: recorded;
 	assertResumableEntry(entry, receipt.workflowRunId, key);
 	input.assertResumable?.(entry.latestRunId);
 	return entry;
