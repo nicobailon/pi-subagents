@@ -772,7 +772,13 @@ async function runSingleAttempt(
 				// JSONL artifact flush is best effort.
 			});
 			// Report the run only after the child's extensions have shut down.
-			void Promise.resolve().then(() => session?.dispose()).catch(() => undefined).then(() => {
+			void Promise.resolve().then(async () => {
+				if (code === 0 && !result.interrupted && !result.timedOut && !result.stopped && !abortedBySignal) {
+					try { await session?.finishCommands?.(); }
+					catch (error) { result.error = error instanceof Error ? error.message : String(error); code = 1; }
+				}
+				await session?.dispose();
+			}).catch(() => undefined).then(() => {
 				resolve(code);
 			});
 		};

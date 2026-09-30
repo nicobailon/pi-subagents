@@ -545,7 +545,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 		};
 
 		/** Stops observing the child and returns when its extensions have shut down. */
-		const finish = (): Promise<void> => {
+		const finish = async (): Promise<string | undefined> => {
 			clearFinalDrainTimers();
 			clearWatchdogTailTimer();
 			clearAllToolTimeouts();
@@ -559,7 +559,13 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			input.registerSteer?.(undefined);
 			input.registerWatchdogStatus?.(undefined);
 			unsubscribe?.();
-			return Promise.resolve().then(() => session?.dispose()).catch(() => undefined);
+			let commandError: string | undefined;
+			if (!interrupted && !timedOut && !stopped) {
+				try { await session?.finishCommands?.(); }
+				catch (error) { commandError = error instanceof Error ? error.message : String(error); }
+			}
+			await Promise.resolve().then(() => session?.dispose()).catch(() => undefined);
+			return commandError;
 		};
 
 		/** The child run ended (or was forced to end); fold in the outcome once the child's shutdown work is done. */
@@ -599,12 +605,13 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			if (!finalError && forced && !forcedDrainAfterFinalSuccess && !interrupted && !timedOut && !stopped) {
 				finalError = "Subagent session did not settle after it was aborted.";
 			}
-			const exitCode = timedOut || stopped
+			let exitCode = timedOut || stopped
 				? 1
 				: interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal)
 					? 0
 					: finalError || promptError !== undefined ? 1 : 0;
-			void closed.then(() => {
+			void closed.then((commandError) => {
+				if (commandError) { finalError ??= commandError; exitCode = 1; }
 				const result: RunChildSessionResult = omitUndefined({
 					exitCode,
 					messages,
@@ -613,7 +620,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					durationMs: Date.now() - startedAt,
 					model,
 					nativeMachine: session?.machineEvidence ? { provider: "herdr", machineId: session.machineEvidence.machineId, ...(session.machineEvidence.initial ? { initialGit: session.machineEvidence.initial } : {}), ...(session.machineEvidence.final ? { finalGit: session.machineEvidence.final } : {}) } : undefined,
-					error: stopped ? stopMessage() : timedOut ? (error ?? timeoutMessage()) : interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal) ? undefined : finalError,
+					error: stopped ? stopMessage() : timedOut ? (error ?? timeoutMessage()) : interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal && !commandError) ? undefined : finalError,
 					finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage() : error ?? timeoutMessage()) : finalOutput,
 					outputState: finalOutput.trim() ? "present" : "absent",
 					interrupted: interrupted || undefined,

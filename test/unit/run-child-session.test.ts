@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { runSync } from "../../src/runs/foreground/execution.ts";
+import { makeAgentConfigs } from "../support/helpers.ts";
 import { runChildSession } from "../../src/runs/background/run-child-session.ts";
 import type { ChildSession, ChildSessionFactory } from "../../src/runs/shared/child-session.ts";
 import type { InProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
@@ -72,3 +75,40 @@ it("reports the created child's context window before prompting", { timeout: 10_
 	assert.deepEqual(reported, [1_050_000]);
 	assert.equal(promptedAfterReport, true);
 });
+
+
+for (const mode of ["foreground", "background"] as const) {
+	it(`rejects unfinished commands at authoritative ${mode} settlement and still disposes the child`, async () => {
+		let listener: (event: any) => void = () => {};
+		let prompted = false;
+		let finalized = 0;
+		let disposed = false;
+		const messages = [];
+		const session: ChildSession = {
+			subscribe(handler) { listener = handler; return () => {}; },
+			async prompt() {
+				const message = fauxAssistantMessage("Done");
+				messages.push(message);
+				listener({ type: "message_end", message });
+				listener({ type: "agent_end", messages });
+				listener({ type: "agent_settled" });
+				prompted = true;
+			},
+			async finishCommands() {
+				assert.equal(prompted, true);
+				finalized++;
+				throw new Error("Child finished with unfinished commands: service. Commands were cancelled.");
+			},
+			async steer() {}, async followUp() {}, async abort() {}, async dispose() { disposed = true; },
+			messages, sessionId: "command-settlement-session", modelId: "mock/model",
+		};
+		const factory: ChildSessionFactory = { create: async () => session, async dispose() {} };
+		const result = mode === "foreground"
+			? await runSync(process.cwd(), makeAgentConfigs(["worker"]), "worker", "Finish", { childSessionFactory: factory })
+			: await runChildSession({ factory, launch, prompt: "Finish", timeoutMessage: "timed out", appendChildEvent() {}, writeOutputLine() {} });
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /unfinished commands: service/);
+		assert.equal(finalized, 1);
+		assert.equal(disposed, true);
+	});
+}

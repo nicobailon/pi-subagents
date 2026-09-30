@@ -320,6 +320,31 @@ subagent({ action: "doctor" })
 - Inside child-safe fanout mode, bare `status` requires an id when no local foreground run is active, so children cannot enumerate unrelated top-level async runs.
 - Bare `interrupt` still targets only the visible top-level run; interrupting a nested run requires its explicit nested id.
 
+### Command controls
+
+Command controls target direct local native Pi children with `bash`, in foreground or async runs. They require the owning parent session, a run `id`, an explicit `index` for multi-child runs, and the exact `toolCallId` for mutations. Nested, external, and custom shell backends do not expose this controller.
+
+```ts
+subagent({ action: "command.status", id: "<run-id>", index: 0 })
+subagent({ action: "command.yield", id: "<run-id>", index: 0, toolCallId: "<call-id>" })
+subagent({ action: "command.cancel", id: "<run-id>", index: 0, toolCallId: "<call-id>" })
+subagent({ action: "command.status", id: "<run-id>", index: 0, toolCallId: "<call-id>" })
+```
+
+`command.yield` releases the selected blocking tool call without restarting the process. `command.cancel` aborts only that command through Pi's native bash cancellation; the child receives a tool error and can continue. `cancel_requested` acknowledges the request, while `cancelled` confirms the backend settled. A stale id never targets a later command. Run-scoped `interrupt` remains separate.
+
+Children with `bash` receive `subagent_command` unless excluded by their tool ceiling or `excludeTools`. Yielding requires this observation tool. Inside the child:
+
+```ts
+bash({ command: "npm run dev", yieldTimeMs: 1000 })
+subagent_command({ action: "status", toolCallId: "<returned-call-id>", waitMs: 1000 })
+subagent_command({ action: "cancel", toolCallId: "<returned-call-id>", waitMs: 1000 })
+```
+
+`yieldTimeMs` and `waitMs` range from 0 to 30,000 milliseconds. Omitting `yieldTimeMs` preserves completion-waiting behavior. Yielded handles are not successful exits. Status includes running/yielded/cancel-requested states and completed/failed/cancelled terminal states, a bounded output tail, and Pi's full-output file path when available. Recent terminal history retains 20 commands; active commands remain tracked.
+
+Commands remain owned by the child session. Normal completion with unfinished commands cancels them and fails the run. Interrupt, stop, timeout, and disposal clean up owned commands. Controls do not transfer processes out of the child or create detached services. Native bash `timeout` remains command-scoped; `toolTimeoutMs` covers an open tool call and does not become a yielded process deadline.
+
 ### resume
 
 `resume` revives a paused, completed, or failed async/foreground child by starting a new child from its stored session file. Stopped runs remain non-resumable, and it does not interrupt a live top-level async child. Use `steer` for acknowledged live async guidance.

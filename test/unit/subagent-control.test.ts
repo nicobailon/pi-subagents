@@ -24,6 +24,9 @@ describe("subagent control attention state", () => {
 		assert.equal(claimControlNotification(resolveControlConfig(), event, seen), true);
 		assert.equal(claimControlNotification(resolveControlConfig(), { ...event, ts: event.ts + 1000 }, seen), false);
 		assert.equal(claimControlNotification(resolveControlConfig(), { ...event, toolCallId: "second" }, seen), true);
+		const notice = formatControlNoticeMessage({ ...event, index: 2 });
+		assert.match(notice, /"action":"command.cancel","id":"run","index":2,"toolCallId":"first"/);
+		assert.match(notice, /"action":"command.yield"/);
 	});
 
 	it("marks a run as needing attention only after the idle threshold", () => {
@@ -231,7 +234,37 @@ describe("subagent control attention state", () => {
 
 		assert.match(message, /worker has had tool 'bash' open for 240s/);
 		assert.match(message, /Facts: tool bash 240s \| path scripts\/run-tests\.sh/);
-		assert.match(message, /message: "Check tool bash at path scripts\/run-tests\.sh\. Report the smallest next step or ask for a decision\."/);
+		assert.match(message, /Inspect the running command and recent output/);
+		assert.match(message, /A queued steer does not cancel an in-flight bash call/);
+		assert.match(message, /dev server or watch command/);
+		assert.match(message, /Elapsed time alone does not prove/);
+		assert.match(message, /yield a needed persistent command or cancel the exact incorrect command/);
+		assert.match(message, /Transcript: subagent\(\{ action: "status", id: "78f659a3", view: "transcript" \}\)/);
+		assert.doesNotMatch(message, /live async nudge|live nested nudge|Interrupt:|Direct intercom target:/);
+		assert.match(formatControlIntercomMessage(event), /A queued steer does not cancel an in-flight bash call/);
+	});
+
+	it("scopes open-bash transcript inspection to the selected child without suggesting a run-wide interrupt", () => {
+		const event = buildControlEvent({
+			to: "needs_attention", runId: "parallel-run", agent: "worker", index: 2,
+			reason: "tool_open_threshold", currentTool: "bash",
+		});
+		const message = formatControlNoticeMessage(event);
+		assert.match(message, /Transcript: subagent\(\{ action: "status", id: "parallel-run", view: "transcript", index: 2 \}\)/);
+		assert.match(message, /interrupt is run-scoped and may affect siblings/);
+		assert.doesNotMatch(message, /subagent\(\{ action: "interrupt"/);
+	});
+
+	it("preserves nudge guidance for other tools and bash notices unrelated to an open call", () => {
+		for (const input of [
+			{ reason: "tool_open_threshold" as const, currentTool: "read" },
+			{ reason: "tool_failures" as const, currentTool: "bash" },
+		]) {
+			const event = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker", ...input });
+			const message = formatControlNoticeMessage(event);
+			assert.match(message, /Top-level live async nudge:/);
+			assert.doesNotMatch(message, /A queued steer does not cancel/);
+		}
 	});
 
 	it("uses bounded task context in nudges and de-duplicates distinct contexts", () => {

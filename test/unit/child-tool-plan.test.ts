@@ -126,14 +126,14 @@ describe("child tool plan declared tools", () => {
 	it("keeps every declared core tool, so the child registry decides what exists", () => {
 		const plan = resolvePiLaunchToolPlan({ tools: ["read", "grep", "find", "ls", "bash"], agentName: "verifier" });
 		assert.deepEqual(plan.declaredBuiltinTools, ["read", "grep", "find", "ls", "bash"]);
-		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "grep", "find", "ls", "bash"]);
-		assert.deepEqual(plan.requiredChildTools, ["read", "grep", "find", "ls", "bash"]);
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "grep", "find", "ls", "bash", "subagent_command"]);
+		assert.deepEqual(plan.requiredChildTools, ["read", "grep", "find", "ls", "bash", "subagent_command"]);
 		assert.deepEqual(plan.warnings, []);
 	});
 
 	it("adds read for lazy skill loading without an explicit declaration", () => {
 		const plan = resolvePiLaunchToolPlan({ tools: ["bash"], requireReadTool: true });
-		assert.deepEqual(plan.requiredChildTools, ["read", "bash"]);
+		assert.deepEqual(plan.requiredChildTools, ["read", "bash", "subagent_command"]);
 	});
 
 	it("preserves arbitrary non-core requirements without inferring their child providers", () => {
@@ -225,9 +225,9 @@ describe("production launch path keeps declared child tools", () => {
 					tools: ["read", "grep", "bash"],
 				});
 				assert.deepEqual(launch.toolPlan.declaredBuiltinTools, ["read", "grep", "bash"]);
-				assert.deepEqual(launch.toolPlan.effectiveToolAllowlist, ["read", "grep", "bash"]);
-				assert.deepEqual(launch.toolPlan.requiredChildTools, ["read", "grep", "bash"]);
-				assert.deepEqual(launch.config.requiredTools, ["read", "grep", "bash"]);
+				assert.deepEqual(launch.toolPlan.effectiveToolAllowlist, ["read", "grep", "bash", "subagent_command"]);
+				assert.deepEqual(launch.toolPlan.requiredChildTools, ["read", "grep", "bash", "subagent_command"]);
+				assert.deepEqual(launch.config.requiredTools, ["read", "grep", "bash", "subagent_command"]);
 				assert.deepEqual(launch.warnings, []);
 			}
 		} finally {

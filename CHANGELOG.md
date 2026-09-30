@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Local native Pi children support command-scoped `command.status`, `command.yield`, and `command.cancel` supervisor actions. Child `bash` accepts an explicit `yieldTimeMs` and returns a managed command handle; `subagent_command` observes or cancels it. Commands reuse Pi's shell backend, stay owned by the child, and are cleaned up at child exit. Unfinished commands fail completion.
+
 ### Fixed
 
 - `/subagent-cost` and the RPC `cost` method no longer log a missing workflow receipt error on every call. Foreground workflows write no receipt file and their child usage is already in their results, so cost collection no longer looks one up for them. An async workflow that has no receipt yet, such as one still running, is now reported as `Async child usage unavailable` instead of being left out of the totals without notice. Unreadable async workflow receipts are still logged. (#2614)

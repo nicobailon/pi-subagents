@@ -62,6 +62,22 @@ describe("subagent control notice delivery", () => {
 		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
 	});
 
+	it("wakes the parent with inspection and recovery guidance for an open bash call", () => {
+		const recorder = makeRecorder();
+		handleSubagentControlNotice({
+			pi: recorder.pi,
+			state: makeState(),
+			visibleControlNotices: new Set(),
+			details: { source: "async", event: needsAttentionEvent({ reason: "tool_open_threshold", currentTool: "bash" }) },
+		});
+		assert.equal(recorder.sent.length, 1);
+		assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
+		const message = recorder.sent[0]?.message as { content: string };
+		assert.match(message.content, /Inspect the running command and recent output/);
+		assert.match(message.content, /view: "transcript", index: 0/);
+		assert.doesNotMatch(message.content, /live async nudge|live nested nudge/);
+	});
+
 	it("delivers goal notices without starting a new turn", () => {
 		const state = makeState();
 		const recorder = makeRecorder();

@@ -27,6 +27,7 @@ import { isWorkflowScriptPath, normalizePublicSubagentExecution, validateWorkflo
 import { readReplyWorkflowScript } from "../../extension/reply-workflow-script.ts";
 import { disabledFeatureNotice, disabledFeatureUseError, resolveDisabledFeatureSurface, type DisabledFeatureSurface } from "../../shared/disabled-features.ts";
 import { runSync } from "./execution.ts";
+import { commandAction, commandStatusLines } from "./command-action.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { applyWatchdogLaunchRules } from "../../watchdog/rules.ts";
@@ -220,8 +221,8 @@ import {
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.rollback", "dismiss", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
-const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "schedule.delete"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["command.yield", "command.cancel", "create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.rollback", "dismiss", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
+const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["command.cancel", "delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "schedule.delete"]);
 
 function resolveSteerDeliveryMode(mode: SubagentParamsLike["mode"]): SteerDeliveryMode | undefined {
 	return mode === "steer" || mode === "follow_up" || mode === "auto" ? mode : undefined;
@@ -328,6 +329,7 @@ export interface SubagentParamsLike {
 	merge?: unknown;
 	supersession?: unknown;
 	index?: number;
+	toolCallId?: string;
 	childId?: string;
 	view?: "fleet" | "transcript";
 	lines?: number;
@@ -6692,7 +6694,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
 				}
 			}
-			const policyAction = action === "stop" ? "stopRun" : action === "steer" ? "steerRun" : action === "schedule.create" ? "scheduleCreate" : action === "inspector.open" ? "inspectorOpen" : action === "project.open" ? "projectOpen" : undefined;
+			const policyAction = action === "stop" || action === "command.cancel" ? "stopRun" : action === "steer" || action === "command.yield" ? "steerRun" : action === "schedule.create" ? "scheduleCreate" : action === "inspector.open" ? "inspectorOpen" : action === "project.open" ? "projectOpen" : undefined;
 			if (policyAction) {
 				// Child-safe mode is a hard capability boundary; the policy is an operator
 				// preference. Refuse first, so the gate never prompts for an action that is
@@ -6915,6 +6917,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "management", results: [], spawnBudget, activeAsyncCapacity },
 				};
 			}
+			if (["command.status", "command.yield", "command.cancel"].includes(action)) {
+				try {
+					if (deps.allowMutatingManagementActions === false && action !== "command.status") throw new Error(`Action '${action}' is not available from child-safe subagent fanout mode.`);
+					const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
+					if (!targetRunId || paramsWithResolvedCwd.dir) throw new Error(`${action} requires id or runId; directory targets are not supported.`);
+					deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+					const target = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
+					if (!target) throw new Error(`No run found for '${targetRunId}'.`);
+					return await commandAction({ state: deps.state, target, operation: action.slice("command.".length) as "status" | "yield" | "cancel", index: paramsWithResolvedCwd.index, toolCallId: paramsWithResolvedCwd.toolCallId, signal });
+				} catch (error) {
+					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
+				}
+			}
 			if (action === "status" || action === "debug.run") {
 				if (!preserveActiveSession) deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
@@ -6922,10 +6937,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const targetLabel = action === "debug.run" ? "Debug run" : formatStatusTargetLabel(paramsWithResolvedCwd, targetRunId);
 				const withBudget = (result: AgentToolResult<Details>) => {
 					const budgeted = withSpawnBudgetStatus(result, deps.state, deps.config, deps.state.currentSessionId);
+					let commands: string[] = [];
+					if (targetRunId && action === "status" && !paramsWithResolvedCwd.view && !result.isError) {
+						try {
+							const target = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
+							if (target) commands = commandStatusLines(deps.state, target);
+						} catch (error) { commands = [`Command status unavailable: ${error instanceof Error ? error.message : String(error)}`]; }
+					}
 					return {
 						...budgeted,
 						content: budgeted.content.map((item, index) => index === 0 && item.type === "text"
-							? { ...item, text: `${targetLabel}\n${item.text}` }
+							? { ...item, text: `${targetLabel}\n${item.text}${commands.length ? `\n${commands.join("\n")}` : ""}` }
 							: item),
 					};
 				};

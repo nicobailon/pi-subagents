@@ -10,6 +10,8 @@ A foreground child is a pi session created inside the parent Pi process, not a s
 
 A background child is a pi session created inside the detached runner process. The runner mirrors session events into `events.jsonl`, `output-<index>.log`, and the transcript. Interrupt and stop abort the child session; steer requests are delivered with the session's `steer` or `followUp`.
 
+Long-open `bash` attention notices identify the exact tool call and include status and child-specific transcript commands. Each distinct long-open call notifies once. Inspect the running command and recent output before intervening: development servers and watch commands may intentionally never return, while builds and tests may legitimately take time. A queued steer does not cancel the shell command. For local native Pi children, `command.yield` returns control while the selected command remains managed; `command.cancel` stops that command without interrupting the child. Query `command.status` to confirm its terminal state. Unsupported children require the existing run-scoped interrupt/resume path, which may affect siblings. See [command controls](tool-reference.md#command-controls).
+
 Live progress shows compact detail for single, chain, and parallel modes: a bounded one-line task, current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available. Workflow `label` metadata wins over raw task text in compact multi-child cards.
 
 Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.

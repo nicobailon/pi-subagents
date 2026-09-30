@@ -181,6 +181,7 @@ const SubagentParamProperties = {
 	supersession: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true, description: "lane.recordSupersession evidence; read guide tool-reference." })),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child/transcript index." })),
 	childId: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: "Child-scoped stop identity." })),
+	toolCallId: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: "Exact bash call for command.status/yield/cancel; get it from the attention notice or command.status." })),
 	view: Type.Optional(Type.String({
 		enum: ["fleet", "transcript"],
 		description: "status view: fleet overview or transcript tail with id/dir and optional index.",
