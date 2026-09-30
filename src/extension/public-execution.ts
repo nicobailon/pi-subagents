@@ -53,6 +53,25 @@ export type PublicSubagentExecutionNormalization<T> =
 	| { ok: true; params: T }
 	| { ok: false; error: string; mode: PublicSubagentExecutionMode };
 
+const RAW_SCRIPT_FORMS = "workflow: true or a workflow script path";
+const REMOVED_WORKFLOW_SCRIPT = "workflowScript was removed; write the script in one ```js workflow block in this reply and call subagent({ workflow: true }), or pass a script file as workflow: \"./path/to/script.js\".";
+const REMOVED_WORKFLOW_SCRIPT_PATH = "workflowScriptPath was removed; pass the script file as workflow: \"./path/to/script.js\" (a workflow value containing '/' is a path).";
+
+/** A workflow value containing "/" is a script path; named workflow resource names never contain "/". */
+export function isWorkflowScriptPath(workflow: string): boolean {
+	return workflow.includes("/");
+}
+
+/**
+ * Model tool calls supply script text only through workflow: true (the reply block) or a script path.
+ * workflowScript remains the internal carrier for slash, prompt-workflow, scheduled, RPC, and named-resource launches.
+ */
+export function removedModelWorkflowFieldError(params: object): string | undefined {
+	if (Object.hasOwn(params, "workflowScript")) return REMOVED_WORKFLOW_SCRIPT;
+	if (Object.hasOwn(params, "workflowScriptPath")) return REMOVED_WORKFLOW_SCRIPT_PATH;
+	return undefined;
+}
+
 export function validateWorkflowCapacityOverrides(params: PublicSubagentExecutionParams): string | undefined {
 	for (const [name, value] of [
 		["globalConcurrencyLimit", params.globalConcurrencyLimit],
@@ -79,19 +98,22 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 			return { ok: false, error: error instanceof Error ? error.message : String(error), mode: params.action === undefined ? "workflow" : "management" };
 		}
 	}
-	if (params.workflowScript !== undefined && params.workflowScriptPath !== undefined) {
-		return { ok: false, error: "workflowScript and workflowScriptPath are mutually exclusive.", mode: "workflow" };
+	if (params.workflowScriptPath !== undefined) {
+		return { ok: false, error: REMOVED_WORKFLOW_SCRIPT_PATH, mode: params.action === undefined ? "workflow" : "management" };
 	}
-	const hasNamedWorkflow = params.workflow !== undefined;
-	if (hasNamedWorkflow && (typeof params.workflow !== "string" || !params.workflow.trim())) {
-		return { ok: false, error: "workflow must be a non-empty named workflow resource.", mode: "workflow" };
+	const workflow = params.workflow;
+	if (workflow !== undefined && workflow !== true && (typeof workflow !== "string" || !workflow.trim())) {
+		return { ok: false, error: "workflow must be true (the ```js workflow block in this reply), a script path containing '/', or a named workflow resource.", mode: "workflow" };
 	}
-	if (hasNamedWorkflow && (params.workflowScript !== undefined || params.workflowScriptPath !== undefined)) {
-		return { ok: false, error: "workflow is mutually exclusive with workflowScript and workflowScriptPath.", mode: "workflow" };
+	const hasNamedWorkflow = typeof workflow === "string" && !isWorkflowScriptPath(workflow);
+	// workflowScript is the internal script carrier; model tool calls cannot set it.
+	if (workflow !== undefined && params.workflowScript !== undefined) {
+		return { ok: false, error: "workflow cannot be combined with an internal workflowScript.", mode: "workflow" };
 	}
-	const hasWorkflowInput = params.workflowScript !== undefined || params.workflowScriptPath !== undefined || hasNamedWorkflow;
+	const hasRawScript = params.workflowScript !== undefined || (workflow !== undefined && !hasNamedWorkflow);
+	const hasWorkflowInput = hasRawScript || hasNamedWorkflow;
 	if (!hasWorkflowInput && params.args !== undefined) {
-		return { ok: false, error: "args requires workflow, workflowScript, or workflowScriptPath.", mode: "workflow" };
+		return { ok: false, error: "args requires workflow.", mode: "workflow" };
 	}
 	const hasCapacityOverride = params.globalConcurrencyLimit !== undefined || params.maxSubagentSpawnsPerRun !== undefined;
 	if (hasCapacityOverride) {
@@ -99,19 +121,18 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		if (capacityOverrideError) return { ok: false, error: capacityOverrideError, mode: params.action === undefined ? "workflow" : "management" };
 		const validatesSpawnBudget = typeof params.action === "string" && params.action.trim() === "validate"
 			&& params.globalConcurrencyLimit === undefined && params.maxSubagentSpawnsPerRun !== undefined;
-		if ((params.action !== undefined && !validatesSpawnBudget) || hasNamedWorkflow || (params.workflowScript === undefined && params.workflowScriptPath === undefined)) {
-			return { ok: false, error: "Workflow capacity overrides are only supported on top-level workflowScript or workflowScriptPath calls; validate accepts maxSubagentSpawnsPerRun for static budget checks.", mode: params.action === undefined ? "workflow" : "management" };
+		if ((params.action !== undefined && !validatesSpawnBudget) || !hasRawScript) {
+			return { ok: false, error: `Workflow capacity overrides are only supported on top-level ${RAW_SCRIPT_FORMS} calls; validate accepts maxSubagentSpawnsPerRun for static budget checks.`, mode: params.action === undefined ? "workflow" : "management" };
 		}
 	}
 	if (params.preflight !== undefined && !hasWorkflowInput) {
-		return { ok: false, error: "preflight requires workflowScript or workflowScriptPath.", mode: params.action === undefined ? "workflow" : "management" };
+		return { ok: false, error: `preflight requires ${RAW_SCRIPT_FORMS}.`, mode: params.action === undefined ? "workflow" : "management" };
 	}
-	if (params.preflight !== undefined && hasNamedWorkflow && params.workflowScript === undefined && params.workflowScriptPath === undefined) {
+	if (params.preflight !== undefined && hasNamedWorkflow) {
 		return { ok: false, error: "preflight is not supported with named workflow resources.", mode: "workflow" };
 	}
-	const hasValidWorkflowInput = (typeof params.workflowScript === "string" && Boolean(params.workflowScript.trim()))
-		|| (typeof params.workflowScriptPath === "string" && Boolean(params.workflowScriptPath.trim()))
-		|| (typeof params.workflow === "string" && Boolean(params.workflow.trim()));
+	const hasValidWorkflowInput = hasNamedWorkflow || workflow !== undefined
+		|| (typeof params.workflowScript === "string" && Boolean(params.workflowScript.trim()));
 	if (params.isolation !== undefined) {
 		if (params.isolation !== "none" && params.isolation !== "worktree") {
 			return { ok: false, error: "isolation must be 'none' or 'worktree'.", mode: hasWorkflowInput ? "workflow" : "management" };
@@ -131,7 +152,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	}
 	const action = params.action;
 	if (action !== undefined && (typeof action !== "string" || !action.trim())) {
-		return { ok: false, error: "action must be a non-empty management/control action, or omit action and use workflowScript.", mode: "management" };
+		return { ok: false, error: "action must be a non-empty management/control action, or omit action and use workflow.", mode: "management" };
 	}
 	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
 	if (params.baseRef !== undefined && normalizedAction !== undefined && normalizedAction !== "resume" && normalizedAction !== "schedule.create") {
@@ -141,55 +162,55 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		return { ok: false, error: "Named workflow resource execution must omit action.", mode: "management" };
 	}
 	if (params.clarify !== undefined) {
-		return { ok: false, error: "Public workflowScript execution does not support clarify UI.", mode: "workflow" };
+		return { ok: false, error: "Public workflow execution does not support clarify UI.", mode: "workflow" };
 	}
 	if (params.chainName !== undefined) {
-		return { ok: false, error: "Durable chain management was removed; use workflowScript or /prompt-workflow for repeatable workflows.", mode: "management" };
+		return { ok: false, error: "Durable chain management was removed; use a workflow script or /prompt-workflow for repeatable workflows.", mode: "management" };
 	}
 	if (params.config && typeof params.config === "object" && !Array.isArray(params.config) && Object.prototype.hasOwnProperty.call(params.config, "steps")) {
-		return { ok: false, error: "Durable chain definitions were removed; use workflowScript or /prompt-workflow for repeatable workflows.", mode: "management" };
+		return { ok: false, error: "Durable chain definitions were removed; use a workflow script or /prompt-workflow for repeatable workflows.", mode: "management" };
 	}
 	if (params.resume !== undefined) {
-		return { ok: false, error: "Top-level resume execution is not available. Put resume on a workflowScript runs.run/runs.all item.", mode: "workflow" };
+		return { ok: false, error: "Top-level resume execution is not available. Put resume on a workflow script runs.run/runs.all item.", mode: "workflow" };
 	}
 	const hasLegacyOrchestration = params.tasks !== undefined || params.chain !== undefined || params.parallel !== undefined || params.concurrency !== undefined || params.chainDir !== undefined;
 	if (hasLegacyOrchestration) {
-		return { ok: false, error: "Legacy top-level chain and parallel inputs were removed; use workflowScript.", mode: normalizedAction ? "management" : "workflow" };
+		return { ok: false, error: `Legacy top-level chain and parallel inputs were removed; use a workflow script (${RAW_SCRIPT_FORMS}).`, mode: normalizedAction ? "management" : "workflow" };
 	}
 	if (normalizedAction !== undefined) {
 		const legacyAction = normalizedAction.toLowerCase();
 		if (legacyAction === "append-step") {
-			return { ok: false, error: "Legacy append-step control was removed from the public subagent tool; use current workflowScript orchestration.", mode: "management" };
+			return { ok: false, error: "Legacy append-step control was removed from the public subagent tool; use workflow script orchestration.", mode: "management" };
 		}
 		if (legacyAction === "approve-checkpoint" || legacyAction === "reject-checkpoint") {
-			return { ok: false, error: "Legacy checkpoint approval controls were removed from the public subagent tool; use current workflowScript orchestration.", mode: "management" };
+			return { ok: false, error: "Legacy checkpoint approval controls were removed from the public subagent tool; use workflow script orchestration.", mode: "management" };
 		}
 		if (legacyAction === "single") {
 			return { ok: false, error: "action='single' is not supported. Omit action and pass { agent, task } for one child.", mode: "workflow" };
 		}
 		if (legacyAction === "parallel" || legacyAction === "tasks" || legacyAction === "chain") {
-			return { ok: false, error: "Legacy top-level chain and parallel inputs were removed; use workflowScript.", mode: "workflow" };
+			return { ok: false, error: `Legacy top-level chain and parallel inputs were removed; use a workflow script (${RAW_SCRIPT_FORMS}).`, mode: "workflow" };
 		}
 		if (normalizedAction === "validate") {
 			if (params.agent !== undefined || params.task !== undefined || params.step !== undefined) {
-				return { ok: false, error: "validate requires workflowScript or workflowScriptPath and does not accept direct agent, task, or step execution fields.", mode: "management" };
+				return { ok: false, error: `validate requires ${RAW_SCRIPT_FORMS} and does not accept direct agent, task, or step execution fields.`, mode: "management" };
 			}
 			if (!hasValidWorkflowInput) {
-				return { ok: false, error: "validate requires a non-empty workflowScript or workflowScriptPath.", mode: "management" };
+				return { ok: false, error: `validate requires ${RAW_SCRIPT_FORMS}.`, mode: "management" };
 			}
 			return { ok: true, params: { ...params, action: normalizedAction } };
 		}
 		if (normalizedAction === "schedule.create") {
 			if (params.agent !== undefined || params.task !== undefined || params.step !== undefined) {
-				return { ok: false, error: "schedule.create requires workflowScript or workflowScriptPath and does not accept direct agent, task, or step execution fields.", mode: "management" };
+				return { ok: false, error: `schedule.create requires ${RAW_SCRIPT_FORMS} and does not accept direct agent, task, or step execution fields.`, mode: "management" };
 			}
 			if (!hasValidWorkflowInput) {
-				return { ok: false, error: "schedule.create requires a non-empty workflowScript or workflowScriptPath.", mode: "management" };
+				return { ok: false, error: `schedule.create requires ${RAW_SCRIPT_FORMS}.`, mode: "management" };
 			}
 			return { ok: true, params: { ...params, action: normalizedAction } };
 		}
 		if (hasWorkflowInput) {
-			return { ok: false, error: "Workflow execution must omit action; only validate and schedule.create accept action with workflowScript or workflowScriptPath.", mode: "management" };
+			return { ok: false, error: `Workflow execution must omit action; only validate and schedule.create accept action with ${RAW_SCRIPT_FORMS}.`, mode: "management" };
 		}
 		if (params.task !== undefined) {
 			return { ok: false, error: "Structured single-child task cannot be combined with a management/control action.", mode: "management" };
@@ -197,10 +218,10 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		return { ok: true, params: { ...params, action: normalizedAction } };
 	}
 	if (params.step !== undefined) {
-		return { ok: false, error: "step is not a public execution field; use workflowScript for orchestration.", mode: "workflow" };
+		return { ok: false, error: `step is not a public execution field; use a workflow script (${RAW_SCRIPT_FORMS}) for orchestration.`, mode: "workflow" };
 	}
 	if (hasWorkflowInput && (params.agent !== undefined || params.task !== undefined)) {
-		return { ok: false, error: "Structured single-child execution cannot be combined with workflow, workflowScript, or workflowScriptPath.", mode: "workflow" };
+		return { ok: false, error: "Structured single-child execution cannot be combined with workflow.", mode: "workflow" };
 	}
 	if (params.agent !== undefined || params.task !== undefined) {
 		if (typeof params.agent !== "string" || !params.agent.trim()) {
@@ -219,7 +240,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		};
 	}
 	if (!hasValidWorkflowInput) {
-		return { ok: false, error: "Execution requires either { agent, task? } for one child, a named workflow resource, or a non-empty workflowScript or workflowScriptPath for orchestration.", mode: "workflow" };
+		return { ok: false, error: "Execution requires either { agent, task? } for one child or workflow (true, a script path, or a named workflow resource) for orchestration.", mode: "workflow" };
 	}
 	return { ok: true, params };
 }

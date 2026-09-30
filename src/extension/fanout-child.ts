@@ -15,6 +15,7 @@ import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
 import { resolveDisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { finalizeToolResult } from "./tool-result.ts";
+import { removedModelWorkflowFieldError } from "./public-execution.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, type AsyncStartedEvent, type Details, type SubagentState } from "../shared/types.ts";
 import { createChildExternalJobBridgeSweeper } from "../runs/shared/external-job-bridge.ts";
@@ -227,6 +228,8 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		].join("\n"),
 		parameters: params,
 		async execute(id, params, signal, onUpdate, ctx) {
+			const removedField = removedModelWorkflowFieldError(params);
+			if (removedField) throw new Error(removedField);
 			return finalizeToolResult(await executor.executePublic(id, params as SubagentParamsLike, signal ?? new AbortController().signal, onUpdate, ctx));
 		},
 	};

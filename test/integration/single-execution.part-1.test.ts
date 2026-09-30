@@ -964,7 +964,7 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("allows schedule.create to load its workflowScript target from a path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("allows schedule.create to load its workflow script target from a path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		let forwarded;
 		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, async (params) => {
 			forwarded = params;
@@ -974,7 +974,7 @@ Answer only from the supplied synthetic text.
 
 		const result = await executor.executePublic(
 			"schedule-create",
-			{ action: "schedule.create", id: "nightly", every: "1h", workflowScriptPath: "scheduled.js", args: { task: "nightly review" } },
+			{ action: "schedule.create", id: "nightly", every: "1h", workflow: "./scheduled.js", args: { task: "nightly review" } },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1228,7 +1228,7 @@ Answer only from the supplied synthetic text.
 		try {
 			for (const params of [
 				{ workflowScript: script },
-				{ workflowScriptPath: "raw-workflow.js" },
+				{ workflow: "./raw-workflow.js" },
 				{ workflow: "test.denied", workflowResourcePermit: {} },
 				{ workflow: "test.denied" },
 			]) {
@@ -1244,7 +1244,7 @@ Answer only from the supplied synthetic text.
 	it("denies host calls from raw public workflow scripts without resource authority", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const script = `return await runs.host("ci", { kind: "command", command: "npm test", timeoutMs: 1000 });`;
 		fs.writeFileSync(path.join(tempDir, "raw-host.js"), script);
-		for (const source of [{ workflowScript: script }, { workflowScriptPath: "raw-host.js" }]) {
+		for (const source of [{ workflowScript: script }, { workflow: "./raw-host.js" }]) {
 			const result = await makeExecutor([makeAgent("echo")]).executePublic(
 				"raw-host-denied",
 				{ ...source, args: { resource: "trusted", permit: true, hostCommands: ["npm test"] }, async: false },
@@ -1482,7 +1482,7 @@ Answer only from the supplied synthetic text.
 		if (failed.details.asyncId) fs.rmSync(path.join(DIRS.results, `${failed.details.asyncId}.json`), { force: true });
 	});
 
-	it("loads workflowScriptPath from the request cwd for validation without launching", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("loads a workflow script path from the request cwd for validation without launching", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const requestCwd = path.join(tempDir, "request-cwd");
 		fs.mkdirSync(requestCwd);
 		fs.writeFileSync(path.join(requestCwd, "workflow.js"), `return runs.run("bad key", { agent: "echo" });`);
@@ -1493,7 +1493,7 @@ Answer only from the supplied synthetic text.
 
 		const result = await executor.executePublic(
 			"file-validation",
-			{ action: "validate", cwd: "request-cwd", workflowScriptPath: "workflow.js", args: { task: "review" } },
+			{ action: "validate", cwd: "request-cwd", workflow: "./workflow.js", args: { task: "review" } },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1507,20 +1507,20 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("reports missing and empty workflowScriptPath files before validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("reports missing and empty workflow script files before validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		fs.writeFileSync(path.join(tempDir, "empty.js"), " \n");
 		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), () => {
 			throw new Error("file input errors must not discover or launch agents");
 		});
 
-		const missing = await executor.executePublic("missing-file", { action: "validate", workflowScriptPath: "missing.js" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const missing = await executor.executePublic("missing-file", { action: "validate", workflow: "./missing.js" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(missing.isError, true);
-		assert.match(missing.content[0]?.text ?? "", /Failed to read workflowScriptPath.*missing\.js/);
+		assert.match(missing.content[0]?.text ?? "", /Failed to read workflow script.*missing\.js/);
 		assert.doesNotMatch(missing.content[0]?.text ?? "", /validation failed|valid JavaScript/);
 
-		const empty = await executor.executePublic("empty-file", { action: "validate", workflowScriptPath: "empty.js" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const empty = await executor.executePublic("empty-file", { action: "validate", workflow: "./empty.js" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(empty.isError, true);
-		assert.match(empty.content[0]?.text ?? "", /workflowScriptPath file .*empty\.js.* is empty/);
+		assert.match(empty.content[0]?.text ?? "", /Workflow script file .*empty\.js.* is empty/);
 		assert.doesNotMatch(empty.content[0]?.text ?? "", /validation failed|valid JavaScript/);
 		assert.equal(mockPi.callCount(), 0);
 	});
@@ -1528,24 +1528,50 @@ Answer only from the supplied synthetic text.
 	it("rejects invalid raw workflow arguments before reading a script path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const result = await makeExecutor([makeAgent("echo")]).executePublic(
 			"invalid-workflow-args",
-			{ workflowScriptPath: "missing.js", args: { task: "" } },
+			{ workflow: "./missing.js", args: { task: "" } },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
 		);
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /args\.task must not be empty/);
-		assert.doesNotMatch(result.content[0]?.text ?? "", /workflowScriptPath|missing\.js/);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /missing\.js/);
 	});
 
-	it("executes a workflow loaded from workflowScriptPath", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("executes the ```js workflow block from the reply that issued the call", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "reply workflow" });
+		const ctx = makeMinimalCtx(tempDir);
+		const reply = {
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "text", text: "Plan:\n```js workflow\nconst child = await runs.run(\"main\", { agent: \"echo\", task: args.task });\nreturn { task: args.task, child: child.output };\n```" },
+					{ type: "toolCall", id: "call-reply", name: "subagent", arguments: { workflow: true } },
+				],
+			},
+		};
+		const result = await makeExecutor([makeAgent("echo")]).executePublic(
+			"call-reply",
+			{ workflow: true, args: { task: "from reply" }, async: false },
+			new AbortController().signal,
+			undefined,
+			{ ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => [reply] } },
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "reply workflow failed");
+		assert.deepEqual(result.details.workflow?.value, { task: "from reply", child: "reply workflow" });
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("executes a workflow loaded from a script path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		fs.writeFileSync(path.join(tempDir, "workflow.js"), `return runs.run("main", { agent: "echo", task: "from file" });`);
 		mockPi.onCall({ output: "loaded workflow" });
 		const executor = makeExecutor([makeAgent("echo")]);
 
 		const result = await executor.executePublic(
 			"file-execution",
-			{ async: false, workflowScriptPath: path.join(tempDir, "workflow.js"), preflight: { version: 1, coverage: "complete", lanes: [{ key: "main", mode: "mutation" }] } },
+			{ async: false, workflow: path.join(tempDir, "workflow.js"), preflight: { version: 1, coverage: "complete", lanes: [{ key: "main", mode: "mutation" }] } },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1566,7 +1592,7 @@ Answer only from the supplied synthetic text.
 
 		for (const { source, invocationArgs } of [
 			{ source: { workflowScript: script }, invocationArgs: args },
-			{ source: { workflowScriptPath: "parameterized-workflow.js" }, invocationArgs: { options: { labels: ["one"] }, task: "from args" } },
+			{ source: { workflow: "./parameterized-workflow.js" }, invocationArgs: { options: { labels: ["one"] }, task: "from args" } },
 			{ source: { workflowScript: script }, invocationArgs: { task: "from args", options: { labels: ["two"] } } },
 		]) {
 			mockPi.onCall({ output: "parameterized workflow" });

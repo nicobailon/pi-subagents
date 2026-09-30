@@ -43,7 +43,7 @@ export default function (pi: ExtensionAPI) {
 						output.content = [{ type: "text", text: "PERSONA_EVIDENCE" }];
 					} else if (!spawned.length) {
 						output.content = model.id === "reviewer"
-							? [call("subagent", { workflowScript: 'return await runs.all([{key:"a",agent:"arm-a",task:"Review A"},{key:"b",agent:"arm-b",task:"Review B"}]);', async: true })]
+							? [{ type: "text" as const, text: '```js workflow\nreturn await runs.all([{key:"a",agent:"arm-a",task:"Review A"},{key:"b",agent:"arm-b",task:"Review B"}]);\n```' }, call("subagent", { workflow: true, async: true })]
 							: Array.from({ length: model.id === "arm-a" ? 2 : 1 }, (_, index) => call("subagent", { agent: "persona", task: `Inspect the assigned code for ${model.id}`, async: true }, index));
 					} else if (!waits.length || (model.id === "arm-b" && waits.length === 1)) {
 						const id = textOf(spawned[0]!).match(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/)?.[0];

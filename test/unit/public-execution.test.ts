@@ -8,8 +8,9 @@ describe("public subagent execution normalization", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return args.task", args: { task: "review" } }), { ok: true, params: { workflowScript: "return args.task", args: { task: "review" } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "review", args: { task: "Review this" } }), { ok: true, params: { workflow: "review", args: { task: "Review this" } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
-		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js", globalConcurrencyLimit: 2 }), { ok: true, params: { workflowScriptPath: "workflows/review.js", globalConcurrencyLimit: 2 } });
-		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js", args: { task: "review" } }), { ok: true, params: { workflowScriptPath: "workflows/review.js", args: { task: "review" } } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "workflows/review.js", globalConcurrencyLimit: 2 }), { ok: true, params: { workflow: "workflows/review.js", globalConcurrencyLimit: 2 } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "workflows/review.js", args: { task: "review" } }), { ok: true, params: { workflow: "workflows/review.js", args: { task: "review" } } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflow: true, maxSubagentSpawnsPerRun: 8, preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflow: true, maxSubagentSpawnsPerRun: 8, preflight: { version: 1, lanes: [] } } });
 		const task = "Use `quotes`\nand newlines";
 		assert.deepEqual(normalizePublicSubagentExecution({ agent: " worker ", task, context: "fresh", async: false }), {
 			ok: true,
@@ -59,8 +60,8 @@ describe("public subagent execution normalization", () => {
 			{ ok: true, params: { action: "validate", workflowScript: "return args.task", args: { task: "review" } } },
 		);
 		assert.deepEqual(
-			normalizePublicSubagentExecution({ action: " validate ", workflowScriptPath: "workflow.js" }),
-			{ ok: true, params: { action: "validate", workflowScriptPath: "workflow.js" } },
+			normalizePublicSubagentExecution({ action: " validate ", workflow: "./workflow.js" }),
+			{ ok: true, params: { action: "validate", workflow: "./workflow.js" } },
 		);
 		assert.deepEqual(
 			normalizePublicSubagentExecution({ action: " validate ", workflowScript: "return 1", maxSubagentSpawnsPerRun: 5 }),
@@ -71,8 +72,8 @@ describe("public subagent execution normalization", () => {
 			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScript: "return args.task", args: { task: "review" } } },
 		);
 		assert.deepEqual(
-			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScriptPath: "/tmp/workflow.js" }),
-			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScriptPath: "/tmp/workflow.js" } },
+			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflow: true }),
+			{ ok: true, params: { action: "schedule.create", every: "1h", workflow: true } },
 		);
 	});
 
@@ -97,17 +98,21 @@ describe("public subagent execution normalization", () => {
 		});
 	});
 
-	it("rejects workflowScript with workflowScriptPath", () => {
-		const result = normalizePublicSubagentExecution({ workflowScript: "return 1", workflowScriptPath: "workflow.js" });
+	it("rejects the removed workflowScriptPath field and names the path form", () => {
+		const result = normalizePublicSubagentExecution({ workflowScriptPath: "workflow.js" });
 		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /mutually exclusive/);
+		if (!result.ok) assert.match(result.error, /workflowScriptPath was removed.*workflow: "\.\/path\/to\/script\.js"/);
 	});
 
 	it("rejects named workflow combinations and caller-controlled provenance fields", () => {
 		for (const params of [
 			{ workflow: "review", workflowScript: "return 1" },
-			{ workflow: "review", workflowScriptPath: "workflow.js" },
+			{ workflow: true, workflowScript: "return 1" },
 			{ workflow: "review", agent: "worker" },
+			{ workflow: true, agent: "worker" },
+			{ workflow: false },
+			{ workflow: "review", preflight: { version: 1, lanes: [] } },
+			{ action: "validate", workflow: "review" },
 			{ workflow: "review", task: "work" },
 			{ args: { task: "work" } },
 			{ workflow: "review", resource: { kind: "workflow" } },
@@ -144,7 +149,7 @@ describe("public subagent execution normalization", () => {
 	it("rejects preflight without a workflow input", () => {
 		const result = normalizePublicSubagentExecution({ agent: "worker", preflight: { version: 1, lanes: [] } });
 		assert.equal(result.ok, false);
-		if (!result.ok) assert.match(result.error, /preflight requires workflowScript or workflowScriptPath/);
+		if (!result.ok) assert.match(result.error, /preflight requires workflow: true or a workflow script path/);
 	});
 
 	it("rejects private run fan-out fields at the public boundary", () => {

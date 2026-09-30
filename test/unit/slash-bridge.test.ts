@@ -100,7 +100,7 @@ describe("slash subagent bridge requester context", () => {
       events.on(RESPONSE, (data: any) => {
         try {
           assert.equal(data.isError, true);
-          assert.match(data.errorText, /removed.*workflowScript/i);
+          assert.match(data.errorText, /removed.*workflow script/i);
           assert.equal(executeCalls, 0);
           resolve();
         } catch (error) {

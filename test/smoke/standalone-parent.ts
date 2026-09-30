@@ -51,13 +51,15 @@ export default function registerSmoke(pi: ExtensionAPI) {
 			assert.deepEqual(parseFrontmatterList(profile.frontmatter.tools), expectedDeclaredTools);
 			const workflow = ["workflow", "targeted-controls", "child-timeout"].includes(mode);
 			const expectedState = mode === "interrupt" ? "paused" : mode === "stop" ? "stopped" : mode.endsWith("-timeout") || mode === "child-stop" || mode === "sdk-init-failure" ? "failed" : "complete";
-			const request = mode === "workflow" ? {
-				workflowScript: `const first = await runs.run("first", { agent: "binary-smoke", task: "Return FIRST." }); const siblings = await runs.all([{ key: "left", agent: "binary-smoke", task: "Return LEFT." }, { key: "right", agent: "binary-smoke", task: "Return RIGHT." }]); return { first, siblings };`,
-			} : mode === "targeted-controls" ? {
-				workflowScript: `const left = runs.run("left", { agent: "binary-smoke", task: "Return LEFT." }); const right = runs.run("right", { agent: "binary-smoke", task: "Return RIGHT." }); let interrupted; try { interrupted = await right; } catch (error) { interrupted = String(error); } return { left: await left, right: interrupted };`,
-			} : mode === "child-timeout" ? {
-				workflowScript: `return await runs.run("child-deadline", { agent: "binary-smoke", task: "Wait for cancellation.", timeoutMs: 8000 });`,
-			} : { agent: "binary-smoke", task: "Return the scripted response." };
+			const workflowScript = mode === "workflow"
+				? `const first = await runs.run("first", { agent: "binary-smoke", task: "Return FIRST." }); const siblings = await runs.all([{ key: "left", agent: "binary-smoke", task: "Return LEFT." }, { key: "right", agent: "binary-smoke", task: "Return RIGHT." }]); return { first, siblings };`
+				: mode === "targeted-controls"
+					? `const left = runs.run("left", { agent: "binary-smoke", task: "Return LEFT." }); const right = runs.run("right", { agent: "binary-smoke", task: "Return RIGHT." }); let interrupted; try { interrupted = await right; } catch (error) { interrupted = String(error); } return { left: await left, right: interrupted };`
+					: mode === "child-timeout"
+						? `return await runs.run("child-deadline", { agent: "binary-smoke", task: "Wait for cancellation.", timeoutMs: 8000 });`
+						: undefined;
+			if (workflowScript !== undefined) fs.writeFileSync("/stage/work/smoke-workflow.js", workflowScript);
+			const request = workflowScript !== undefined ? { workflow: "/stage/work/smoke-workflow.js" } : { agent: "binary-smoke", task: "Return the scripted response." };
 			fs.writeFileSync("/stage/parent-initialized", String(process.pid));
 			if (mode === "shared-run" || mode === "parallel-stop") {
 				await verifySharedRun(host, ctx, mode, waitForFile, notification);

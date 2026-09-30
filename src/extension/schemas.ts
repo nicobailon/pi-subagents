@@ -146,7 +146,7 @@ const WorkflowPreflightOverride = Type.Object({
 	version: Type.Integer({ minimum: 1, maximum: 1 }),
 	coverage: Type.Optional(Type.String({ enum: ["complete", "partial"] })),
 	lanes: Type.Array(WorkflowPreflightLane, { maxItems: 64 }),
-}, { additionalProperties: false, description: "workflowScript/workflowScriptPath only; display-only hints; coverage warns." });
+}, { additionalProperties: false, description: "workflow: true or a script path only; display-only hints; coverage warns." });
 
 // Parallel task item (within a parallel step)
 export const ParallelTaskSchema = Type.Object({
@@ -283,7 +283,7 @@ const SubagentParamProperties = {
 	extensionBindings: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Child-only plain JSON; package.name/1; depth 16, 256 props, 16 KiB." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,
-		description: "Management/control only; omit for execution. validate accepts either script input. Discover actions with guide topic tool-reference."
+		description: "Management/control only; omit for execution. validate accepts workflow: true or a script path. Discover actions with guide topic tool-reference."
 	})),
 	capabilities: Type.Optional(Type.Boolean({ description: "list: compact capability rows/details without system prompts." })),
 	name: Type.Optional(Type.String({ description: "schedule.create name." })),
@@ -342,10 +342,11 @@ const SubagentParamProperties = {
 		],
 		description: "create/update agent config; object or JSON string."
 	})),
-	workflow: Type.Optional(Type.String({ minLength: 1, description: "Extension-owned workflow resource." })),
-	args: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Bounded plain-JSON args for named, inline, or file-backed workflows; raw-script args are exposed deeply frozen and persisted, so do not include secrets." })),
-	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Inline JavaScript statement body; raw/unknown provenance, no runs.host. Use explicit return and top-level await; see tool guidance/guide workflows." })),
-	workflowScriptPath: Type.Optional(Type.String({ minLength: 1, description: "Raw script file; host reads from request cwd before sandbox. Mutually exclusive with workflowScript and workflow." })),
+	workflow: Type.Optional(Type.Unsafe<string | true>({
+		anyOf: [{ type: "boolean" }, { type: "string", minLength: 1 }],
+		description: "true: run the one ```js workflow block written in this same reply (false invalid). String with '/': script file read from request cwd. Other string: named workflow resource. Raw scripts (true or path) have no runs.host.",
+	})),
+	args: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Bounded plain-JSON args for workflow; raw-script args are exposed deeply frozen and persisted, so do not include secrets." })),
 	globalConcurrencyLimit: Type.Optional(Type.Integer({ minimum: 1 })),
 	maxSubagentSpawnsPerRun: Type.Optional(Type.Integer({ minimum: 1 })),
 	preflight: Type.Optional(WorkflowPreflightOverride),

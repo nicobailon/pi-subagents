@@ -90,8 +90,8 @@ export function resolveWorkflowChatProgress(input: ResolveWorkflowChatProgressIn
 	if (requestedMode === "auto") mode = sameRepo && !input.background ? "live-card" : "off";
 	else mode = requestedMode;
 
-	if (mode === "live-card" && !sameRepo) return { error: "chatProgress: 'live-card' is only available for workflowScript runs in the same Git repository." };
-	if (mode === "live-card" && input.background) return { error: "chatProgress: 'live-card' is unavailable for async workflowScript. Async workflows have no inline live card; omit chatProgress or use auto/off. Use async:false only when the parent must block." };
+	if (mode === "live-card" && !sameRepo) return { error: "chatProgress: 'live-card' is only available for workflow script runs in the same Git repository." };
+	if (mode === "live-card" && input.background) return { error: "chatProgress: 'live-card' is unavailable for async workflow scripts. Async workflows have no inline live card; omit chatProgress or use auto/off. Use async:false only when the parent must block." };
 	return { projection: { mode, repoRelation, ...(repoLabel ? { repoLabel } : {}) } };
 }
 

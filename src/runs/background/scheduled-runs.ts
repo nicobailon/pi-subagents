@@ -438,9 +438,9 @@ function targetLabel(target: ScheduleTarget): string {
 }
 
 function sanitizeTarget(params: SubagentParamsLike): { target?: ScheduleTarget; error?: string } {
-	if (params.tasks || params.chain) return { error: "Recurring schedules require workflowScript; legacy tasks and chain inputs are unsupported." };
-	if (params.agent !== undefined || params.task !== undefined) return { error: "schedule.create requires workflowScript. Use workflowScript: \"return runs.run('main', { agent, task })\"." };
-	if (typeof params.workflowScript !== "string" || !params.workflowScript.trim()) return { error: "schedule.create requires a non-empty workflowScript." };
+	if (params.tasks || params.chain) return { error: "Recurring schedules require a workflow script; legacy tasks and chain inputs are unsupported." };
+	if (params.agent !== undefined || params.task !== undefined) return { error: "schedule.create requires workflow: true or a workflow script path, e.g. a ```js workflow block containing return runs.run('main', { agent, task })." };
+	if (typeof params.workflowScript !== "string" || !params.workflowScript.trim()) return { error: "schedule.create requires workflow: true or a workflow script path." };
 	if (params.context === "fork") return { error: "Scheduled runs require fresh context." };
 	if (params.async === false) return { error: "Scheduled runs are always async." };
 	let baseRef: string | undefined;

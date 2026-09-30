@@ -72,7 +72,7 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("renders only the public workflow execution mode", () => {
+	it("renders the workflow source without reading the script", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -85,56 +85,44 @@ describe("subagent extension child mode", () => {
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
 			const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
-			const workflow = registeredTool.renderCall({
-				workflowScript: "const scan = await runs.run('scan', {agent:'worker'}); return runs.all([{key:'correctness',agent:'reviewer'},{key:'tests',agent:'reviewer'}]);",
-			}, theme).text;
-			const foregroundWorkflow = registeredTool.renderCall({ workflowScript: "return runs.run('publish', {agent:'worker'});", async: false }, theme).text;
-			const templateWorkflow = registeredTool.renderCall({ workflowScript: "return runs.run(\`template\`, {agent:'worker'});", async: false }, theme).text;
-			const commentedWorkflow = registeredTool.renderCall({ workflowScript: "// runs.run('ignored', {agent:'worker'})\nconst note = \"key: 'also-ignored'\"; return runs.run('real', {agent:'worker'});" }, theme).text;
-			const dynamicKeyWorkflow = registeredTool.renderCall({ workflowScript: "return runs.all([{key: 'review-' + item, agent: 'reviewer'}]);" }, theme).text;
-			const ordinaryKeyWorkflow = registeredTool.renderCall({ workflowScript: "const config = {key: 'secret'}; return runs.all([{agent: 'reviewer', config: {key: 'nested'}, key: 'review'}]);" }, theme).text;
-			if (!workflow.includes("background · 3 lanes: scan, correctness, tests")) throw new Error("expected workflow manifest, got " + workflow);
-			if (!foregroundWorkflow.includes("foreground · 1 lane: publish")) throw new Error("expected foreground workflow manifest, got " + foregroundWorkflow);
-			if (!templateWorkflow.includes("foreground · 1 lane: template")) throw new Error("expected static template lane, got " + templateWorkflow);
-			if (!commentedWorkflow.includes("background · 1 lane: real")) throw new Error("expected lexical lane filtering, got " + commentedWorkflow);
-			if (!dynamicKeyWorkflow.includes("workflow script · background")) throw new Error("expected dynamic key fallback, got " + dynamicKeyWorkflow);
-			if (!ordinaryKeyWorkflow.includes("background · 1 lane: review") || ordinaryKeyWorkflow.includes("secret") || ordinaryKeyWorkflow.includes("nested")) throw new Error("expected only runs.all child key, got " + ordinaryKeyWorkflow);
+			const rows = [
+				registeredTool.renderCall({ workflow: true, async: true }, theme).text,
+				registeredTool.renderCall({ workflow: "./ci/sweep.js" }, theme).text,
+				registeredTool.renderCall({ workflow: "review" }, theme).text,
+			];
+			const expected = ["subagent workflow block [async]", "subagent ./ci/sweep.js", "subagent review"];
+			if (JSON.stringify(rows) !== JSON.stringify(expected)) throw new Error("expected " + JSON.stringify(expected) + ", got " + JSON.stringify(rows));
 		`;
 		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
 	});
 
-	it("shows omitted workflow async as background even when asyncByDefault is false", () => {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-workflow-manifest-config-"));
-		try {
-			const configDir = path.join(agentDir, "extensions", "subagent");
-			fs.mkdirSync(configDir, { recursive: true });
-			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ asyncByDefault: false, forceTopLevelAsync: true }), "utf-8");
-			const script = String.raw`
-				import registerSubagentExtension from "./index.ts";
-				const events = { on() { return () => {}; }, emit() {} };
-				let registeredTool;
-				const fakePi = new Proxy({
-					events, registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
-					registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
-				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
-				registerSubagentExtension(fakePi);
-				const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
-				const result = registeredTool.renderCall({
-					workflowScript: "return runs.run('scan' /* stable lane */, {agent:'worker'});",
-				}, theme).text;
-				const explicitForeground = registeredTool.renderCall({
-					workflowScript: "return runs.run('publish', {agent:'worker'});",
-					async: false,
-				}, theme).text;
-				if (!result.includes("background · 1 lane: scan")) throw new Error("expected workflow executor background manifest, got " + result);
-				if (!explicitForeground.includes("foreground · 1 lane: publish")) throw new Error("expected workflow executor foreground manifest, got " + explicitForeground);
-			`;
-			const env = parentToolEnv();
-			env.PI_CODING_AGENT_DIR = agentDir;
-			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
-		} finally {
-			fs.rmSync(agentDir, { recursive: true, force: true });
-		}
+	it("rejects model-sent workflowScript and workflowScriptPath on parent and fanout tools before execution", () => {
+		const script = String.raw`
+			import assert from "node:assert/strict";
+			import registerSubagentExtension from "./index.ts";
+			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
+			const tools = {};
+			const makePi = (name) => new Proxy({
+				events: { on() { return () => {}; }, emit() {} },
+				registerTool(tool) { if (tool.name === "subagent") tools[name] = tool; },
+				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			registerSubagentExtension(makePi("parent"));
+			registerFanoutChildSubagentExtension(makePi("fanout"), { fanoutChild: true, depth: 1, waitTool: { enabled: true }, fast: false });
+			const expanded = [];
+			const ctx = {
+				cwd: process.cwd(), hasUI: true,
+				ui: { setToolsExpanded(value) { expanded.push(value); } },
+				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; }, getBranch() { return []; } },
+				modelRegistry: { getAvailable() { return []; } },
+			};
+			for (const tool of [tools.parent, tools.fanout]) {
+				await assert.rejects(tool.execute("model-script", { workflowScript: "return 1" }, new AbortController().signal, undefined, ctx), /workflowScript was removed.*subagent\(\{ workflow: true \}\)/);
+				await assert.rejects(tool.execute("model-path", { workflowScriptPath: "ci/sweep.js" }, new AbortController().signal, undefined, ctx), /workflowScriptPath was removed.*workflow: "\.\/path\/to\/script\.js"/);
+			}
+			assert.deepEqual(expanded, [], "rejected calls must not reach parent execution");
+		`;
+		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
 	});
 
 	it("keeps registered tool errors actionable while successful results stay collapsed", () => {

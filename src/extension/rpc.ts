@@ -23,7 +23,7 @@ import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
-import { normalizePublicSubagentExecution } from "./public-execution.ts";
+import { isWorkflowScriptPath, normalizePublicSubagentExecution } from "./public-execution.ts";
 import { collectSubagentCost, SUBAGENT_COST_REPORT_VERSION } from "../slash/subagent-cost.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, stopStoppableAsyncStatusChildren, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
@@ -521,7 +521,13 @@ function manageParams(params: unknown, options: RegisterSubagentRpcBridgeOptions
 }
 
 function spawnParams(params: unknown): SubagentParamsLike {
-	const input = assertRecordParams(params, "spawn");
+	const { workflowScriptPath, ...input } = assertRecordParams(params, "spawn");
+	// RPC keeps its documented workflowScriptPath field; the executor reads files through the workflow path form.
+	if (workflowScriptPath !== undefined) {
+		if (input.workflow !== undefined) throw new SubagentRpcError("invalid_params", "RPC spawn workflowScriptPath cannot be combined with workflow.");
+		if (typeof workflowScriptPath !== "string" || !workflowScriptPath.trim()) throw new SubagentRpcError("invalid_params", "RPC spawn workflowScriptPath must be a non-empty string.");
+		input.workflow = isWorkflowScriptPath(workflowScriptPath) ? workflowScriptPath : `./${workflowScriptPath}`;
+	}
 	const normalized = normalizePublicSubagentExecution(input);
 	if (!normalized.ok) throw new SubagentRpcError("invalid_params", normalized.error);
 	if (normalized.params.action !== undefined) {

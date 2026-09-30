@@ -595,6 +595,23 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
+	it("keeps spawn workflowScriptPath by passing it to the executor as a workflow path", async () => {
+		const events = new FakeEvents();
+		const executed: any[] = [];
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx(),
+			execute: async (_id, params) => {
+				executed.push(params);
+				return { content: [{ type: "text", text: "Async: workflow [run-1]" }], details: { mode: "workflow", results: [], asyncId: "run-1" } } as any;
+			},
+		});
+
+		for (const workflowScriptPath of ["sweep.js", "ci/sweep.js"]) assert.equal((await request(events, `spawn-${workflowScriptPath}`, "spawn", { workflowScriptPath })).success, true);
+		assert.deepEqual(executed.map((params) => [params.workflow, "workflowScriptPath" in params]), [["./sweep.js", false], ["ci/sweep.js", false]]);
+		bridge.dispose();
+	});
+
 	it("allows direct managed worktree spawn requests", async () => {
 		const events = new FakeEvents();
 		let executedParams: any;
@@ -631,7 +648,7 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(chainReply.success, false);
 		assert.equal(parallelReply.success, false);
 		assert.equal(worktreeReply.success, false);
-		assert.match((chainReply as { error?: { message?: string } }).error?.message ?? "", /workflowScript/);
+		assert.match((chainReply as { error?: { message?: string } }).error?.message ?? "", /removed; use a workflow script/);
 		assert.equal(executeCalls, 0);
 		bridge.dispose();
 	});

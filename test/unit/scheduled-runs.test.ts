@@ -290,11 +290,11 @@ describe("project schedule management", () => {
 		assert.doesNotThrow(() => manager.bindSession(context(project)));
 	});
 
-	it("rejects direct schedule targets and requires workflowScript", async () => {
+	it("rejects direct schedule targets and requires a workflow script", async () => {
 		const h = harness();
 		const result = await h.manager.handleToolCall({ action: "schedule.create", id: "direct", every: "1h", agent: "worker", task: "Review" }, h.ctx);
 		assert.equal(result.isError, true);
-		assert.match(text(result), /requires workflowScript/);
+		assert.match(text(result), /requires workflow: true or a workflow script path/);
 	});
 
 	it("fails closed on persisted legacy agent targets", () => {

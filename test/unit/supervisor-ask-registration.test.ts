@@ -240,10 +240,12 @@ describe("supervisor ask registration", () => {
 				await runtime.emit("session_start");
 				assert.equal(polling.intervals.size, 0);
 				assert.equal(polling.scans.length, 0);
+				const workflowPath = path.join(root, "inspect.js");
+				fs.writeFileSync(workflowPath, "return runs.run('inspect', { agent: 'leaf', task: 'Inspect read-only and report progress.', async: false, output: false });");
 				for (const mode of ["foreground", "workflow"] as const) {
 					const params = mode === "foreground"
 						? { agent: "leaf", task: "Inspect read-only and report progress.", async: false, output: false }
-						: { workflowScript: "return runs.run('inspect', { agent: 'leaf', task: 'Inspect read-only and report progress.', async: false, output: false });", async: false };
+						: { workflow: workflowPath, async: false };
 					const result = await runtime.call("subagent", params);
 					assert.notEqual(result.isError, true, text(result));
 					assert.equal(leaves.at(-1)!.closed, true, "child starts and completes without a timer tick");
@@ -365,8 +367,10 @@ describe("supervisor ask registration", () => {
 							if (launch.runtime.agent === "coordinator") {
 								assert.ok(runtime.registered.has(NATIVE_SUPERVISOR_TOOL_NAME), "B needs a native downward provider");
 								assert.ok(runtime.active().includes(NATIVE_SUPERVISOR_TOOL_NAME), "B's requested supervisor tool must be callable");
+								const workflowPath = path.join(root, "inspect.js");
+								fs.writeFileSync(workflowPath, "return runs.run('inspect', { agent: 'leaf', task: 'Inspect the repository read-only and ask which option to report.', async: false });");
 								const receipt = await runtime.call("subagent", {
-									workflowScript: "return runs.run('inspect', { agent: 'leaf', task: 'Inspect the repository read-only and ask which option to report.', async: false });",
+									workflow: workflowPath,
 									async: true,
 								});
 								assert.notEqual(receipt.isError, true, text(receipt));
