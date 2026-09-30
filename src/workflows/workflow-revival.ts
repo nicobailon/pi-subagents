@@ -73,8 +73,9 @@ export function recordWorkflowRevival(asyncDirRoot: string, sourceRunId: string,
 	try {
 		writePrivateAtomicJson(path.join(sourceDir, REVIVAL_LINK_FILE), link);
 	} catch (error) {
-		// Without the forward link the origin only keeps an unlinked run from retention.
-		fs.rmSync(originFile, { force: true });
+		// Keep the origin exactly when the published link names this revival: an unlinked origin
+		// would only pin the run against retention, and a linked one protects the key's chain.
+		if (readLink(path.join(sourceDir, REVIVAL_LINK_FILE))?.revivedRunId !== revivedRunId) fs.rmSync(originFile, { force: true });
 		throw error;
 	}
 }
