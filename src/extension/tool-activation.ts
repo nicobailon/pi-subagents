@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
+import type { ToolActivationMode } from "../shared/types.ts";
 
 interface ActivationDetails {
 	enabled?: string[];
@@ -23,37 +24,73 @@ function hasNativeToolSelection(messages: readonly ToolSelectionMessage[]): bool
 		&& (Object.hasOwn(message, "toolsAdded") || Object.hasOwn(message, "toolsRemoved")));
 }
 
-function setSelection(pi: ExtensionAPI, includeSubagent: boolean): void {
+function setSelection(pi: ExtensionAPI, includeSubagent: boolean, includeLoader: boolean): void {
 	const active = pi.getActiveTools();
-	const next = includeSubagent ? [...active, SUBAGENT_NAME] : active.filter((name) => name !== SUBAGENT_NAME);
-	if (!next.includes(LOADER_NAME)) next.push(LOADER_NAME);
+	const kept = active.filter((name) => (includeSubagent || name !== SUBAGENT_NAME) && (includeLoader || name !== LOADER_NAME));
+	const next = includeSubagent ? [...kept, SUBAGENT_NAME] : kept;
+	if (includeLoader && !next.includes(LOADER_NAME)) next.push(LOADER_NAME);
 	pi.setActiveTools([...new Set(next)]);
 }
 
-function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext): void {
+// Mirrors pi-ai's per-API transcript handling. Without these flags, adding a tool mid-conversation makes
+// Pi resend the conversation with a new leading system message, which can miss the provider prompt cache.
+function addsToolsWithoutCheckpoint(model: ExtensionContext["model"]): boolean {
+	const compat = model?.compat as {
+		supportsMidConvoSystemMessages?: boolean;
+		supportsMidConvoToolChanges?: boolean;
+		supportsMidConvoToolAdditions?: boolean;
+		supportsAdditionalTools?: boolean;
+		supportsToolSearch?: boolean;
+	} | undefined;
+	if (!model || compat?.supportsMidConvoSystemMessages !== true) return false;
+	switch (model.api) {
+		case "anthropic-messages": return compat.supportsMidConvoToolChanges === true;
+		case "openai-completions": return compat.supportsMidConvoToolAdditions === true;
+		case "openai-responses":
+		case "openai-codex-responses":
+		case "azure-openai-responses": return compat.supportsAdditionalTools === true || compat.supportsToolSearch === true;
+		default: return false;
+	}
+}
+
+// Returns whether the loader is selected for this session.
+function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "auto" | "dynamic"): boolean {
 	const available = pi.getAllTools();
-	if (!Array.isArray(available) || !Array.isArray(pi.getActiveTools())) return;
-	if (!available.some((tool) => tool.name === LOADER_NAME)) return;
+	if (!Array.isArray(available) || !Array.isArray(pi.getActiveTools())) return true;
+	if (!available.some((tool) => tool.name === LOADER_NAME)) return true;
 	// SAFETY: The running Pi session manager exposes buildSessionContext, but its read-only extension type omits it.
 	const messages = (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: ToolSelectionMessage[] } }).buildSessionContext().messages;
 	if (hasNativeToolSelection(messages)) {
-		// Only this tool's membership matters; a package-local pi-ai may be older than the running Pi.
+		// Only these tools' membership matters; a package-local pi-ai may be older than the running Pi.
 		let selected = false;
+		let loaderRecorded = false;
 		for (const message of messages) {
 			if (message.role !== "system") continue;
 			if (message.toolsRemoved?.some((tool) => tool.name === SUBAGENT_NAME)) selected = false;
 			if (message.toolsAdded?.some((tool) => tool.name === SUBAGENT_NAME)) selected = true;
+			if (message.toolsRemoved?.some((tool) => tool.name === LOADER_NAME)) loaderRecorded = false;
+			if (message.toolsAdded?.some((tool) => tool.name === LOADER_NAME)) loaderRecorded = true;
 		}
-		setSelection(pi, selected);
-		return;
+		// "auto" keeps the recorded loader membership: adding the loader to a transcript that never
+		// declared it is itself a mid-conversation tool change.
+		const loaderSelected = mode === "dynamic" || loaderRecorded;
+		setSelection(pi, selected, loaderSelected);
+		return loaderSelected;
 	}
-	setSelection(pi, messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME));
+	// "auto" decides once, for a new session: with a model that cannot take a tool mid-conversation
+	// without a checkpoint, start with subagent active instead of offering the loader.
+	const eager = mode === "auto" && messages.length === 0 && !addsToolsWithoutCheckpoint(ctx.model);
+	setSelection(pi, eager || (messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME)), !eager);
+	return !eager;
 }
 
 export function registerSubagentToolActivation(
 	pi: ExtensionAPI,
-	options: { advertisedPrompt: () => string | undefined | Promise<string | undefined> },
+	options: { advertisedPrompt: () => string | undefined | Promise<string | undefined>; mode?: ToolActivationMode },
 ): void {
+	const mode = options.mode ?? "auto";
+	// Like --exclude-tools subagents_enable: no loader, so subagent stays active from the first request.
+	if (mode === "eager") return;
 	if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") {
 		if (!warnedUnsupportedHost) {
 			warnedUnsupportedHost = true;
@@ -78,7 +115,7 @@ export function registerSubagentToolActivation(
 				details: { unavailable: [SUBAGENT_NAME] },
 			};
 			try {
-				setSelection(pi, true);
+				setSelection(pi, true, true);
 			} catch (error) {
 				return {
 					isError: true,
@@ -100,9 +137,12 @@ export function registerSubagentToolActivation(
 	};
 	pi.registerTool(loader);
 
-	pi.on("session_start", (_event, ctx) => applyRecordedSelection(pi, ctx));
-	pi.on("session_tree", (_event, ctx) => applyRecordedSelection(pi, ctx));
+	// Decided at session start and tree navigation only; a later model switch keeps the session's tools.
+	let loaderSelected = true;
+	pi.on("session_start", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode); });
+	pi.on("session_tree", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode); });
 	pi.on("before_agent_start", (event) => {
+		if (!loaderSelected) return;
 		const available = pi.getAllTools();
 		if (!Array.isArray(available) || !available.some((tool) => tool.name === LOADER_NAME)) return;
 		const selectedTools = event.systemPromptOptions.selectedTools ??= [...pi.getActiveTools()];

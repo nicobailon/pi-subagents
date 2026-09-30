@@ -2592,6 +2592,8 @@ export interface ProactiveSkillSubagentsConfig {
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
+/** How the parent session offers the subagent tool: via the subagents_enable loader, from the start, or chosen from the model. */
+export type ToolActivationMode = "auto" | "dynamic" | "eager";
 export type InlineToolDisplay = "rich" | "summary";
 
 export interface ScheduledRunsConfig {
@@ -2667,6 +2669,8 @@ export interface ExtensionConfig {
 	modelResponseAliases?: Record<string, string[]>;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to split metadata. */
 	toolDescriptionMode?: ToolDescriptionMode;
+	/** How a new parent session offers the subagent tool. Defaults to auto. */
+	toolActivation?: ToolActivationMode;
 	/** Opt-in feature groups removed from the subagent tool schema and rejected at every execution boundary. */
 	disabledFeatures?: SubagentFeature[];
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */

@@ -44,7 +44,7 @@ Pi is the parent session. A subagent is a focused child Pi session with its own 
 
 When you ask for a subagent, Pi starts the child, gives it the task, and brings the result back. Foreground children run as sessions inside the parent Pi process and stream in the conversation. Background children run as sessions inside a detached runner process that keeps working and can be checked later.
 
-Installing the extension does not start an automatic reviewer in the background. Fresh parent sessions initially expose the small `subagents_enable` loader instead of the full `subagent` schema. When your request or applicable instructions authorize delegation, Pi can call the loader itself; the unchanged `subagent` tool is available on the next model request. Complexity alone does not authorize delegation. `bg_wait` and supervisor replies remain available without activation.
+Installing the extension does not start an automatic reviewer in the background. When the session's model can take a new tool mid-conversation, fresh parent sessions initially expose the small `subagents_enable` loader instead of the full `subagent` schema. When your request or applicable instructions authorize delegation, Pi can call the loader itself; the unchanged `subagent` tool is available on the next model request. With other models, fresh sessions start with `subagent` active, because adding a tool later would make the provider miss its prompt cache. The [`toolActivation`](docs/configuration.md#toolactivation) setting changes this. Complexity alone does not authorize delegation. `bg_wait` and supervisor replies remain available without activation.
 
 If you want every implementation reviewed, say so in your prompt or project instructions:
 

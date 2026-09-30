@@ -9,6 +9,8 @@ import {
 	fauxToolCall,
 	getCurrentSystemPrompt,
 	getCurrentTools,
+	type FauxResponseFactory,
+	type FauxResponseStep,
 } from "@earendil-works/pi-ai";
 import {
 	DefaultResourceLoader,
@@ -25,12 +27,17 @@ function serializedCharacters(tools: ReturnType<typeof getCurrentTools>): number
 	return tools.filter((tool) => packageToolNames.has(tool.name)).reduce((total, tool) => total + JSON.stringify(tool).length, 0);
 }
 
-test("native Pi exposes the full subagent schema on the request immediately after activation", { timeout: 30_000 }, async () => {
+// Runs prompts in a native Pi session with the given pi-subagents config and faux responses.
+async function runNativeSession(config: Record<string, unknown> | undefined, responses: FauxResponseStep[], prompts: string[]): Promise<void> {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-activation-"));
 	const cwd = path.join(root, "project");
 	const agentDir = path.join(root, "agent");
 	fs.mkdirSync(cwd);
 	fs.mkdirSync(agentDir);
+	if (config) {
+		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify(config));
+	}
 	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const priorChild = process.env.PI_SUBAGENT_CHILD;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -39,33 +46,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 	try {
 		const { default: registerSubagentExtension } = await import(`../../index.ts?native-activation=${Date.now()}`);
 		const faux = fauxProvider({ provider: "tool-activation", models: [{ id: "local" }], tokensPerSecond: 100_000 });
-		const captured: number[] = [];
-		faux.setResponses([
-			(context) => {
-				const tools = getCurrentTools(context.messages);
-				const systemPrompt = getCurrentSystemPrompt(context.messages);
-				assert.match(systemPrompt, /pi-subagents is installed/i);
-				assert.match(systemPrompt, /complexity alone is not authorization/i);
-				captured.push(serializedCharacters(tools));
-				const loader = tools.find((tool) => tool.name === "subagents_enable");
-				const wait = tools.find((tool) => tool.name === "bg_wait");
-				const supervisor = tools.find((tool) => tool.name === "subagent_supervisor");
-				assert.ok(loader);
-				assert.ok(wait);
-				assert.ok(supervisor);
-				assert.ok(JSON.stringify(loader).length <= 800);
-				assert.ok(!tools.some((tool) => tool.name === "subagent"));
-				return fauxAssistantMessage(fauxToolCall("subagents_enable", {}), { stopReason: "toolUse" });
-			},
-			(context) => {
-				const tools = getCurrentTools(context.messages);
-				captured.push(serializedCharacters(tools));
-				const subagent = tools.find((tool) => tool.name === "subagent");
-				assert.ok(subagent);
-				assert.deepEqual(subagent.parameters, createSubagentParamsSchema());
-				return fauxAssistantMessage("Activation verified.");
-			},
-		]);
+		faux.setResponses(responses);
 		const settingsManager = SettingsManager.inMemory({});
 		const resourceLoader = new DefaultResourceLoader({
 			cwd, agentDir, settingsManager,
@@ -79,13 +60,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 			model: faux.getModel("local"), sessionManager: SessionManager.inMemory(cwd), noTools: "builtin",
 		}));
 		await session.bindExtensions({});
-		await session.prompt("Use the authorized delegation tools.");
-
-		assert.equal(captured.length, 2);
-		assert.ok(captured[0]! <= 5_500, `cold package schemas exceeded budget: ${captured[0]}`);
-		assert.ok(captured[1]! <= 24_000, `activated package schemas exceeded budget: ${captured[1]}`);
-		assert.ok(captured[1]! - captured[0]! >= 17_500, "lazy activation should remove the full subagent schema from cold requests");
-		console.log(`schema characters cold=${captured[0]} activated=${captured[1]}`);
+		for (const prompt of prompts) await session.prompt(prompt);
 	} finally {
 		if (session) {
 			await (session.extensionRunner as any).emit({ type: "session_shutdown", reason: "quit" });
@@ -95,4 +70,64 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 		if (priorChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = priorChild;
 		fs.rmSync(root, { recursive: true, force: true });
 	}
+}
+
+test("native Pi exposes the full subagent schema on the request immediately after activation", { timeout: 30_000 }, async () => {
+	const captured: number[] = [];
+	await runNativeSession({ toolActivation: "dynamic" }, [
+		(context) => {
+			const tools = getCurrentTools(context.messages);
+			const systemPrompt = getCurrentSystemPrompt(context.messages);
+			assert.match(systemPrompt, /pi-subagents is installed/i);
+			assert.match(systemPrompt, /complexity alone is not authorization/i);
+			captured.push(serializedCharacters(tools));
+			const loader = tools.find((tool) => tool.name === "subagents_enable");
+			const wait = tools.find((tool) => tool.name === "bg_wait");
+			const supervisor = tools.find((tool) => tool.name === "subagent_supervisor");
+			assert.ok(loader);
+			assert.ok(wait);
+			assert.ok(supervisor);
+			assert.ok(JSON.stringify(loader).length <= 800);
+			assert.ok(!tools.some((tool) => tool.name === "subagent"));
+			return fauxAssistantMessage(fauxToolCall("subagents_enable", {}), { stopReason: "toolUse" });
+		},
+		(context) => {
+			const tools = getCurrentTools(context.messages);
+			captured.push(serializedCharacters(tools));
+			// Replay on resume relies on the first declared tool set recording the loader.
+			const firstDeclared = context.messages.find((message) => message.role === "system" && message.toolsAdded?.length);
+			assert.ok(firstDeclared?.role === "system" && firstDeclared.toolsAdded?.some((tool) => tool.name === "subagents_enable"));
+			const subagent = tools.find((tool) => tool.name === "subagent");
+			assert.ok(subagent);
+			assert.deepEqual(subagent.parameters, createSubagentParamsSchema());
+			return fauxAssistantMessage("Activation verified.");
+		},
+	], ["Use the authorized delegation tools."]);
+
+	assert.equal(captured.length, 2);
+	assert.ok(captured[0]! <= 5_500, `cold package schemas exceeded budget: ${captured[0]}`);
+	assert.ok(captured[1]! <= 24_000, `activated package schemas exceeded budget: ${captured[1]}`);
+	assert.ok(captured[1]! - captured[0]! >= 17_500, "lazy activation should remove the full subagent schema from cold requests");
+	console.log(`schema characters cold=${captured[0]} activated=${captured[1]}`);
+});
+
+test("native Pi starts with subagent and no loader in auto when the model cannot add tools mid-conversation", { timeout: 30_000 }, async () => {
+	// The faux model declares no mid-conversation tool compat flags.
+	const toolLists: string[][] = [];
+	const record: FauxResponseFactory = (context) => {
+		const tools = getCurrentTools(context.messages);
+		toolLists.push(tools.map((tool) => tool.name).sort());
+		assert.equal(context.messages.filter((message) => message.role === "system" && (message.toolsAdded?.length || message.toolsRemoved?.length)).length, 1, "tools must stay as first declared");
+		const subagent = tools.find((tool) => tool.name === "subagent");
+		assert.ok(subagent);
+		assert.deepEqual(subagent.parameters, createSubagentParamsSchema());
+		return fauxAssistantMessage("ok");
+	};
+	await runNativeSession(undefined, [record, record], ["First prompt.", "Second prompt."]);
+
+	assert.equal(toolLists.length, 2);
+	assert.ok(!toolLists[0]!.includes("subagents_enable"));
+	assert.ok(toolLists[0]!.includes("bg_wait"));
+	assert.ok(toolLists[0]!.includes("subagent_supervisor"));
+	assert.deepEqual(toolLists[1], toolLists[0]);
 });
