@@ -90,7 +90,7 @@ describe("subagent extension child mode", () => {
 				registeredTool.renderCall({ workflow: "./ci/sweep.js" }, theme).text,
 				registeredTool.renderCall({ workflow: "review" }, theme).text,
 			];
-			const expected = ["subagent workflow block [async]", "subagent ./ci/sweep.js", "subagent review"];
+			const expected = ["subagent workflow (reply block) [async]", "subagent workflow ./ci/sweep.js", "subagent workflow review"];
 			if (JSON.stringify(rows) !== JSON.stringify(expected)) throw new Error("expected " + JSON.stringify(expected) + ", got " + JSON.stringify(rows));
 		`;
 		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });

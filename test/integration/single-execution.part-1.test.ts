@@ -1851,7 +1851,7 @@ Answer only from the supplied synthetic text.
 			assert.equal(stopped.state, "stopped");
 			assert.equal(stopped.workflow?.stopCause, "runtime-replaced");
 			assert.equal(stopped.workflow?.scriptDigest, createHash("sha256").update(script).digest("hex"));
-			assert.match(resultFileText(firstId), /Async children that were still running keep running; relaunch the same workflowScript with the same args to reuse finished children and re-attach to running ones\./);
+			assert.match(resultFileText(firstId), /Async children that were still running keep running; relaunch the same workflow script with the same args to reuse finished children and re-attach to running ones\./);
 			const stage1RunId = stopped.steps?.find((step) => step.workflowKey === "stage1")?.runId;
 			assert.ok(stage1RunId);
 			const callsAfterStop = mockPi.callCount();
@@ -1896,7 +1896,7 @@ Answer only from the supplied synthetic text.
 			assert.equal(mockPi.callCount(), callsAfterStop + 2, "the failed stage1 launches again");
 			assert.equal(userStopped.workflow?.reusedFrom, firstId);
 			assert.equal(userStopped.workflow?.stopCause, undefined);
-			assert.doesNotMatch(resultFileText(secondId), /relaunch the same workflowScript/);
+			assert.doesNotMatch(resultFileText(secondId), /relaunch the same workflow script/);
 
 			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one fixed" });
 			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
@@ -2003,7 +2003,7 @@ Answer only from the supplied synthetic text.
 				const stopped = await settled(runId);
 				assert.equal(stopped.state, "stopped", form);
 				assert.equal(stopped.steps?.find((step) => step.workflowKey === "fg")?.status, "stopped", form);
-				assert.doesNotMatch(resultFileText(runId), /relaunch the same workflowScript/, form);
+				assert.doesNotMatch(resultFileText(runId), /relaunch the same workflow script/, form);
 				assert.equal((await waitForAsyncState(bgRunId, (status) => terminalStates.includes(status.state ?? ""), 30_000)).state, "stopped", form);
 				const workflowStopRequests = path.join(DIRS.async, runId, "control", "stop-requests");
 				assert.deepEqual(fs.existsSync(workflowStopRequests) ? fs.readdirSync(workflowStopRequests) : [], [], `${form}: no unread stop request is left for the in-process workflow`);

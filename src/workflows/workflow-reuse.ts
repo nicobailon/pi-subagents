@@ -11,7 +11,7 @@ type WorkflowStopCause = typeof WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED;
 
 const WORKFLOW_CHILD_JOURNAL_FILE = "workflow-children.jsonl";
 
-export const WORKFLOW_RUNTIME_REPLACED_RELAUNCH_NOTICE = "Async children that were still running keep running; relaunch the same workflowScript with the same args to reuse finished children and re-attach to running ones.";
+export const WORKFLOW_RUNTIME_REPLACED_RELAUNCH_NOTICE = "Async children that were still running keep running; relaunch the same workflow script with the same args to reuse finished children and re-attach to running ones.";
 
 /** Abort reason for workflow controllers torn down by runtime replacement; carries the cause as data, not text. */
 export function runtimeReplacedAbortReason(): Error {

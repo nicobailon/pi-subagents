@@ -296,7 +296,7 @@ function parseScheduleTarget(value: unknown, file: string): ScheduleTarget {
 		if ("error" in normalizedArgs) throw new Error(`Schedule record '${file}' has invalid args: ${normalizedArgs.error}`);
 		return { workflowScript: target.workflowScript.trim(), args: deepFreezeWorkflowArgs(normalizedArgs.args), ...(baseRef === undefined ? {} : { baseRef }) };
 	}
-	if (target.agent !== undefined || target.task !== undefined) throw new Error(`Schedule record '${file}' uses a removed legacy agent target; recreate it with target.workflowScript.`);
+	if (target.agent !== undefined || target.task !== undefined) throw new Error(`Schedule record '${file}' uses a removed legacy agent target; recreate it with schedule.create and workflow: true or a workflow script path.`);
 	throw new Error(`Schedule record '${file}' requires a workflowScript target.`);
 }
 
@@ -434,7 +434,7 @@ function publicScheduleRecord(schedule: ScheduleRecord): PublicScheduleRecord {
 
 function targetLabel(target: ScheduleTarget): string {
 	const preview = previewSimpleWorkflowRun(target.workflowScript);
-	return preview?.agent ? `workflowScript -> agent ${preview.agent}` : "workflowScript (dynamic)";
+	return preview?.agent ? `workflow -> agent ${preview.agent}` : "workflow (dynamic)";
 }
 
 function sanitizeTarget(params: SubagentParamsLike): { target?: ScheduleTarget; error?: string } {

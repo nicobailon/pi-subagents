@@ -223,6 +223,7 @@ function formatPermissionSystemSection(): string[] {
 
 function formatWorkflowScriptSection(): string[] {
 	return [
+		"- launch: write a ```js workflow block in the reply, then call subagent({ workflow: true }); or pass a file as workflow: \"./path.js\"",
 		"- helpers: runs.run, runs.all, runs.steer, runs.status, runs.ref/refs, emit, console",
 		"- recovery: if runs.all is missing, reload or update pi-subagents; await Promise.all([runs.run(...)]) is also supported",
 	];

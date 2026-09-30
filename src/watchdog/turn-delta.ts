@@ -178,7 +178,7 @@ export function formatWatchdogOrchestrationActivity(event: unknown): string {
 		const eligible = call.name === "bg_wait"
 			|| (call.name === "subagent_supervisor" && ["pending", "list", "reply"].includes(args.action))
 			|| (call.name === "subagent" && (["status", "resume", "interrupt", "steer", "stop"].includes(args.action)
-				|| (args.action === undefined && (typeof args.agent === "string" || args.workflow === true || (typeof args.workflow === "string" && args.workflow.includes("/"))))));
+				|| (args.action === undefined && (typeof args.agent === "string" || args.workflow !== undefined))));
 		if (!eligible) continue;
 		const result = turn.toolResults.find((value) => {
 			const result = value as { role?: string; toolCallId?: string; toolName?: string };

@@ -1154,7 +1154,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	const scopeRaw = cfg.scope ?? "user";
 	if (scopeRaw !== "user" && scopeRaw !== "project") return result("config.scope must be 'user' or 'project'.", true);
 	const scope = scopeRaw;
-	if (hasKey(cfg, "steps")) return result("Durable chain definitions were removed; use workflowScript or /prompt-workflow for repeatable workflows.", true);
+	if (hasKey(cfg, "steps")) return result("Durable chain definitions were removed; use a workflow script or /prompt-workflow for repeatable workflows.", true);
 	const d = discoverCatalog(ctx);
 	const projectConfigDir = getProjectConfigDir(ctx.cwd);
 	const targetDir = scope === "user" ? d.userDir : d.projectDir ?? path.join(projectConfigDir, "agents");
@@ -1196,7 +1196,7 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	if (parsedConfig.status === "error") return result(parsedConfig.message, true);
 	if (parsedConfig.status === "missing") return result("config required for update.", true);
 	const cfg = parsedConfig.value;
-	if (hasKey(cfg, "steps")) return result("Durable chain definitions were removed; use workflowScript or /prompt-workflow for repeatable workflows.", true);
+	if (hasKey(cfg, "steps")) return result("Durable chain definitions were removed; use a workflow script or /prompt-workflow for repeatable workflows.", true);
 	const warnings: string[] = [];
 	const scopeHint = asDisambiguationScope(params.agentScope);
 	const targetOrError = resolveTarget(params.agent, findAgents(params.agent, ctx, scopeHint ?? "both"), ctx.cwd, ctx, scopeHint);

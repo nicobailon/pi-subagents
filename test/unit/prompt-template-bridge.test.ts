@@ -237,7 +237,7 @@ describe("prompt-template delegation bridge", () => {
 		});
 		const response = await tasksResponse as { isError: boolean; errorText?: string };
 		assert.equal(response.isError, true);
-		assert.match(response.errorText ?? "", /removed.*workflowScript/i);
+		assert.match(response.errorText ?? "", /removed.*workflow script/i);
 		assert.equal(executeCalls, 0);
 		bridge.dispose();
 	});

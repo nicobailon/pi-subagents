@@ -324,17 +324,17 @@ describe("project schedule management", () => {
 			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
 		});
 
-		assert.throws(() => manager.bindSession(context(h.ctx.cwd, "session-b")), /removed legacy agent target.*target\.workflowScript/i);
+		assert.throws(() => manager.bindSession(context(h.ctx.cwd, "session-b")), /removed legacy agent target.*schedule\.create and workflow: true or a workflow script path/i);
 	});
 
 	it("supports workflowScript targets and rejects unsafe or deferred shapes", async () => {
 		const h = harness();
 		const workflow = await h.manager.handleToolCall({ action: "schedule.create", id: "workflow", every: "6h", workflowScript: "return await runs.run('review', {agent:'reviewer'})" }, h.ctx);
 		assert.equal(workflow.isError, undefined);
-		assert.match(text(workflow), /workflowScript -> agent reviewer/);
+		assert.match(text(workflow), /workflow -> agent reviewer/);
 		const dynamic = await h.manager.handleToolCall({ action: "schedule.create", id: "dynamic", every: "6h", workflowScript: "const agent = 'worker'; return runs.run('main', { agent })" }, h.ctx);
 		assert.equal(dynamic.isError, undefined);
-		assert.match(text(dynamic), /workflowScript \(dynamic\)/);
+		assert.match(text(dynamic), /workflow \(dynamic\)/);
 		for (const params of [
 			{ action: "schedule.create", id: "../escape", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" },
 			{ action: "schedule.create", id: "both", at: "+1h", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" },
@@ -687,7 +687,7 @@ describe("quiet schedules", () => {
 
 		h.clock.now += 3_600_000;
 		h.timers.fireAll();
-		assert.deepEqual(h.launches[0]?.params.scheduleOrigin, { id: "quiet-hourly", name: "workflowScript -> agent worker", quiet: true });
+		assert.deepEqual(h.launches[0]?.params.scheduleOrigin, { id: "quiet-hourly", name: "workflow -> agent worker", quiet: true });
 	});
 
 	it("rejects a non-boolean quiet value", async () => {
@@ -724,7 +724,7 @@ describe("quiet schedules", () => {
 
 		const explicit = h.manager.handleToolCall({ action: "schedule.run", id: "quiet-hourly", quiet: true }, h.ctx);
 		await flush();
-		assert.deepEqual(h.launches[1]?.params.scheduleOrigin, { id: "quiet-hourly", name: "workflowScript -> agent worker", quiet: true });
+		assert.deepEqual(h.launches[1]?.params.scheduleOrigin, { id: "quiet-hourly", name: "workflow -> agent worker", quiet: true });
 		h.launches[1]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "single", results: [], asyncId: "manual-quiet" } });
 		await explicit;
 	});
@@ -737,7 +737,7 @@ describe("recurring schedule execution", () => {
 		h.clock.now += 3_600_000;
 		h.timers.fireAll();
 		assert.equal(h.launches.length, 1);
-		assert.deepEqual(h.launches[0]?.params, { workflowScript: "return runs.run('main', { agent: 'worker', task: 'Maintain backlog' })", args: {}, async: true, context: "fresh", cwd: h.ctx.cwd, mission: false, scheduleOrigin: { id: "hourly", name: "workflowScript -> agent worker" } });
+		assert.deepEqual(h.launches[0]?.params, { workflowScript: "return runs.run('main', { agent: 'worker', task: 'Maintain backlog' })", args: {}, async: true, context: "fresh", cwd: h.ctx.cwd, mission: false, scheduleOrigin: { id: "hourly", name: "workflow -> agent worker" } });
 		h.launches[0]!.resolve({ content: [{ type: "text", text: "Async worker" }], details: { mode: "single", results: [], asyncId: "async-1", asyncDir: "/tmp/async-1" } });
 		await flush();
 		assert.deepEqual([...h.manager.observedCompletionRunIds()], ["async-1"]);

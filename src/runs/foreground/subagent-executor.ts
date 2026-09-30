@@ -374,7 +374,7 @@ export interface SubagentParamsLike {
 	runFanoutAdmitted?: boolean;
 	/** Internal inherited tool/agent ceiling for delegated child launches. */
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	/** Internal durable-run compatibility fields. Public callers must use workflowScript. */
+	/** Internal durable-run compatibility fields. Public callers must use workflow. */
 	chain?: ChainStep[];
 	tasks?: TaskParam[];
 	concurrency?: number;
