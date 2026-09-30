@@ -1054,7 +1054,8 @@ describe("subagent async widget rendering", () => {
 
 			renderWidget(ui.ctx as never, crowdedJobs);
 			const crowdedLines = renderWidgetLines(ui.widgets.at(-1));
-			assert.equal(crowdedLines.length, 10, "30 terminal rows should keep the compact widget cap while locking height");
+			assert.equal(crowdedLines.length, 4, "the crowded progressive card locks to its content rows");
+			assert.equal(crowdedLines.filter((line) => line.trim() === "").length, 0);
 			assert.match(crowdedLines.join("\n"), /Async agents · 3 agents running/);
 
 			renderWidget(ui.ctx as never, [{
@@ -1068,13 +1069,13 @@ describe("subagent async widget rendering", () => {
 				],
 			}]);
 			const settledLines = renderWidgetLines(ui.widgets.at(-1));
-			assert.equal(settledLines.length, 10, "collapsed widget keeps its locked row count until cleared or resized");
+			assert.equal(settledLines.length, 4, "collapsed widget keeps its locked row count until cleared or resized");
 			assert.match(settledLines.join("\n"), /parallel · done/);
 
 			renderWidget(ui.ctx as never, []);
 			renderWidget(ui.ctx as never, [{ asyncId: "small", asyncDir: "/tmp/small", status: "running", agents: ["worker"], currentTool: "read" }]);
 			const resetLines = renderWidgetLines(ui.widgets.at(-1));
-			assert.ok(resetLines.length < 10, "clearing the widget starts a fresh layout session");
+			assert.ok(resetLines.length < 4, `clearing the widget starts a fresh layout session, got ${resetLines.length}`);
 		});
 		resetWidgetLayout();
 	});
@@ -1098,8 +1099,36 @@ describe("subagent async widget rendering", () => {
 
 			renderWidget(ui.ctx as never, jobs);
 			const lines = renderWidgetLines(ui.widgets.at(-1));
-			assert.equal(lines.length, 14);
+			assert.ok(lines.length <= 14, `progressive card should stay within the compact cap, got ${lines.length}`);
+			assert.equal(lines.filter((line) => line.trim() === "").length, 0, "progressive card should not pad with blank rows");
 			assert.match(lines.join("\n"), /parallel · running/);
+		});
+		resetWidgetLayout();
+	});
+
+	it("shows workflow lanes instead of blank rows in the progressive card (#2578)", () => {
+		resetWidgetLayout();
+		withStdoutSize(36, 120, () => {
+			const lanes = ["lane-1", "lane-2", "lane-3", "lane-4"].map((key) => ({
+				asyncId: `child-${key}`, asyncDir: `/tmp/${key}`, parentWorkflowRunId: "wf", workflowKey: key,
+				mode: "single", agents: ["scout"], status: "running", currentTool: "read",
+			}));
+			const workflow = { asyncId: "wf", asyncDir: "/tmp/wf", mode: "workflow", status: "running",
+				steps: lanes.map((lane, index) => ({ index, workflowKey: lane.workflowKey, runId: lane.asyncId, agent: "scout", status: "running" })) };
+			const single = { asyncId: "solo", asyncDir: "/tmp/solo", mode: "single", agents: ["worker"], status: "running", currentTool: "bash" };
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [workflow, ...lanes, single]);
+			const lines = renderWidgetLines(ui.widgets.at(-1), 120);
+			assert.equal(lines.filter((line) => line.trim() === "").length, 0, lines.join("\n"));
+			assert.equal(lines.length, 7, "header, workflow, four lanes, single run");
+			for (const key of ["lane-1", "lane-2", "lane-3", "lane-4"]) assert.match(lines.join("\n"), new RegExp(`${key} · scout`));
+
+			const extra = { asyncId: "solo-2", asyncDir: "/tmp/solo-2", mode: "single", agents: ["reviewer"], status: "running", currentTool: "grep" };
+			renderWidget(ui.ctx as never, [workflow, ...lanes, single, extra]);
+			const grown = renderWidgetLines(ui.widgets.at(-1), 120);
+			assert.equal(grown.length, lines.length, "a job started before the next relock keeps the locked height");
+			assert.equal(grown.filter((line) => line.trim() === "").length, 0, grown.join("\n"));
+			assert.match(grown.join("\n"), /reviewer · running/);
 		});
 		resetWidgetLayout();
 	});
