@@ -12,7 +12,7 @@ import type { WorkflowScriptChildResult } from "./scripted-workflow.ts";
  */
 const REVIVAL_LINK_FILE = "workflow-revival.json";
 /** The same link, kept in the revived run's directory so reviving it again keeps the key. */
-const REVIVAL_ORIGIN_FILE = "workflow-revival-origin.json";
+export const REVIVAL_ORIGIN_FILE = "workflow-revival-origin.json";
 /** Recording refuses a deeper link, so readers bounded by this always reach the chain's end. */
 const MAX_REVIVAL_DEPTH = 16;
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -53,21 +53,14 @@ function readLink(file: string): WorkflowRevivalLink | undefined {
 	return { version: 1, workflowRunId: link.workflowRunId, workflowKey: link.workflowKey, sourceRunId: link.sourceRunId, revivedRunId: link.revivedRunId, depth: link.depth as number };
 }
 
-function readStatusSafely(asyncDir: string): AsyncStatus | null {
-	try {
-		return readStatus(asyncDir);
-	} catch {
-		return null;
-	}
-}
-
 /**
  * Links a detached revival to the workflow key of its source run when the source failed and is
- * an async workflow child or an earlier revival of one. Throws when the key's revival chain is full.
+ * an async workflow child or an earlier revival of one. Throws when the source status cannot be
+ * read or the key's revival chain is full; the caller reports that on the revive receipt.
  */
 export function recordWorkflowRevival(asyncDirRoot: string, sourceRunId: string, revivedRunId: string): void {
 	const sourceDir = path.join(asyncDirRoot, sourceRunId);
-	const status = readStatusSafely(sourceDir);
+	const status = readStatus(sourceDir);
 	if (status?.runId !== sourceRunId || status.state !== "failed") return;
 	const origin = isRunId(status.parentWorkflowRunId) && typeof status.workflowKey === "string" && KEY_PATTERN.test(status.workflowKey)
 		? { workflowRunId: status.parentWorkflowRunId, workflowKey: status.workflowKey, depth: 0 }
@@ -94,7 +87,12 @@ export function projectWorkflowKeyRevival(asyncDirRoot: string, workflowRunId: s
 		current = link.revivedRunId;
 	}
 	if (revivedRunIds.length === 0) return undefined;
-	const status = readStatusSafely(path.join(asyncDirRoot, current));
+	let status: AsyncStatus | null = null;
+	try {
+		status = readStatus(path.join(asyncDirRoot, current));
+	} catch {
+		// Readers show "status unavailable" instead of failing the workflow's status or notice.
+	}
 	return { revivedRunIds, latestRunId: current, ...(status?.runId === current ? { state: status.state } : {}) };
 }
 

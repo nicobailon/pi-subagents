@@ -195,6 +195,8 @@ describe("async retention cleanup", () => {
 			const mission = writeOldRun(roots.asyncDirRoot, "mission");
 			fs.writeFileSync(path.join(mission, "mission.json"), "{}");
 			writeOldRun(roots.asyncDirRoot, "workflow", { mode: "workflow" });
+			const revived = writeOldRun(roots.asyncDirRoot, "revived-workflow-child");
+			fs.writeFileSync(path.join(revived, "workflow-revival-origin.json"), "{}");
 			writeOldRun(roots.asyncDirRoot, "nested", { isNested: true });
 			writeOldRun(roots.asyncDirRoot, "handoff", { parallelHandoff: { path: "/tmp/handoff.json" } });
 			writeOldRun(roots.asyncDirRoot, "waited");
@@ -203,7 +205,7 @@ describe("async retention cleanup", () => {
 
 			const result = await cleanupAsyncRetention({ ...cleanupOptions(roots), protectedRunIds: ["runtime"] });
 
-			for (const runId of ["active", "paused", "recent", "resumable", "status-session", "step-session", "uninspectable-session", "malformed-ended-at", "malformed-last-update", "missing-mode", "non-finite-ended-at", "mission", "workflow", "nested", "handoff", "waited", "runtime"]) {
+			for (const runId of ["active", "paused", "recent", "resumable", "status-session", "step-session", "uninspectable-session", "malformed-ended-at", "malformed-last-update", "missing-mode", "non-finite-ended-at", "mission", "workflow", "revived-workflow-child", "nested", "handoff", "waited", "runtime"]) {
 				assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, runId)), true, runId);
 			}
 			assert.equal(result.deletedRuns, 0);
@@ -214,7 +216,7 @@ describe("async retention cleanup", () => {
 			assert.equal(result.skipped["invalid-status"], 1);
 			assert.equal(result.skipped["unknown-age"], 3);
 			assert.equal(result.skipped["mission-reference"], 1);
-			assert.equal(result.skipped["workflow-reference"], 1);
+			assert.equal(result.skipped["workflow-reference"], 2);
 			assert.equal(result.skipped["nested-reference"], 1);
 			assert.equal(result.skipped["handoff-reference"], 1);
 			assert.equal(result.skipped["wait-reference"], 1);

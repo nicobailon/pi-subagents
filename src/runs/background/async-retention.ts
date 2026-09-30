@@ -9,6 +9,7 @@ import type { AsyncStatus } from "../../shared/types.ts";
 import { readMissionBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
 import { MissionNotFoundError, readMission } from "../../missions/store.ts";
 import type { MissionStatus } from "../../missions/types.ts";
+import { REVIVAL_ORIGIN_FILE } from "../../workflows/workflow-revival.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "./active-run-index.ts";
 import { encodeIndexSegment } from "./index-segment.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
@@ -317,6 +318,8 @@ function runSkipReason(input: {
 	if (activeMarkerExists(input.asyncDirRoot, status.runId)) return "active-index";
 	if (!TERMINAL_STATES.has(status.state)) return "non-terminal";
 	if (status.mode === "workflow" || status.parentWorkflowRunId || status.workflowKey) return "workflow-reference";
+	// A revived workflow child is a link in its key's revival chain; deleting it would cut off later revivals.
+	if (fs.existsSync(path.join(runDir, REVIVAL_ORIGIN_FILE))) return "workflow-reference";
 	if (hasNestedReferences(status)) return "nested-reference";
 	if (missionReferenceBlocksReclaim(runDir, input.resultsDir, status.runId)) return "mission-reference";
 	if (hasUnresolvedRunHandoff(runDir, status)) return "handoff-reference";

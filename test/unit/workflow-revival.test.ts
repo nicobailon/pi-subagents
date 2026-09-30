@@ -43,6 +43,9 @@ describe("workflow child revival links", () => {
 		const { root } = setup("failed");
 		recordWorkflowRevival(root, "child", "revived");
 		assert.deepEqual(keyedLatest(root), { latestRunId: "revived", runIds: ["child", "revived"] });
+		const corrupt = setup("failed").root;
+		fs.writeFileSync(path.join(corrupt, "child", "status.json"), "{");
+		assert.throws(() => recordWorkflowRevival(corrupt, "child", "revived"), /status/i, "an unreadable source status is reported, not skipped");
 	});
 
 	it("refuses a revival past the chain bound, which readers always reach", () => {
