@@ -28,7 +28,7 @@ import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { getAgentDir } from "../shared/utils.ts";
-import { isStaleExtensionContextError, withCachedUiContext } from "../shared/extension-context.ts";
+import { isStaleExtensionContextError, MODEL_ONLY_TOOL, withCachedUiContext } from "../shared/extension-context.ts";
 import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary, setInlineWorkflowCoverage } from "../tui/render.ts";
@@ -830,6 +830,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const parameters = createSubagentParamsSchema(disabledFeatures);
 	const tool: ToolDefinition<typeof parameters, Details> = {
 		name: "subagent",
+		...MODEL_ONLY_TOOL,
 		label: "Subagent",
 		description: buildSubagentToolDescription(config, { disabledFeatures }),
 		...buildSubagentToolPromptMetadata(config),

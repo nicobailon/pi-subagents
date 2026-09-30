@@ -411,12 +411,14 @@ describe("subagent prompt runtime", () => {
 			const terminalState = { captured: false };
 			let execute: ((_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }>) | undefined;
 			let parameters: unknown;
+			let exposure: unknown;
 
 			registerSubagentPromptRuntime({
-				registerTool(tool: { name: string; parameters: unknown; execute: (_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }> }) {
+				registerTool(tool: { name: string; parameters: unknown; exposure?: string; execute: (_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }> }) {
 					if (tool.name === "structured_output") {
 						execute = tool.execute;
 						parameters = tool.parameters;
+						exposure = tool.exposure;
 					}
 				},
 				on() {},
@@ -425,6 +427,7 @@ describe("subagent prompt runtime", () => {
 			}));
 
 			assert.ok(execute, "structured_output tool should be registered");
+			assert.equal(exposure, "model-only", "a nested structured_output call cannot terminate the step");
 			assert.deepEqual(parameters, {
 				type: "object",
 				properties: { value: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } } },

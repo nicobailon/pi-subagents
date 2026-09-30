@@ -18,6 +18,7 @@ import { finalizeToolResult } from "./tool-result.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, type AsyncStartedEvent, type Details, type SubagentState } from "../shared/types.ts";
 import { createChildExternalJobBridgeSweeper } from "../runs/shared/external-job-bridge.ts";
+import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 
 function getSubagentSessionRoot(parentSessionFile: string | null): string {
 	if (parentSessionFile) {
@@ -217,6 +218,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 	const params = createSubagentParamsSchema(disabledFeatures);
 	const tool: ToolDefinition<typeof params, Details> = {
 		name: "subagent",
+		...MODEL_ONLY_TOOL,
 		label: "Subagent",
 		description: [
 			"Delegate to subagents from child-safe fanout mode.",

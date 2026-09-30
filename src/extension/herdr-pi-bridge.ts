@@ -13,6 +13,7 @@ import { buildAgentMemoryInjection } from "../agents/agent-memory.ts";
 import { appendAgentRefinementOverlay } from "../agents/agent-refinements.ts";
 import { rewriteSubagentPrompt } from "../runs/shared/subagent-prompt-runtime.ts";
 import { resolveExistingReadPaths } from "../shared/settings.ts";
+import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 
 interface PendingRequest { operation: "prompt" | "steer" | "follow-up" | "abort" | "supervisor-reply"; text?: string; supervisorId?: string }
 interface BridgeContext {
@@ -75,6 +76,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 
 	pi.registerTool({
 		name: "contact_supervisor",
+		...MODEL_ONLY_TOOL,
 		label: "Contact supervisor",
 		description: "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update.",
 		parameters: Type.Object({ reason: Type.Union([Type.Literal("need_decision"), Type.Literal("interview_request"), Type.Literal("progress_update")]), message: Type.Optional(Type.String({ maxLength: 65_536 })), interview: Type.Optional(Type.Unknown()) }, { additionalProperties: false }),

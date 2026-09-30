@@ -22,6 +22,7 @@ import { captureWatchdogDiffBaseline, createWatchdogDiffTool, WATCHDOG_DIFF_TOOL
 import { inheritedNestedRouteOf } from "./nested-events.ts";
 import { registerWaitTool } from "../background/wait-tool.ts";
 import { drainOutstandingWork } from "../background/auto-drain.ts";
+import { MODEL_ONLY_TOOL } from "../../shared/extension-context.ts";
 import {
 	childSupervisorMetadata,
 	evaluateChildToolDiagnostic,
@@ -417,6 +418,7 @@ function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<
 	}) => void;
 	registerTool({
 		name: "structured_output",
+		...MODEL_ONLY_TOOL,
 		label: "Structured Output",
 		description: "Submit the required final structured output for this subagent step. This terminates the step.",
 		parameters,

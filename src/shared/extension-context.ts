@@ -1,5 +1,13 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+/**
+ * Declares a tool to the model but keeps it out of codemode scripts and other `ctx.executeTool()`
+ * callers. These tools need model-issued calls: nested calls hide their progress, block the script
+ * on supervisor replies, and drop `terminate`. Pi 0.99 reads `exposure`; the pinned SDK types
+ * predate it and older hosts ignore it.
+ */
+export const MODEL_ONLY_TOOL = { exposure: "model-only" } as const;
+
 /** Pi exposes replaced extension contexts as ordinary Errors without a stable code. */
 export function isStaleExtensionContextError(error: unknown): boolean {
 	return error instanceof Error
