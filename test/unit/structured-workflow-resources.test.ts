@@ -50,8 +50,7 @@ function delay(ms: number): Promise<void> {
 describe("structured workflow resources", () => {
 	it("issues a package-owned chain resource with a one-use permit and named provenance", () => {
 		const resolved = resolveStructuredWorkflowResource({ kind: "chain", steps: [{ agent: "worker", task: "Do it" }] });
-		assert.equal(resolved.ok, true);
-		if (!resolved.ok) return;
+		assert.ok(resolved.ok);
 		assert.deepEqual(resolved.resource.provenance, {
 			kind: "workflow", name: "chain", version: 1, invocation: "named", expansion: "resolved", id: resolved.resource.provenance.id,
 		});

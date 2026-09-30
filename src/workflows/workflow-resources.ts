@@ -6,7 +6,7 @@ import {
 	type WorkflowResourcePermit,
 } from "../shared/workflow-child-permit.ts";
 import type { WorkflowResourceProvenance } from "../shared/types.ts";
-import { buildStructuredWorkflowScript } from "./structured-workflow-scripts.ts";
+import { buildStructuredWorkflowScript, isPlainRecord } from "./structured-workflow-scripts.ts";
 
 const RESOURCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const MAX_ARGS_BYTES = 16 * 1024;
@@ -83,12 +83,6 @@ export function registerWorkflowResource(input: RegisterWorkflowResourceInput): 
 			if (bucket.size === 0 && current.bySession.get(sessionId) === bucket) current.bySession.delete(sessionId);
 		},
 	};
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-	const prototype = Object.getPrototypeOf(value);
-	return prototype === Object.prototype || prototype === null;
 }
 
 function jsonByteLength(value: unknown): number {

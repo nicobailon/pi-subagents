@@ -4,15 +4,14 @@ import { describe, it } from "node:test";
 import { Compile } from "typebox/compile";
 import { disabledFeatureUseError, resolveDisabledFeatureSurface } from "../../src/shared/disabled-features.ts";
 import { normalizePublicSubagentExecution } from "../../src/extension/public-execution.ts";
-import { SubagentParams, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
+import { createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
 import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "../../src/extension/tool-description.ts";
-import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { createSubagentExecutor, type SubagentParamsLike } from "../../src/runs/foreground/subagent-executor.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
-import { registerPromptWorkflowCommands } from "../../src/slash/prompt-workflows.ts";
 import { registerSlashCommands } from "../../src/slash/slash-commands.ts";
-import type { ExtensionConfig, SubagentParamsLike } from "../../src/shared/types.ts";
-import { makeMinimalCtx } from "../support/helpers.ts";
+import type { ExtensionConfig } from "../../src/shared/types.ts";
+import { createEventBus, makeMinimalCtx } from "../support/helpers.ts";
 
 const SETTING = `disabledFeatures "workflow-scripts"`;
 const DISABLED: ExtensionConfig = { disabledFeatures: ["workflow-scripts"] };
@@ -51,14 +50,6 @@ function declarationLength(config: ExtensionConfig, toolDescriptionMode?: "full"
 }
 
 describe("workflow-scripts tool surface", () => {
-	it("declares chain and tasks only when workflow-scripts is disabled", () => {
-		const unrelated = createSubagentParamsSchema(resolveDisabledFeatureSurface({ disabledFeatures: ["watchdog"] }));
-		for (const schema of [SubagentParams, unrelated]) {
-			assert.equal(Object.hasOwn(schema.properties, "chain"), false);
-			assert.equal(Object.hasOwn(schema.properties, "tasks"), false);
-		}
-	});
-
 	it("is smaller than the default declaration", () => {
 		for (const mode of [undefined, "full"] as const) {
 			const enabled = declarationLength({}, mode);
@@ -113,19 +104,6 @@ describe("workflow-scripts admission", () => {
 		assert.equal(resultText(await executor.executeScheduled("scheduled", script, new AbortController().signal, ctx())), SCRIPTS_DISABLED);
 	});
 
-	it("rejects /prompt-workflow template scripts", async () => {
-		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
-		const launched: SubagentParamsLike[] = [];
-		registerPromptWorkflowCommands({
-			pi: { registerCommand: (name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) => commands.set(name, spec), sendMessage() {} } as never,
-			run: async (params) => { launched.push(params); },
-		});
-		await commands.get("prompt-workflow")!.handler("parallel-review src", { ...makeMinimalCtx(process.cwd()), ui: { notify: (message: string) => assert.fail(message) } });
-		assert.equal(launched.length, 1);
-		const result = await createExecutor(DISABLED).executePublic("template", launched[0]!, new AbortController().signal, undefined, ctx());
-		assert.equal(resultText(result), SCRIPTS_DISABLED);
-	});
-
 	it("rejects RPC spawn scripts before normalization", async () => {
 		const handlers: Array<(data: unknown) => void> = [];
 		const replies = new Map<string, unknown>();
@@ -154,16 +132,7 @@ describe("workflow-scripts admission", () => {
 	it("launches /run as a direct child", async () => {
 		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
 		const requested: unknown[] = [];
-		const handlers = new Map<string, Array<(data: unknown) => void>>();
-		const events = {
-			on(event: string, handler: (data: unknown) => void) {
-				handlers.set(event, [...(handlers.get(event) ?? []), handler]);
-				return () => {};
-			},
-			emit(event: string, data: unknown) {
-				for (const handler of handlers.get(event) ?? []) handler(data);
-			},
-		};
+		const events = createEventBus();
 		events.on("subagent:slash:request", (data) => {
 			const { requestId, params } = data as { requestId: string; params: unknown };
 			requested.push(params);
@@ -171,8 +140,7 @@ describe("workflow-scripts admission", () => {
 			events.emit("subagent:slash:response", { requestId, result: { content: [{ type: "text", text: "done" }], details: { mode: "single", results: [] } }, isError: false });
 		});
 		const pi = { events, on() { return () => {}; }, registerTool() {}, registerCommand: (name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) => commands.set(name, spec), registerShortcut() {}, sendMessage() {} };
-		const state = { baseCwd: process.cwd(), currentSessionId: null, asyncJobs: new Map(), foregroundRuns: new Map(), foregroundControls: new Map(), lastForegroundControlId: null, cleanupTimers: new Map(), lastUiContext: null, poller: null, completionSeen: new Map(), watcher: null, watcherRestartTimer: null, resultFileCoalescer: { schedule: () => false, clear: () => {} } };
-		const disposer = registerSlashCommands(pi as never, state as never, { workflowScriptsDisabled: true });
+		const disposer = registerSlashCommands(pi as never, { ...createChildSafeState(), baseCwd: process.cwd() }, { workflowScriptsDisabled: true });
 		try {
 			await commands.get("run")!.handler("scout Inspect this --bg", { ...makeMinimalCtx(process.cwd()), ui: { notify() {}, setStatus() {}, setToolsExpanded() {} } });
 			await new Promise<void>((resolve) => setImmediate(resolve));

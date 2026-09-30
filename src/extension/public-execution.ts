@@ -131,8 +131,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	if (params.preflight !== undefined && hasNamedWorkflow) {
 		return { ok: false, error: "preflight is not supported with named workflow resources.", mode: "workflow" };
 	}
-	const hasValidWorkflowInput = hasNamedWorkflow || workflow !== undefined
-		|| (typeof params.workflowScript === "string" && Boolean(params.workflowScript.trim()));
+	const hasValidWorkflowInput = workflow !== undefined || (typeof params.workflowScript === "string" && Boolean(params.workflowScript.trim()));
 	if (params.isolation !== undefined) {
 		if (params.isolation !== "none" && params.isolation !== "worktree") {
 			return { ok: false, error: "isolation must be 'none' or 'worktree'.", mode: hasWorkflowInput ? "workflow" : "management" };

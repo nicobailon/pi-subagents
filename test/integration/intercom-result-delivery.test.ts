@@ -1149,11 +1149,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			cleanup.push(path.join(ASYNC_DIR, revivedId), path.join(RESULTS_DIR, `${revivedId}.json`));
 			await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`));
 			const revivedStatusPath = path.join(ASYNC_DIR, revivedId, "status.json");
-			const statusDeadline = Date.now() + 10_000;
-			while (JSON.parse(fs.readFileSync(revivedStatusPath, "utf-8")).state !== "complete") {
-				if (Date.now() > statusDeadline) assert.fail("revived run did not reach complete status");
-				await new Promise((resolve) => setTimeout(resolve, 50));
-			}
+			await waitForStatus(revivedStatusPath, (candidate) => candidate.state === "complete");
 
 			const status = await executor.execute("workflow-status", { action: "status", id: workflowRunId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.match(status.content[0]?.text ?? "", new RegExp(`Child run: ${childRunId}\\n {2}Revived → ${revivedId}: completed`));

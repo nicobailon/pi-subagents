@@ -59,32 +59,7 @@ return results.map(result => result.output);
 
 Use `runs.lanes(lanes)` inside a workflow script when several independent lanes each have ordered stages. This helper composes the existing workflow child runner; it does not add a top-level `lanes` parameter or a second persistence/cleanup system.
 
-```js workflow
-const board = await runs.lanes([
-  { key: "api", stages: [
-    { key: "writer", agent: "worker", task: "Implement the API change" },
-    { key: "challenge", resume: "previous", task: "Challenge the implementation" },
-    { key: "review", agent: "reviewer", task: "Review the API lane" }
-  ] },
-  { key: "ui", stages: [
-    { key: "writer", agent: "worker", task: "Implement the UI change" },
-    { key: "review", agent: "reviewer", task: "Review the UI lane" }
-  ] }
-]);
-return board.map((lane) => ({
-  key: lane.key,
-  state: lane.state,
-  failedStage: lane.failedStage,
-  stages: lane.stages.map((stage) => ({
-    key: stage.key,
-    state: stage.state,
-    ok: stage.ok,
-    runId: stage.runId,
-    outputReference: stage.outputReference,
-    verdict: stage.verdict
-  }))
-}));
-```
+See the [staged-lane example](workflows.md#parallel-sequential-lanes) (guide topic `workflows`).
 
 The first stage of each lane is launched by one existing `runs.all(...)` batch. Later stages run in lane order. Set `resume: "previous"` on a later stage to continue the preceding retained child; the helper requires that child’s returned `runId` and delegates to the existing resume checks. Stage keys are local to the lane, and generated child keys are `<lane>.<stage>`.
 

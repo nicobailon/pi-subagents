@@ -48,17 +48,13 @@ const SCHEDULE_SURFACE = {
 	params: ["name", "at", "every", "sessionOnly", "quiet", "on", "timezone", "overlap", "catchUp"],
 } as const;
 
-function isSubagentFeature(value: string): value is SubagentFeature {
-	return Object.hasOwn(SUBAGENT_FEATURES, value);
-}
-
 export function validateDisabledFeatures(value: unknown): void {
 	if (value === undefined) return;
 	if (!Array.isArray(value)) throw new Error("config.disabledFeatures must be an array of feature names");
 	const seen = new Set<string>();
 	for (const entry of value) {
 		if (entry === "schedules") throw new Error(`config.disabledFeatures does not accept "schedules"; set config.scheduledRuns.enabled to false instead`);
-		if (typeof entry !== "string" || !isSubagentFeature(entry)) {
+		if (typeof entry !== "string" || !Object.hasOwn(SUBAGENT_FEATURES, entry)) {
 			throw new Error(`config.disabledFeatures entry ${JSON.stringify(entry)} is not one of: ${Object.keys(SUBAGENT_FEATURES).join(", ")}`);
 		}
 		if (seen.has(entry)) throw new Error(`config.disabledFeatures lists "${entry}" more than once`);

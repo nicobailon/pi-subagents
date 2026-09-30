@@ -28,7 +28,7 @@ they do not authorize a launch.
 Agents use the `subagent(...)` tool for execution, management, status, and control. Direct `{ agent, task }` execution is enough for one bounded child task; use a workflow script (one ```` ```js workflow ```` block in the reply plus `subagent({ workflow: true })`) when the parent needs JavaScript control flow or data-dependent branching, keyed, parallel, sequential, retry, retained-resume, aggregate, or explicit staged-lane behavior (`runs.lanes`). Humans often use the slash-command layer instead:
 
 - `/run` — launch a single agent
-- `subagent({ workflow: ... })` — the sole public surface for sequence, parallelism, branching, retries, and aggregation
+- `subagent({ workflow: ... })` — the workflow-script surface for sequence, parallelism, branching, retries, and aggregation; with `disabledFeatures: ["workflow-scripts"]`, top-level `chain` and `tasks` replace it (see [configuration](../../../docs/configuration.md#chain-and-tasks-without-workflow-scripts))
 - `/subagents` — interactive admin for inspecting agents and editing model, thinking, or system prompt
 - `/subagents-stop [run-id]` — stop a current-session top-level async run; opens a selector when no id is given
 - `/subagents-detach [run-id]` — detach an active foreground single-subagent run without terminating its child

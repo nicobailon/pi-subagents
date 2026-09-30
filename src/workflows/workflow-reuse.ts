@@ -72,7 +72,6 @@ function readWorkflowChildJournal(runId: string, workflowAsyncDir: string): Work
 	for (const line of text.split("\n")) {
 		let record: Partial<WorkflowChildJournalRecord> | undefined;
 		try {
-			// SAFETY: every field is type-checked below before a record is stored.
 			record = line.trim() ? JSON.parse(line) as Partial<WorkflowChildJournalRecord> : undefined;
 		} catch {
 			continue;

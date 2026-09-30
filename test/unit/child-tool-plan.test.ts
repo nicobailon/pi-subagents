@@ -75,36 +75,28 @@ describe("child tool plan with Pi built-in MCP", () => {
 		);
 	});
 
-	it("keeps the pi-mcp-adapter path when the adapter owns /mcp", () => {
-		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-adapter-mcp-"));
-		try {
-			assert.throws(
-				() => resolvePiLaunchToolPlan({ mcpDirectTools: ["docs"], cwd, runtimeSnapshotHost: mcpHost("/ext/pi-mcp-adapter/index.ts", BUILTIN_MCP_TOOLS) }),
-				/Unresolved MCP direct-tool selectors: docs\. Direct MCP tools require a matching configured server/,
-			);
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
-
-	it("keeps the pi-mcp-adapter path when adapter 3.x loads next to Pi's built-in /mcp", () => {
-		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-adapter3-mcp-"));
-		const host: McpRuntimeSnapshotHost = {
+	for (const [description, adapterHost] of [
+		["when the adapter owns /mcp", mcpHost("/ext/pi-mcp-adapter/index.ts", BUILTIN_MCP_TOOLS)],
+		["when adapter 3.x loads next to Pi's built-in /mcp", {
 			...mcpHost("builtin:mcp", BUILTIN_MCP_TOOLS),
 			getCommands: () => [
 				{ name: "mcp", sourceInfo: { path: "builtin:mcp" } },
 				{ name: "mcp-adapter", sourceInfo: { path: "/ext/pi-mcp-adapter/index.ts" } },
 			],
-		};
-		try {
-			assert.throws(
-				() => resolvePiLaunchToolPlan({ mcpDirectTools: ["docs"], cwd, runtimeSnapshotHost: host }),
-				/Unresolved MCP direct-tool selectors: docs\. Direct MCP tools require a matching configured server/,
-			);
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
+		}],
+	] satisfies Array<[string, McpRuntimeSnapshotHost]>) {
+		it(`keeps the pi-mcp-adapter path ${description}`, () => {
+			const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-adapter-mcp-"));
+			try {
+				assert.throws(
+					() => resolvePiLaunchToolPlan({ mcpDirectTools: ["docs"], cwd, runtimeSnapshotHost: adapterHost }),
+					/Unresolved MCP direct-tool selectors: docs\. Direct MCP tools require a matching configured server/,
+				);
+			} finally {
+				fs.rmSync(cwd, { recursive: true, force: true });
+			}
+		});
+	}
 });
 
 describe("child tool plan", () => {

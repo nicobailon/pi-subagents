@@ -592,7 +592,7 @@ async function runSlashSubagent(
 	}
 }
 
-function slashRunWorkflowScript(key: string, child: Record<string, unknown>): string {
+function slashRunWorkflowScript(key: string, child: SubagentParamsLike): string {
 	return `return runs.run(${JSON.stringify(key)}, ${JSON.stringify(child)})`;
 }
 
@@ -672,14 +672,13 @@ export function registerSlashCommands(
 				const existingReads = inline.reads.filter((read) => resolveExistingReadPaths([read], state.baseCwd).length > 0);
 				if (existingReads.length > 0) finalTask = `[Read from: ${existingReads.join(", ")}]\n\n${finalTask}`;
 			}
-			const child: Record<string, unknown> = { agent: agentName, task: finalTask, agentScope: "both" };
+			const child: SubagentParamsLike = { agent: agentName, task: finalTask, agentScope: "both" };
 			if (inline.output !== undefined) child.output = inline.output;
 			if (inline.outputMode !== undefined) child.outputMode = inline.outputMode;
 			if (inline.skill !== undefined) child.skill = inline.skill;
 			if (inline.model) child.model = inline.model;
 			if (fork) child.context = "fork";
-			const async = bg ? true : false;
-			launchCommand(ctx, options.workflowScriptsDisabled ? { ...child, async } as SubagentParamsLike : { workflowScript: slashRunWorkflowScript("run", child), async });
+			launchCommand(ctx, options.workflowScriptsDisabled ? { ...child, async: bg } : { workflowScript: slashRunWorkflowScript("run", child), async: bg });
 		},
 	});
 

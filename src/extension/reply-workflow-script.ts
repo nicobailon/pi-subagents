@@ -1,10 +1,10 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const WORKFLOW_FENCE = /^```(?:js|javascript) workflow[ \t]*$/;
 const OPEN_FENCE = /^(`{3,}|~{3,})/;
 const CLOSE_FENCE = /^(`{3,}|~{3,})[ \t]*$/;
 
-type ContentBlock = { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown; text?: unknown };
 export type ReplyWorkflowScript = { script: string } | { error: string };
 
 /**
@@ -16,20 +16,19 @@ export function readReplyWorkflowScript(sessionManager: Pick<ExtensionContext["s
 	for (let index = branch.length - 1; index >= 0; index--) {
 		const entry = branch[index]!;
 		if (entry.type !== "message") continue;
-		const message = (entry as { message?: { role?: unknown; content?: unknown } }).message;
+		const message = entry.message;
 		if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-		const content = message.content as ContentBlock[];
-		if (!content.some((block) => block.type === "toolCall" && block.id === toolCallId)) continue;
-		return scriptFromReply(content);
+		if (!message.content.some((block) => block.type === "toolCall" && block.id === toolCallId)) continue;
+		return scriptFromReply(message.content);
 	}
 	return { error: "workflow: true only works from a model subagent tool call whose assistant message contains the ```js workflow block; other callers must pass a script path such as workflow: \"./script.js\"." };
 }
 
-function scriptFromReply(content: ContentBlock[]): ReplyWorkflowScript {
+function scriptFromReply(content: AssistantMessage["content"]): ReplyWorkflowScript {
 	const replyCalls = content.filter((block) => block.type === "toolCall" && block.name === "subagent"
-		&& (block.arguments as { workflow?: unknown } | undefined)?.workflow === true).length;
+		&& block.arguments?.workflow === true).length;
 	if (replyCalls > 1) return { error: `This reply has ${replyCalls} subagent calls with workflow: true; a reply can carry only one. Pass other scripts as workflow file paths.` };
-	const text = content.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text as string).join("\n");
+	const text = content.flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
 	const { blocks, unclosed } = workflowBlocks(text);
 	if (unclosed) return { error: "The ```js workflow block in this reply is not closed." };
 	if (blocks.length !== 1) return { error: `workflow: true requires exactly one \`\`\`js workflow fenced block in the same reply as the tool call; found ${blocks.length}.` };

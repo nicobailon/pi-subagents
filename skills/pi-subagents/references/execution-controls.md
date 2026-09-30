@@ -82,10 +82,11 @@ lanes, or a fanout that the parent will consume together.
 
 Write the script as one ```` ```js workflow ```` fenced block in the reply, then
 call `subagent({ workflow: true, ... })` in the same reply. The block is plain
-text, so it needs no JSON string escaping; a line starting with ```` ``` ````
-ends it. A reply carries one block and one `workflow: true` call. Use
-`workflow: "./path/to/script.js"` for a script file. Later examples that show
-only a ```` ```js workflow ```` block run with `subagent({ workflow: true })`.
+text, so it needs no JSON string escaping; a line containing only ```` ``` ````
+(three or more backticks) ends it. A reply carries one block and one
+`workflow: true` call. Use `workflow: "./path/to/script.js"` for a script file.
+Later examples that show only a ```` ```js workflow ```` block run with
+`subagent({ workflow: true })`.
 
 ```js workflow
 const scan = await runs.run("scan", { label: "Map target behavior", agent: "scout", task: "Map the target" });

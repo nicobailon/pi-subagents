@@ -44,7 +44,9 @@ A workflow script is code-driven: `runs.run(...)` for keyed steps,
 `runs.all([...])` for fanout, plain JavaScript for branching and aggregation.
 Keep scripts portable: use top-level `await`, plain helpers, or explicit Promise
 chains, not nested async helpers. Legacy top-level `chain` / `tasks` inputs and
-durable `.chain.md` execution are inspection or migration material only.
+durable `.chain.md` execution are inspection or migration material only, except
+that `disabledFeatures: ["workflow-scripts"]` replaces scripts with top-level
+`chain` and `tasks` (see [configuration](../../docs/configuration.md#chain-and-tasks-without-workflow-scripts)).
 
 Use `runs.lanes(...)` only inside a workflow script, not as a top-level mode,
 when a broad, predeclared plan benefits from visible per-lane stages; otherwise

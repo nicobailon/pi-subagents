@@ -26,7 +26,7 @@ interface StepChild {
 	taskExpression: string;
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	const prototype = Object.getPrototypeOf(value);
 	return prototype === Object.prototype || prototype === null;
@@ -73,17 +73,12 @@ function compileTemplate(template: string, scope: TemplateScope): string {
 	return parts.join(" + ");
 }
 
-/** Shared script prelude: result helpers plus the original request as one JSON string constant. */
 function prelude(originalTask: string | undefined): string[] {
 	return originalTask === undefined ? [SETTLE_HELPER] : [SETTLE_HELPER, `const originalTask = ${JSON.stringify(originalTask)};`];
 }
 
 function runsAllCall(children: readonly StepChild[]): string {
 	return `await runs.all([${children.map((child) => `{ key: ${JSON.stringify(child.key)}, agent: ${JSON.stringify(child.agent)}, task: ${child.taskExpression} }`).join(", ")}])`;
-}
-
-function agentsLiteral(children: readonly StepChild[]): string {
-	return JSON.stringify(children.map((child) => child.agent));
 }
 
 const SETTLE_HELPER = [
@@ -93,9 +88,6 @@ const SETTLE_HELPER = [
 	"    if (!child.ok && typeof result.error === \"string\") child.error = result.error;",
 	"    return child;",
 	"  });",
-	"}",
-	"function allOk(children) {",
-	"  return children.every(function (child) { return child.ok; });",
 	"}",
 	// A failed child fails the workflow; the runtime keeps every settled child in the partial results.
 	"function failure(label, children) {",
@@ -121,8 +113,8 @@ function buildTasksScript(steps: unknown, originalTask: string | undefined): str
 	return [
 		...prelude(originalTask),
 		`const run1 = ${runsAllCall(children)};`,
-		`const children = settle(run1, ${agentsLiteral(children)});`,
-		"if (!allOk(children)) throw failure(\"tasks failed\", children);",
+		`const children = settle(run1, ${JSON.stringify(children.map((child) => child.agent))});`,
+		"if (!children.every(function (child) { return child.ok; })) throw failure(\"tasks failed\", children);",
 		"return { ok: true, children };",
 	].join("\n");
 }
@@ -168,9 +160,9 @@ function buildChainScript(steps: unknown, originalTask: string | undefined): str
 		}
 		lines.push(
 			`const run${number} = ${runsAllCall(stepChildren)};`,
-			`const step${number} = settle(run${number}, ${agentsLiteral(stepChildren)});`,
+			`const step${number} = settle(run${number}, ${JSON.stringify(stepChildren.map((child) => child.agent))});`,
 			`children.push(...step${number});`,
-			`if (!allOk(step${number})) throw failure(${JSON.stringify(`chain stopped at step ${number}`)}, step${number});`,
+			`if (!step${number}.every(function (child) { return child.ok; })) throw failure(${JSON.stringify(`chain stopped at step ${number}`)}, step${number});`,
 		);
 		if (index < steps.length - 1) lines.push(`const output${number} = step${number}.map(function (child) { return child.output; }).join("\\n\\n");`);
 		if (outputName !== undefined) outputs.set(outputName, `output${number}`);

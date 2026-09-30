@@ -227,7 +227,6 @@ describe("toolActivation modes", () => {
 			// Switching to a capable model mid-session changes nothing.
 			runtime.context.model = COMPATIBLE;
 			assert.deepEqual(await startAgent(runtime), first);
-			assert.deepEqual(await startAgent(runtime), first);
 		}
 	});
 

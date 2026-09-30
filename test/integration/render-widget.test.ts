@@ -1080,21 +1080,7 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 	});
 
-	it("counts running workflow lanes, not the workflow, in the progressive header", () => {
-		resetWidgetLayout();
-		withStdoutSize(36, 120, () => {
-			const lanes = ["lane-1", "lane-2", "lane-3", "lane-4"].map((key) => ({
-				asyncId: `child-${key}`, asyncDir: `/tmp/${key}`, parentWorkflowRunId: "wf", workflowKey: key,
-				mode: "single", agents: ["scout"], status: "running", currentTool: "read",
-			}));
-			const workflow = { asyncId: "wf", asyncDir: "/tmp/wf", mode: "workflow", status: "running",
-				steps: lanes.map((lane, index) => ({ index, workflowKey: lane.workflowKey, runId: lane.asyncId, agent: "scout", status: "running" })) };
-			const single = { asyncId: "solo", asyncDir: "/tmp/solo", mode: "single", agents: ["worker"], status: "running", currentTool: "bash" };
-			const ui = createUiContext();
-			renderWidget(ui.ctx as never, [workflow, ...lanes, single]);
-			const header = renderWidgetLines(ui.widgets.at(-1), 120)[0] ?? "";
-			assert.match(header, /Async agents · 5 agents running/, "4 workflow lanes plus 1 single run, matching FleetView's active agent count");
-		});
+	it("counts unloaded workflow children and step-less parallel runs like FleetView in the progressive header", () => {
 		resetWidgetLayout();
 		// FleetView counts only loaded workflow children, and synthesizes steps from `agents` for step-less runs.
 		const solo = { asyncId: "solo", asyncDir: "/tmp/solo", mode: "single", agents: ["worker"], status: "running", currentTool: "bash" };
@@ -1153,6 +1139,7 @@ describe("subagent async widget rendering", () => {
 			const ui = createUiContext();
 			renderWidget(ui.ctx as never, [workflow, ...lanes, single]);
 			const lines = renderWidgetLines(ui.widgets.at(-1), 120);
+			assert.match(lines[0] ?? "", /Async agents · 5 agents running/, "4 workflow lanes plus 1 single run, matching FleetView's active agent count");
 			assert.equal(lines.filter((line) => line.trim() === "").length, 0, lines.join("\n"));
 			assert.equal(lines.length, 7, "header, workflow, four lanes, single run");
 			for (const key of ["lane-1", "lane-2", "lane-3", "lane-4"]) assert.match(lines.join("\n"), new RegExp(`${key} · scout`));
