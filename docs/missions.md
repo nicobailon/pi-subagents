@@ -30,16 +30,11 @@ const created = subagent({
   action: "mission.create",
   mission: { title: "Ship auth refresh", objective: "Implement and validate token refresh" }
 })
-subagent({
-  workflowScript: `return runs.run("main", { agent: "worker", task: "Implement the approved auth refresh plan" })`,
-  missionId: "<mission-id>"
-})
+// After a ```js workflow block that runs the approved auth refresh plan:
+subagent({ workflow: true, missionId: "<mission-id>" })
 
 // Or create and attach in one launch
-subagent({
-  workflowScript: `return runs.run("main", { agent: "worker", task: "Implement the approved plan" })`,
-  mission: { title: "Ship auth refresh" }
-})
+subagent({ workflow: true, mission: { title: "Ship auth refresh" } })
 ```
 
 ### Goal missions
@@ -89,6 +84,10 @@ Durable schedules are enabled by default and stored per project under `.pi/subag
 
 Create a one-shot schedule:
 
+```js workflow
+return runs.run("main", { agent: "reviewer", task: "Review the current diff." });
+```
+
 ```ts
 subagent({
   action: "schedule.create",
@@ -96,22 +95,23 @@ subagent({
   name: "Evening review",
   at: "+30m",
   baseRef: "refs/heads/release",
-  workflowScript: `return runs.run("main", { agent: "reviewer", task: "Review the current diff." })`
+  workflow: true
 })
 ```
 
-Create a fixed recurring workflow:
+Create a fixed recurring workflow from a script file:
 
 ```ts
-subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflowScript: "return runs.run('main', { agent: 'worker', task: args.task })", args: { task: "Maintain core" } })
+// .pi/workflows/backlog.js: return runs.run('main', { agent: 'worker', task: args.task })
+subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflow: "./.pi/workflows/backlog.js", args: { task: "Maintain core" } })
 ```
 
-Fixed intervals support `m`, `h`, `d`, and `w` units and advance from the planned time without completion drift. Schedule arguments are normalized and persisted for exact replay after reload; do not put secrets in them.
+Fixed intervals support `m`, `h`, `d`, and `w` units and advance from the planned time without completion drift. The schedule stores the script text read at creation, so later edits to the file do not change it. Schedule arguments are normalized and persisted for exact replay after reload; do not put secrets in them.
 
 Create a quiet recurring workflow whose successful completions stay visible but do not wake the parent session:
 
 ```ts
-subagent({ action: "schedule.create", id: "nightly-sweep", every: "24h", quiet: true, workflowScript: "..." })
+subagent({ action: "schedule.create", id: "nightly-sweep", every: "24h", quiet: true, workflow: true })
 ```
 
 Manage schedules with `schedule.list`, `schedule.show`, `schedule.history`, `schedule.pause`, `schedule.resume`, `schedule.run`, `schedule.run-due`, and `schedule.delete`.

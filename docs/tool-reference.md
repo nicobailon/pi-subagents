@@ -8,13 +8,15 @@ Call `{ action: "guide", topic: "tool-reference" }` for this reference or `topic
 
 ## Execution examples
 
-Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. For permission-sensitive host calls, use an extension-owned named resource such as `{ workflow: "run-ci", args: { command: "npm test" } }`; raw public `workflowScript`/`workflowScriptPath` inputs have unknown resource provenance and cannot call `runs.host`. A resolved resource may internally use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })` within its authority ceiling; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({...})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
+Chaining is code-driven through a workflow script. Write the script as one ```` ```js workflow ```` fenced block in the reply, then call `subagent({ workflow: true, ... })` in the same reply. A `workflow` string containing `/` is a script file, and any other string is a named resource. `workflowScript` and `workflowScriptPath` were removed; use these forms instead.
 
-Use `{ action: "validate", workflowScript }` to check statically decidable syntax and structure without launching children. It returns `{ ok, errors }` and fails the tool call when `ok` is false. Literal child `baseRef` values are checked against the runtime ref policy. Dynamic keys and values remain subject to runtime checks; static validation does not guess them.
+Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. For permission-sensitive host calls, use an extension-owned named resource such as `{ workflow: "run-ci", args: { command: "npm test" } }`; raw scripts (`workflow: true` or a script path) have unknown resource provenance and cannot call `runs.host`. A resolved resource may internally use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })` within its authority ceiling; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({...})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
 
-Use `workflowScriptPath` instead of `workflowScript` to load the same JavaScript statement body from a file. The two fields are mutually exclusive. Relative paths resolve against the request `cwd`, and absolute paths pass through. The host reads the file before validation, scheduling, or sandbox execution. The workflow sandbox still has no filesystem access. Missing, unreadable, and empty files fail as file input errors.
+Use `{ action: "validate", workflow: true }` (or a script path) to check statically decidable syntax and structure without launching children. It returns `{ ok, errors }` and fails the tool call when `ok` is false. Literal child `baseRef` values are checked against the runtime ref policy. Dynamic keys and values remain subject to runtime checks; static validation does not guess them.
 
-Raw inline and file-backed scripts accept bounded plain-JSON `args`, including during `validate` and `schedule.create`. Omitted raw args become `{}`; supplied args are deeply frozen in the sandbox. Normalized args persist in run and schedule evidence for diagnosis and exact replay, so never include secrets. Args are data only and do not grant `runs.host` authority.
+Use `workflow: "./path/to/script.js"` to load the same JavaScript statement body from a file. Relative paths resolve against the request `cwd`, and absolute paths pass through. The host reads the file before validation, scheduling, or sandbox execution. The workflow sandbox still has no filesystem access. Missing, unreadable, and empty files fail as file input errors.
+
+Raw reply-block and file-backed scripts accept bounded plain-JSON `args`, including during `validate` and `schedule.create`. Omitted raw args become `{}`; supplied args are deeply frozen in the sandbox. Normalized args persist in run and schedule evidence for diagnosis and exact replay, so never include secrets. Args are data only and do not grant `runs.host` authority.
 
 For permission-extension interoperability, use one of the package-owned named resources with bounded `args` instead of caller-supplied workflow text:
 
@@ -23,65 +25,65 @@ For permission-extension interoperability, use one of the package-owned named re
 { workflow: "run-ci", args: { command: "npm test" } }
 ```
 
-The host resolves the script and authority internally and records bounded provenance in workflow details and receipts. Named resources cannot be combined with `agent`, `task`, `workflowScript`, or `workflowScriptPath`; user/project resource registries are not part of this first slice.
+The host resolves the script and authority internally and records bounded provenance in workflow details and receipts. Named resources cannot be combined with `agent` or `task`; user/project resource registries are not part of this first slice.
 
 ```js
-{ workflowScriptPath: "workflows/review.js", args: { target: "src/workflows" }, cwd: "/path/to/project" }
-{ action: "validate", workflowScriptPath: "workflows/review.js", args: { target: "src/workflows" } }
-{ action: "schedule.create", every: "6h", workflowScriptPath: "workflows/review.js", args: { target: "src/workflows" } }
+{ workflow: "./workflows/review.js", args: { target: "src/workflows" }, cwd: "/path/to/project" }
+{ action: "validate", workflow: "./workflows/review.js", args: { target: "src/workflows" } }
+{ action: "schedule.create", every: "6h", workflow: "./workflows/review.js", args: { target: "src/workflows" } }
 ```
 
-```js
+Each script below is the ```` ```js workflow ```` block of a reply that then calls `subagent({ workflow: true })`:
+
+```js workflow
 // One child; return the child promise explicitly
-{ workflowScript: `return runs.run("main", { agent: "scout", task: "Analyze the auth flow" })` }
+return runs.run("main", { agent: "scout", task: "Analyze the auth flow" });
+```
 
+```js workflow
 // Sequential workflow
-{ workflowScript: `
-  const scan = await runs.run("scan", { agent: "scout", task: "Analyze auth" });
-  return (await runs.run("implement", { agent: "worker", task: "Implement from: " + scan.output })).output;
-` }
+const scan = await runs.run("scan", { agent: "scout", task: "Analyze auth" });
+return (await runs.run("implement", { agent: "worker", task: "Implement from: " + scan.output })).output;
+```
 
+```js workflow
 // Parallel workflow
-{ workflowScript: `
-  const results = await runs.all([
-    { key: "backend", agent: "reviewer", task: "Review backend" },
-    { key: "frontend", agent: "reviewer", task: "Review frontend" }
-  ]);
-  return results.map(result => result.output);
-` }
+const results = await runs.all([
+  { key: "backend", agent: "reviewer", task: "Review backend" },
+  { key: "frontend", agent: "reviewer", task: "Review frontend" }
+]);
+return results.map(result => result.output);
 ```
 
 ### Parallel sequential lanes
 
-Use `runs.lanes(lanes)` inside a `workflowScript` when several independent lanes each have ordered stages. This helper composes the existing workflow child runner; it does not add a top-level `lanes` parameter or a second persistence/cleanup system.
+Use `runs.lanes(lanes)` inside a workflow script when several independent lanes each have ordered stages. This helper composes the existing workflow child runner; it does not add a top-level `lanes` parameter or a second persistence/cleanup system.
 
-```js
-{ workflowScript: `
-  const board = await runs.lanes([
-    { key: "api", stages: [
-      { key: "writer", agent: "worker", task: "Implement the API change" },
-      { key: "challenge", resume: "previous", task: "Challenge the implementation" },
-      { key: "review", agent: "reviewer", task: "Review the API lane" }
-    ] },
-    { key: "ui", stages: [
-      { key: "writer", agent: "worker", task: "Implement the UI change" },
-      { key: "review", agent: "reviewer", task: "Review the UI lane" }
-    ] }
-  ]);
-  return board.map((lane) => ({
-    key: lane.key,
-    state: lane.state,
-    failedStage: lane.failedStage,
-    stages: lane.stages.map((stage) => ({
-      key: stage.key,
-      state: stage.state,
-      ok: stage.ok,
-      runId: stage.runId,
-      outputReference: stage.outputReference,
-      verdict: stage.verdict
-    }))
-  }));
-` }
+```js workflow
+const board = await runs.lanes([
+  { key: "api", stages: [
+    { key: "writer", agent: "worker", task: "Implement the API change" },
+    { key: "challenge", resume: "previous", task: "Challenge the implementation" },
+    { key: "review", agent: "reviewer", task: "Review the API lane" }
+  ] },
+  { key: "ui", stages: [
+    { key: "writer", agent: "worker", task: "Implement the UI change" },
+    { key: "review", agent: "reviewer", task: "Review the UI lane" }
+  ] }
+]);
+return board.map((lane) => ({
+  key: lane.key,
+  state: lane.state,
+  failedStage: lane.failedStage,
+  stages: lane.stages.map((stage) => ({
+    key: stage.key,
+    state: stage.state,
+    ok: stage.ok,
+    runId: stage.runId,
+    outputReference: stage.outputReference,
+    verdict: stage.verdict
+  }))
+}));
 ```
 
 The first stage of each lane is launched by one existing `runs.all(...)` batch. Later stages run in lane order. Set `resume: "previous"` on a later stage to continue the preceding retained child; the helper requires that child’s returned `runId` and delegates to the existing resume checks. Stage keys are local to the lane, and generated child keys are `<lane>.<stage>`.
@@ -114,19 +116,19 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
 | `capabilities` | boolean | `false` | With `action: "list"`, return compact prompt-free rows and `details.agentCapabilities` machine-readable records for each agent's declared/default routing capabilities. External CLI rows also include their command and passive local availability. |
 | `async` | boolean | default-on | Background execution. Workflows default to background. `async:false` blocks the parent until completion. A local foreground child runs inside the parent Pi process and never loads the parent's ambient extensions, but it does inherit the providers those extensions registered. A pane-native remote foreground child instead uses the remote machine's provider discovery and configuration. Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) must run as background children, which load them inside the detached runner process. |
-| `chatProgress` | `auto \| off \| live-card` | `auto` | WorkflowScript chat projection. `auto` renders a live in-chat card only for watched foreground workflows in the same Git repository, including managed worktrees; it is off otherwise. Explicit `live-card` requires `async:false` and the same Git repository. Async workflows have no inline live card, so omit `chatProgress` or use `auto`/`off`; use `async:false` only when the parent must block. |
+| `chatProgress` | `auto \| off \| live-card` | `auto` | Workflow chat projection. `auto` renders a live in-chat card only for watched foreground workflows in the same Git repository, including managed worktrees; it is off otherwise. Explicit `live-card` requires `async:false` and the same Git repository. Async workflows have no inline live card, so omit `chatProgress` or use `auto`/`off`; use `async:false` only when the parent must block. |
 | `isolation` | `none \| worktree` | - | Workflow child isolation. `none` runs in the shared cwd and does not need Git. `worktree` requires a managed Git worktree. Do not combine it with a contradictory `worktree` value. |
-| `baseRef` | string | `HEAD` | `HEAD` or a supported named ref such as `refs/heads/release`, `refs/tags/v1`, or `origin/main`. Full 40/64-character commit IDs and revision expressions such as `HEAD~1` are unsupported. The ref must resolve to a commit at worktree allocation; omitted values default to `HEAD` resolved at that time. Source-checkout cleanliness is still checked. For workflowScript, set it on the outer request as a default or on an individual `runs.run`/`runs.all` child to override it. |
+| `baseRef` | string | `HEAD` | `HEAD` or a supported named ref such as `refs/heads/release`, `refs/tags/v1`, or `origin/main`. Full 40/64-character commit IDs and revision expressions such as `HEAD~1` are unsupported. The ref must resolve to a commit at worktree allocation; omitted values default to `HEAD` resolved at that time. Source-checkout cleanliness is still checked. For a workflow script, set it on the outer request as a default or on an individual `runs.run`/`runs.all` child to override it. |
 | `timeoutMs` / `maxRuntimeMs` | number | config `timeoutMs`, else 30 min foreground / single-agent async | Optional run-level max runtime in milliseconds. Both aliases may be supplied only when their values agree. When omitted, the global [`timeoutMs`](configuration.md#timeoutms) config provides the default; absent that, foreground and plain single-agent async runs fall back to 30 minutes, while composite async runs (chains, parallel tasks, workflows) stay unbounded at the top level. Expiration of this run-level deadline is terminal. |
 | `toolTimeoutMs` | number | fast-tool default | Optional positive hard per-tool-call deadline in milliseconds. Precedence: call value → agent frontmatter → config → `PI_SUBAGENT_TOOL_TIMEOUT_MS`. The timer starts on `tool_execution_start`, clears on the matching `tool_execution_end`, and terminates the run with `timedOut: true` if the tool remains open. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It never extends the run deadline; `contact_supervisor`, `intercom`, and `bg_wait` are exempt. |
 | `checkpointBeforeDeadlineMs` | number | none | Async single-agent runs only. The runner requests that the child "checkpoint and stop" this many milliseconds before the run deadline (finish the current tool call, report changed files, build/test state, remaining work, commit/PR state; start no new work). This best-effort steer uses the normal steering lifecycle at the next tool boundary, so the receipt is visible in status and events; the ordinary deadline kill still applies. Precedence: call value → config `checkpointBeforeDeadlineMs`. Disarmed when the deadline leaves under one second before the checkpoint. |
 | `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`: `hard` is a positive integer and `soft`, if set, is a positive integer no greater than `hard`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, and accepts either a nonempty array of tool names or `"*"` for every tool call. Final assistant text is never blocked. |
 | `usageBudget` | object | none | Optional root-only reported-usage budget `{ tokens?: { soft?, hard }, costUsd?: { soft?, hard } }`. Include at least one metric; each `hard` must be positive and each optional `soft` positive and no greater than its `hard`. Soft limits are status-only. Hard limits prevent later child launches after reported usage is reconciled; already-running children are not stopped and no reservations are made. |
 | `extensionBindings` | object | none | Child-only plain JSON keyed by namespaces like `package.name/1` (positive version): at most 16 namespaces, nesting depth 16, 256 total object properties, and 16 KiB of canonical UTF-8 JSON. Native Pi launches only; external runners and retained resumes reject it. |
-| `preflight` | object | none | Advisory lane hints for `workflowScript` or `workflowScriptPath` only; not accepted with named workflows or direct children. See [bounded workflows](workflows.md#opt-in-bounded-workflows). |
+| `preflight` | object | none | Advisory lane hints for raw scripts (`workflow: true` or a script path) only; not accepted with named workflows or direct children. See [bounded workflows](workflows.md#opt-in-bounded-workflows). |
 | `cwd` | string | runtime cwd | Override working directory. With `machine`, the directory on that machine. |
 | `machine` | string | - | Herdr saved machine (label or profile id) for external-cli agents; see [agents.md](agents.md#running-external-cli-agents-on-a-herdr-saved-machine). |
-| `maxOutput` | object | none | Final output truncation limits `{ bytes?, lines? }`. For child runs it is only applied when set; there is no default cap on the inline path, so use `outputMode: "file-only"` for large outputs. For `workflowScript` results, the Return, Emitted, and Console sections are always capped, at 200 KB / 5000 lines unless `maxOutput` sets other limits. |
+| `maxOutput` | object | none | Final output truncation limits `{ bytes?, lines? }`. For child runs it is only applied when set; there is no default cap on the inline path, so use `outputMode: "file-only"` for large outputs. For workflow script results, the Return, Emitted, and Console sections are always capped, at 200 KB / 5000 lines unless `maxOutput` sets other limits. |
 | `artifacts` | boolean | true | Write debug artifacts. |
 | `includeProgress` | boolean | false | Include full progress in result. |
 | `share` | boolean | false | Upload session export to GitHub Gist. |
@@ -156,26 +158,24 @@ The workflow trace records the attempt and receipt. Always await, return, or inc
 
 For advanced rolling fanout, keep the launched `runs.run` promises in ordinary JavaScript data only when every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. `Promise.race` gives the next completed child, `runs.steer` can challenge a still-running keyed sibling, and `Promise.all` collects the rest. No separate `runs.start`, `runs.next`, or `runs.collect` API is exposed.
 
-```js
-{ workflowScript: `
-  let pending = [
-    { key: "writer", promise: runs.run("writer", { agent: "worker", task: "Draft the fix" }).then((result) => ({ key: "writer", result })) },
-    { key: "reviewer", promise: runs.run("reviewer", { agent: "reviewer", task: "Review likely risks" }).then((result) => ({ key: "reviewer", result })) }
-  ];
-  const first = await Promise.race(pending.map((child) => child.promise));
-  pending = pending.filter((child) => child.key !== first.key);
-  const target = pending[0];
-  const receipt = await runs.steer(target.key, "Use this early review:\n" + first.result.output, { mode: "auto" });
-  const rest = await Promise.all(pending.map((child) => child.promise));
-  return { first: first.key, rest: rest.map((child) => child.key), receipt };
-` }
+```js workflow
+let pending = [
+  { key: "writer", promise: runs.run("writer", { agent: "worker", task: "Draft the fix" }).then((result) => ({ key: "writer", result })) },
+  { key: "reviewer", promise: runs.run("reviewer", { agent: "reviewer", task: "Review likely risks" }).then((result) => ({ key: "reviewer", result })) }
+];
+const first = await Promise.race(pending.map((child) => child.promise));
+pending = pending.filter((child) => child.key !== first.key);
+const target = pending[0];
+const receipt = await runs.steer(target.key, "Use this early review:\n" + first.result.output, { mode: "auto" });
+const rest = await Promise.all(pending.map((child) => child.promise));
+return { first: first.key, rest: rest.map((child) => child.key), receipt };
 ```
 
 ### Output mode details
 
 Use `outputMode: "file-only"` when a saved output may be large and the parent only needs a pointer. The returned text is a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Failed runs and save errors still return normal inline output for debugging.
 
-In workflowScript, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
+In a workflow script, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction.
 
 The `output` field is the API binding; a filename mentioned in task text (for example, `Write your findings to exactly this path: report.md`) is only instruction and does not override runtime routing. When a later workflow step or parent needs a durable file, set `output` on `runs.run`/`runs.all` and return the child’s `outputReference`, `outputPathMapping`, or `artifactPaths`; arbitrary literal strings returned by workflow JavaScript are not rewritten. Omitted child output may use a managed aggregate-derived sibling path.
 
@@ -185,20 +185,18 @@ Workflows get `await state.get(key)` and `await state.set(key, value)` through t
 
 Completed workflow children from the current parent session stay addressable as retained children. `{ action: "children.list" }` lists up to the last 10 with their run ids and explicit `resumable` or `not resumable` state. This workflow-only roster is not an exhaustive list of direct native children. Resume only rows reported `resumable`. When the exact run id of an intended direct child is known, inspect it with `{ action: "status", id: "<run-id>" }`; if status identifies the candidate, attempt `{ action: "resume", id: "<run-id>", message: "..." }`. Resume performs the authoritative eligibility check and may reject the attempt. Start a same-role fallback challenge, labeled as fallback, only when no known candidate exists or resume rejects eligibility. A later workflow continues a resumable child by passing `resume` instead of `agent`:
 
-```js
-{ workflowScript: `
-  let writer = await runs.run("implement", { agent: "worker", task: "Implement the accepted contract" });
-  for (const pass of [1, 2]) {
-    if (!writer.runId) throw new Error("writer did not return a retained run id");
-    writer = await runs.run("followup-" + pass, { resume: writer.runId, task: "Revisit pass " + pass + ": " + writer.output });
-  }
-  return writer;
-` }
+```js workflow
+let writer = await runs.run("implement", { agent: "worker", task: "Implement the accepted contract" });
+for (const pass of [1, 2]) {
+  if (!writer.runId) throw new Error("writer did not return a retained run id");
+  writer = await runs.run("followup-" + pass, { resume: writer.runId, task: "Revisit pass " + pass + ": " + writer.output });
+}
+return writer;
 ```
 
 Each workflow key identifies one result lane. Use a new stable workflow key for every distinct retained resume pass; same-key calls are reused only when launch parameters are identical, and incompatible parameters are rejected.
 
-Inside `workflowScript`, `await runs.run(key, { resume, task })` waits for the revived child to finish and returns its completed output and new `runId`. Each resume can return a new retained run id, so loops must continue from the latest returned `runId`. Top-level `{ action: "resume" }` remains detached and returns a background-run receipt. When it revives a failed async workflow child (or a failed revival of one), the revived run becomes that key's latest run: workflow `status` adds `Revived → <run>: <state>` under the key, and keyed `resume: { workflowRunId, key, latest: true }` continues from it with lineage `[original, revived, ...]`. If the workflow was still running, the receipt it writes when it ends adds the revived runs to the key's lineage, and its completion notice keeps the child's failed result with the same `Revived →` line. The workflow's return value and state are not changed, notices already delivered are not rewritten, and a key accepts at most 16 chained revivals. Reviving a completed, paused, or stopped child does not change its key.
+Inside a workflow script, `await runs.run(key, { resume, task })` waits for the revived child to finish and returns its completed output and new `runId`. Each resume can return a new retained run id, so loops must continue from the latest returned `runId`. Top-level `{ action: "resume" }` remains detached and returns a background-run receipt. When it revives a failed async workflow child (or a failed revival of one), the revived run becomes that key's latest run: workflow `status` adds `Revived → <run>: <state>` under the key, and keyed `resume: { workflowRunId, key, latest: true }` continues from it with lineage `[original, revived, ...]`. If the workflow was still running, the receipt it writes when it ends adds the revived runs to the key's lineage, and its completion notice keeps the child's failed result with the same `Revived →` line. The workflow's return value and state are not changed, notices already delivered are not rewritten, and a key accepts at most 16 chained revivals. Reviving a completed, paused, or stopped child does not change its key.
 
 For a simple implementation challenge outside a workflow script, send the challenge through `subagent({ action: "resume", id: "<retained-writer-run>", message: "Reconsider the implementation and make any better current-scope change." })` when `children.list` reports that retained writer as `resumable`, or attempt it after exact-id status inspection identifies a known direct-child candidate. Status is advisory; resume authoritatively checks eligibility and may reject missing recovery requirements. If there is no known candidate or resume rejects eligibility, start a same-role fallback challenge and record why it is a fallback. Use workflow `runs.run({ resume })` only when the script must await the revived writer output before the next step. Do not use `steer` as the sole challenge action for a completed retained child; `steer` with `mode: "follow_up"` only queues text for the next `resume`.
 
@@ -273,7 +271,7 @@ Rules:
 
 ### Schedule controls
 
-Use `schedule.create` with `workflowScript` or `workflowScriptPath`, not a direct child. `at` accepts a delay like `+10m` or an ISO timestamp with timezone; `every` accepts fixed intervals. `sessionOnly:true` binds restoration/execution to the creating session file; omitted/false is project-wide. Recurring `quiet:true` keeps successful automatic fires visible without a parent turn; failed, stopped or paused runs still wake the parent. One-shot `at` and manual `schedule.run` stay noisy unless that launch passes `quiet:true`. See [missions and schedules](missions.md#schedules) for examples and list/show/history/pause/resume/run/run-due/delete. Calendar selectors (`on`, `timezone`) and schedule mission attachment are deferred. `baseRef` resolves only at worktree allocation and still requires a clean source checkout.
+Use `schedule.create` with `workflow: true` or a script path, not a direct child. `at` accepts a delay like `+10m` or an ISO timestamp with timezone; `every` accepts fixed intervals. `sessionOnly:true` binds restoration/execution to the creating session file; omitted/false is project-wide. Recurring `quiet:true` keeps successful automatic fires visible without a parent turn; failed, stopped or paused runs still wake the parent. One-shot `at` and manual `schedule.run` stay noisy unless that launch passes `quiet:true`. See [missions and schedules](missions.md#schedules) for examples and list/show/history/pause/resume/run/run-due/delete. Calendar selectors (`on`, `timezone`) and schedule mission attachment are deferred. `baseRef` resolves only at worktree allocation and still requires a clean source checkout.
 
 ## Lane merge evidence and cleanup eligibility
 
@@ -406,8 +404,8 @@ Prefer an inline JSON object. JSON-encoded object strings are tolerated only dur
 
 When one host-run command is the entire verification contract, use the `gate` shorthand instead of a full `acceptance` object:
 
-```js
-{ workflowScript: `return runs.run("impl", { agent: "worker", task: "Implement the fix", gate: "npm test" })` }
+```js workflow
+return runs.run("impl", { agent: "worker", task: "Implement the fix", gate: "npm test" });
 ```
 
 `gate` normalizes to verified acceptance with that single command, so the runtime executes it on the host and records the result as evidence. Verification results are memoized per tracked workspace state and effective environment, so an unchanged tree does not rerun the same command. Use explicit `acceptance.verify` when you need multiple commands, timeouts, or custom criteria. `gate` rejects `acceptance` except `false` (treated as omitted), and rejects retained `resume` items. With `worktree: true`, the gate runs inside the child's managed worktree.
@@ -416,12 +414,12 @@ When one host-run command is the entire verification contract, use the `gate` sh
 
 A gate given as `{ command, output: "json" }` runs like a string gate, and then parses the command's stdout:
 
-```js
-{ workflowScript: `return runs.run("review", {
+```js workflow
+return runs.run("review", {
   agent: "reviewer", task: "Review the change", output: "reports/review.md", outputMode: "file-only",
   gate: { command: "classify --report reports/review.md", output: "json",
           schema: { type: "object", properties: { verdict: { enum: ["ok", "blocked"] } }, required: ["verdict"] } }
-})` }
+});
 ```
 
 - The command runs after the child's output file is saved, in the child's cwd or managed worktree, so it can read what the child wrote.
@@ -516,8 +514,12 @@ Intentionally unsupported: native Pi child options such as model override, struc
 
 Pass `share: true` to export a full session to HTML, upload it to a secret GitHub Gist through your `gh` credentials, and return a `https://shittycodingagent.ai/session/?<gistId>` URL.
 
-```ts
-{ workflowScript: `return runs.run("main", { agent: "scout", task: "..." })`, share: true }
+```js workflow
+return runs.run("main", { agent: "scout", task: "..." });
+```
+
+```js
+subagent({ workflow: true, share: true });
 ```
 
 This is disabled by default. Session data may contain source code, paths, environment variables, credentials, or other sensitive output. You need `gh` installed and authenticated.

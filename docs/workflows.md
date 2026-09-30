@@ -27,7 +27,7 @@ Stop and report the exact failure, run/status, and repository/cwd/worktree/branc
 
 Failed workflow details and async `status.json` include `workflow.failureKind` as `validation`, `script`, `child`, `return-serialization`, `timeout`, `detached-child`, or `runtime`. `validation` means the host rejected the script before it ran (syntax or portability) or at completion (unawaited calls); errors thrown into a running script, including rejected `runs.run` parameters and runtime `SyntaxError`s, are `script` because the script could catch them, and failed children are `child`. `runtime` covers host setup and infrastructure failures, such as an unavailable cwd or a crashed worker. A workflow that is stopped or reloaded is not a failure and has no `failureKind`.
 
-When `/reload`, a session resume, or a pi-web project switch replaces the extension runtime, a running async workflow stops with `workflow.stopCause: "runtime-replaced"` in `status.json`, and its awaited async children keep running. When the same `workflowScript` is launched again with the same `args` in that session, a `runs.run` with the same key and params returns a child that already finished successfully without launching it, and waits for a child that is still running instead of starting another. Those results carry `reused: true`, their step and trace entry are marked `reused`, and the new run records `workflow.reusedFrom`. Failed and stopped children, and children that ran in-process, launch again. Reuse applies only when the newest run of that script and args in the session was stopped this way; a user stop or a completed run ends it.
+When `/reload`, a session resume, or a pi-web project switch replaces the extension runtime, a running async workflow stops with `workflow.stopCause: "runtime-replaced"` in `status.json`, and its awaited async children keep running. When the same workflow script is launched again with the same `args` in that session, a `runs.run` with the same key and params returns a child that already finished successfully without launching it, and waits for a child that is still running instead of starting another. Those results carry `reused: true`, their step and trace entry are marked `reused`, and the new run records `workflow.reusedFrom`. Failed and stopped children, and children that ran in-process, launch again. Reuse applies only when the newest run of that script and args in the session was stopped this way; a user stop or a completed run ends it.
 
 Pi core may print a generic `pi -ne` extension-load hint; that out-of-repo hint is not protocol-approved fallback. A verified compaction abort may continue the retained child once on its already resolved model; it does not authorize an execution-mode or model switch.
 
@@ -45,9 +45,17 @@ The package includes reusable prompt templates for common workflows. You do not 
 
 Add `autofix` to `/parallel-review` or `/parallel-cleanup` to apply only the synthesized fixes worth doing now after reviewers return.
 
-## Scripted workflows (workflowScript)
+## Scripted workflows
 
-Use direct `{ agent, task }` for one bounded child. Use `workflowScript` when the parent needs a stable keyed child, sequence, fanout, steering, retry, or aggregation. For ordinary parallel fanout, use `await runs.all([{ key, agent, task }, ...])`. It resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from unawaited `runs.run` launches. Store a `runs.run` promise only when the script later observes it with `await`, `Promise.race`, or `Promise.all`, such as steering a live child before awaiting its result. Scripts are ordinary JavaScript statement bodies. Use an explicit `return` for a useful result:
+Use direct `{ agent, task }` for one bounded child. Use a workflow script when the parent needs a stable keyed child, sequence, fanout, steering, retry, or aggregation. For ordinary parallel fanout, use `await runs.all([{ key, agent, task }, ...])`. It resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from unawaited `runs.run` launches. Store a `runs.run` promise only when the script later observes it with `await`, `Promise.race`, or `Promise.all`, such as steering a live child before awaiting its result. Scripts are ordinary JavaScript statement bodies. Use an explicit `return` for a useful result.
+
+The `workflow` field selects the script source:
+
+- `workflow: true` runs the one ```` ```js workflow ```` fenced block written in the same assistant reply as the `subagent` call. The script is plain text in the reply, so it needs no JSON string escaping. A reply can carry exactly one such block and one `workflow: true` call; zero or several blocks fail. A line that starts with ```` ``` ```` ends the block, so keep Markdown fences inside quoted strings.
+- A string containing `/`, such as `workflow: "./workflows/review.js"`, is a script file.
+- Any other string, such as `workflow: "review"`, is a [named workflow resource](#named-workflow-resources-for-permission-extensions).
+
+`workflow: true` works only from a model tool call. Slash commands, RPC, and schedules pass scripts through their own inputs. Examples below that show only a ```` ```js workflow ```` block run with `subagent({ workflow: true })` in the same reply.
 
 For multi-step or parallel work, make exactly one top-level `subagent` workflow call with `async:true` and launch children only inside it. Read this guide for recipes rather than constructing a second top-level orchestration. Available sandbox helpers include `runs.run`, `runs.all`, `runs.lanes`, `runs.steer`, `runs.status`, `runs.ref`/`runs.refs`, `emit`, `console`, standard JavaScript, and mission `state` when enabled. No filesystem, shell, arbitrary Pi tools, or host globals are available; named resources alone may grant `runs.host` authority.
 
@@ -61,26 +69,28 @@ A workflow can finish dispatch while these children remain running. Its summary 
 
 Validate a script without launching children:
 
-```js
-subagent({ action: "validate", workflowScript: `
-  const results = await runs.all([{ key: "scan", agent: "scout", task: "Scan" }]);
-  return results[0].output;
-` });
+```js workflow
+const results = await runs.all([{ key: "scan", agent: "scout", task: "Scan" }]);
+return results[0].output;
 ```
 
-For a script stored in a file, use `workflowScriptPath` instead of `workflowScript`:
-
 ```js
-subagent({ workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" });
-subagent({ action: "validate", workflowScriptPath: "workflows/review.js" });
+subagent({ action: "validate", workflow: true });
 ```
 
-The fields are mutually exclusive. Relative paths resolve against the request `cwd`; absolute paths pass through. The host reads the file before validation, schedule creation, or workflow sandbox execution. The sandbox still has no filesystem access. Missing, unreadable, and empty files return file input errors instead of script syntax errors.
-
-Inline and file-backed scripts accept bounded plain-JSON `args`:
+For a script stored in a file, pass its path:
 
 ```js
-subagent({ workflowScriptPath: "workflows/review.js", args: { target: "src/workflows" } });
+subagent({ workflow: "./workflows/review.js", cwd: "/path/to/project" });
+subagent({ action: "validate", workflow: "./workflows/review.js" });
+```
+
+Relative paths resolve against the request `cwd`; absolute paths pass through. The host reads the file before validation, schedule creation, or workflow sandbox execution. The sandbox still has no filesystem access. Missing, unreadable, and empty files return file input errors instead of script syntax errors.
+
+Reply-block and file-backed scripts accept bounded plain-JSON `args`:
+
+```js
+subagent({ workflow: "./workflows/review.js", args: { target: "src/workflows" } });
 // workflows/review.js
 return runs.run("review", { agent: "reviewer", task: `Review ${args.target}` });
 ```
@@ -96,18 +106,20 @@ subagent({ workflow: "review", args: { task: "Review the change" } });
 subagent({ workflow: "run-ci", args: { command: "npm test" } });
 ```
 
-The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Inline `workflowScript` and `workflowScriptPath` remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent`, `task`, `workflowScript`, or `workflowScriptPath`; this first slice ships only the package-owned `review` and `run-ci` resources, not a user/project resource registry.
+The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Reply-block (`workflow: true`) and file-path scripts remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent` or `task`; this first slice ships only the package-owned `review` and `run-ci` resources, not a user/project resource registry.
 
 ### Opt-in bounded workflows
 
 Composite workflows have no default parent deadline. Add bounds only when the workflow contract calls for them:
 
+```js workflow
+const scan = await runs.run("scan", { agent: "scout", task: "Inspect the named files." });
+return runs.run("review", { agent: "reviewer", task: "Review:\n" + scan.output });
+```
+
 ```js
 subagent({
-  workflowScript: `
-    const scan = await runs.run("scan", { agent: "scout", task: "Inspect the named files." });
-    return runs.run("review", { agent: "reviewer", task: "Review:\n" + scan.output });
-  `,
+  workflow: true,
   timeoutMs: 900000,
   toolBudget: { soft: 40, hard: 60 },
   usageBudget: { tokens: { soft: 100000, hard: 150000 } }
@@ -122,80 +134,76 @@ subagent({
 
 These controls are opt-in. Avoid tight hard budgets for mutation-capable workers unless the workflow has an explicit checkpoint and handoff path.
 
-The optional `preflight` lane hints apply only to raw `workflowScript` or `workflowScriptPath` requests, not named workflows or direct child calls. They are display-only: mismatched coverage warns but never changes execution authority.
+The optional `preflight` lane hints apply only to raw scripts (`workflow: true` or a script path), not named workflows or direct child calls. They are display-only: mismatched coverage warns but never changes execution authority.
 
 The result is `{ ok, errors }`. Invalid scripts return a tool error and include line and column data when available. Validation checks syntax, portable nested-async rules, literal `runs.run` and `runs.all` keys and child `baseRef` values, duplicate literal keys in one `runs.all` group, direct keyed access to a known `runs.all` result, and statically clear non-JSON boundary values. It also looks up literal `agent` names in `runs.run`, `runs.all`, and `runs.lanes` children against the agents discovered for the request `cwd` and `agentScope`, and reports unknown or ambiguous names with a close match when one exists. Children with their own `cwd`, `agentScope`, or `resume`, object spreads, and names built at runtime are left to launch time. Dynamic keys and other runtime-only values are accepted without a warning. Validation does not launch children or create run artifacts. Executing a workflow runs the same agent-name check first, so an unknown literal agent fails before any child launches.
 
-```js
-subagent({ workflowScript: `
-  const scan = await runs.run("scan", { label: "Map codebase behavior", agent: "scout", task: "Scan the codebase" });
-  const reviews = await runs.all([
-    { key: "correctness", label: "Review codebase correctness", agent: "reviewer", task: "Review correctness: " + scan.output },
-    { key: "tests", label: "Review test coverage", agent: "reviewer", task: "Review tests: " + scan.output }
-  ]);
-  return reviews.map(result => result.output);
-` });
+```js workflow
+const scan = await runs.run("scan", { label: "Map codebase behavior", agent: "scout", task: "Scan the codebase" });
+const reviews = await runs.all([
+  { key: "correctness", label: "Review codebase correctness", agent: "reviewer", task: "Review correctness: " + scan.output },
+  { key: "tests", label: "Review test coverage", agent: "reviewer", task: "Review tests: " + scan.output }
+]);
+return reviews.map(result => result.output);
 ```
 
-Keep helper functions portable across Node and Bun. Use top-level `await`, plain helper functions that return `runs.run(...)`, or explicit Promise chains. Do not define nested `async function` helpers, async arrows, or async methods inside `workflowScript`; native async helpers hide child-launch observation in Bun and are rejected.
-
 ```js
-subagent({ workflowScript: `
-  function scan() {
-    return runs.run("scan", { label: "Map codebase behavior", agent: "scout", task: "Scan the codebase" });
-  }
-  const result = await scan();
-  return result.output;
-` });
+subagent({ workflow: true });
+```
+
+Keep helper functions portable across Node and Bun. Use top-level `await`, plain helper functions that return `runs.run(...)`, or explicit Promise chains. Do not define nested `async function` helpers, async arrows, or async methods inside a workflow script; native async helpers hide child-launch observation in Bun and are rejected.
+
+```js workflow
+function scan() {
+  return runs.run("scan", { label: "Map codebase behavior", agent: "scout", task: "Scan the codebase" });
+}
+const result = await scan();
+return result.output;
 ```
 
 Chaining is still supported. The supported form is scripted chaining: await one `runs.run(...)` result, then pass its output into the next step. Parallel fanout uses `runs.all(...)` inside the same script.
 
-```js
-subagent({ workflowScript: `
-  const plan = await runs.run("plan", { label: "Plan migration behavior", agent: "scout", task: "Plan the migration" });
-  const patch = await runs.run("patch", { label: "Implement migration behavior", agent: "worker", task: "Implement this plan:\n" + plan.output });
-  return patch.output;
-` });
+```js workflow
+const plan = await runs.run("plan", { label: "Plan migration behavior", agent: "scout", task: "Plan the migration" });
+const patch = await runs.run("patch", { label: "Implement migration behavior", agent: "worker", task: "Implement this plan:\n" + plan.output });
+return patch.output;
 ```
 
 ### Parallel sequential lanes
 
-For a bounded set of independent chains, `runs.lanes(...)` removes the mechanical loop that would otherwise connect each lane's stages. It is a helper inside `workflowScript`, not a new top-level `subagent` execution mode:
+For a bounded set of independent chains, `runs.lanes(...)` removes the mechanical loop that would otherwise connect each lane's stages. It is a helper inside a workflow script, not a new top-level `subagent` execution mode:
 
-```js
-subagent({ workflowScript: `
-  const board = await runs.lanes([
-    {
-      key: "api",
-      stages: [
-        { key: "writer", label: "Implement API behavior", agent: "worker", task: "Implement the API change" },
-        { key: "challenge", label: "Challenge API behavior", resume: "previous", task: "Challenge the API implementation" },
-        { key: "review", label: "Review API behavior", agent: "reviewer", task: "Review the API lane" }
-      ]
-    },
-    {
-      key: "ui",
-      stages: [
-        { key: "writer", label: "Implement UI behavior", agent: "worker", task: "Implement the UI change" },
-        { key: "review", label: "Review UI behavior", agent: "reviewer", task: "Review the UI lane" }
-      ]
-    }
-  ]);
-  return board.map((lane) => ({
-    key: lane.key,
-    state: lane.state,
-    failedStage: lane.failedStage,
-    stages: lane.stages.map((stage) => ({
-      key: stage.key,
-      state: stage.state,
-      ok: stage.ok,
-      runId: stage.runId,
-      outputReference: stage.outputReference,
-      verdict: stage.verdict
-    }))
-  }));
-` });
+```js workflow
+const board = await runs.lanes([
+  {
+    key: "api",
+    stages: [
+      { key: "writer", label: "Implement API behavior", agent: "worker", task: "Implement the API change" },
+      { key: "challenge", label: "Challenge API behavior", resume: "previous", task: "Challenge the API implementation" },
+      { key: "review", label: "Review API behavior", agent: "reviewer", task: "Review the API lane" }
+    ]
+  },
+  {
+    key: "ui",
+    stages: [
+      { key: "writer", label: "Implement UI behavior", agent: "worker", task: "Implement the UI change" },
+      { key: "review", label: "Review UI behavior", agent: "reviewer", task: "Review the UI lane" }
+    ]
+  }
+]);
+return board.map((lane) => ({
+  key: lane.key,
+  state: lane.state,
+  failedStage: lane.failedStage,
+  stages: lane.stages.map((stage) => ({
+    key: stage.key,
+    state: stage.state,
+    ok: stage.ok,
+    runId: stage.runId,
+    outputReference: stage.outputReference,
+    verdict: stage.verdict
+  }))
+}));
 ```
 
 The first stage from every lane is launched in one existing `runs.all(...)` batch. Later stages in each lane start only after the preceding stage settles. A later stage with `resume: "previous"` requires the preceding child to return a retained `runId`; the helper then uses the existing retained-resume launch checks and does not accept an arbitrary run id. Generated child keys use `<lane>.<stage>`, while the returned board uses the local lane and stage keys.
@@ -210,18 +218,16 @@ Two ways to put a small classifier (a script, a lookup, a fast evaluation model)
 
 **A typed gate** runs a command after a child finishes and turns its JSON stdout into that child's `structuredOutput`:
 
-```js
-subagent({ workflowScript: `
-  const review = await runs.run("review", {
-    agent: "reviewer", task: packet,
-    output: "reports/review.md", outputMode: "file-only",
-    gate: { command: "classify --report reports/review.md", output: "json" }
-  });
-  if (review.structuredOutput.verdict === "blocked") {
-    return runs.run("fix", { agent: "worker", task: "Fix the findings in reports/review.md" });
-  }
-  return { verdict: review.structuredOutput.verdict, report: "reports/review.md" };
-` });
+```js workflow
+const review = await runs.run("review", {
+  agent: "reviewer", task: args.packet,
+  output: "reports/review.md", outputMode: "file-only",
+  gate: { command: "classify --report reports/review.md", output: "json" }
+});
+if (review.structuredOutput.verdict === "blocked") {
+  return runs.run("fix", { agent: "worker", task: "Fix the findings in reports/review.md" });
+}
+return { verdict: review.structuredOutput.verdict, report: "reports/review.md" };
 ```
 
 The parent receives a pointer plus a verdict instead of the review text. See [typed gates](tool-reference.md#typed-gates) for the contract and failure rules.
@@ -266,13 +272,11 @@ The first named resource version supports only `npm test` and `npm run typecheck
 
 Use `await runs.steer(key, message, options?)` after `runs.run` or `runs.all` has launched that stable key. Scripts do not target raw run ids. The optional fields are `mode: "steer" | "follow_up" | "auto"`, a non-negative child `index`, and a positive `ackTimeoutMs`.
 
-```js
-subagent({ workflowScript: `
-  const writer = runs.run("writer", { agent: "worker", task: "Implement the change" });
-  const evidence = await runs.run("evidence", { agent: "scout", task: "Find the exact contract" });
-  const receipt = await runs.steer("writer", "Also check: " + evidence.output, { mode: "follow_up" });
-  return { writer: await writer, receipt };
-` });
+```js workflow
+const writer = runs.run("writer", { agent: "worker", task: "Implement the change" });
+const evidence = await runs.run("evidence", { agent: "scout", task: "Find the exact contract" });
+const receipt = await runs.steer("writer", "Also check: " + evidence.output, { mode: "follow_up" });
+return { writer: await writer, receipt };
 ```
 
 The receipt state is `queued`, `delivered`, `missed`, or `failed`. For an async child, `delivered` means it consumed the correlated user input; for a foreground child, it means the in-process Pi transport accepted the input. It does not mean the model followed it. `missed` means the keyed child became terminal or had no live route before delivery. This first slice uses the existing foreground and async steering transports but does not start steering recovery. Workflow traces include one steering attempt entry and one receipt entry.
@@ -283,78 +287,70 @@ Always await or return a `runs.steer` promise. The workflow waits for an observe
 
 `runs.run` starts a keyed child when you call it. You do not need separate `runs.start`, `runs.next`, or `runs.collect` helpers for rolling councils or staged reviews. This is the advanced exception to ordinary `runs.all` fanout: keep launched promises only when the script later observes each one with direct `await`, `Promise.race`, or `Promise.all`. Use `Promise.race` to wait for the next completed child, steer a still-running sibling by its stable key, and use `Promise.all` to collect the remaining children.
 
-```js
-subagent({ workflowScript: `
-  let pending = [
-    { key: "analysis-a", promise: runs.run("analysis-a", { agent: "reviewer", task: "Analyze option A" }).then((result) => ({ key: "analysis-a", result })) },
-    { key: "analysis-b", promise: runs.run("analysis-b", { agent: "reviewer", task: "Analyze option B" }).then((result) => ({ key: "analysis-b", result })) },
-    { key: "critic", promise: runs.run("critic", { agent: "reviewer", task: "Find the strongest objection" }).then((result) => ({ key: "critic", result })) }
-  ];
+```js workflow
+let pending = [
+  { key: "analysis-a", promise: runs.run("analysis-a", { agent: "reviewer", task: "Analyze option A" }).then((result) => ({ key: "analysis-a", result })) },
+  { key: "analysis-b", promise: runs.run("analysis-b", { agent: "reviewer", task: "Analyze option B" }).then((result) => ({ key: "analysis-b", result })) },
+  { key: "critic", promise: runs.run("critic", { agent: "reviewer", task: "Find the strongest objection" }).then((result) => ({ key: "critic", result })) }
+];
 
-  const first = await Promise.race(pending.map((child) => child.promise));
-  pending = pending.filter((child) => child.key !== first.key);
+const first = await Promise.race(pending.map((child) => child.promise));
+pending = pending.filter((child) => child.key !== first.key);
 
-  const target = pending.find((child) => child.key === "critic") ?? pending[0];
-  const receipt = await runs.steer(target.key, "Challenge this early result:\n" + first.result.output, { mode: "auto" });
-  const rest = await Promise.all(pending.map((child) => child.promise));
+const target = pending.find((child) => child.key === "critic") ?? pending[0];
+const receipt = await runs.steer(target.key, "Challenge this early result:\n" + first.result.output, { mode: "auto" });
+const rest = await Promise.all(pending.map((child) => child.promise));
 
-  return { first: first.result.output, rest: rest.map((child) => child.result.output), receipt };
-` });
+return { first: first.result.output, rest: rest.map((child) => child.result.output), receipt };
 ```
 
 The workflow trace records the run completions and steering receipt. Scripts cannot access the filesystem or control inboxes; returned run and artifact references are data only. If the keyed child is terminal, stale, or has no live route when `runs.steer` runs, the receipt reports `missed` or `failed` and the script can decide whether to continue.
 
 Use named outputs when later workflow steps need structured data or durable references:
 
-```js
-subagent({ workflowScript: `
-  const inventory = await runs.run("inventory", {
-    agent: "scout",
-    task: "List the files that need review.",
-    outputSchema: {
-      type: "object",
-      properties: { files: { type: "array", items: { type: "string" } } },
-      required: ["files"],
-      additionalProperties: false
-    }
-  });
-  return runs.run("review", {
-    agent: "reviewer",
-    task: "Review these files: " + inventory.structuredOutput.files.join(", ")
-  });
-` });
+```js workflow
+const inventory = await runs.run("inventory", {
+  agent: "scout",
+  task: "List the files that need review.",
+  outputSchema: {
+    type: "object",
+    properties: { files: { type: "array", items: { type: "string" } } },
+    required: ["files"],
+    additionalProperties: false
+  }
+});
+return runs.run("review", {
+  agent: "reviewer",
+  task: "Review these files: " + inventory.structuredOutput.files.join(", ")
+});
 ```
 
 For dynamic fanout, have one step return a structured list, check it in JavaScript, then map the bounded entries into `runs.all(...)`:
 
-```js
-subagent({ workflowScript: `
-  const targets = await runs.run("targets", {
-    agent: "scout",
-    task: "Return up to five source files that need review.",
-    outputSchema: {
-      type: "object",
-      properties: { files: { type: "array", items: { type: "string" }, maxItems: 5 } },
-      required: ["files"],
-      additionalProperties: false
-    }
-  });
-  const files = targets.structuredOutput.files.slice(0, 5);
-  return runs.all(files.map((file, index) => ({
-    key: "review-" + index,
-    agent: "reviewer",
-    task: "Review " + file
-  })));
-` });
+```js workflow
+const targets = await runs.run("targets", {
+  agent: "scout",
+  task: "Return up to five source files that need review.",
+  outputSchema: {
+    type: "object",
+    properties: { files: { type: "array", items: { type: "string" }, maxItems: 5 } },
+    required: ["files"],
+    additionalProperties: false
+  }
+});
+const files = targets.structuredOutput.files.slice(0, 5);
+return runs.all(files.map((file, index) => ({
+  key: "review-" + index,
+  agent: "reviewer",
+  task: "Review " + file
+})));
 ```
 
 For intermediate data that only later steps need, prefer the prior child's returned output or `structuredOutput` instead of writing shared files:
 
-```js
-subagent({ workflowScript: `
-  const scan = await runs.run("scan", { agent: "scout", task: "Find the files that need fixes." });
-  return runs.run("fix", { agent: "worker", task: "Implement these findings:\n" + scan.output });
-` });
+```js workflow
+const scan = await runs.run("scan", { agent: "scout", task: "Find the files that need fixes." });
+return runs.run("fix", { agent: "worker", task: "Implement these findings:\n" + scan.output });
 ```
 
 `{chain_dir}` remains available inside scripted workflow step templates for legacy-compatible path templates. It expands to the workflow cwd, not to private temporary storage.
@@ -367,27 +363,23 @@ Legacy top-level `chain`, `tasks`, `parallel`, `chainDir`, `/chain`, `/parallel`
 // Old shape, no longer supported:
 // { chain: [{ agent: "scout", task: "Scan" }, { agent: "worker", task: "Fix from {previous}" }] }
 
-// Current shape:
-{ workflowScript: `
-  const scan = await runs.run("scan", { agent: "scout", task: "Scan" });
-  return runs.run("fix", { agent: "worker", task: "Fix from: " + scan.output });
-` }
+// Current shape: this ```js workflow block plus subagent({ workflow: true })
+const scan = await runs.run("scan", { agent: "scout", task: "Scan" });
+return runs.run("fix", { agent: "worker", task: "Fix from: " + scan.output });
 ```
 
 ```js
 // Old shape, no longer supported:
 // { tasks: [{ agent: "reviewer", task: "Review API" }, { agent: "reviewer", task: "Review UI" }] }
 
-// Current shape:
-{ workflowScript: `
-  return runs.all([
-    { key: "api", agent: "reviewer", task: "Review API" },
-    { key: "ui", agent: "reviewer", task: "Review UI" }
-  ]);
-` }
+// Current shape: this ```js workflow block plus subagent({ workflow: true })
+return runs.all([
+  { key: "api", agent: "reviewer", task: "Review API" },
+  { key: "ui", agent: "reviewer", task: "Review UI" }
+]);
 ```
 
-For long task text with Markdown fences or shell blocks, use quoted lines instead of a raw template literal:
+For long task text with Markdown fences or shell blocks, use quoted lines instead of a raw template literal. In a reply block, a line that starts with ```` ``` ```` would end the block:
 
 ````js
 const task = [
@@ -405,7 +397,7 @@ A plain workflow creates one enclosing mission by default. Its children do not c
 
 Use stable child keys and keep process logic in ordinary JavaScript. `runs.run` launches one child, `runs.all` launches independent children together, and later steps can use each completed child's `output`. Put long task text in arrays joined with `"\n"` so Markdown fences do not conflict with the script string.
 
-For a process you run often, save the task as a prompt template under `.pi/prompts/` or `~/.pi/agent/prompts/` and launch it with `/prompt-workflow`. The adapter compiles prompt steps into `workflowScript`, so templates describe the work instead of embedding raw `subagent` tool-call JSON. You can ask the parent agent to create or update these prompt files from a process described in natural language.
+For a process you run often, save the task as a prompt template under `.pi/prompts/` or `~/.pi/agent/prompts/` and launch it with `/prompt-workflow`. The adapter compiles prompt steps into a workflow script, so templates describe the work instead of embedding raw `subagent` tool calls. You can ask the parent agent to create or update these prompt files from a process described in natural language.
 
 ```md
 ---
@@ -452,11 +444,11 @@ return { api: api.artifactPaths, ui: ui.artifactPaths };
 
 Each child uses the existing worktree lifecycle: it branches from clean HEAD, journals ownership before launch, captures a patch and handoff manifest, then removes cleanly captured temporary worktrees and branches. The handoff manifest path remains available in the child's `artifactPaths`; return or emit it when the orchestrator needs to apply or inspect the patches. `runs.ref` stays concise and intentionally omits full paths.
 
-A top-level `{ workflowScript, worktree: true }` makes isolation the default for every workflow child. An individual child can override that default with `worktree: false`. Keep one writer when parallel writes are not intentionally isolated.
+A top-level `{ workflow: true, worktree: true }` makes isolation the default for every workflow child. An individual child can override that default with `worktree: false`. Keep one writer when parallel writes are not intentionally isolated.
 
 Before a materialized `runs.run` or `runs.all` group dispatches fresh children, isolated sources must be Git repositories with clean working trees (excluding `.pi/subagents/` runtime state). A rejected group dispatches no children and spends no fan-out slots or child output claims; key-level failure traces can remain. Checks are shared only within that group, are cancellable, and run again at allocation because sources can change. Retained resumes keep their stored contracts. Select the correct cwd or arrange an operator-approved commit/stash; isolation is never dropped automatically.
 
-Use `baseRef` to branch managed worktrees from `HEAD` or a supported named ref such as `refs/heads/release`, `refs/tags/v1`, or `origin/main`. Full 40/64-character commit IDs and revision expressions such as `HEAD~1` are unsupported. For example, `{ workflowScript, worktree: true, baseRef: "refs/heads/release" }` applies the release ref to children unless a child supplies its own `baseRef`. If omitted, the default `HEAD` is resolved at worktree allocation, not when the script is validated or a schedule is created. The source checkout must still be clean, and the ref must resolve to a commit before any worktree is allocated.
+Use `baseRef` to branch managed worktrees from `HEAD` or a supported named ref such as `refs/heads/release`, `refs/tags/v1`, or `origin/main`. Full 40/64-character commit IDs and revision expressions such as `HEAD~1` are unsupported. For example, `{ workflow: true, worktree: true, baseRef: "refs/heads/release" }` applies the release ref to children unless a child supplies its own `baseRef`. If omitted, the default `HEAD` is resolved at worktree allocation, not when the script is validated or a schedule is created. The source checkout must still be clean, and the ref must resolve to a commit before any worktree is allocated.
 
 Configure the worktree provider, native path layout, base directory, and setup hook in [configuration.md](configuration.md).
 
@@ -525,7 +517,7 @@ For A → B → C, C's request belongs to B, not A. B can escalate a separate qu
 
 Child-side routine completion handoffs are not expected. If a child appears stalled, needs-attention notices show up in the parent session with useful next actions, such as checking `subagent({ action: "status" })`, interrupting the run, or nudging the child.
 
-If a `workflowScript` child detaches through `contact_supervisor`, the enclosing async workflow stays `paused` until that child exits. Then the extension reconciles it to `complete` or `failed`. Wait on the child until that happens.
+If a workflow script child detaches through `contact_supervisor`, the enclosing async workflow stays `paused` until that child exits. Then the extension reconciles it to `complete` or `failed`. Wait on the child until that happens.
 
 If messages do not show up, run `/subagents-doctor`. Advanced users can tune the bridge with `intercomBridge` in [configuration.md](configuration.md).
 
@@ -573,4 +565,4 @@ Then run it through the native adapter:
 
 The adapter delegates to the named subagent, applies `model`, `skill`, `cwd`, and fork/fresh context metadata, and supports runtime overrides such as `--subagent reviewer`, `--fork`, `--fresh`, and `--bg`.
 
-Prompt templates with `chain:` frontmatter are translated into `workflowScript` and launched through `/prompt-workflow`; `/chain-prompts` is no longer registered.
+Prompt templates with `chain:` frontmatter are translated into a workflow script and launched through `/prompt-workflow`; `/chain-prompts` is no longer registered.

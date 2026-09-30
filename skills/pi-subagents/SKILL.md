@@ -29,19 +29,24 @@ and their resolved `tools` allow `subagent`.
 | Need | Use |
 | --- | --- |
 | One bounded task for one child | direct `{ agent, task }` |
-| JavaScript control flow or data-dependent branching; sequence, fanout, retry, rolling fanout, or aggregation | `workflowScript` with `runs.run(...)` / `runs.all(...)` |
-| A broad plan split into visible narrow stages per lane | `workflowScript` with `runs.lanes([{ key, stages: [...] }])` |
+| JavaScript control flow or data-dependent branching; sequence, fanout, retry, rolling fanout, or aggregation | a workflow script with `runs.run(...)` / `runs.all(...)` |
+| A broad plan split into visible narrow stages per lane | a workflow script with `runs.lanes([{ key, stages: [...] }])` |
 | Independent worktree or repository lanes | `references/multi-lane-orchestration.md` |
 | Council of advisors | `../council-mode/SKILL.md` |
 | Management, status, steering, authoring, or inspection | `action` |
 
-`workflowScript` is code-driven: `runs.run(...)` for keyed steps,
+To launch a workflow script, write it as one ```` ```js workflow ```` fenced
+block in your reply, then call `subagent({ workflow: true, ... })` in the same
+reply. Use `workflow: "./path/to/script.js"` for a script file and
+`workflow: "<name>"` for a named resource.
+
+A workflow script is code-driven: `runs.run(...)` for keyed steps,
 `runs.all([...])` for fanout, plain JavaScript for branching and aggregation.
 Keep scripts portable: use top-level `await`, plain helpers, or explicit Promise
 chains, not nested async helpers. Legacy top-level `chain` / `tasks` inputs and
 durable `.chain.md` execution are inspection or migration material only.
 
-Use `runs.lanes(...)` only inside a `workflowScript`, not as a top-level mode,
+Use `runs.lanes(...)` only inside a workflow script, not as a top-level mode,
 when a broad, predeclared plan benefits from visible per-lane stages; otherwise
 use ordinary `runs.run(...)` / `runs.all(...)`. See the [canonical staged-lane
 example](../../docs/workflows.md#parallel-sequential-lanes). Keep assignments

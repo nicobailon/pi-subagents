@@ -1,5 +1,5 @@
 // Run from this directory:
-//   subagent({ workflowScriptPath: "workflow.js", agentScope: "both" })
+//   subagent({ workflow: "./workflow.js", agentScope: "both" })
 //
 // Shape 1: a typed gate grades the reviewer's report the moment the child finishes.
 // Shape 2: the classifier agent is a typed step the workflow fans out and branches on.

@@ -25,10 +25,10 @@ they do not authorize a launch.
 
 ## Tool vs Slash Commands
 
-Agents use the `subagent(...)` tool for execution, management, status, and control. Direct `{ agent, task }` execution is enough for one bounded child task; use `workflowScript` when the parent needs JavaScript control flow or data-dependent branching, keyed, parallel, sequential, retry, retained-resume, aggregate, or explicit staged-lane behavior (`runs.lanes`). Humans often use the slash-command layer instead:
+Agents use the `subagent(...)` tool for execution, management, status, and control. Direct `{ agent, task }` execution is enough for one bounded child task; use a workflow script (one ```` ```js workflow ```` block in the reply plus `subagent({ workflow: true })`) when the parent needs JavaScript control flow or data-dependent branching, keyed, parallel, sequential, retry, retained-resume, aggregate, or explicit staged-lane behavior (`runs.lanes`). Humans often use the slash-command layer instead:
 
 - `/run` — launch a single agent
-- `workflowScript` — the sole public surface for sequence, parallelism, branching, retries, and aggregation
+- `subagent({ workflow: ... })` — the sole public surface for sequence, parallelism, branching, retries, and aggregation
 - `/subagents` — interactive admin for inspecting agents and editing model, thinking, or system prompt
 - `/subagents-stop [run-id]` — stop a current-session top-level async run; opens a selector when no id is given
 - `/subagents-detach [run-id]` — detach an active foreground single-subagent run without terminating its child
@@ -39,7 +39,7 @@ Agents use the `subagent(...)` tool for execution, management, status, and contr
 - `/subagents-doctor` — diagnose setup, discovery, async paths, and intercom bridge state
 - `/subagents-models [agent]` — show the live runtime-loaded builtin model mapping
 - `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile` — manage model profiles and provider catalogs
-- `/prompt-workflow` — run a prompt template through native workflowScript execution
+- `/prompt-workflow` — run a prompt template as a native workflow script
 
 Prefer the tool when you are writing agent logic. Prefer the slash commands when
 you are guiding a human through an interactive flow.
@@ -83,22 +83,21 @@ Default guardrails:
 
 Example shape:
 
+```js workflow
+const results = await runs.all([
+  { key: "deslop", agent: "reviewer", task: "Apply the available 'deslop' skill to review the current diff for concrete cleanup findings only. Do not modify files.", skill: "deslop" },
+  { key: "accessibility", agent: "reviewer", task: "Apply the available 'accessibility' skill to review the UI changes for concrete issues only. Do not modify files.", skill: "accessibility" }
+]);
+return results.map(result => result.output);
+```
+
 ```typescript
-subagent({
-  workflowScript: `
-    const results = await runs.all([
-      { key: "deslop", agent: "reviewer", task: "Apply the available 'deslop' skill to review the current diff for concrete cleanup findings only. Do not modify files.", skill: "deslop" },
-      { key: "accessibility", agent: "reviewer", task: "Apply the available 'accessibility' skill to review the UI changes for concrete issues only. Do not modify files.", skill: "accessibility" }
-    ]);
-    return results.map(result => result.output);
-  `,
-  context: "fresh"
-})
+subagent({ workflow: true, context: "fresh" })
 ```
 
 ### Review-loop technique
 
-Use this when the user wants implementation or current diff review to continue until reviewers stop finding fixes worth doing now. Keep the loop in the parent session: one async `worker` implements or fixes, fresh-context `reviewer` agents inspect the actual repo and diff, the parent synthesizes accepted fixes, and one async forked `worker` applies them. The parent can express the sequence up front as an async/background `workflowScript` when the workflow is known, or continue with explicit follow-up workflowScript runs after each async completion. For an initial workflow, pass `async: true` so the main chat is unblocked. Treat an async implementation worker handoff as an intermediate state, not final completion, unless the user explicitly asked for worker-only work, review-only output, or to stop after implementation. Stop when reviewers find no P0 blockers or P1 fixes worth doing now, remaining P2 feedback is optional or deferred, an unapproved product/scope/architecture decision appears, or the max review-round cap is reached. Default to 3 review rounds unless the user sets a different cap. Do not loop for optional polish, and do not let children launch subagents or decide the loop outcome.
+Use this when the user wants implementation or current diff review to continue until reviewers stop finding fixes worth doing now. Keep the loop in the parent session: one async `worker` implements or fixes, fresh-context `reviewer` agents inspect the actual repo and diff, the parent synthesizes accepted fixes, and one async forked `worker` applies them. The parent can express the sequence up front as an async/background workflow script when the workflow is known, or continue with explicit follow-up workflow script runs after each async completion. For an initial workflow, pass `async: true` so the main chat is unblocked. Treat an async implementation worker handoff as an intermediate state, not final completion, unless the user explicitly asked for worker-only work, review-only output, or to stop after implementation. Stop when reviewers find no P0 blockers or P1 fixes worth doing now, remaining P2 feedback is optional or deferred, an unapproved product/scope/architecture decision appears, or the max review-round cap is reached. Default to 3 review rounds unless the user sets a different cap. Do not loop for optional polish, and do not let children launch subagents or decide the loop outcome.
 
 As a conservative orchestration policy, do not pass a hard `toolBudget` to an implementation worker, fix worker, reviewer with edit authority, or other mutation-capable child. The default tool budget blocks read/search tools rather than mutation tools, but count limits still do not measure delivery safety. Use a narrow task plus an outer elapsed deadline with enough margin, then request a checkpoint after the current tool returns. The checkpoint should report changed files, build/test state, remaining work, and commit or PR state. An elapsed timeout is not a mutation-safe boundary and must not be used as the checkpoint trigger.
 
@@ -118,10 +117,10 @@ Use this after implementation when the user or applicable instructions request d
 
 ### Staged fix orchestration technique
 
-Use this when a broad diff has known reviewer findings across several items and the user wants the parent to “orchestrate subagents like a boss.” Keep mutation ownership explicit in the `workflowScript`:
+Use this when a broad diff has known reviewer findings across several items and the user wants the parent to “orchestrate subagents like a boss.” Keep mutation ownership explicit in the workflow script:
 
 When staged seams are available, a low-tier writer should not receive the
-end-to-end issue. Use `runs.lanes` inside `workflowScript` to keep stages narrow:
+end-to-end issue. Use `runs.lanes` inside the workflow script to keep stages narrow:
 a scout/red test, helper-only change, one render seam, validation, minimality
 challenge, or fresh review. Give the writer only its assigned implementation
 stage; keep sequencing and synthesis with the parent.
@@ -137,39 +136,37 @@ When one child returns a structured target list, use ordinary JavaScript to vali
 
 Single-seam example shape (the lane board records that these are review angles on one tightly coupled deployment-lifecycle diff, not independent implementation contracts):
 
+```js workflow
+// Stage 1: parallel read-only review angles on one recorded single seam
+const plans = await runs.all([
+  { key: "correctness-plan", agent: "reviewer", phase: "Planning", label: "Review lifecycle correctness", task: "Plan correctness fixes for the same deployment-lifecycle diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/correctness.md", outputMode: "file-only" },
+  { key: "regression-plan", agent: "reviewer", phase: "Planning", label: "Review lifecycle regressions", task: "Plan regression coverage for the same deployment-lifecycle diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/regressions.md", outputMode: "file-only" },
+  { key: "minimality-plan", agent: "reviewer", phase: "Planning", label: "Review lifecycle minimality", task: "Plan minimality fixes for the same deployment-lifecycle diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/minimality.md", outputMode: "file-only" }
+]);
+
+// Stage 2: one writer for this lane-board-recorded single seam.
+// Under outputMode "file-only" the awaited .output is the saved-output
+// reference, so pass those managed artifact references to the writer.
+const worker = await runs.run("apply-fixes", {
+  agent: "worker",
+  phase: "Implementation",
+  label: "Apply accepted fixes",
+  task: "Apply only the accepted fixes to the one deployment-lifecycle seam. The lane board records that splitting this existing diff would create overlapping ownership. You are the sole writer for this seam. Run focused validation and report changed files, commands, failures, and remaining issues.\n\nCorrectness plan: " + plans[0].output + "\n\nRegression plan: " + plans[1].output + "\n\nMinimality plan: " + plans[2].output,
+  output: "worker/fixes.md",
+  outputMode: "file-only"
+});
+
+// Stage 3: parallel read-only validation fanout
+const validations = await runs.all([
+  { key: "validate-behavior", agent: "reviewer", phase: "Validation", label: "Validate lifecycle behavior", task: "Validate behavior in the post-worker deployment-lifecycle diff. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/behavior.md", outputMode: "file-only" },
+  { key: "validate-minimality", agent: "reviewer", phase: "Validation", label: "Validate lifecycle minimality", task: "Validate minimality in the same post-worker deployment-lifecycle diff. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/minimality.md", outputMode: "file-only" }
+]);
+
+return { worker: worker.output, validations: validations.map(v => v.output) };
+```
+
 ```typescript
-subagent({
-  async: true,
-  context: "fresh",
-  workflowScript: `
-    // Stage 1: parallel read-only review angles on one recorded single seam
-    const plans = await runs.all([
-      { key: "correctness-plan", agent: "reviewer", phase: "Planning", label: "Review lifecycle correctness", task: "Plan correctness fixes for the same deployment-lifecycle diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/correctness.md", outputMode: "file-only" },
-      { key: "regression-plan", agent: "reviewer", phase: "Planning", label: "Review lifecycle regressions", task: "Plan regression coverage for the same deployment-lifecycle diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/regressions.md", outputMode: "file-only" },
-      { key: "minimality-plan", agent: "reviewer", phase: "Planning", label: "Review lifecycle minimality", task: "Plan minimality fixes for the same deployment-lifecycle diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/minimality.md", outputMode: "file-only" }
-    ]);
-
-    // Stage 2: one writer for this lane-board-recorded single seam.
-    // Under outputMode "file-only" the awaited .output is the saved-output
-    // reference, so pass those managed artifact references to the writer.
-    const worker = await runs.run("apply-fixes", {
-      agent: "worker",
-      phase: "Implementation",
-      label: "Apply accepted fixes",
-      task: "Apply only the accepted fixes to the one deployment-lifecycle seam. The lane board records that splitting this existing diff would create overlapping ownership. You are the sole writer for this seam. Run focused validation and report changed files, commands, failures, and remaining issues.\\n\\nCorrectness plan: " + plans[0].output + "\\n\\nRegression plan: " + plans[1].output + "\\n\\nMinimality plan: " + plans[2].output,
-      output: "worker/fixes.md",
-      outputMode: "file-only"
-    });
-
-    // Stage 3: parallel read-only validation fanout
-    const validations = await runs.all([
-      { key: "validate-behavior", agent: "reviewer", phase: "Validation", label: "Validate lifecycle behavior", task: "Validate behavior in the post-worker deployment-lifecycle diff. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/behavior.md", outputMode: "file-only" },
-      { key: "validate-minimality", agent: "reviewer", phase: "Validation", label: "Validate lifecycle minimality", task: "Validate minimality in the same post-worker deployment-lifecycle diff. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/minimality.md", outputMode: "file-only" }
-    ]);
-
-    return { worker: worker.output, validations: validations.map(v => v.output) };
-  `
-})
+subagent({ workflow: true, async: true, context: "fresh" })
 ```
 
 ## Builtin Agents

@@ -12,6 +12,7 @@
 
 ### Changed
 
+- **Breaking:** A workflow script passed to the `subagent` tool had to be a JSON string, so every quote and newline in the script was escaped in the tool call. The tool now takes one `workflow` field with three forms: `workflow: true` runs the single ```` ```js workflow ```` fenced block written in the same assistant reply; a string containing `/` (such as `"./ci/sweep.js"`) loads a script file relative to the request `cwd`; any other string runs a named workflow resource. The `workflowScript` and `workflowScriptPath` tool parameters were removed, and calls that still pass them fail with an error that names the new forms. RPC `spawn` takes inline script text as `script` and a path or resource name as `workflow`; it rejects `workflowScript`, `workflowScriptPath`, and `workflow: true`. Saved schedules and run records keep their existing format.
 - The `subagents_enable` result told the model to wait for the next prompt on some providers, even when `subagent` was already available in the current turn. It now tells the model to check its tool list: if a `subagent` tool is there, use it; if not, wait for the next user prompt instead of retrying. The `--exclude-tools subagents_enable` hint for operators is unchanged.
 - CI now runs the native tool-activation smoke test on the existing Ubuntu typecheck leg, so dynamic activation and schema-budget regressions are covered by required checks. Thanks to [@quifox](https://github.com/quifox) for [#2528](https://github.com/nicobailon/pi-subagents/pull/2528).
 

@@ -32,7 +32,7 @@ Pass 1 is independent reports. Pass 2 is one cross-exam. Run Pass 3 only when `-
 
 1. Write the council brief: question, scope, non-goals, evidence targets, roster, known advisor context modes, and pass cap.
 2. Tell the user the roster, context modes, and pass cap.
-3. Launch one async `workflowScript` with `runs.all` for Pass 1. Use stable keys, `phase: "Council pass 1"`, concise labels, and `output: false` unless separate artifacts are useful. Set `context` only when the profile context is known or a fallback rule requires it.
+3. Launch one async workflow script (a ```` ```js workflow ```` block plus `subagent({ workflow: true, async: true })`) with `runs.all` for Pass 1. Use stable keys, `phase: "Council pass 1"`, concise labels, and `output: false` unless separate artifacts are useful. Set `context` only when the profile context is known or a fallback rule requires it.
 4. Return one aggregate Pass 1 receipt. On completion, tell the user completion count, agreement count, dispute count, and whether Pass 2 is needed.
 5. Synthesize the claim matrix in the parent: agreements, disputed claims, missing proof, owner decisions, and at most five material relay claims per advisor.
 6. For Pass 2, tell the user which claims are relayed and why they matter. Resume each advisor with a curated challenge packet. A resume needs a retained run id and task; it excludes `agent` and rejects `gate`. Record each new run id; Pass 3 resumes those latest ids with new stable keys.

@@ -500,12 +500,12 @@ Discovery uses project-first precedence:
 6. User packages and user settings packages via `package.json -> pi.skills`
 7. `~/.pi/agent/settings.json -> skills`
 
-Use agent defaults, override them at runtime, or disable them:
+Use agent defaults, override them at runtime, or disable them inside the ```` ```js workflow ```` block:
 
-```ts
-{ workflowScript: `return runs.run("main", { agent: "scout", task: "..." })` }
-{ workflowScript: `return runs.run("main", { agent: "scout", task: "...", skill: "tmux, safe-bash" })` }
-{ workflowScript: `return runs.run("main", { agent: "scout", task: "...", skill: false })` }
+```js
+runs.run("default", { agent: "scout", task: "..." })
+runs.run("override", { agent: "scout", task: "...", skill: "tmux, safe-bash" })
+runs.run("disabled", { agent: "scout", task: "...", skill: false })
 ```
 
 For chains, `skill` at the top level is additive. A step-level `skill` overrides that step; `false` disables skills for that step.
