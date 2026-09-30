@@ -46,6 +46,10 @@ describe("workflow child revival links", () => {
 		const corrupt = setup("failed").root;
 		fs.writeFileSync(path.join(corrupt, "child", "status.json"), "{");
 		assert.throws(() => recordWorkflowRevival(corrupt, "child", "revived"), /status/i, "an unreadable source status is reported, not skipped");
+		const blocked = setup("failed").root;
+		fs.mkdirSync(path.join(blocked, "child", "workflow-revival.json"));
+		assert.throws(() => recordWorkflowRevival(blocked, "child", "revived"));
+		assert.equal(fs.existsSync(path.join(blocked, "revived", "workflow-revival-origin.json")), false, "a failed link write leaves no origin that would pin the run");
 	});
 
 	it("refuses a revival past the chain bound, which readers always reach", () => {

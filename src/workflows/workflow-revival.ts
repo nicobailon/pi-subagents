@@ -68,8 +68,15 @@ export function recordWorkflowRevival(asyncDirRoot: string, sourceRunId: string,
 	if (!origin || ("revivedRunId" in origin && origin.revivedRunId !== sourceRunId)) return;
 	if (origin.depth >= MAX_REVIVAL_DEPTH) throw new Error(`workflow key '${origin.workflowKey}' of ${origin.workflowRunId} already has ${MAX_REVIVAL_DEPTH} chained revivals.`);
 	const link: WorkflowRevivalLink = { version: 1, workflowRunId: origin.workflowRunId, workflowKey: origin.workflowKey, sourceRunId, revivedRunId, depth: origin.depth + 1 };
-	writePrivateAtomicJson(path.join(asyncDirRoot, revivedRunId, REVIVAL_ORIGIN_FILE), link);
-	writePrivateAtomicJson(path.join(sourceDir, REVIVAL_LINK_FILE), link);
+	const originFile = path.join(asyncDirRoot, revivedRunId, REVIVAL_ORIGIN_FILE);
+	writePrivateAtomicJson(originFile, link);
+	try {
+		writePrivateAtomicJson(path.join(sourceDir, REVIVAL_LINK_FILE), link);
+	} catch (error) {
+		// Without the forward link the origin only keeps an unlinked run from retention.
+		fs.rmSync(originFile, { force: true });
+		throw error;
+	}
 }
 
 /**
