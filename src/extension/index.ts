@@ -111,6 +111,8 @@ import { showUpgradeNotice } from "./upgrade-notice.ts";
 export { loadConfig, resolveAsyncByDefault } from "./config.ts";
 
 const SLOW_RELOAD_PHASE_MS = 250;
+// Long enough for Pi to finish starting; loading the executor blocks the event loop for tens of ms.
+const MODULE_PRELOAD_DELAY_MS = 1_000;
 const RUNTIME_REGISTRY_STORE_KEY = "__piSubagentRuntimeRegistry";
 
 type SubagentExecutorModule = typeof import("../runs/foreground/subagent-executor.ts");
@@ -564,12 +566,28 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	let executor: SubagentExecutor | undefined;
 	let executorPromise: Promise<SubagentExecutor> | undefined;
+	let executorModulePromise: Promise<SubagentExecutorModule> | undefined;
+	const loadExecutorModule = () => executorModulePromise ??= import("../runs/foreground/subagent-executor.ts");
 	const getExecutor = (): Promise<SubagentExecutor> => {
-		executorPromise ??= import("../runs/foreground/subagent-executor.ts").then(({ createSubagentExecutor }) => {
+		executorPromise ??= loadExecutorModule().then(({ createSubagentExecutor }) => {
 			executor = createSubagentExecutor(executorDeps);
 			return executor;
 		});
 		return executorPromise;
+	};
+	// Loading these on first use could happen days after startup, when pi-subagents may have
+	// changed on disk and the new files would import stale cached copies of modules loaded at
+	// startup. Load them shortly after a session starts instead, off Pi's startup path; child
+	// runtimes return before registration and never schedule this.
+	let modulePreloadTimer: ReturnType<typeof setTimeout> | undefined;
+	const scheduleModulePreload = () => {
+		if (executorModulePromise || modulePreloadTimer) return;
+		modulePreloadTimer = setTimeout(() => {
+			// Errors surface from the first call that needs the module.
+			loadExecutorModule().catch(() => {});
+			if (fleetViewEnabled) import("../tui/fleet.ts").catch(() => {});
+		}, MODULE_PRELOAD_DELAY_MS);
+		modulePreloadTimer.unref?.();
 	};
 
 	pi.registerMessageRenderer<SupervisorRequestMessageDetails>(SUPERVISOR_REQUEST_MESSAGE_TYPE, renderSupervisorRequest);
@@ -973,6 +991,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			resultIndexCleanupTimer = undefined;
 			if (asyncRetentionTimer) clearTimeout(asyncRetentionTimer);
 			asyncRetentionTimer = undefined;
+			if (modulePreloadTimer) clearTimeout(modulePreloadTimer);
+			modulePreloadTimer = undefined;
 			asyncRetentionAbort.abort();
 			stopResultWatcher();
 			resultDeliveryOwnership.clear();
@@ -1079,6 +1099,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (event, ctx) => {
 		installRuntime(ctx);
 		startSessionMaintenance();
+		scheduleModulePreload();
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
 		resetSessionState(ctx, recovering, event.previousSessionFile);
 		releaseHostSessionLiveness();
