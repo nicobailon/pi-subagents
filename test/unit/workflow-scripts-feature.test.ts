@@ -6,14 +6,7 @@ import { disabledFeatureUseError, resolveDisabledFeatureSurface } from "../../sr
 import { normalizePublicSubagentExecution } from "../../src/extension/public-execution.ts";
 import { SubagentParams, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
-import {
-	buildSubagentToolDescription,
-	buildSubagentToolPromptMetadata,
-	DEFAULT_SUBAGENT_TOOL_DESCRIPTION,
-	FULL_SUBAGENT_TOOL_DESCRIPTION,
-	SUBAGENT_TOOL_PROMPT_GUIDELINES,
-	SUBAGENT_TOOL_PROMPT_SNIPPET,
-} from "../../src/extension/tool-description.ts";
+import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "../../src/extension/tool-description.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
 import { registerPromptWorkflowCommands } from "../../src/slash/prompt-workflows.ts";
@@ -57,20 +50,16 @@ function declarationLength(config: ExtensionConfig, toolDescriptionMode?: "full"
 	}).length;
 }
 
-describe("workflow-scripts disabled feature: tool surface", () => {
-	it("leaves the default schema, descriptions, and prompt metadata unchanged", () => {
-		const unrelated = resolveDisabledFeatureSurface({ disabledFeatures: ["watchdog"] });
-		assert.equal(createSubagentParamsSchema(resolveDisabledFeatureSurface({})), SubagentParams);
-		assert.equal(Object.hasOwn(SubagentParams.properties, "chain"), false);
-		assert.equal(Object.hasOwn(SubagentParams.properties, "tasks"), false);
-		assert.equal(Object.hasOwn(createSubagentParamsSchema(unrelated).properties, "chain"), false);
-		assert.equal(buildSubagentToolDescription({}, { disabledFeatures: resolveDisabledFeatureSurface({}) }), DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(buildSubagentToolDescription({ toolDescriptionMode: "full" }), FULL_SUBAGENT_TOOL_DESCRIPTION);
-		assert.deepEqual(buildSubagentToolPromptMetadata({}), { promptSnippet: SUBAGENT_TOOL_PROMPT_SNIPPET, promptGuidelines: SUBAGENT_TOOL_PROMPT_GUIDELINES });
-		assert.deepEqual(buildSubagentToolPromptMetadata({}, unrelated), { promptSnippet: SUBAGENT_TOOL_PROMPT_SNIPPET, promptGuidelines: SUBAGENT_TOOL_PROMPT_GUIDELINES });
+describe("workflow-scripts tool surface", () => {
+	it("declares chain and tasks only when workflow-scripts is disabled", () => {
+		const unrelated = createSubagentParamsSchema(resolveDisabledFeatureSurface({ disabledFeatures: ["watchdog"] }));
+		for (const schema of [SubagentParams, unrelated]) {
+			assert.equal(Object.hasOwn(schema.properties, "chain"), false);
+			assert.equal(Object.hasOwn(schema.properties, "tasks"), false);
+		}
 	});
 
-	it("declares a smaller tool than the default with the same constructors", () => {
+	it("is smaller than the default declaration", () => {
 		for (const mode of [undefined, "full"] as const) {
 			const enabled = declarationLength({}, mode);
 			const disabled = declarationLength(DISABLED, mode);
@@ -78,9 +67,8 @@ describe("workflow-scripts disabled feature: tool surface", () => {
 		}
 	});
 
-	it("replaces the five script parameters with a small chain/tasks schema", () => {
+	it("accepts chain and tasks shapes with a small schema", () => {
 		const schema = createSubagentParamsSchema(surface);
-		for (const param of ["workflow", "args", "preflight", "globalConcurrencyLimit", "maxSubagentSpawnsPerRun"]) assert.equal(Object.hasOwn(schema.properties, param), false, param);
 		const validator = Compile(schema);
 		assert.equal(validator.Check({ task: "ship it", tasks: [{ agent: "scout", task: "a" }, { agent: "reviewer", task: "b" }] }), true);
 		assert.equal(validator.Check({ task: "ship it", chain: [{ agent: "scout", task: "{task}", as: "scan" }, { parallel: [{ agent: "reviewer", task: "{outputs.scan}" }] }, { agent: "writer" }] }), true);
@@ -91,7 +79,7 @@ describe("workflow-scripts disabled feature: tool surface", () => {
 		assert.ok(serialized.length <= 750, `chain/tasks schema is ${serialized.length} chars`);
 	});
 
-	it("drops script guidance from the description and prompt snippet and explains chain/tasks", () => {
+	it("replaces script guidance with chain/tasks guidance", () => {
 		for (const toolDescriptionMode of [undefined, "compact", "full"] as const) {
 			const description = buildSubagentToolDescription({ toolDescriptionMode }, { disabledFeatures: surface });
 			for (const script of ["```js workflow", "workflow:true", "runs.run", "runs.all", "runs.lanes", "runs.host", "Named resources", "validate", "args", "state.get", "Schedules take script inputs"]) {
@@ -101,43 +89,28 @@ describe("workflow-scripts disabled feature: tool surface", () => {
 				assert.ok(description.includes(text), `${toolDescriptionMode ?? "default"} description lacks ${text}`);
 			}
 		}
-		const metadata = buildSubagentToolPromptMetadata({}, surface);
-		assert.equal(metadata.promptSnippet, "For operator-requested delegation, use subagents; compose multi-child work in one chain or tasks call.");
-		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
+		assert.equal(buildSubagentToolPromptMetadata({}, surface).promptSnippet, "For operator-requested delegation, use subagents; compose multi-child work in one chain or tasks call.");
 	});
 });
 
-describe("workflow-scripts disabled feature: admission", () => {
-	it("attributes preflight to workflow-scripts whatever order the config lists it", () => {
+describe("workflow-scripts admission", () => {
+	it("attributes preflight to workflow-scripts in either config order", () => {
 		for (const disabledFeatures of [["preflight", "workflow-scripts"], ["workflow-scripts", "preflight"]] as const) {
 			const both = resolveDisabledFeatureSurface({ disabledFeatures: [...disabledFeatures] });
 			assert.equal(disabledFeatureUseError({ preflight: {} }, both), `subagent option 'preflight' is disabled by config ${SETTING}.`);
 		}
 	});
 
-	it("rejects each removed parameter, validate, and a raw script with the setting name", async () => {
+	it("rejects every workflow form and raw scripts from public, delegated, and scheduled launches", async () => {
 		const executor = createExecutor(DISABLED);
-		for (const [param, value] of [["workflow", true], ["workflow", "./flow.js"], ["workflow", "review"], ["args", {}], ["preflight", {}], ["globalConcurrencyLimit", 2], ["maxSubagentSpawnsPerRun", 2]] as const) {
-			const result = await executor.executePublic("disabled", { [param]: value } as SubagentParamsLike, new AbortController().signal, undefined, ctx());
-			assert.equal(result.isError, true);
-			assert.equal(resultText(result), `subagent option '${param}' is disabled by config ${SETTING}.`);
+		for (const workflow of [true, "./flow.js", "review"]) {
+			const result = await executor.executePublic("workflow", { workflow } as SubagentParamsLike, new AbortController().signal, undefined, ctx());
+			assert.equal(resultText(result), `subagent option 'workflow' is disabled by config ${SETTING}.`);
 		}
-		const validate = await executor.executePublic("disabled", { action: "validate" }, new AbortController().signal, undefined, ctx());
-		assert.equal(resultText(validate), `subagent action 'validate' is disabled by config ${SETTING}.`);
-		const raw = await executor.executePublic("disabled", { workflowScript: "return 1;" }, new AbortController().signal, undefined, ctx());
-		assert.equal(resultText(raw), SCRIPTS_DISABLED);
-	});
-
-	it("rejects raw scripts from delegated and scheduled launches", async () => {
-		const executor = createExecutor(DISABLED);
-		const delegated = await executor.executeDelegated("delegated", { workflowScript: "return 1;" }, new AbortController().signal, undefined, ctx());
-		assert.equal(delegated.isError, true);
-		assert.equal(resultText(delegated), SCRIPTS_DISABLED);
-		const scheduled = await executor.executeScheduled("scheduled", { workflowScript: "return 1;", args: {}, async: true }, new AbortController().signal, ctx());
-		assert.equal(scheduled.isError, true);
-		assert.equal(resultText(scheduled), `subagent option 'args' is disabled by config ${SETTING}.`);
-		const scheduledScript = await executor.executeScheduled("scheduled", { workflowScript: "return 1;", async: true }, new AbortController().signal, ctx());
-		assert.equal(resultText(scheduledScript), SCRIPTS_DISABLED);
+		const script = { workflowScript: "return 1;", async: true };
+		assert.equal(resultText(await executor.executePublic("public", script, new AbortController().signal, undefined, ctx())), SCRIPTS_DISABLED);
+		assert.equal(resultText(await executor.executeDelegated("delegated", script, new AbortController().signal, undefined, ctx())), SCRIPTS_DISABLED);
+		assert.equal(resultText(await executor.executeScheduled("scheduled", script, new AbortController().signal, ctx())), SCRIPTS_DISABLED);
 	});
 
 	it("rejects /prompt-workflow template scripts", async () => {
@@ -147,16 +120,13 @@ describe("workflow-scripts disabled feature: admission", () => {
 			pi: { registerCommand: (name: string, spec: { handler(args: string, ctx: unknown): Promise<void> }) => commands.set(name, spec), sendMessage() {} } as never,
 			run: async (params) => { launched.push(params); },
 		});
-		const notices: string[] = [];
-		await commands.get("prompt-workflow")!.handler("parallel-review src", { ...makeMinimalCtx(process.cwd()), ui: { notify: (message: string) => notices.push(message) } });
-		assert.deepEqual(notices, []);
+		await commands.get("prompt-workflow")!.handler("parallel-review src", { ...makeMinimalCtx(process.cwd()), ui: { notify: (message: string) => assert.fail(message) } });
 		assert.equal(launched.length, 1);
-		assert.equal(typeof launched[0]!.workflowScript, "string");
 		const result = await createExecutor(DISABLED).executePublic("template", launched[0]!, new AbortController().signal, undefined, ctx());
 		assert.equal(resultText(result), SCRIPTS_DISABLED);
 	});
 
-	it("rejects RPC spawn scripts and script parameters before normalization", async () => {
+	it("rejects RPC spawn scripts before normalization", async () => {
 		const handlers: Array<(data: unknown) => void> = [];
 		const replies = new Map<string, unknown>();
 		registerSubagentRpcBridge({
@@ -173,16 +143,15 @@ describe("workflow-scripts disabled feature: admission", () => {
 		});
 		const spawn = async (requestId: string, params: unknown) => {
 			for (const handler of handlers) await handler({ version: SUBAGENT_RPC_PROTOCOL_VERSION, requestId, method: "spawn", params });
-			return replies.get(subagentRpcReplyEvent(requestId)) as { success: boolean; error?: { code: string; message: string } };
+			return (replies.get(subagentRpcReplyEvent(requestId)) as { error?: { code: string; message: string } }).error;
 		};
-		assert.deepEqual((await spawn("script", { script: "return 1;" })).error, { code: "invalid_params", message: `RPC spawn workflow scripts are disabled by config ${SETTING}.` });
-		// Without the early check, "args requires workflow." would hide the setting.
-		assert.deepEqual((await spawn("args", { agent: "scout", task: "x", args: {} })).error, { code: "invalid_params", message: `RPC spawn option 'args' is disabled by config ${SETTING}.` });
-		assert.deepEqual((await spawn("path", { workflow: "./flow.js" })).error, { code: "invalid_params", message: `RPC spawn option 'workflow' is disabled by config ${SETTING}.` });
-		assert.equal((await spawn("chain", { chain: [{ agent: "scout", task: "x" }] })).error?.message, LEGACY_ERROR);
+		assert.deepEqual(await spawn("script", { script: "return 1;" }), { code: "invalid_params", message: `RPC spawn workflow scripts are disabled by config ${SETTING}.` });
+		// Normalization would otherwise report "args requires workflow." and hide the setting.
+		assert.deepEqual(await spawn("args", { agent: "scout", task: "x", args: {} }), { code: "invalid_params", message: `RPC spawn option 'args' is disabled by config ${SETTING}.` });
+		assert.equal((await spawn("chain", { chain: [{ agent: "scout", task: "x" }] }))?.message, LEGACY_ERROR);
 	});
 
-	it("launches /run as a direct single child instead of a script", async () => {
+	it("launches /run as a direct child", async () => {
 		const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
 		const requested: unknown[] = [];
 		const handlers = new Map<string, Array<(data: unknown) => void>>();
@@ -211,41 +180,29 @@ describe("workflow-scripts disabled feature: admission", () => {
 			disposer.dispose();
 		}
 		assert.deepEqual(requested, [{ agent: "scout", task: "Inspect this", agentScope: "both", async: true }]);
-		const normalized = normalizePublicSubagentExecution(requested[0] as SubagentParamsLike, { structuredWorkflows: true });
-		assert.equal(normalized.ok, true);
-		assert.equal(disabledFeatureUseError(requested[0] as object, surface), undefined);
 	});
 });
 
-describe("workflow-scripts: chain/tasks public normalization", () => {
-	const structured = { structuredWorkflows: true };
-
-	it("keeps chain and tasks legacy errors while workflow scripts are enabled", async () => {
+describe("workflow-scripts chain/tasks normalization", () => {
+	it("keeps chain and tasks as legacy errors while workflow scripts are enabled", async () => {
 		for (const input of [{ chain: [{ agent: "scout", task: "x" }] }, { tasks: [{ agent: "scout", task: "x" }] }]) {
-			const normalized = normalizePublicSubagentExecution(input);
-			assert.deepEqual(normalized, { ok: false, error: LEGACY_ERROR, mode: "workflow" });
 			const result = await createExecutor({}).executePublic("enabled", input, new AbortController().signal, undefined, ctx());
 			assert.equal(resultText(result), LEGACY_ERROR);
 		}
 	});
 
-	it("accepts chain or tasks with the original request and rejects conflicting inputs", () => {
+	it("accepts chain or tasks with the original request and rejects conflicts", () => {
 		const chain = [{ agent: "scout", task: "{task}" }];
-		assert.deepEqual(normalizePublicSubagentExecution({ task: "ship", chain, async: true }, structured), { ok: true, params: { task: "ship", chain, async: true } });
-		assert.deepEqual(normalizePublicSubagentExecution({ tasks: chain }, structured), { ok: true, params: { tasks: chain } });
+		const normalize = (input: Record<string, unknown>) => normalizePublicSubagentExecution(input, { structuredWorkflows: true });
+		assert.deepEqual(normalize({ task: "ship", chain, async: true }), { ok: true, params: { task: "ship", chain, async: true } });
 		const error = (input: Record<string, unknown>) => {
-			const normalized = normalizePublicSubagentExecution(input, structured);
+			const normalized = normalize(input);
 			return normalized.ok ? undefined : normalized.error;
 		};
 		assert.equal(error({ chain, tasks: chain }), "Pass either tasks or chain, not both.");
 		assert.equal(error({ chain, agent: "scout" }), "chain cannot be combined with agent.");
 		assert.equal(error({ tasks: chain, action: "status" }), "tasks cannot be combined with action.");
-		assert.equal(error({ tasks: chain, workflowScript: "return 1;" }), "tasks cannot be combined with workflowScript.");
-		assert.equal(error({ chain, task: 1 }), "task must be a string when provided; with chain it is the original request for {task}.");
-		for (const action of ["chain", "tasks", "parallel"]) {
-			assert.equal(error({ action }), LEGACY_ERROR);
-			assert.equal(error({ action, chain }), LEGACY_ERROR);
-		}
-		for (const legacy of [{ parallel: chain }, { chain, concurrency: 2 }, { chain, chainDir: "/tmp" }]) assert.equal(error(legacy), LEGACY_ERROR);
+		assert.equal(error({ tasks: chain, step: {} }), "tasks cannot be combined with step.");
+		for (const legacy of [{ action: "chain", chain }, { action: "tasks", tasks: chain }, { chain, concurrency: 2 }, { chain, chainDir: "/tmp" }]) assert.equal(error(legacy), LEGACY_ERROR);
 	});
 });

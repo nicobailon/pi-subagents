@@ -110,7 +110,7 @@ describe("structured workflow resources", () => {
 		assert.equal(launches[1]!.task, "{task} {previous} {outputs.first}|{task} {previous} {outputs.first}|orig {previous} {outputs.first}");
 	});
 
-	it("stops after a failed sequential step and fails the workflow with the results so far", async () => {
+	it("fails the chain at a failed step and keeps earlier results", async () => {
 		const script = resolveScript({ kind: "chain", steps: [{ agent: "one", task: "first" }, { agent: "two" }, { agent: "three" }] });
 		const { message, children, launches } = await runFailingScript(script, ({ key }) => key === "step-2" ? { ok: false, output: "boom", error: "boom" } : {});
 		assert.deepEqual(launches.map(({ key }) => key), ["step-1", "step-2"]);
@@ -142,7 +142,7 @@ describe("structured workflow resources", () => {
 		]));
 	});
 
-	it("runs tasks as one parallel group and fails after every child settles when any failed", async () => {
+	it("fails tasks after every child settles when one failed", async () => {
 		const script = resolveScript({
 			kind: "tasks",
 			task: "the request",

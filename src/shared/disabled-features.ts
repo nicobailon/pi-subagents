@@ -115,11 +115,6 @@ export function disabledFeatureUseError(request: object, surface: DisabledFeatur
 	return undefined;
 }
 
-/** True when chain/tasks replace workflow scripts on the public tool. */
-export function structuredWorkflowsEnabled(surface: DisabledFeatureSurface): boolean {
-	return surface.features.has("workflow-scripts");
-}
-
 /** Lists what config disabled, for prepending to static reference docs that describe the full tool. */
 export function disabledFeatureNotice(surface: DisabledFeatureSurface): string | undefined {
 	if (surface.features.size === 0) return undefined;

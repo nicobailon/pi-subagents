@@ -3,7 +3,7 @@
  */
 
 import { Type } from "typebox";
-import { structuredWorkflowsEnabled, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
+import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
 
 function keepTopLevelParameterDescriptions<T>(schema: T): T {
 	return pruneNestedDescriptions(schema, []) as T;
@@ -298,12 +298,11 @@ const StructuredWorkflowProperties = {
 
 export function createSubagentParamsSchema(disabled?: DisabledFeatureSurface): typeof SubagentParams {
 	if (!disabled || disabled.params.size === 0) return SubagentParams;
-	const structured = structuredWorkflowsEnabled(disabled);
+	const structured = disabled.features.has("workflow-scripts");
 	const enabledProperties = Object.fromEntries(Object.entries(SubagentParamProperties).flatMap(([name, schema]) => {
 		if (disabled.params.has(name)) return [];
-		if (!structured) return [[name, schema]];
-		if (name === "action") return [[name, StructuredWorkflowProperties.action]];
-		if (name === "task") return [[name, StructuredWorkflowProperties.task], ["tasks", StructuredWorkflowProperties.tasks], ["chain", StructuredWorkflowProperties.chain]];
+		if (structured && name === "action") return [[name, StructuredWorkflowProperties.action]];
+		if (structured && name === "task") return [[name, StructuredWorkflowProperties.task], ["tasks", StructuredWorkflowProperties.tasks], ["chain", StructuredWorkflowProperties.chain]];
 		return [[name, schema]];
 	}));
 	// SAFETY: only optional properties are dropped or added; the executor rejects disabled options and admits chain/tasks at runtime.

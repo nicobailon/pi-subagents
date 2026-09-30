@@ -53,11 +53,6 @@ export type PublicSubagentExecutionNormalization<T> =
 	| { ok: true; params: T }
 	| { ok: false; error: string; mode: PublicSubagentExecutionMode };
 
-export interface PublicSubagentExecutionOptions {
-	/** disabledFeatures "workflow-scripts" replaces workflow scripts with top-level chain/tasks. */
-	structuredWorkflows?: boolean;
-}
-
 const RAW_SCRIPT_FORMS = "workflow: true or a workflow script path";
 const REMOVED_WORKFLOW_SCRIPT = "workflowScript was removed; write the script in one ```js workflow block in this reply and call subagent({ workflow: true }), or pass a script file as workflow: \"./path/to/script.js\".";
 const REMOVED_WORKFLOW_SCRIPT_PATH = "workflowScriptPath was removed; pass the script file as workflow: \"./path/to/script.js\" (a workflow value containing '/' is a path).";
@@ -90,7 +85,7 @@ export function validateWorkflowCapacityOverrides(params: PublicSubagentExecutio
  * Enforce the public execution cutover before requests reach the executor.
  * Internal runs.run children and structured owned delegation bypass this boundary.
  */
-export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, options: PublicSubagentExecutionOptions = {}): PublicSubagentExecutionNormalization<T> {
+export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, options: { structuredWorkflows?: boolean } = {}): PublicSubagentExecutionNormalization<T> {
 	for (const field of ["resource", "resourceProvenance", "workflowResource", "workflowResourceProvenance", "workflowResourcePermit", "resourcePermit", "permit"] as const) {
 		if (Object.hasOwn(params, field) && (params as Record<string, unknown>)[field] !== undefined) {
 			return { ok: false, error: "Public execution does not accept workflow resource provenance or permit fields.", mode: params.action === undefined ? "workflow" : "management" };
@@ -190,11 +185,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 			return { ok: false, error: "Pass either tasks or chain, not both.", mode: "workflow" };
 		}
 		const field = params.tasks !== undefined ? "tasks" : "chain";
-		for (const [name, value] of [["action", params.action], ["agent", params.agent], ["workflow", params.workflow], ["workflowScript", params.workflowScript], ["step", params.step]] as const) {
+		// workflow and workflowScript were already rejected by the workflow-scripts feature check.
+		for (const [name, value] of [["action", params.action], ["agent", params.agent], ["step", params.step]] as const) {
 			if (value !== undefined) return { ok: false, error: `${field} cannot be combined with ${name}.`, mode: normalizedAction ? "management" : "workflow" };
-		}
-		if (params.task !== undefined && typeof params.task !== "string") {
-			return { ok: false, error: `task must be a string when provided; with ${field} it is the original request for {task}.`, mode: "workflow" };
 		}
 		return { ok: true, params };
 	}

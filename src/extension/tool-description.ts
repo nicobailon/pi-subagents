@@ -34,7 +34,6 @@ Before advanced orchestration (runs.lanes, rolling fanout, mission state, handof
 Model override: first call {action:"models"}; copy exact provider/id, not agent names. Thinking uses model suffix${on("watchdog", ", not watchdog-only thinking")}.
 Named resources: {workflow:'review',args:{task:'...'}} or {workflow:'run-ci',args:{command:'npm test'}}. Raw scripts also accept bounded plain-data args; raw-script args persist as evidence, so never include secrets. worktree:true requires clean source; baseRef defaults to HEAD at allocation or a supported named ref, never full 40/64-character commit IDs or revision expressions.`;
 
-// disabledFeatures "workflow-scripts": chain/tasks replace workflow scripts and named resources.
 const structuredExecutionGuidance = (on: FeatureText) => `Delegate one child with {agent,task?}. tasks:[{agent,task},...] runs children in parallel. chain:[{agent,task?,as?} or {parallel:[{agent,task},...]}] runs steps in order; a parallel step waits for all its children and a failed step stops the chain.
 Chain task placeholders: {task} is the top-level task (the original request); {previous} is the prior step's output (a parallel step's outputs in order), and the default when task is omitted; {outputs.name} is the output of an earlier step with as:'name'.
 agent, chain and tasks exclude each other and action. action is management/control; agent may target management actions.

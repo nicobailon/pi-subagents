@@ -22,7 +22,7 @@ import {
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
-import { disabledFeatureUseError, structuredWorkflowsEnabled, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
+import { disabledFeatureUseError, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
 import { collectSubagentCost, SUBAGENT_COST_REPORT_VERSION } from "../slash/subagent-cost.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
@@ -532,7 +532,7 @@ function spawnParams(params: unknown, options: RegisterSubagentRpcBridgeOptions)
 		input.workflowScript = script;
 	}
 	// With workflow scripts disabled, name the setting before normalization can report a script-shape error instead.
-	const disabledFeatureError = options.disabledFeatures && structuredWorkflowsEnabled(options.disabledFeatures) ? disabledFeatureUseError(input, options.disabledFeatures, "RPC spawn") : undefined;
+	const disabledFeatureError = options.disabledFeatures?.features.has("workflow-scripts") ? disabledFeatureUseError(input, options.disabledFeatures, "RPC spawn") : undefined;
 	if (disabledFeatureError) throw new SubagentRpcError("invalid_params", disabledFeatureError);
 	const normalized = normalizePublicSubagentExecution(input);
 	if (!normalized.ok) throw new SubagentRpcError("invalid_params", normalized.error);
