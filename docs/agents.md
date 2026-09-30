@@ -503,9 +503,11 @@ Discovery uses project-first precedence:
 Use agent defaults, override them at runtime, or disable them inside the ```` ```js workflow ```` block:
 
 ```js
-runs.run("default", { agent: "scout", task: "..." })
-runs.run("override", { agent: "scout", task: "...", skill: "tmux, safe-bash" })
-runs.run("disabled", { agent: "scout", task: "...", skill: false })
+return runs.all([
+  { key: "default", agent: "scout", task: "..." },
+  { key: "override", agent: "scout", task: "...", skill: "tmux, safe-bash" },
+  { key: "disabled", agent: "scout", task: "...", skill: false },
+])
 ```
 
 For chains, `skill` at the top level is additive. A step-level `skill` overrides that step; `false` disables skills for that step.
