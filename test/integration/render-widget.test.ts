@@ -1133,6 +1133,35 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 	});
 
+	it("grows a content-sized progressive card when a job starts before the next relock", () => {
+		resetWidgetLayout();
+		withStdoutSize(30, 120, () => {
+			const wide = {
+				asyncId: "run-wide", asyncDir: "/tmp/run-wide", status: "running", mode: "parallel",
+				agents: Array.from({ length: 40 }, (_, index) => `agent-${index}`), activeParallelGroup: true,
+				runningSteps: 40, completedSteps: 0, stepsTotal: 40,
+				steps: Array.from({ length: 40 }, (_, index) => ({ index, agent: `agent-${index}`, status: "running", currentTool: "read" })),
+			};
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [wide]);
+			assert.equal(renderWidgetLines(ui.widgets.at(-1)).length, 2, "one job locks a two-row progressive card");
+
+			const late = { asyncId: "run-late", asyncDir: "/tmp/run-late", status: "running", mode: "single", agents: ["reviewer"], currentTool: "grep" };
+			renderWidget(ui.ctx as never, [wide, late]);
+			const grown = renderWidgetLines(ui.widgets.at(-1));
+			const text = grown.join("\n");
+			assert.equal(grown.length, 3, text);
+			assert.match(text, /parallel · running/);
+			assert.match(text, /reviewer · running/);
+			assert.doesNotMatch(text, /\+\d+ more/);
+			assert.equal(grown.filter((line) => line.trim() === "").length, 0, text);
+
+			renderWidget(ui.ctx as never, [wide, { ...late, status: "complete", currentTool: undefined }]);
+			assert.equal(renderWidgetLines(ui.widgets.at(-1)).length, 3, "the grown lock does not shrink when the job finishes");
+		});
+		resetWidgetLayout();
+	});
+
 	it("selects the current flat-indexed member from a collapsed parallel group", () => {
 		resetWidgetLayout();
 		withStdoutSize(22, 120, () => {

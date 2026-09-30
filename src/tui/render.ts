@@ -2759,9 +2759,17 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 	}
 
 	if (hasMatchingSession && widgetLayoutSession?.tier === "progressive" && widgetLayoutSession.lockedRows !== undefined) {
-		const rendered = buildProgressiveWidgetLines(jobs, theme, width, widgetLayoutSession.lockedRows, widgetLayoutSession.visibleJobKeys, frame, projectionFor);
-		widgetLayoutSession.visibleJobKeys = rendered.visibleJobKeys;
-		return rendered.lines;
+		const session = widgetLayoutSession;
+		const lockedRows = widgetLayoutSession.lockedRows;
+		let rendered = buildProgressiveWidgetLines(jobs, theme, width, lockedRows, session.visibleJobKeys, frame, projectionFor);
+		// A job that starts after a content-sized lock can be hidden while the cap has room: grow the lock, never shrink it.
+		const capRows = Math.min(availableRows, collapsedWidgetLineBudget(rows));
+		if (rendered.visibleJobKeys.length < jobs.length && lockedRows < capRows) {
+			rendered = buildProgressiveWidgetLines(jobs, theme, width, capRows, session.visibleJobKeys, frame, projectionFor);
+			session.lockedRows = Math.max(lockedRows, rendered.contentRows);
+		}
+		session.visibleJobKeys = rendered.visibleJobKeys;
+		return rendered.lines.slice(0, session.lockedRows);
 	}
 
 	const lines = buildLines();
