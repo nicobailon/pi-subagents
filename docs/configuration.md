@@ -118,8 +118,24 @@ Removes feature groups you do not use from the `subagent` tool. Each listed feat
 | `control-overrides` | `control` | |
 | `extension-bindings` | `extensionBindings` | |
 | `external-machines` | `machine` | |
+| `workflow-scripts` | `workflow`, `args`, `preflight`, `globalConcurrencyLimit`, `maxSubagentSpawnsPerRun` | `validate` |
 
 Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, the watchdog still follows its own settings, missions still attach automatically when [`missions`](#missions) enables them, and agents with a `machine` in their definition still run there. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged. With every feature and [`scheduledRuns.enabled`](#scheduledruns) disabled, the default `subagent` tool declaration (name, description, and parameter schema as JSON) shrinks from 18,319 to 11,570 characters (82 to 45 parameters). Restart Pi after changing this setting.
+
+### Chain and tasks without workflow scripts
+
+`workflow-scripts` removes workflow scripts and named workflow resources from every entry point. The model can no longer write a script, and a script that still arrives from RPC `spawn` (`script` or `workflow`), `/prompt-workflow`, a saved schedule, or a delegated launch fails with an error that names the setting. Schedule inspection, pause, and delete still work, but `schedule.create` cannot succeed because it needs a script. `/run` still works: it launches its one child directly. The built-in tool description and prompt snippet drop the script guidance and describe two small inputs instead:
+
+- `tasks: [{ agent, task }, ...]` runs the children in parallel and returns their results in order.
+- `chain: [step, ...]` runs steps in order. A step is `{ agent, task?, as? }` or a parallel group `{ parallel: [{ agent, task }, ...] }`. A group waits for all of its children.
+
+A top-level `task` is the original request. Tasks can use three placeholders:
+
+- `{task}` is the top-level `task`. Using it without a top-level `task` is an error.
+- `{previous}` is the output of the previous chain step. For a parallel group, the outputs are joined in input order with a blank line between them. A chain step without `task` uses `{previous}`. The first step has no previous output, so it needs a `task` and cannot use `{previous}`.
+- `{outputs.name}` is the output of an earlier sequential step that set `as: "name"`. Names are identifiers, and each name can be used once.
+
+`tasks` items can only use `{task}`. Placeholders are replaced in one pass, so placeholder text inside an output is not replaced again. Other brace text stays as written. `chain` and `tasks` exclude each other, `agent`, and `action`. Steps accept only the fields above, and inputs are limited to 64 items and 16 KiB. Top-level child options such as `model`, `skill`, `output`, and `worktree` apply to every child. If a child fails, the run fails: a chain stops after the failed step or group, `tasks` fails once every child has settled, and the error names each failed child. The results of the children that already finished are still returned. Without this setting, `chain` and `tasks` are rejected as removed legacy inputs.
 
 ## `inlineToolDisplay`
 
