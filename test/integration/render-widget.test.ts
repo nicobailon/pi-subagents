@@ -1056,7 +1056,7 @@ describe("subagent async widget rendering", () => {
 			const crowdedLines = renderWidgetLines(ui.widgets.at(-1));
 			assert.equal(crowdedLines.length, 4, "the crowded progressive card locks to its content rows");
 			assert.equal(crowdedLines.filter((line) => line.trim() === "").length, 0);
-			assert.match(crowdedLines.join("\n"), /Async agents · 3 agents running/);
+			assert.match(crowdedLines.join("\n"), /Async agents · 6 agents running/);
 
 			renderWidget(ui.ctx as never, [{
 				...crowdedJobs[0]!,
@@ -1078,6 +1078,40 @@ describe("subagent async widget rendering", () => {
 			assert.ok(resetLines.length < 4, `clearing the widget starts a fresh layout session, got ${resetLines.length}`);
 		});
 		resetWidgetLayout();
+	});
+
+	it("counts running workflow lanes, not the workflow, in the progressive header", () => {
+		resetWidgetLayout();
+		withStdoutSize(36, 120, () => {
+			const lanes = ["lane-1", "lane-2", "lane-3", "lane-4"].map((key) => ({
+				asyncId: `child-${key}`, asyncDir: `/tmp/${key}`, parentWorkflowRunId: "wf", workflowKey: key,
+				mode: "single", agents: ["scout"], status: "running", currentTool: "read",
+			}));
+			const workflow = { asyncId: "wf", asyncDir: "/tmp/wf", mode: "workflow", status: "running",
+				steps: lanes.map((lane, index) => ({ index, workflowKey: lane.workflowKey, runId: lane.asyncId, agent: "scout", status: "running" })) };
+			const single = { asyncId: "solo", asyncDir: "/tmp/solo", mode: "single", agents: ["worker"], status: "running", currentTool: "bash" };
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [workflow, ...lanes, single]);
+			const header = renderWidgetLines(ui.widgets.at(-1), 120)[0] ?? "";
+			assert.match(header, /Async agents · 5 agents running/, "4 workflow lanes plus 1 single run, matching FleetView's active agent count");
+		});
+		resetWidgetLayout();
+		// FleetView counts only loaded workflow children, and synthesizes steps from `agents` for step-less runs.
+		const solo = { asyncId: "solo", asyncDir: "/tmp/solo", mode: "single", agents: ["worker"], status: "running", currentTool: "bash" };
+		const cases = [
+			{ expected: "1 agent running", job: { asyncId: "wf", asyncDir: "/tmp/wf", mode: "workflow", status: "running",
+				steps: [0, 1, 2, 3].map((index) => ({ index, workflowKey: `lane-${index}`, runId: `unloaded-${index}`, agent: "scout", status: "running" })) } },
+			{ expected: "3 agents running", job: { asyncId: "par", asyncDir: "/tmp/par", mode: "parallel", status: "running", agents: ["a", "b"] } },
+			{ expected: "3 agents running", job: { asyncId: "par", asyncDir: "/tmp/par", mode: "parallel", status: "running", agents: ["a", "b"], steps: [], runningSteps: 2 } },
+		];
+		for (const { expected, job } of cases) {
+			withStdoutSize(22, 120, () => {
+				const ui = createUiContext();
+				renderWidget(ui.ctx as never, [job, solo]);
+				assert.match(renderWidgetLines(ui.widgets.at(-1), 120)[0] ?? "", new RegExp(`Async agents · ${expected}`), `${job.asyncId} header should say ${expected}`);
+			});
+			resetWidgetLayout();
+		}
 	});
 
 	it("keeps medium terminal progressive fallback within the compact cap", () => {

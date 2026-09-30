@@ -2629,12 +2629,29 @@ function selectProgressiveJobKeys(jobs: AsyncJobState[], previousKeys: string[],
 	return selected;
 }
 
-function progressiveHeaderLine(jobs: AsyncJobState[], theme: Theme, width: number, frame?: number): string {
+// Counts the leaf entries collectFleetStatusEntries (fleet-status.ts) makes for a running async job,
+// so this matches FleetView's "N active agents": a workflow counts only its loaded child runs;
+// another job counts its active steps, synthesized from `agents` when it has no steps.
+function runningLeafAgentCount(job: AsyncJobState, projectionFor: WorkflowWidgetProjectionLookup): number {
+	if (job.mode === "workflow") return (projectionFor(job).children ?? []).reduce((total, child) => total + runningLeafAgentCount(child, projectionFor), 0);
+	if (job.status !== "running") return 0;
+	const sequential = job.mode === "chain" && !job.activeParallelGroup;
+	const current = job.currentStep ?? 0;
+	const steps = job.steps?.length
+		? job.steps
+		: job.agents?.map((_, index) => ({ index, status: sequential && index !== current ? "pending" : "running" }));
+	if (!steps?.length) return 1;
+	return steps.filter((step, offset) => ["running", "queued", "pending"].includes(step.status)
+		&& !(step.status === "pending" && sequential && (step.index ?? offset) !== current)).length;
+}
+
+function progressiveHeaderLine(jobs: AsyncJobState[], theme: Theme, width: number, frame: number | undefined, projectionFor: WorkflowWidgetProjectionLookup): string {
 	const counts = widgetHeaderCounts(jobs);
 	const hasActive = counts.running.length > 0 || counts.queued.length > 0;
 	const glyph = counts.running.length > 0 ? runningGlyph(animatedSeed(widgetJobsRunningSeed(counts.running), frame)) : hasActive ? "●" : "○";
 	const parts: string[] = [];
-	if (counts.running.length > 0) parts.push(formatAgentRunningLabel(counts.running.length));
+	const runningAgents = jobs.reduce((total, job) => total + runningLeafAgentCount(job, projectionFor), 0);
+	if (runningAgents > 0) parts.push(formatAgentRunningLabel(runningAgents));
 	if (counts.queued.length > 0) parts.push(`${counts.queued.length} queued`);
 	if (!hasActive) {
 		if (counts.failed.length > 0) parts.push(`${counts.failed.length} failed`);
@@ -2703,7 +2720,7 @@ function buildProgressiveWidgetLines(jobs: AsyncJobState[], theme: Theme, width:
 
 	// Rows left after every visible job line show the visible workflows' lanes.
 	let spareRows = rowCount - 1 - visibleJobs.length - (hiddenJobs.length > 0 ? 1 : 0);
-	const lines = [progressiveHeaderLine(jobs, theme, width, frame)];
+	const lines = [progressiveHeaderLine(jobs, theme, width, frame, projectionFor)];
 	for (const job of visibleJobs) {
 		const projection = projectionFor(job);
 		const laneRows = job.mode === "workflow" ? compactWorkflowLaneRows(job, projection.checklist) : undefined;
