@@ -493,7 +493,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		assert.ok(serialized.length <= 13_000, `expected concise schema at or under 13k chars, got ${serialized.length}`);
+		assert.ok(serialized.length <= 13_010, `expected concise schema at or under 13,010 chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Evidence policy;").length - 1, 1);
@@ -558,6 +558,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 				if (Object.hasOwn(node, "anyOf") && Object.hasOwn(node, "type")) {
 					rejectedPaths.push(`${current.path}.type+anyOf`);
 				}
+				// llama.cpp grammar conversion rejects patterns not anchored with both ^ and $.
+				// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Inspecting JSON Schema pattern representation is the portability contract under test.
+				if (typeof node.pattern === "string" && !(node.pattern.startsWith("^") && node.pattern.endsWith("$"))) {
+					rejectedPaths.push(`${current.path}.pattern`);
+				}
 				for (const keyword of rejectedKeywords) {
 					if (Object.hasOwn(node, keyword)) rejectedPaths.push(`${current.path}.${keyword}`);
 				}
@@ -608,7 +613,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.deepEqual(reviewedRecoveryBranch?.enum, ["reviewed"]);
 		assert.equal(reviewedRecoveryBranch?.deprecated, true);
 		const acceptanceObjectStringBranch = acceptanceStringBranches.find((branch) => branch.enum === undefined);
-		assert.equal(acceptanceObjectStringBranch?.pattern, "^\\s*\\{", "acceptance should tolerate only object-shaped JSON strings");
+		assert.equal(acceptanceObjectStringBranch?.pattern, "^\\s*\\{[\\s\\S]*$", "acceptance should tolerate only object-shaped JSON strings");
 		assert.match(String(acceptanceSchema.description ?? ""), /omit for read-only\/review/i);
 		assert.match(String(acceptanceSchema.description ?? ""), /prefer object/i);
 		assert.match(String(acceptanceSchema.description ?? ""), /false disables; true invalid/i);
