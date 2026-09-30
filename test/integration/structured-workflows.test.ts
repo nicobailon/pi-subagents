@@ -1,7 +1,4 @@
-/**
- * End-to-end chain/tasks execution through executePublic with disabledFeatures "workflow-scripts".
- * Children run through the mock pi child launcher; see test/support/mock-pi.ts.
- */
+/** chain/tasks through executePublic with disabledFeatures "workflow-scripts", using the mock pi child launcher. */
 
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -49,6 +46,18 @@ describe("structured chain/tasks workflows", { skip: !available || !createSubage
 		const launched = readAllCallArgs().map((args) => args.join(" "));
 		assert.equal(launched.length, 3);
 		assert.ok(launched[2]!.includes("Write PLAN-RESULT using SCAN-RESULT for fix login"), launched[2]);
+	});
+
+	it("does not warn about dynamic launches for a chain", async (t) => {
+		const warnings: string[] = [];
+		t.mock.method(console, "warn", (message: string) => { warnings.push(message); });
+		const result = await makeExecutor([makeAgent("scout")], DISABLED).executePublic("chain-warn", {
+			chain: [{ agent: "scout", task: "One" }, { agent: "scout" }],
+			async: false,
+			chatProgress: "off",
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined, text(result));
+		assert.deepEqual(warnings.filter((message) => String(message).includes("dynamic child launches")), []);
 	});
 
 	it("returns a failed chain step as an error with the earlier step's output", async () => {

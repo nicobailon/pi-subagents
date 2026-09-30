@@ -5362,7 +5362,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (launchBlockingErrors.length > 0) {
 				return buildRequestedModeError(requestParams, `Workflow '${_id}' validation failed before child launch; no children launched. ${launchBlockingErrors.map((error) => error.message).join(" ")}`);
 			}
-			for (const warning of workflowValidation.warnings ?? []) console.warn(`[pi-subagents] ${warning.message}`);
+			// A package chain's per-step stop check defeats static launch counting; runtime fan-out enforcement still applies.
+			const structuredResource = workflowResource?.provenance.name === "chain" || workflowResource?.provenance.name === "tasks";
+			for (const warning of workflowValidation.warnings ?? []) {
+				if (!(structuredResource && warning.kind === "dynamic-spawn-count")) console.warn(`[pi-subagents] ${warning.message}`);
+			}
 			const acceptanceErrors = validateAcceptanceInput(requestParams.acceptance);
 			if (acceptanceErrors.length > 0) return buildRequestedModeError(requestParams, acceptanceErrors.join(" "));
 			const foregroundWorkflowRunId = encodeIndexSegment(_id);
