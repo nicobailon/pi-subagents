@@ -1521,6 +1521,11 @@ Answer only from the supplied synthetic text.
 		const empty = await executor.executePublic("empty-file", { action: "validate", workflow: "./empty.js" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(empty.isError, true);
 		assert.match(empty.content[0]?.text ?? "", /Workflow script file .*empty\.js.* is empty/);
+
+		// Seen live: a model put the script itself in the workflow string.
+		const scriptText = await executor.executePublic("script-text", { workflow: "return 1", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(scriptText.isError, true);
+		assert.match(scriptText.content[0]?.text ?? "", /write it in one ```js workflow block in the same reply and call subagent\(\{ workflow: true \}\)/);
 		assert.doesNotMatch(empty.content[0]?.text ?? "", /validation failed|valid JavaScript/);
 		assert.equal(mockPi.callCount(), 0);
 	});

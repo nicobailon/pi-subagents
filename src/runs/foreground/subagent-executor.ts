@@ -7884,9 +7884,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let publicParams = normalized.params as SubagentParamsLike;
 		const workflow = publicParams.workflow;
 		const errorResult = (text: string): Promise<AgentToolResult<Details>> => Promise.resolve({ content: [{ type: "text", text }], isError: true, details: { mode: publicParams.action ? "management" : "workflow", results: [] } });
+		// Models tend to put script text in the workflow string; say how to pass it instead.
+		const scriptTextHint = " A workflow string is a named workflow resource or a script file path. To run script text, write it in one ```js workflow block in the same reply and call subagent({ workflow: true }).";
 		if (typeof workflow === "string" && !isWorkflowScriptPath(workflow)) {
 			const resolved = resolveWorkflowResource(workflow, publicParams.args, ctx.sessionManager.getSessionId() ?? undefined);
-			if (!resolved.ok) return Promise.resolve({ content: [{ type: "text", text: resolved.error }], isError: true, details: { mode: "workflow", results: [] } });
+			if (!resolved.ok) return Promise.resolve({ content: [{ type: "text", text: resolved.error + scriptTextHint }], isError: true, details: { mode: "workflow", results: [] } });
 			const { workflow: _workflow, args: _args, ...withoutResourceInput } = publicParams;
 			publicParams = { ...withoutResourceInput, workflowScript: resolved.resource.script };
 			workflowResourcePermits.set(publicParams, resolved.resource.permit);
@@ -7896,7 +7898,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			let workflowScript = publicParams.workflowScript;
 			if (workflow !== undefined) {
 				const source = workflow === true ? readReplyWorkflowScript(ctx.sessionManager, id) : readWorkflowScriptFile(workflow, publicParams.cwd, ctx.cwd);
-				if ("error" in source) return errorResult(source.error);
+				if ("error" in source) return errorResult(workflow === true ? source.error : source.error + scriptTextHint);
 				workflowScript = source.script;
 			}
 			const { workflow: _workflow, ...withoutWorkflowSource } = publicParams;
