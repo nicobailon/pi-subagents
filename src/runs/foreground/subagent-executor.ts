@@ -410,7 +410,7 @@ export interface SubagentParamsLike {
 	modelOrigin?: ModelOrigin;
 	fast?: boolean;
 	thinking?: string | false;
-	/** true = the ```js workflow block in the calling reply; a string containing "/" = script path; otherwise a named workflow resource. */
+	/** true = the ```js workflow block in the calling reply; a string containing "/" or "\" = script path; otherwise a named workflow resource. */
 	workflow?: string | true;
 	args?: Record<string, unknown>;
 	scope?: string;

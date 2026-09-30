@@ -52,7 +52,7 @@ Use direct `{ agent, task }` for one bounded child. Use a workflow script when t
 The `workflow` field selects the script source:
 
 - `workflow: true` runs the one ```` ```js workflow ```` fenced block written in the same assistant reply as the `subagent` call. The script is plain text in the reply, so it needs no JSON string escaping. A reply can carry exactly one such block and one `workflow: true` call; zero or several blocks fail. A line that starts with ```` ``` ```` ends the block, so keep Markdown fences inside quoted strings.
-- A string containing `/`, such as `workflow: "./workflows/review.js"`, is a script file.
+- A string containing `/` (or `\` in a Windows path), such as `workflow: "./workflows/review.js"`, is a script file.
 - Any other string, such as `workflow: "review"`, is a [named workflow resource](#named-workflow-resources-for-permission-extensions).
 
 `workflow: true` works only from a model tool call. Slash commands, RPC, and schedules pass scripts through their own inputs. Examples below that show only a ```` ```js workflow ```` block run with `subagent({ workflow: true })` in the same reply.

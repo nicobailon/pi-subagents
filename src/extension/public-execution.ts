@@ -57,9 +57,9 @@ const RAW_SCRIPT_FORMS = "workflow: true or a workflow script path";
 const REMOVED_WORKFLOW_SCRIPT = "workflowScript was removed; write the script in one ```js workflow block in this reply and call subagent({ workflow: true }), or pass a script file as workflow: \"./path/to/script.js\".";
 const REMOVED_WORKFLOW_SCRIPT_PATH = "workflowScriptPath was removed; pass the script file as workflow: \"./path/to/script.js\" (a workflow value containing '/' is a path).";
 
-/** A workflow value containing "/" is a script path; named workflow resource names never contain "/". */
+/** A workflow value containing "/" or "\" is a script path; named workflow resource names contain neither. */
 export function isWorkflowScriptPath(workflow: string): boolean {
-	return workflow.includes("/");
+	return workflow.includes("/") || workflow.includes("\\");
 }
 
 /**

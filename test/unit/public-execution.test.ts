@@ -63,6 +63,8 @@ describe("public subagent execution normalization", () => {
 			normalizePublicSubagentExecution({ action: " validate ", workflow: "./workflow.js" }),
 			{ ok: true, params: { action: "validate", workflow: "./workflow.js" } },
 		);
+		const windowsPath = { workflow: "C:\\ci\\sweep.js", preflight: { version: 1, coverage: "complete", lanes: [{ key: "main", mode: "mutation" }] } };
+		assert.deepEqual(normalizePublicSubagentExecution(windowsPath), { ok: true, params: windowsPath }, "a Windows script path is a path, not a resource name");
 		assert.deepEqual(
 			normalizePublicSubagentExecution({ action: " validate ", workflowScript: "return 1", maxSubagentSpawnsPerRun: 5 }),
 			{ ok: true, params: { action: "validate", workflowScript: "return 1", maxSubagentSpawnsPerRun: 5 } },
