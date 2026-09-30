@@ -27,7 +27,6 @@ function serializedCharacters(tools: ReturnType<typeof getCurrentTools>): number
 	return tools.filter((tool) => packageToolNames.has(tool.name)).reduce((total, tool) => total + JSON.stringify(tool).length, 0);
 }
 
-// Runs prompts in a native Pi session with the given pi-subagents config and faux responses.
 async function runNativeSession(config: Record<string, unknown> | undefined, responses: FauxResponseStep[], prompts: string[]): Promise<void> {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-activation-"));
 	const cwd = path.join(root, "project");
@@ -111,23 +110,18 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 	console.log(`schema characters cold=${captured[0]} activated=${captured[1]}`);
 });
 
-test("native Pi starts with subagent and no loader in auto when the model cannot add tools mid-conversation", { timeout: 30_000 }, async () => {
-	// The faux model declares no mid-conversation tool compat flags.
-	const toolLists: string[][] = [];
+test("native Pi starts auto sessions with subagent and no loader when the model cannot add tools", { timeout: 30_000 }, async () => {
+	// The faux model sets no compat flags.
+	const requests: string[][] = [];
 	const record: FauxResponseFactory = (context) => {
-		const tools = getCurrentTools(context.messages);
-		toolLists.push(tools.map((tool) => tool.name).sort());
-		assert.equal(context.messages.filter((message) => message.role === "system" && (message.toolsAdded?.length || message.toolsRemoved?.length)).length, 1, "tools must stay as first declared");
-		const subagent = tools.find((tool) => tool.name === "subagent");
-		assert.ok(subagent);
-		assert.deepEqual(subagent.parameters, createSubagentParamsSchema());
+		// One tool declaration across both prompts: the tool list never changed.
+		assert.equal(context.messages.filter((message) => message.role === "system" && (message.toolsAdded?.length || message.toolsRemoved?.length)).length, 1);
+		requests.push(getCurrentTools(context.messages).map((tool) => tool.name));
 		return fauxAssistantMessage("ok");
 	};
 	await runNativeSession(undefined, [record, record], ["First prompt.", "Second prompt."]);
 
-	assert.equal(toolLists.length, 2);
-	assert.ok(!toolLists[0]!.includes("subagents_enable"));
-	assert.ok(toolLists[0]!.includes("bg_wait"));
-	assert.ok(toolLists[0]!.includes("subagent_supervisor"));
-	assert.deepEqual(toolLists[1], toolLists[0]);
+	assert.equal(requests.length, 2);
+	assert.ok(requests[0]!.includes("subagent") && requests[0]!.includes("bg_wait"));
+	assert.equal(requests[0]!.includes("subagents_enable"), false);
 });

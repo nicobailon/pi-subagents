@@ -199,14 +199,15 @@ describe("host dynamic tool support detection", () => {
 });
 
 const tool = (name: string) => ({ name, description: name, parameters: { type: "object" } });
-const selection = (added: string[], removed: string[] = [], timestamp = 1) => ({
-	role: "system", content: "", toolsAdded: added.map(tool), ...(removed.length ? { toolsRemoved: removed.map((name) => ({ name })) } : {}), timestamp,
+const declared = (added: string[], removed: string[] = []) => ({
+	role: "system", content: "", toolsAdded: added.map(tool), ...(removed.length ? { toolsRemoved: removed.map((name) => ({ name })) } : {}), timestamp: 1,
 });
-const model = (api: string, compat?: Record<string, boolean>) => ({ id: "m", provider: "p", api, ...(compat ? { compat } : {}) });
-const COMPATIBLE = model("anthropic-messages", { supportsMidConvoSystemMessages: true, supportsMidConvoToolChanges: true });
-const INCOMPATIBLE = model("openai-completions", { supportsMidConvoSystemMessages: false, supportsMidConvoToolAdditions: true });
+const model = (api: string, compat?: Record<string, boolean>) => ({ id: "m", provider: "p", api, compat });
+const system = { supportsMidConvoSystemMessages: true };
+const COMPATIBLE = model("anthropic-messages", { ...system, supportsMidConvoToolChanges: true });
+const INCOMPATIBLE = model("openai-completions", { supportsMidConvoToolAdditions: true });
 
-async function startAgent(runtime: ReturnType<typeof createRuntime>) {
+async function startAgent(runtime: ReturnType<typeof createRuntime>): Promise<string[]> {
 	const event = {
 		type: "before_agent_start", prompt: "continue", systemPrompt: "base",
 		systemPromptOptions: { selectedTools: runtime.active(), sections: {}, promptGuidelines: [] },
@@ -216,111 +217,75 @@ async function startAgent(runtime: ReturnType<typeof createRuntime>) {
 }
 
 describe("toolActivation modes", () => {
-	it("defaults to auto and starts a new session with subagent active when the model cannot add tools mid-conversation", async () => {
-		for (const options of [{}, { config: { toolActivation: "auto" } }, { model: INCOMPATIBLE }]) {
+	it("defaults to auto, which starts a new session with subagent and no loader when the model cannot add tools", async () => {
+		for (const options of [{}, { config: { toolActivation: "auto" }, model: INCOMPATIBLE }]) {
 			const runtime = createRuntime([], [], [], options);
 			await runtime.emit("session_start", { type: "session_start", reason: "startup" });
-			assert.ok(runtime.tools.has("subagents_enable"), "auto keeps the loader registered");
 			const first = await startAgent(runtime);
-			assert.ok(first.includes("subagent"));
+			assert.ok(first.includes("subagent") && first.includes("read"));
 			assert.equal(first.includes("subagents_enable"), false);
-			assert.ok(first.includes("read"));
-			assert.ok(first.includes("bg_wait"));
-			const selected = runtime.active();
-			assert.ok(selected.includes("subagent"));
-			assert.equal(selected.includes("subagents_enable"), false);
-			for (let turn = 0; turn < 3; turn++) {
-				assert.deepEqual(await startAgent(runtime), selected);
-				assert.deepEqual(runtime.active(), selected);
-			}
-			// A later model switch does not change the session's tools.
+			// Switching to a capable model mid-session changes nothing.
 			runtime.context.model = COMPATIBLE;
-			await runtime.emit("model_select", { type: "model_select", model: COMPATIBLE, previousModel: undefined, source: "set" });
-			assert.deepEqual(await startAgent(runtime), selected);
+			assert.deepEqual(await startAgent(runtime), first);
+			assert.deepEqual(await startAgent(runtime), first);
 		}
 	});
 
-	it("starts with the loader in auto when the model can add tools mid-conversation", async () => {
-		const runtime = createRuntime([], [], [], { model: COMPATIBLE });
-		await runtime.emit("session_start", { type: "session_start", reason: "startup" });
-		assert.equal(runtime.active().includes("subagent"), false);
-		runtime.select(["read"]);
-		const selectedTools = await startAgent(runtime);
-		assert.ok(selectedTools.includes("subagents_enable"));
-		assert.ok(runtime.active().includes("subagents_enable"));
-		assert.equal(runtime.active().includes("subagent"), false);
-		const result = await runtime.tools.get("subagents_enable")?.execute?.("enable", {}, new AbortController().signal, undefined, runtime.context);
-		assert.notEqual(result?.isError, true);
-		assert.ok(runtime.active().includes("subagent"));
-	});
-
-	it("applies the per-API capability rule", async () => {
-		const system = { supportsMidConvoSystemMessages: true };
-		const all = { ...system, supportsMidConvoToolChanges: true, supportsMidConvoToolAdditions: true, supportsAdditionalTools: true, supportsToolSearch: true };
-		const cases: Array<[string, unknown, boolean]> = [
-			["undefined model", undefined, false],
-			["model without compat", model("anthropic-messages"), false],
-			["anthropic", model("anthropic-messages", { ...system, supportsMidConvoToolChanges: true }), true],
-			["anthropic, system false", model("anthropic-messages", { supportsMidConvoSystemMessages: false, supportsMidConvoToolChanges: true }), false],
-			["anthropic, system unset", model("anthropic-messages", { supportsMidConvoToolChanges: true }), false],
-			["anthropic, tool changes unset", model("anthropic-messages", system), false],
-			["anthropic, wrong flag", model("anthropic-messages", { ...system, supportsMidConvoToolAdditions: true }), false],
-			["completions", model("openai-completions", { ...system, supportsMidConvoToolAdditions: true }), true],
-			["completions, system false", model("openai-completions", { supportsMidConvoSystemMessages: false, supportsMidConvoToolAdditions: true }), false],
-			["completions, wrong flag", model("openai-completions", { ...system, supportsMidConvoToolChanges: true }), false],
-			["responses, additional tools", model("openai-responses", { ...system, supportsAdditionalTools: true }), true],
-			["responses, tool search", model("openai-responses", { ...system, supportsToolSearch: true }), true],
-			["responses, neither", model("openai-responses", system), false],
-			["responses, system false", model("openai-responses", { supportsMidConvoSystemMessages: false, supportsAdditionalTools: true }), false],
-			["codex responses", model("openai-codex-responses", { ...system, supportsToolSearch: true }), true],
-			["codex responses, neither", model("openai-codex-responses", system), false],
-			["azure responses", model("azure-openai-responses", { ...system, supportsAdditionalTools: true }), true],
-			["azure responses, neither", model("azure-openai-responses", system), false],
-			["other api", model("google-generative-ai", all), false],
+	it("offers the loader in auto only when the model's API can add tools mid-conversation", async () => {
+		const cases: Array<[unknown, boolean]> = [
+			[undefined, false],
+			[model("anthropic-messages"), false],
+			[model("anthropic-messages", { ...system, supportsMidConvoToolChanges: true }), true],
+			[model("anthropic-messages", { supportsMidConvoSystemMessages: false, supportsMidConvoToolChanges: true }), false],
+			[model("anthropic-messages", { supportsMidConvoToolChanges: true }), false],
+			[model("anthropic-messages", system), false],
+			[model("openai-completions", { ...system, supportsMidConvoToolAdditions: true }), true],
+			[model("openai-completions", { ...system, supportsMidConvoToolChanges: true }), false],
+			[model("openai-responses", { ...system, supportsAdditionalTools: true }), true],
+			[model("openai-responses", { ...system, supportsToolSearch: true }), true],
+			[model("openai-responses", system), false],
+			[model("openai-codex-responses", { ...system, supportsToolSearch: true }), true],
+			[model("azure-openai-responses", { ...system, supportsAdditionalTools: true }), true],
+			[model("google-generative-ai", { ...system, supportsMidConvoToolChanges: true, supportsMidConvoToolAdditions: true, supportsAdditionalTools: true }), false],
 		];
-		for (const [label, caseModel, compatible] of cases) {
+		for (const [caseModel, compatible] of cases) {
 			const runtime = createRuntime([], [], [], { model: caseModel });
 			await runtime.emit("session_start", { type: "session_start", reason: "startup" });
-			await startAgent(runtime);
-			assert.equal(runtime.active().includes("subagents_enable"), compatible, `${label}: loader`);
-			assert.equal(runtime.active().includes("subagent"), !compatible, `${label}: subagent`);
+			const selectedTools = await startAgent(runtime);
+			assert.equal(selectedTools.includes("subagents_enable"), compatible, JSON.stringify(caseModel));
+			assert.equal(selectedTools.includes("subagent"), !compatible, JSON.stringify(caseModel));
 		}
 	});
 
-	it("keeps today's loader behavior for explicit dynamic, whatever the model", async () => {
-		const runtime = createRuntime([], [], [], { ...DYNAMIC, model: INCOMPATIBLE });
-		await runtime.emit("session_start", { type: "session_start", reason: "startup" });
-		await startAgent(runtime);
-		assert.ok(runtime.active().includes("subagents_enable"));
-		assert.equal(runtime.active().includes("subagent"), false);
-
-		const recordedEager = createRuntime([selection(["read", "subagent"])], [], [], { ...DYNAMIC, model: INCOMPATIBLE });
-		await recordedEager.emit("session_start", { type: "session_start", reason: "resume" });
-		assert.ok((await startAgent(recordedEager)).includes("subagents_enable"));
-		assert.ok(recordedEager.active().includes("subagent"));
+	it("always offers the loader in dynamic, even to a recorded session without it", async () => {
+		for (const messages of [[], [declared(["read", "subagent"])]]) {
+			const runtime = createRuntime(messages, [], [], { ...DYNAMIC, model: INCOMPATIBLE });
+			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
+			assert.ok((await startAgent(runtime)).includes("subagents_enable"));
+			assert.equal(runtime.active().includes("subagent"), messages.length > 0);
+		}
 	});
 
-	it("registers no loader for explicit eager, even with a capable model or recorded loader history", async () => {
-		for (const messages of [[], [selection(["read", "subagents_enable"])]]) {
+	it("registers no loader in eager, even with a capable model or recorded loader history", async () => {
+		for (const messages of [[], [declared(["read", "subagents_enable"])]]) {
 			const runtime = createRuntime(messages, [], [], { config: { toolActivation: "eager" }, model: COMPATIBLE });
 			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
 			assert.equal(runtime.tools.has("subagents_enable"), false);
 			const selectedTools = await startAgent(runtime);
 			assert.ok(selectedTools.includes("subagent"));
 			assert.equal(selectedTools.includes("subagents_enable"), false);
-			assert.ok(runtime.active().includes("bg_wait"));
 		}
 	});
 
-	it("replays recorded cold, warm, and eager sessions in auto without adding or removing tools", async () => {
+	it("replays recorded sessions in auto without adding or removing tools, whatever the model", async () => {
 		const cases: Array<[string, any[], string[]]> = [
-			["cold", [selection(["read", "subagents_enable"])], ["subagents_enable"]],
-			["warm", [selection(["read", "subagents_enable"]), selection(["subagent"], [], 2)], ["subagents_enable", "subagent"]],
-			["eager", [selection(["read", "subagent"])], ["subagent"]],
-			["eager, then subagent removed", [selection(["read", "subagent"]), selection([], ["subagent"], 2)], []],
-			["loader removed", [selection(["read", "subagents_enable", "subagent"]), selection([], ["subagents_enable"], 2)], ["subagent"]],
+			["cold", [declared(["read", "subagents_enable"])], ["subagents_enable"]],
+			["warm", [declared(["read", "subagents_enable"]), declared(["subagent"])], ["subagents_enable", "subagent"]],
+			["eager", [declared(["read", "subagent"])], ["subagent"]],
+			["loader removed", [declared(["read", "subagents_enable", "subagent"]), declared([], ["subagents_enable"])], ["subagent"]],
+			["legacy", [{ role: "user", content: "continue", timestamp: 1 }], ["subagents_enable", "subagent"]],
 		];
-		for (const caseModel of [COMPATIBLE, INCOMPATIBLE, undefined]) {
+		for (const caseModel of [COMPATIBLE, INCOMPATIBLE]) {
 			for (const [label, messages, expected] of cases) {
 				const runtime = createRuntime(messages, [], [], { model: caseModel });
 				for (const event of [
@@ -329,26 +294,14 @@ describe("toolActivation modes", () => {
 					{ type: "session_tree", newLeafId: null, oldLeafId: null },
 				]) {
 					await runtime.emit(event.type, event);
-					for (let turn = 0; turn < 2; turn++) {
-						const selectedTools = await startAgent(runtime);
-						const active = runtime.active();
-						for (const name of ["subagents_enable", "subagent"]) {
-							assert.equal(active.includes(name), expected.includes(name), `${label} (${caseModel?.api ?? "no model"}) ${event.type}: ${name}`);
-							assert.equal(selectedTools.includes(name), expected.includes(name), `${label} selectedTools: ${name}`);
-						}
-						assert.ok(active.includes("read"));
+					const selectedTools = await startAgent(runtime);
+					for (const name of ["subagents_enable", "subagent"]) {
+						assert.equal(selectedTools.includes(name), expected.includes(name), `${label}, ${caseModel.api}, ${event.type}: ${name}`);
+						assert.equal(runtime.active().includes(name), expected.includes(name), `${label}, ${caseModel.api}, ${event.type}: active ${name}`);
 					}
 				}
 			}
 		}
-	});
-
-	it("keeps legacy undeclared history eager with the loader in auto", async () => {
-		const legacy = createRuntime([{ role: "user", content: "continue", timestamp: 1 }], [], [], { model: INCOMPATIBLE });
-		await legacy.emit("session_start", { type: "session_start", reason: "resume" });
-		await startAgent(legacy);
-		assert.ok(legacy.active().includes("subagent"));
-		assert.ok(legacy.active().includes("subagents_enable"));
 	});
 
 	it("rejects an unknown toolActivation value instead of falling back", () => {

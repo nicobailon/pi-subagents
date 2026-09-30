@@ -25,15 +25,14 @@ function hasNativeToolSelection(messages: readonly ToolSelectionMessage[]): bool
 }
 
 function setSelection(pi: ExtensionAPI, includeSubagent: boolean, includeLoader: boolean): void {
-	const active = pi.getActiveTools();
-	const kept = active.filter((name) => (includeSubagent || name !== SUBAGENT_NAME) && (includeLoader || name !== LOADER_NAME));
-	const next = includeSubagent ? [...kept, SUBAGENT_NAME] : kept;
-	if (includeLoader && !next.includes(LOADER_NAME)) next.push(LOADER_NAME);
+	const next = pi.getActiveTools().filter((name) => (includeSubagent || name !== SUBAGENT_NAME) && (includeLoader || name !== LOADER_NAME));
+	if (includeSubagent) next.push(SUBAGENT_NAME);
+	if (includeLoader) next.push(LOADER_NAME);
 	pi.setActiveTools([...new Set(next)]);
 }
 
-// Mirrors pi-ai's per-API transcript handling. Without these flags, adding a tool mid-conversation makes
-// Pi resend the conversation with a new leading system message, which can miss the provider prompt cache.
+// Mirrors pi-ai's per-API transcript handling: without these flags, a mid-conversation tool change
+// makes Pi resend the conversation under a new leading system message, missing the prompt cache.
 function addsToolsWithoutCheckpoint(model: ExtensionContext["model"]): boolean {
 	const compat = model?.compat as {
 		supportsMidConvoSystemMessages?: boolean;
@@ -61,24 +60,19 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 	// SAFETY: The running Pi session manager exposes buildSessionContext, but its read-only extension type omits it.
 	const messages = (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: ToolSelectionMessage[] } }).buildSessionContext().messages;
 	if (hasNativeToolSelection(messages)) {
-		// Only these tools' membership matters; a package-local pi-ai may be older than the running Pi.
-		let selected = false;
-		let loaderRecorded = false;
+		// Replayed here because a package-local pi-ai may be older than the running Pi.
+		const recorded = new Set<string>();
 		for (const message of messages) {
 			if (message.role !== "system") continue;
-			if (message.toolsRemoved?.some((tool) => tool.name === SUBAGENT_NAME)) selected = false;
-			if (message.toolsAdded?.some((tool) => tool.name === SUBAGENT_NAME)) selected = true;
-			if (message.toolsRemoved?.some((tool) => tool.name === LOADER_NAME)) loaderRecorded = false;
-			if (message.toolsAdded?.some((tool) => tool.name === LOADER_NAME)) loaderRecorded = true;
+			for (const tool of message.toolsRemoved ?? []) recorded.delete(tool.name);
+			for (const tool of message.toolsAdded ?? []) recorded.add(tool.name);
 		}
-		// "auto" keeps the recorded loader membership: adding the loader to a transcript that never
-		// declared it is itself a mid-conversation tool change.
-		const loaderSelected = mode === "dynamic" || loaderRecorded;
-		setSelection(pi, selected, loaderSelected);
+		// "auto" never adds the loader to a transcript that did not declare it: that is itself a tool change.
+		const loaderSelected = mode === "dynamic" || recorded.has(LOADER_NAME);
+		setSelection(pi, recorded.has(SUBAGENT_NAME), loaderSelected);
 		return loaderSelected;
 	}
-	// "auto" decides once, for a new session: with a model that cannot take a tool mid-conversation
-	// without a checkpoint, start with subagent active instead of offering the loader.
+	// "auto" goes eager only for an empty session; any history keeps the tools it already sent.
 	const eager = mode === "auto" && messages.length === 0 && !addsToolsWithoutCheckpoint(ctx.model);
 	setSelection(pi, eager || (messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME)), !eager);
 	return !eager;
@@ -89,7 +83,7 @@ export function registerSubagentToolActivation(
 	options: { advertisedPrompt: () => string | undefined | Promise<string | undefined>; mode?: ToolActivationMode },
 ): void {
 	const mode = options.mode ?? "auto";
-	// Like --exclude-tools subagents_enable: no loader, so subagent stays active from the first request.
+	// Same as --exclude-tools subagents_enable: without the loader, subagent stays active.
 	if (mode === "eager") return;
 	if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") {
 		if (!warnedUnsupportedHost) {
@@ -137,7 +131,7 @@ export function registerSubagentToolActivation(
 	};
 	pi.registerTool(loader);
 
-	// Decided at session start and tree navigation only; a later model switch keeps the session's tools.
+	// Decided at session start and tree navigation only; switching models keeps the session's tools.
 	let loaderSelected = true;
 	pi.on("session_start", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode); });
 	pi.on("session_tree", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode); });

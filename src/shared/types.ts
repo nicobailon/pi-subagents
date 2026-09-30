@@ -2592,7 +2592,6 @@ export interface ProactiveSkillSubagentsConfig {
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
-/** How the parent session offers the subagent tool: via the subagents_enable loader, from the start, or chosen from the model. */
 export type ToolActivationMode = "auto" | "dynamic" | "eager";
 export type InlineToolDisplay = "rich" | "summary";
 
