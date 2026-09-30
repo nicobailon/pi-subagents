@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
 import { consumeWorkflowResourcePermit } from "../../src/shared/workflow-child-permit.ts";
 import { resolveStructuredWorkflowResource, resolveWorkflowResource } from "../../src/workflows/workflow-resources.ts";
-import { runWorkflowScript, validateWorkflowScript, type WorkflowScriptChildResult } from "../../src/workflows/scripted-workflow.ts";
+import { runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowScriptChildResult } from "../../src/workflows/scripted-workflow.ts";
 
 type Launch = { key: string; agent: unknown; task: unknown };
 
@@ -29,6 +29,18 @@ async function runScript(script: string, respond: (launch: Launch) => Partial<Wo
 		async status(key) { return { key, ok: true, output: "unused", artifactPaths: [] }; },
 	});
 	return { value: execution.value, launches };
+}
+
+/** Run a script expected to fail; returns the error message and the settled children the runtime kept. */
+async function runFailingScript(script: string, respond: Parameters<typeof runScript>[1]) {
+	const launches: Launch[] = [];
+	const error = await runScript(script, (launch) => {
+		launches.push(launch);
+		return respond!(launch);
+	}).then(() => assert.fail("script should fail"), (reason: unknown) => reason);
+	assert.ok(error instanceof WorkflowScriptError, String(error));
+	const children = error.partial.children.map(({ key, ok, output, error: childError }) => ({ key, ok, output, ...(childError ? { error: childError } : {}) }));
+	return { message: error.message, children, launches };
 }
 
 function delay(ms: number): Promise<void> {
@@ -98,17 +110,15 @@ describe("structured workflow resources", () => {
 		assert.equal(launches[1]!.task, "{task} {previous} {outputs.first}|{task} {previous} {outputs.first}|orig {previous} {outputs.first}");
 	});
 
-	it("stops after a failed sequential step and returns the results so far", async () => {
+	it("stops after a failed sequential step and fails the workflow with the results so far", async () => {
 		const script = resolveScript({ kind: "chain", steps: [{ agent: "one", task: "first" }, { agent: "two" }, { agent: "three" }] });
-		const { value, launches } = await runScript(script, ({ key }) => key === "step-2" ? { ok: false, output: "boom", error: "boom" } : {});
+		const { message, children, launches } = await runFailingScript(script, ({ key }) => key === "step-2" ? { ok: false, output: "boom", error: "boom" } : {});
 		assert.deepEqual(launches.map(({ key }) => key), ["step-1", "step-2"]);
-		assert.deepEqual(value, {
-			ok: false,
-			children: [
-				{ key: "step-1", agent: "one", ok: true, output: "out:step-1" },
-				{ key: "step-2", agent: "two", ok: false, output: "boom", error: "boom" },
-			],
-		});
+		assert.match(message, /chain stopped at step 2: step-2 \(two\) failed: boom/);
+		assert.deepEqual(children, [
+			{ key: "step-1", ok: true, output: "out:step-1" },
+			{ key: "step-2", ok: false, output: "boom", error: "boom" },
+		]);
 	});
 
 	it("waits for every group sibling, then stops the chain when any member failed", async () => {
@@ -117,7 +127,7 @@ describe("structured workflow resources", () => {
 			kind: "chain",
 			steps: [{ parallel: [{ agent: "fast", task: "fail" }, { agent: "slow", task: "finish" }] }, { agent: "next" }],
 		});
-		const { value, launches } = await runScript(script, async ({ key }) => {
+		const { message, children, launches } = await runFailingScript(script, async ({ key }) => {
 			if (key === "step-1-1") return { ok: false, output: "rejected", error: "rejected" };
 			await delay(40);
 			slowFinished = true;
@@ -125,36 +135,32 @@ describe("structured workflow resources", () => {
 		});
 		assert.equal(slowFinished, true);
 		assert.deepEqual(launches.map(({ key }) => key), ["step-1-1", "step-1-2"]);
-		assert.deepEqual(value, {
-			ok: false,
-			children: [
-				{ key: "step-1-1", agent: "fast", ok: false, output: "rejected", error: "rejected" },
-				{ key: "step-1-2", agent: "slow", ok: true, output: "out:step-1-2" },
-			],
-		});
+		assert.match(message, /chain stopped at step 1: step-1-1 \(fast\) failed: rejected/);
+		assert.deepEqual(new Set(children.map((child) => JSON.stringify(child))), new Set([
+			JSON.stringify({ key: "step-1-1", ok: false, output: "rejected", error: "rejected" }),
+			JSON.stringify({ key: "step-1-2", ok: true, output: "out:step-1-2" }),
+		]));
 	});
 
-	it("runs tasks as one parallel group and returns every result, including failures", async () => {
+	it("runs tasks as one parallel group and fails after every child settles when any failed", async () => {
 		const script = resolveScript({
 			kind: "tasks",
 			task: "the request",
 			steps: [{ agent: "a", task: "A: {task}" }, { agent: "b", task: "B" }, { agent: "c", task: "C {other}" }],
 		});
-		const { value, launches } = await runScript(script, async ({ key }) => {
+		const { message, children, launches } = await runFailingScript(script, async ({ key }) => {
 			if (key === "task-1") await delay(20);
 			return key === "task-2" ? { ok: false, output: "bad", error: "bad" } : {};
 		});
 		assert.deepEqual(new Set(launches.map(({ key }) => key)), new Set(["task-1", "task-2", "task-3"]));
 		assert.equal(launches.find(({ key }) => key === "task-1")!.task, "A: the request");
 		assert.equal(launches.find(({ key }) => key === "task-3")!.task, "C {other}");
-		assert.deepEqual(value, {
-			ok: false,
-			children: [
-				{ key: "task-1", agent: "a", ok: true, output: "out:task-1" },
-				{ key: "task-2", agent: "b", ok: false, output: "bad", error: "bad" },
-				{ key: "task-3", agent: "c", ok: true, output: "out:task-3" },
-			],
-		});
+		assert.match(message, /tasks failed: task-2 \(b\) failed: bad/);
+		assert.deepEqual(new Set(children.map((child) => JSON.stringify(child))), new Set([
+			JSON.stringify({ key: "task-1", ok: true, output: "out:task-1" }),
+			JSON.stringify({ key: "task-2", ok: false, output: "bad", error: "bad" }),
+			JSON.stringify({ key: "task-3", ok: true, output: "out:task-3" }),
+		]));
 		const allOk = await runScript(resolveScript({ kind: "tasks", steps: [{ agent: "a", task: "A" }] }));
 		assert.deepEqual(allOk.value, { ok: true, children: [{ key: "task-1", agent: "a", ok: true, output: "out:task-1" }] });
 	});
