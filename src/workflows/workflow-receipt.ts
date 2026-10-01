@@ -321,9 +321,9 @@ export function readWorkflowReceipt(asyncDirRoot: string, workflowRunId: string)
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 			const workflowDir = path.dirname(receiptPath);
 			if (fs.existsSync(path.join(workflowDir, "status.json")) || fs.existsSync(path.join(workflowDir, "events.jsonl"))) {
-				throw new Error(`Workflow receipt '${workflowRunId}' is not available because the workflow may still be active or terminal receipt writing failed. Use direct child run IDs from status/events for direct resume after the normal retained-child checks.`);
+				throw new Error(`Workflow receipt '${workflowRunId}' is not available because the workflow may still be active or terminal receipt writing failed. Use direct child run IDs from status/events for direct resume after the normal retained-child checks.`, { cause: error });
 			}
-			throw new Error(`Workflow receipt '${workflowRunId}' was not found.`);
+			throw new Error(`Workflow receipt '${workflowRunId}' was not found.`, { cause: error });
 		}
 		throw new Error(`Workflow receipt '${workflowRunId}' could not be read: ${error instanceof Error ? error.message : String(error)}`, { cause: error instanceof Error ? error : undefined });
 	}

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 
-import { collectSubagentCost } from "../../src/slash/subagent-cost.ts";
+import { collectSubagentCost, formatSubagentCostReport } from "../../src/slash/subagent-cost.ts";
 import { DIRS, SLASH_RESULT_TYPE } from "../../src/shared/types.ts";
 
 function collectWithErrors(branch: unknown[]) {
@@ -28,6 +28,23 @@ describe("collectSubagentCost workflow receipts", () => {
 		assert.deepEqual(errors, []);
 		assert.equal(report.children.length, 1);
 		assert.equal(report.childTotal.input, 12);
+	});
+
+	it("counts a running async workflow without a receipt as unavailable without logging", () => {
+		const workflowRunId = `async-running-${process.pid}`;
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId: workflowRunId, mode: "workflow", state: "running", startedAt: Date.now(), cwd: process.cwd(), steps: [] }), "utf-8");
+		try {
+			const { report, errors } = collectWithErrors([
+				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "workflow", runId: workflowRunId, asyncId: workflowRunId, results: [] } } },
+			]);
+			assert.deepEqual(errors, []);
+			assert.equal(report.unresolvedAsyncChildren, 1);
+			assert.match(formatSubagentCostReport(report), /Async child usage unavailable: 1\./);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
 	});
 
 	it("still reports unreadable async workflow receipts", () => {
