@@ -8,6 +8,7 @@ import { parse as parseYaml } from "yaml";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createAtomicJsonWriter } from "../shared/atomic-json.ts";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, JsonSchemaObject, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
@@ -944,7 +945,48 @@ function readSettingsFileStrict(filePath: string): Record<string, unknown> {
 
 function writeSettingsFile(filePath: string, settings: Record<string, unknown>): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	fs.writeFileSync(filePath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+	const targetPath = resolveSettingsWriteTarget(filePath);
+	let existingMode: number | undefined;
+	try {
+		existingMode = fs.statSync(targetPath).mode & 0o7777;
+	} catch (error) {
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+	}
+	if (existingMode !== undefined) fs.accessSync(targetPath, fs.constants.W_OK);
+
+	const tempMode = existingMode === undefined ? undefined : existingMode | 0o200;
+	// Reuse the atomic temp/rename path while retaining settings' newline and existing mode.
+	const writeAtomicSettings = createAtomicJsonWriter({
+		mode: tempMode,
+		fs: {
+			mkdirSync: fs.mkdirSync,
+			writeFileSync: (tempPath, data, options) => {
+				if (typeof data !== "string") throw new TypeError("Settings JSON serialization must produce a string.");
+				return fs.writeFileSync(tempPath, `${data}\n`, options);
+			},
+			renameSync: (sourcePath, destinationPath) => {
+				if (existingMode !== undefined) fs.chmodSync(sourcePath, existingMode);
+				fs.renameSync(sourcePath, destinationPath);
+			},
+			rmSync: fs.rmSync,
+		},
+	});
+	writeAtomicSettings(targetPath, settings);
+}
+
+function resolveSettingsWriteTarget(filePath: string): string {
+	let targetPath = path.resolve(filePath);
+	for (let linkCount = 0; linkCount <= 40; linkCount++) {
+		try {
+			const stats = fs.lstatSync(targetPath);
+			if (!stats.isSymbolicLink()) return targetPath;
+			targetPath = path.resolve(fs.realpathSync(path.dirname(targetPath)), fs.readlinkSync(targetPath));
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+			return path.join(fs.realpathSync(path.dirname(targetPath)), path.basename(targetPath));
+		}
+	}
+	throw new Error(`Too many symbolic links while resolving settings file '${filePath}'.`);
 }
 
 function parseOverrideStringArrayOrFalse(

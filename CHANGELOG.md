@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Builtin agent settings overrides now stage JSON before replacing the settings file, so an interrupted save leaves the previous settings readable.
 - The global mission list now reads title, status, update time, and latest run ID from each readable mission record. A stale index pointer therefore no longer makes a successfully updated mission appear out of date; listing still does not rewrite the pointer. Thanks to [@quifox](https://github.com/quifox) for [#2618](https://github.com/nicobailon/pi-subagents/pull/2618).
 - Loading or checking a saved subagent profile now rejects malformed `machine` placement values. Loading validates before writing settings and normalizes valid strings using the same limits as agent definitions and overrides. `machine: false` still clears a pin, and an omitted machine continues to preserve an existing string pin. Thanks to [@quifox](https://github.com/quifox) for [#2619](https://github.com/nicobailon/pi-subagents/pull/2619).
 - `/subagent-cost` and the RPC `cost` method no longer log a missing workflow receipt error on every call. Foreground workflows write no receipt file and their child usage is already in their results, so cost collection no longer looks one up for them. An async workflow that has no receipt yet, such as one still running, is now reported as `Async child usage unavailable` instead of being left out of the totals without notice. Unreadable async workflow receipts are still logged. (#2614)
