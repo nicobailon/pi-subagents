@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { createBashTool, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createDefaultChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { supervisorChannelDir } from "../../src/runs/shared/child-tool-plan.ts";
+import { evaluateChildToolDiagnostic } from "../../src/runs/shared/child-runtime-config.ts";
 import { readChildCommandState } from "../../src/runs/shared/child-commands.ts";
 
 function fakePi(override?: ToolDefinition) {
@@ -90,4 +91,25 @@ describe("default child factory command integration", () => {
 			assert.equal(readChildCommandState(channel), undefined, "custom backend must not be advertised as a controllable native command");
 		} finally { await factory.dispose(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
 	});
+	it("keeps an explicitly required command tool available without claiming control of custom bash", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-command-explicit-override-"));
+		const runId = `explicit-override-${randomUUID()}`;
+		const channel = supervisorChannelDir(runId, "worker", 0);
+		const original: ToolDefinition = { ...createBashTool(dir), execute: async () => ({ content: [{ type: "text", text: "custom backend" }], details: undefined }) };
+		const fake = fakePi(original);
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => fake.pi });
+		const input = launch(dir, runId);
+		input.runtime.requiredTools = ["bash", "subagent_command"];
+		try {
+			const child = await factory.create(input);
+			assert.equal(fake.tools.get("bash"), original);
+			assert.equal(evaluateChildToolDiagnostic(input.runtime, [...fake.tools.keys()]), undefined);
+			const commandTool = fake.tools.get("subagent_command")!;
+			assert.match(commandTool.description, /unavailable.*custom bash/);
+			await assert.rejects(commandTool.execute("status", { action: "status" }, undefined, undefined, {} as ExtensionContext), /unavailable.*custom bash/);
+			await child.prompt("custom command");
+			assert.equal(readChildCommandState(channel), undefined);
+		} finally { await factory.dispose(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+
 });

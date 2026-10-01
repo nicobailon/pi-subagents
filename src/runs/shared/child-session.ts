@@ -11,8 +11,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createChildCommandRuntime } from "./child-commands.ts";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { CHILD_COMMAND_TOOL, createChildCommandRuntime } from "./child-commands.ts";
 import { supervisorChannelDir } from "./child-tool-plan.ts";
 import { pinChildCacheRetention } from "../../shared/child-cache-retention.ts";
 import { getAgentDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
@@ -199,11 +199,21 @@ function prioritizeChildPromptRuntime<T extends { extensions: Array<{ path: stri
 }
 
 /** Ambient bash overrides keep their original backend and priority. */
-function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: string; tools?: Map<string, unknown> }> }>(result: T): T {
+function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: string; tools?: Map<string, unknown> }> }>(result: T, requiredCommandTool: boolean): T {
 	const index = result.extensions.findIndex(({ path }) => path === "<inline:pi-subagents:commands>");
 	if (index < 0) return result;
 	if (result.extensions.some((extension, otherIndex) => otherIndex !== index && extension.tools?.has("bash"))) {
-		return { ...result, extensions: result.extensions.filter((_, otherIndex) => otherIndex !== index) };
+		const extensions = result.extensions.filter((_, otherIndex) => otherIndex !== index);
+		if (requiredCommandTool) {
+			const commands = result.extensions[index]!;
+			const registered = commands.tools!.get(CHILD_COMMAND_TOOL) as { definition: ToolDefinition };
+			const reason = "Native command controls are unavailable with the active custom bash backend. Use that backend's own command controls.";
+			extensions.unshift({ ...commands, tools: new Map([[CHILD_COMMAND_TOOL, { ...registered, definition: {
+				...registered.definition, description: reason,
+				execute: async () => { throw new Error(reason); },
+			} }]]) });
+		}
+		return { ...result, extensions };
 	}
 	if (index === 0) return result;
 	const extensions = [...result.extensions];
@@ -422,10 +432,10 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				noContextFiles: launch.noContextFiles,
 				additionalExtensionPaths: builtinMcp ? [...launch.extensionPaths, "builtin:mcp"] : launch.extensionPaths,
 				extensionFactories: [...launch.hooks, ...(commands ? [{ name: "pi-subagents:commands", factory: (api: ExtensionAPI) => {
-					api.registerTool(commands.wrap(pi.createBashTool(launch.cwd, { commandPrefix: settingsManager.getShellCommandPrefix(), shellPath: settingsManager.getShellPath() }) as unknown as import("@earendil-works/pi-coding-agent").ToolDefinition));
+					api.registerTool(commands.wrap(pi.createBashTool(launch.cwd, { commandPrefix: settingsManager.getShellCommandPrefix(), shellPath: settingsManager.getShellPath() }) as unknown as ToolDefinition));
 					api.registerTool(commands.tool());
 				} }] : []), ...codemode, ...(builtinMcp ? [builtinMcp] : [])],
-				extensionsOverride: (result) => prioritizeChildPromptRuntime(prioritizeChildCommandRuntime(result)),
+				extensionsOverride: (result) => prioritizeChildPromptRuntime(prioritizeChildCommandRuntime(result, launch.runtime.requiredTools?.includes(CHILD_COMMAND_TOOL) === true)),
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});

@@ -322,7 +322,7 @@ subagent({ action: "doctor" })
 
 ### Command controls
 
-Command controls target direct local native Pi children with `bash`, in foreground or async runs. They require the owning parent session, a run `id`, an explicit `index` for multi-child runs, and the exact `toolCallId` for mutations. Nested, external, and custom shell backends do not expose this controller.
+Command controls target direct local native Pi children with `bash`, in foreground or async runs. They require the owning parent session, a run `id`, an explicit `index` for multi-child runs, and the exact `toolCallId` for mutations. Nested, external, and custom shell backends do not expose this controller. When `subagent_command` is explicitly required with a custom bash override, its tool name remains available for startup validation and calls return an explicit unsupported-backend error. Automatically granted observation tools remain hidden for custom backends.
 
 ```ts
 subagent({ action: "command.status", id: "<run-id>", index: 0 })
