@@ -199,12 +199,12 @@ function prioritizeChildPromptRuntime<T extends { extensions: Array<{ path: stri
 }
 
 /** Ambient bash overrides keep their original backend and priority. */
-function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: string; tools?: Map<string, unknown> }> }>(result: T, requiredCommandTool: boolean): T {
+function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: string; tools?: Map<string, unknown> }> }>(result: T): T {
 	const index = result.extensions.findIndex(({ path }) => path === "<inline:pi-subagents:commands>");
 	if (index < 0) return result;
 	if (result.extensions.some((extension, otherIndex) => otherIndex !== index && extension.tools?.has("bash"))) {
 		const extensions = result.extensions.filter((_, otherIndex) => otherIndex !== index);
-		if (requiredCommandTool && !extensions.some((extension) => extension.tools?.has(CHILD_COMMAND_TOOL))) {
+		if (!extensions.some((extension) => extension.tools?.has(CHILD_COMMAND_TOOL))) {
 			const commands = result.extensions[index]!;
 			const registered = commands.tools!.get(CHILD_COMMAND_TOOL) as { definition: ToolDefinition };
 			const reason = "Native command controls are unavailable with the active custom bash backend. Use that backend's own command controls.";
@@ -436,7 +436,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					api.registerTool(commands.wrap(pi.createBashTool(launch.cwd, { commandPrefix: settingsManager.getShellCommandPrefix(), shellPath: settingsManager.getShellPath() }) as unknown as ToolDefinition));
 					api.registerTool(commands.tool());
 				} }] : []), ...codemode, ...(builtinMcp ? [builtinMcp] : [])],
-				extensionsOverride: (result) => prioritizeChildPromptRuntime(prioritizeChildCommandRuntime(result, launch.runtime.requiredTools?.includes(CHILD_COMMAND_TOOL) === true)),
+				extensionsOverride: (result) => prioritizeChildPromptRuntime(prioritizeChildCommandRuntime(result)),
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});
