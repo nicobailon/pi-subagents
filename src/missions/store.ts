@@ -562,7 +562,16 @@ export function listGlobalMissions(globalIndexDir: string): GlobalMissionListRes
 			try {
 				const record = parseMissionRecord(JSON.parse(fs.readFileSync(entry.recordPath, "utf-8")), entry.recordPath);
 				if (record.id !== entry.missionId) throw new Error(`record id '${record.id}' does not match index id '${entry.missionId}'`);
-				entries.push({ ...entry, stale: false });
+				const projection: MissionIndexEntry = {
+					...entry,
+					title: record.title,
+					status: record.status,
+					updatedAt: record.updatedAt,
+				};
+				delete projection.lastRunId;
+				const lastRunId = record.runs.at(-1)?.runId;
+				if (lastRunId) projection.lastRunId = lastRunId;
+				entries.push({ ...projection, stale: false });
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 					try {
