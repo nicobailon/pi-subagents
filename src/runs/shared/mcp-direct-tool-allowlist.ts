@@ -173,8 +173,9 @@ function usesBuiltinMcp(host: McpRuntimeSnapshotHost | undefined): host is McpRu
 }
 
 /**
- * Pi names built-in MCP tools `mcp__<server>__<tool>` with invalid characters replaced by `_`,
- * in the namespace `mcp__<server>`. An overlong name, or one an earlier tool already took (`a_b`
+ * Pi names built-in MCP tools `mcp__<server>__<tool>` with everything but `[A-Za-z0-9_]` replaced
+ * by `_`, in the namespace `mcp__<server>` with `-` replaced by `_`. Selectors name the raw server
+ * and tool. An overlong name, or one an earlier tool already took (`a_b`
  * before `a.b`), gets a suffix hashed from the raw server and tool (Pi's `createMcpToolName`), so
  * that suffixed name identifies the tool. The unsuffixed name may belong to another raw tool; the
  * child checks each granted tool's raw identity before it exposes the tool.
@@ -185,7 +186,7 @@ function resolveBuiltinMcpSelections(selectors: string[], tools: readonly McpHos
 	for (const selector of selectors) {
 		const slash = selector.indexOf("/");
 		const server = slash === -1 ? selector : selector.slice(0, slash);
-		const inServer = tools.filter((tool) => tool.namespace?.name === `mcp__${server}`);
+		const inServer = tools.filter((tool) => tool.namespace?.name === `mcp__${server.replace(/-/g, "_")}`);
 		const toolName = slash === -1 ? undefined : builtinMcpToolNames(server, selector.slice(slash + 1)).find((name) => inServer.some((tool) => tool.name === name));
 		const matches = inServer.filter((tool) => tool.exposure !== "hidden" && (slash === -1 || tool.name === toolName));
 		if (matches.length === 0) unresolvedSelectors.push(selector);
@@ -198,7 +199,7 @@ function resolveBuiltinMcpSelections(selectors: string[], tools: readonly McpHos
 
 /** The names Pi's `createMcpToolName` can give a raw tool, the hash-suffixed one first. */
 function builtinMcpToolNames(server: string, tool: string): string[] {
-	const name = `mcp__${server}__${tool}`.replace(/[^A-Za-z0-9_-]/g, "_");
+	const name = `mcp__${server}__${tool}`.replace(/[^A-Za-z0-9_]/g, "_");
 	const hash = createHash("sha256").update(`${server}\0${tool}`).digest("hex").slice(0, 8);
 	const suffixed = `${name.slice(0, 64 - hash.length - 1)}_${hash}`;
 	return name.length <= 64 ? [suffixed, name] : [suffixed];

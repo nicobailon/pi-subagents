@@ -7,6 +7,7 @@
 - Headless sessions now deliver goal-mission notices even when draining background work fails, while preserving the drain rejection for callers. Thanks to [@quifox](https://github.com/quifox) for [#2605](https://github.com/nicobailon/pi-subagents/pull/2605).
 - A damaged linked-run status or mission state no longer prevents healthy goal missions from receiving continuation notices. The failing mission is reported separately. Thanks to [@quifox](https://github.com/quifox) for [#2604](https://github.com/nicobailon/pi-subagents/pull/2604).
 - On Linux, zombie runners no longer leave runs marked running or workflow reattachment waiting for an unpublished result when their recorded PID namespace matches the observer. Uncertain PID identities are still handled conservatively. Thanks to [@quifox](https://github.com/quifox) for [#2606](https://github.com/nicobailon/pi-subagents/pull/2606).
+- With Pi's built-in MCP, `mcp:` selectors whose server or tool name contains `-`, such as `mcp:srv/get-item` or `mcp:my-docs`, failed with "selects MCP tools that Pi's built-in MCP does not offer". Pi replaces `-` with `_` in the tool name and namespace (`mcp__srv__get_item`), and pi-subagents now does the same when it looks the tool up. Selectors keep naming the server and tool as the server reports them. Thanks to [@sheurich](https://github.com/sheurich) for [#2607](https://github.com/nicobailon/pi-subagents/issues/2607).
 
 ## [0.74.0] - 2026-09-30
 

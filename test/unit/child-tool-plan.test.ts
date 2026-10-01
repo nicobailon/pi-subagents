@@ -59,13 +59,13 @@ describe("child tool plan with Pi built-in MCP", () => {
 		assert.deepEqual(plan.effectiveMcpTools, ["mcp__srv__a_b_df0974cd"]);
 	});
 
-	it("does not apply the adapter's legacy underscore ceiling names to built-in tools", () => {
+	it("resolves a raw hyphenated selector to the name and namespace Pi gives the tool", () => {
 		const plan = resolvePiLaunchToolPlan({
-			mcpDirectTools: ["my-docs/fetch"],
-			capabilityCeiling: { version: 1, allowedTools: ["mcp__my_docs__fetch"], sources: ["test"] },
-			runtimeSnapshotHost: mcpHost("builtin:mcp", [{ name: "mcp__my-docs__fetch", exposure: "codemode", namespace: { name: "mcp__my-docs" } }]),
+			mcpDirectTools: ["my-docs/get-item"],
+			capabilityCeiling: { version: 1, allowedTools: ["mcp__my_docs__get_item"], sources: ["test"] },
+			runtimeSnapshotHost: mcpHost("builtin:mcp", [{ name: "mcp__my_docs__get_item", exposure: "codemode", namespace: { name: "mcp__my_docs" } }]),
 		});
-		assert.deepEqual(plan.builtinMcpTools, []);
+		assert.deepEqual(plan.builtinMcpTools, [{ name: "mcp__my_docs__get_item", selector: "my-docs/get-item" }]);
 	});
 
 	it("fails a launch whose selector matches no offered tool", () => {
