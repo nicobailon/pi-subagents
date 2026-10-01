@@ -524,7 +524,7 @@ function spawnParams(params: unknown, options: RegisterSubagentRpcBridgeOptions)
 	const { script, ...input } = assertRecordParams(params, "spawn");
 	if (Object.hasOwn(input, "workflowScript")) throw new SubagentRpcError("invalid_params", "RPC spawn workflowScript was removed; pass inline script text as script.");
 	if (Object.hasOwn(input, "workflowScriptPath")) throw new SubagentRpcError("invalid_params", "RPC spawn workflowScriptPath was removed; pass the file as workflow: \"./path/to/script.js\".");
-	if (input.workflow === true) throw new SubagentRpcError("invalid_params", "RPC spawn has no reply block for workflow: true; pass inline script text as script or a file as workflow: \"./path/to/script.js\".");
+	if (input.workflow === true || input.workflow === "true") throw new SubagentRpcError("invalid_params", "RPC spawn has no reply block for workflow: true; pass inline script text as script or a file as workflow: \"./path/to/script.js\".");
 	if (script !== undefined) {
 		if (typeof script !== "string" || !script.trim()) throw new SubagentRpcError("invalid_params", "RPC spawn script must be a non-empty string.");
 		if (input.workflow !== undefined) throw new SubagentRpcError("invalid_params", "RPC spawn script cannot be combined with workflow.");
