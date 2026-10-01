@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Codex child context now preserves `call_id|item_id` tool identities when both parts are nonempty, use only letters, digits, `_` or `-`, and are at most 64 characters each. Malformed or oversized IDs still use the deterministic bounded fallback. (#2623)
 - An invalid value for any config key no longer silently drops `authorityPolicy`, `permissions`, or `toolBudget`. When the config file sets one of them, loading now fails closed instead of falling back to an empty config that allows actions or tools those settings forbid. (#2622)
 - The global mission list now reads title, status, update time, and latest run ID from each readable mission record. A stale index pointer therefore no longer makes a successfully updated mission appear out of date; listing still does not rewrite the pointer. Thanks to [@quifox](https://github.com/quifox) for [#2618](https://github.com/nicobailon/pi-subagents/pull/2618).
 - Loading or checking a saved subagent profile now rejects malformed `machine` placement values. Loading validates before writing settings and normalizes valid strings using the same limits as agent definitions and overrides. `machine: false` still clears a pin, and an omitted machine continues to preserve an existing string pin. Thanks to [@quifox](https://github.com/quifox) for [#2619](https://github.com/nicobailon/pi-subagents/pull/2619).
