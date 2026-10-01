@@ -127,6 +127,13 @@ describe("model response identity", () => {
 			"anthropic/claude-sonnet-4": ["gateway-model"],
 		}) ?? "", /model_verification_failed/);
 	});
+
+	it("verifies a virtual-model child against its exact selection, not the dispatched model", () => {
+		assert.equal(formatSubagentModelVerificationError("openai/gpt-5-mini:high", "anthropic/claude-sonnet-4", models, undefined, "openai/gpt-5-mini"), undefined);
+		assert.match(formatSubagentModelVerificationError("openai/gpt-5-mini", "gpt-5-mini", models, undefined, "other-router/gpt-5-mini") ?? "", /model_verification_failed.*observed 'other-router\/gpt-5-mini'/);
+		assert.match(formatSubagentModelVerificationError("openai/gpt-5-mini", "gpt-5-mini", models, undefined, "gpt-5-mini") ?? "", /model_verification_failed/);
+		assert.match(formatSubagentModelVerificationError("openai/gpt-5-mini", "anthropic/claude-sonnet-4", models) ?? "", /model_verification_failed/);
+	});
 });
 
 describe("context overflow classification", () => {

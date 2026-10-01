@@ -514,7 +514,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				if (event.message.model) {
 					model = event.message.model;
 					if (input.expectedModelForVerification && !hasToolCall) {
-						const modelVerificationError = formatSubagentModelVerificationError(input.expectedModelForVerification, event.message.model, input.modelVerificationRegistry, input.modelResponseAliases);
+						const modelVerificationError = formatSubagentModelVerificationError(input.expectedModelForVerification, event.message.model, input.modelVerificationRegistry, input.modelResponseAliases, session?.virtualModelId);
 						if (modelVerificationError && !error) error = modelVerificationError;
 					}
 				}

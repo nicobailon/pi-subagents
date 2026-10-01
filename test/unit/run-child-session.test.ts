@@ -72,3 +72,26 @@ it("reports the created child's context window before prompting", { timeout: 10_
 	assert.deepEqual(reported, [1_050_000]);
 	assert.equal(promptedAfterReport, true);
 });
+
+it("verifies a virtual-model child against its selection and keeps the dispatched model", { timeout: 10_000 }, async () => {
+	let listener: ((event: never) => void) | undefined;
+	const session: ChildSession = {
+		subscribe(next) { listener = next as typeof listener; return () => {}; },
+		async prompt() {
+			listener?.({ type: "message_end", message: { role: "assistant", model: "gpt-6.1-sol", stopReason: "stop", content: [{ type: "text", text: "done" }] } } as never);
+		},
+		async steer() {}, async followUp() {}, async abort() {}, async dispose() {},
+		messages: [], sessionId: "virtual-session", modelId: "router/auto", virtualModelId: "router/auto",
+	};
+	const result = await runChildSession({
+		factory: { create: async () => session, async dispose() {} },
+		launch,
+		prompt: "route",
+		appendChildEvent() {}, writeOutputLine() {},
+		expectedModelForVerification: "router/auto:medium",
+		modelVerificationRegistry: [{ provider: "router", id: "auto", fullId: "router/auto" }],
+	});
+	assert.equal(result.error, undefined);
+	assert.equal(result.exitCode, 0);
+	assert.equal(result.model, "gpt-6.1-sol");
+});

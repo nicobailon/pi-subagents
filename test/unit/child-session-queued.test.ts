@@ -191,3 +191,41 @@ describe("default factory queued-message probe", () => {
 		assert.equal(childSessionHasQueuedMessages(child), true);
 	});
 });
+
+describe("default factory virtual model selection", () => {
+	it("reports the live selection only when Pi marks it virtual", async () => {
+		const session = {
+			model: { provider: "router", id: "auto", api: "openai-responses" } as { provider: string; id: string; api: string },
+			bindExtensions: async () => {},
+			dispose() {},
+			extensionRunner: { hasHandlers: () => false },
+			subscribe: () => () => {},
+			messages: [],
+			sessionId: "virtual",
+		};
+		const factory = createDefaultChildSessionFactory({
+			loadPiCodingAgent: async () => ({
+				ModelRuntime: { create: async () => ({}) },
+				SettingsManager: { create: () => ({}) },
+				DefaultResourceLoader: class { async reload() {} },
+				SessionManager: { inMemory: () => ({}) },
+				resolveCliModel: () => ({}),
+				createAgentSession: async () => ({ session }),
+			} as unknown as PiCodingAgentModule),
+		});
+		const child = await factory.create({
+			cwd: process.cwd(),
+			storage: { kind: "memory" },
+			extensionPaths: [],
+			ambientExtensions: false,
+			hooks: [],
+			noSkills: true,
+			noContextFiles: true,
+			runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+		});
+		assert.equal(child.virtualModelId, undefined);
+		session.model = { provider: "router", id: "auto", api: "pi-virtual" };
+		assert.equal(child.virtualModelId, "router/auto");
+		assert.equal(child.modelId, "router/auto");
+	});
+});
