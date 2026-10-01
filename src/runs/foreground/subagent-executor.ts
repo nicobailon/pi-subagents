@@ -4686,7 +4686,11 @@ function workflowOutputPathMappingSummary(children: WorkflowScriptChildResult[])
 }
 
 function workflowDetailsResults(children: WorkflowScriptChildResult[]): SingleResult[] {
-	return children.flatMap((child) => (child.results ?? []).map((result) => result.workflowKey ? result : { ...result, workflowKey: child.key }));
+	return children.flatMap((child) => (child.results ?? []).map((result) => ({
+		...result,
+		workflowKey: result.workflowKey ?? child.key,
+		...(child.runId && !result.runId ? { runId: child.runId } : {}),
+	})));
 }
 
 function workflowSteerReceipt(key: string, result: AgentToolResult<Details>): WorkflowSteerResult {

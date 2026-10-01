@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { formatTokens } from "../shared/formatters.ts";
-import { DIRS, SLASH_RESULT_TYPE, type Details, type SingleResult, type SubagentState, type Usage } from "../shared/types.ts";
+import { DIRS, SLASH_RESULT_TYPE, type Details, type SubagentState, type Usage } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { readWorkflowReceipt } from "../workflows/workflow-receipt.ts";
 import { resolveSlashMessageDetails } from "./slash-live-state.ts";
@@ -191,8 +191,7 @@ export function collectSubagentCost(
 		// An async launch result has no child results; its usage lands in run artifacts.
 		else if (details.asyncId && details.results.length === 0) asyncRunIds.add(details.asyncId);
 		for (const result of details.results) {
-			const resultRunId = (result as SingleResult & { runId?: unknown }).runId;
-			addChild({ agent: result.agent, runId: typeof resultRunId === "string" ? resultRunId : undefined, usage: usageFromValue(result.usage), sessionFile: result.sessionFile });
+			addChild({ agent: result.agent, runId: typeof result.runId === "string" ? result.runId : undefined, usage: usageFromValue(result.usage), sessionFile: result.sessionFile });
 		}
 		for (const completion of details.completions ?? []) {
 			if (completion.mode === "workflow") workflowRunIds.add(completion.runId);

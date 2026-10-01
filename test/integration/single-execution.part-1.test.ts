@@ -1602,6 +1602,26 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 1);
 	});
 
+	it("tags each foreground workflow result with its child run id", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first" });
+		mockPi.onCall({ output: "second" });
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"workflow-result-run-ids",
+			{
+				async: false,
+				workflowScript: `const a = await runs.run("a", { agent: "echo", task: "A" }); const b = await runs.run("b", { agent: "echo", task: "B" }); return { a: a.runId, b: b.runId };`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const value = result.details.workflow?.value as { a?: string; b?: string };
+		assert.ok(value.a && value.b && value.a !== value.b);
+		assert.deepEqual(result.details.results.map((entry) => ({ key: entry.workflowKey, runId: entry.runId })), [{ key: "a", runId: value.a }, { key: "b", runId: value.b }]);
+	});
+
 	it("executes a workflow loaded from a script path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		fs.writeFileSync(path.join(tempDir, "workflow.js"), `return runs.run("main", { agent: "echo", task: "from file" });`);
 		mockPi.onCall({ output: "loaded workflow" });

@@ -1275,6 +1275,8 @@ export interface SingleResult {
 	index: number;
 	/** Workflow child key that owns this result when returned from workflow details. */
 	workflowKey?: string;
+	/** Workflow child run id that produced this result; resumed rounds share a session file but not a run id. */
+	runId?: string;
 	agent: string;
 	task: string;
 	/** Human-readable display name for the child's own session (agent + task
