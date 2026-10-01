@@ -1654,7 +1654,12 @@ function markParallelGroupSetupFailure(input: {
 		if (!task) throw new Error(`Missing parallel task at index ${taskIndex}`);
 		const stopped = statusStep.stopped || statusStep.stopRequested || input.statusPayload.stopped;
 		const paused = !stopped && input.statusPayload.state === "paused";
+		const timedOut = !stopped && !paused && input.statusPayload.timedOut === true;
 		statusStep.status = stopped ? "stopped" : paused ? "paused" : "failed";
+		// Mirror the run-level timeout onto the step so consumers (status readers,
+		// run-history recording) see timed_out rather than a bare failure — the
+		// StepResult below already carries it, the status step must too.
+		if (timedOut) statusStep.timedOut = true;
 		statusStep.startedAt = input.failedAt;
 		statusStep.endedAt = input.failedAt;
 		statusStep.durationMs = 0;
