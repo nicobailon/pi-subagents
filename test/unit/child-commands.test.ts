@@ -18,7 +18,8 @@ async function until(predicate: () => boolean, diagnostic?: () => unknown) {
 function processAlive(pid: number) { try { process.kill(pid, 0); return true; } catch { return false; } }
 function serviceCommand(pidFile: string) {
 	const script = `${pidFile}.cjs`;
-	fs.writeFileSync(script, `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); console.log('ready'); setInterval(() => {}, 1000);`);
+	const pending = `${pidFile}.pending`;
+	fs.writeFileSync(script, `const fs = require('fs'); fs.writeFileSync(${JSON.stringify(pending)}, String(process.pid)); fs.renameSync(${JSON.stringify(pending)}, ${JSON.stringify(pidFile)}); console.log('ready'); setInterval(() => {}, 1000);`);
 	return `${JSON.stringify(process.execPath.replaceAll("\\", "/"))} ${JSON.stringify(script.replaceAll("\\", "/"))}`;
 }
 
@@ -36,6 +37,7 @@ describe("child commands using Pi's real bash backend", () => {
 			await until(() => fs.existsSync(firstPid) && fs.existsSync(secondPid), commands.state);
 			const pid1 = Number(fs.readFileSync(firstPid));
 			const pid2 = Number(fs.readFileSync(secondPid));
+			assert.ok(pid1 > 0 && pid2 > 0, `services must publish valid PIDs: ${pid1}, ${pid2}`);
 			const continued = await bash.execute("continue", { command: "printf continued" }, undefined, undefined, ctx);
 			assert.equal(continued.content[0].text, "continued");
 			const cancelled = await controlChildCommand(dir, "cancel", "first");
@@ -47,7 +49,7 @@ describe("child commands using Pi's real bash backend", () => {
 			assert.equal(commands.operate("status", "second").commands[0].state, "yielded");
 			await controlChildCommand(dir, "cancel", "second");
 			await commands.shutdown();
-			await until(() => !processAlive(pid2));
+			await until(() => !processAlive(pid2), () => ({ pid2, publishedPid: fs.readFileSync(secondPid, "utf8"), commands: commands.state() }));
 			assert.equal(readChildCommandState(dir)?.closed, true);
 		} finally { await commands.shutdown(); fs.rmSync(dir, { recursive: true, force: true }); }
 	});
