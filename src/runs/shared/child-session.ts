@@ -204,11 +204,11 @@ function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: str
 	if (index < 0) return result;
 	if (result.extensions.some((extension, otherIndex) => otherIndex !== index && extension.tools?.has("bash"))) {
 		const extensions = result.extensions.filter((_, otherIndex) => otherIndex !== index);
-		if (requiredCommandTool) {
+		if (requiredCommandTool && !extensions.some((extension) => extension.tools?.has(CHILD_COMMAND_TOOL))) {
 			const commands = result.extensions[index]!;
 			const registered = commands.tools!.get(CHILD_COMMAND_TOOL) as { definition: ToolDefinition };
 			const reason = "Native command controls are unavailable with the active custom bash backend. Use that backend's own command controls.";
-			extensions.unshift({ ...commands, tools: new Map([[CHILD_COMMAND_TOOL, { ...registered, definition: {
+			extensions.push({ ...commands, tools: new Map([[CHILD_COMMAND_TOOL, { ...registered, definition: {
 				...registered.definition, description: reason,
 				execute: async () => { throw new Error(reason); },
 			} }]]) });
@@ -399,9 +399,10 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				: await sharedRuntime(pi);
 			const agentDir = getAgentDir();
 			const commands = launch.runtime.runId && launch.runtime.agent && launch.runtime.childIndex !== undefined
-				&& (launch.tools === undefined || launch.tools.includes("bash")) && !launch.excludeTools?.includes("bash")
+				&& launch.tools?.includes("bash") && launch.tools.includes(CHILD_COMMAND_TOOL)
+				&& !launch.excludeTools?.includes("bash") && !launch.excludeTools?.includes(CHILD_COMMAND_TOOL)
 				&& typeof pi.createBashTool === "function"
-				? createChildCommandRuntime(supervisorChannelDir(launch.runtime.runId, launch.runtime.agent, launch.runtime.childIndex), (launch.tools === undefined || launch.tools.includes("subagent_command")) && !launch.excludeTools?.includes("subagent_command")) : undefined;
+				? createChildCommandRuntime(supervisorChannelDir(launch.runtime.runId, launch.runtime.agent, launch.runtime.childIndex)) : undefined;
 			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir, { projectTrusted: launch.projectTrusted });
 			// Foreground children share Pi's global theme with the parent, so reinitializing it
 			// would overwrite the parent's active light/dark appearance. Detached runners have

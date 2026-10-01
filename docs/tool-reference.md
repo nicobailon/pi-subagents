@@ -322,7 +322,7 @@ subagent({ action: "doctor" })
 
 ### Command controls
 
-Command controls target direct local native Pi children with `bash`, in foreground or async runs. They require the owning parent session, a run `id`, an explicit `index` for multi-child runs, and the exact `toolCallId` for mutations. Nested, external, and custom shell backends do not expose this controller. When `subagent_command` is explicitly required with a custom bash override, its tool name remains available for startup validation and calls return an explicit unsupported-backend error. Automatically granted observation tools remain hidden for custom backends.
+Command controls target direct local native Pi children that explicitly select both `bash` and `subagent_command`, in foreground or async runs. They require the owning parent session, a run `id`, an explicit `index` for multi-child runs, and the exact `toolCallId` for mutations. Nested, external, and custom shell backends do not expose this controller. Custom bash extensions keep their own registered `subagent_command` tool. If a custom bash backend does not provide that tool, an explicitly required `subagent_command` remains available and reports an unsupported-backend error. Native supervisor command controls are unavailable for custom backends.
 
 ```ts
 subagent({ action: "command.status", id: "<run-id>", index: 0 })
@@ -333,7 +333,7 @@ subagent({ action: "command.status", id: "<run-id>", index: 0, toolCallId: "<cal
 
 `command.yield` releases the selected blocking tool call without restarting the process. `command.cancel` aborts only that command through Pi's native bash cancellation; the child receives a tool error and can continue. `cancel_requested` acknowledges the request, while `cancelled` confirms the backend settled. A stale id never targets a later command. Run-scoped `interrupt` remains separate.
 
-Children with `bash` receive `subagent_command` unless excluded by their tool ceiling or `excludeTools`. Yielding requires this observation tool. Inside the child:
+Enable command controls by including both `bash` and `subagent_command` in the agent or call's `tools` allowlist. Tool ceilings and `excludeTools` still apply. Without this explicit selection, bash keeps its original tool schema and backend; no command controller, inbox watcher, or command-state writes are added. Inside an enabled child:
 
 ```ts
 bash({ command: "npm run dev", yieldTimeMs: 1000 })

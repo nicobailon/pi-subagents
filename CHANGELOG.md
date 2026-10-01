@@ -4,7 +4,7 @@
 
 ### Added
 
-- Local native Pi children support command-scoped `command.status`, `command.yield`, and `command.cancel` supervisor actions. Child `bash` accepts an explicit `yieldTimeMs` and returns a managed command handle; `subagent_command` observes or cancels it. Commands reuse Pi's shell backend, stay owned by the child, and are cleaned up at child exit. Unfinished commands fail completion. Thanks to [@jiuai233](https://github.com/jiuai233) for [#2598](https://github.com/nicobailon/pi-subagents/pull/2598).
+- Local native Pi children explicitly granted `bash` and `subagent_command` support command-scoped `command.status`, `command.yield`, and `command.cancel` supervisor actions. Child `bash` accepts an explicit `yieldTimeMs` and returns a managed command handle; `subagent_command` observes or cancels it. Commands reuse Pi's shell backend, stay owned by the child, and are cleaned up at child exit. Unfinished commands fail completion. Thanks to [@jiuai233](https://github.com/jiuai233) for [#2598](https://github.com/nicobailon/pi-subagents/pull/2598).
 
 ### Fixed
 

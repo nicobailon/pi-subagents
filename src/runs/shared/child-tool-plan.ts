@@ -325,7 +325,7 @@ export function resolvePiLaunchToolPlan(
 	const ceilingFilteredBuiltinTools =
 		input.tools === undefined
 			? allowedToolSet
-				? [...allowedToolSet]
+				? [...allowedToolSet].filter((tool) => tool !== "subagent_command")
 				: []
 			: (input.requireReadTool &&
 				requestedBuiltinTools.length > 0 &&
@@ -386,7 +386,6 @@ export function resolvePiLaunchToolPlan(
 		allowedToolSet !== undefined;
 	const internalTools = [
 		...(input.structuredOutput ? ["structured_output"] : []),
-		...(effectiveDeclaredBuiltinTools.includes("bash") && (!allowedToolSet || allowedToolSet.has("subagent_command")) ? ["subagent_command"] : []),
 	].filter((tool) => !excludedToolSet.has(tool));
 	const effectiveToolAllowlist = [
 		...new Set([
@@ -395,8 +394,6 @@ export function resolvePiLaunchToolPlan(
 			...internalTools,
 		]),
 	];
-	// Automatically granted command observation is optional because custom bash
-	// overrides do not expose the native controller. An explicit declaration remains required.
 	// Upward contact stays in the --tools allowlist but is not a strict
 	// requirement: children register contact_supervisor at runtime through
 	// the native supervisor channel (or pi-intercom). The pre-0.50 bridge always
@@ -409,7 +406,7 @@ export function resolvePiLaunchToolPlan(
 				...new Set([
 					...(input.tools !== undefined ? effectiveDeclaredBuiltinTools : []),
 					...(input.mcpDirectTools?.length ? effectiveMcpTools : []),
-					...internalTools.filter((tool) => tool !== "subagent_command"),
+					...internalTools,
 				].filter((tool) => tool !== "contact_supervisor" && (!legacySupervisorPairing || tool !== "intercom"))),
 			]
 		: [];

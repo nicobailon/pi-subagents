@@ -46,7 +46,7 @@ function text(result: AgentToolResult<unknown>): string {
 }
 
 /** Owns command lifetimes, not shell execution. The supplied Pi tool still executes the command. */
-export function createChildCommandRuntime(channelDir: string, canYield = true) {
+export function createChildCommandRuntime(channelDir: string) {
 	const ownerId = randomUUID();
 	const jobs = new Map<string, CommandJob>();
 	const usedIds = new Set<string>();
@@ -61,7 +61,6 @@ export function createChildCommandRuntime(channelDir: string, canYield = true) {
 		if (operation === "status" && toolCallId === undefined) return state();
 		const job = toolCallId ? jobs.get(toolCallId) : undefined;
 		if (!job) throw new Error(`No retained command '${toolCallId ?? ""}' in this child session.`);
-		if (operation === "yield" && !canYield) throw new Error("Command yielding requires subagent_command in the child tool allowlist.");
 		if (operation !== "status" && closed) throw new Error("Child command controller is closed.");
 		if (active(job)) {
 			if (operation === "yield" && job.snapshot.state === "running") {
@@ -116,15 +115,14 @@ export function createChildCommandRuntime(channelDir: string, canYield = true) {
 				...tool,
 				parameters: Type.Unsafe({ ...tool.parameters, properties: {
 					...(tool.parameters as { properties?: object }).properties,
-					...(canYield ? { yieldTimeMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 30_000, description: "Return a managed command handle after this wait; does not terminate the command. Omit to wait for completion." })) } : {}),
+					yieldTimeMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 30_000, description: "Return a managed command handle after this wait; does not terminate the command. Omit to wait for completion." })),
 				} }),
-				description: !canYield ? tool.description : `${tool.description}\nOptional yieldTimeMs returns a command handle without stopping execution. Use subagent_command to query or cancel it. Finish or cancel every command before completing the task.`,
+				description: `${tool.description}\nOptional yieldTimeMs returns a command handle without stopping execution. Use subagent_command to query or cancel it. Finish or cancel every command before completing the task.`,
 				async execute(toolCallId, params, signal, onUpdate, ctx) {
 					if (closed) throw new Error("Child command controller is closed.");
 					if (usedIds.has(toolCallId)) throw new Error(`Command id '${toolCallId}' was already used in this child session.`);
 					usedIds.add(toolCallId);
 					const { yieldTimeMs, ...args } = params as Record<string, unknown>;
-					if (yieldTimeMs !== undefined && !canYield) throw new Error("Command yielding requires subagent_command in the child tool allowlist.");
 					const controller = new AbortController();
 					const commandSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
 					let yieldResult!: () => void;

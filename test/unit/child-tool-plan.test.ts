@@ -126,17 +126,24 @@ describe("child tool plan declared tools", () => {
 	it("keeps every declared core tool, so the child registry decides what exists", () => {
 		const plan = resolvePiLaunchToolPlan({ tools: ["read", "grep", "find", "ls", "bash"], agentName: "verifier" });
 		assert.deepEqual(plan.declaredBuiltinTools, ["read", "grep", "find", "ls", "bash"]);
-		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "grep", "find", "ls", "bash", "subagent_command"]);
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "grep", "find", "ls", "bash"]);
 		assert.deepEqual(plan.requiredChildTools, ["read", "grep", "find", "ls", "bash"]);
 		assert.deepEqual(plan.warnings, []);
 	});
 
-	it("requires command observation only when explicitly declared", () => {
+	it("grants command observation only when explicitly declared", () => {
 		const automatic = resolvePiLaunchToolPlan({ tools: ["bash"] });
-		assert.deepEqual(automatic.effectiveToolAllowlist, ["bash", "subagent_command"]);
+		assert.deepEqual(automatic.effectiveToolAllowlist, ["bash"]);
 		assert.deepEqual(automatic.requiredChildTools, ["bash"]);
 		const explicit = resolvePiLaunchToolPlan({ tools: ["bash", "subagent_command"] });
 		assert.deepEqual(explicit.requiredChildTools, ["bash", "subagent_command"]);
+	});
+
+	it("does not enable command controls through a ceiling alone and honors explicit exclusions", () => {
+		const ceiling = { version: 1 as const, allowedTools: ["bash", "subagent_command"], denyExtensions: false, sources: ["test"] };
+		assert.deepEqual(resolvePiLaunchToolPlan({ capabilityCeiling: ceiling }).effectiveToolAllowlist, ["bash"]);
+		assert.deepEqual(resolvePiLaunchToolPlan({ tools: ["bash", "subagent_command"], excludeTools: ["subagent_command"] }).effectiveToolAllowlist, ["bash"]);
+		assert.deepEqual(resolvePiLaunchToolPlan({ tools: ["bash", "subagent_command"], capabilityCeiling: { ...ceiling, allowedTools: ["bash"] } }).effectiveToolAllowlist, ["bash"]);
 	});
 
 	it("adds read for lazy skill loading without an explicit declaration", () => {
@@ -233,7 +240,7 @@ describe("production launch path keeps declared child tools", () => {
 					tools: ["read", "grep", "bash"],
 				});
 				assert.deepEqual(launch.toolPlan.declaredBuiltinTools, ["read", "grep", "bash"]);
-				assert.deepEqual(launch.toolPlan.effectiveToolAllowlist, ["read", "grep", "bash", "subagent_command"]);
+				assert.deepEqual(launch.toolPlan.effectiveToolAllowlist, ["read", "grep", "bash"]);
 				assert.deepEqual(launch.toolPlan.requiredChildTools, ["read", "grep", "bash"]);
 				assert.deepEqual(launch.config.requiredTools, ["read", "grep", "bash"]);
 				assert.deepEqual(launch.warnings, []);

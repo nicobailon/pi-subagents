@@ -253,7 +253,7 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 			`Signal: ${event.message}`,
 			facts ? `Facts: ${facts}` : undefined,
 			"Hint: Inspect the running command and recent output before nudging. A queued steer does not cancel an in-flight bash call. A dev server or watch command may intentionally never return. Elapsed time alone does not prove the command is stuck.",
-			"Recovery: For a local Pi child, yield a needed persistent command or cancel the exact incorrect command, then steer the child. Query command.status to confirm the result. If command controls are unavailable, inspect partial changes and interruption scope before interrupt/resume; interrupt is run-scoped and may affect siblings.",
+			"Recovery: For a local Pi child explicitly granted subagent_command, yield a needed persistent command or cancel the exact incorrect command, then steer the child. Query command.status to confirm the result. If command controls are unavailable, inspect partial changes and interruption scope before interrupt/resume; interrupt is run-scoped and may affect siblings.",
 			...(event.toolCallId ? [
 				`Command: subagent(${JSON.stringify({ action: "command.status", id: runTarget, ...(event.index !== undefined ? { index: event.index } : {}), toolCallId: event.toolCallId })})`,
 				`Yield: subagent(${JSON.stringify({ action: "command.yield", id: runTarget, ...(event.index !== undefined ? { index: event.index } : {}), toolCallId: event.toolCallId })})`,

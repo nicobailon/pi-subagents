@@ -203,13 +203,4 @@ describe("command identities and bounded observation", () => {
 		} finally { await commands.shutdown(); fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 
-	it("disables yielding when the command observation tool is not granted", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-child-ceiling-"));
-		const commands = createChildCommandRuntime(dir, false);
-		try {
-			const bash = commands.wrap(createBashToolDefinition(dir));
-			assert.equal(bash.parameters.properties.yieldTimeMs, undefined);
-			await assert.rejects(bash.execute("not-granted", { command: "sleep 10", yieldTimeMs: 0 }, undefined, undefined, ctx), /requires subagent_command/);
-		} finally { await commands.shutdown(); fs.rmSync(dir, { recursive: true, force: true }); }
-	});
 });
