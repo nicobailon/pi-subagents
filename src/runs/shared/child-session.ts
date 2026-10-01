@@ -470,14 +470,26 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					sessionStartEvent: { type: "session_start", reason: "startup" },
 				});
 				pinChildCacheRetention(session.agent);
+				// Pi reports handler failures through onError instead of throwing, so required startup failures must be collected here.
+				const requiredStartupErrors: string[] = [];
+				let binding = true;
 				try {
 					await session.bindExtensions({
 						mode: "print",
-						onError: (error) => launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
+						onError: (error) => {
+							if (binding && requiredPaths.has(error.extensionPath)) requiredStartupErrors.push(`${error.extensionPath} (${error.event}): ${error.error}`);
+							launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error });
+						},
 					});
 				} catch (error) {
 					session.dispose();
 					throw error;
+				} finally {
+					binding = false;
+				}
+				if (requiredStartupErrors.length > 0) {
+					session.dispose();
+					throw new Error(`Required child extension failed during startup: ${requiredStartupErrors.join("; ")}`);
 				}
 				return session;
 			};

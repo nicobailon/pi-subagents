@@ -114,6 +114,35 @@ describe("default factory queued-message probe", () => {
 		assert.equal(modelResolved, false);
 	});
 
+	it("rejects a child whose required extension fails during session_start, but not one whose ordinary extension does", async () => {
+		const requiredPath = "/tmp/required-policy.mjs";
+		const ordinaryPath = "/tmp/ordinary.mjs";
+		const reported: string[] = [];
+		let disposed = 0;
+		const createFactory = (failingPath: string) => createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
+			ModelRuntime: { create: async () => ({ refresh: async () => {} }) },
+			SettingsManager: { create: () => ({}) },
+			DefaultResourceLoader: class { async reload() {} getExtensions() { return { extensions: [], errors: [], runtime: { pendingProviderRegistrations: [], pendingNativeProviderRegistrations: [] } }; } },
+			SessionManager: { inMemory: () => ({}) },
+			resolveCliModel: () => ({}),
+			createAgentSession: async () => ({
+				session: {
+					bindExtensions: async ({ onError }: { onError: (error: { extensionPath: string; event: string; error: string }) => void }) => { onError({ extensionPath: failingPath, event: "session_start", error: "policy init failed" }); },
+					dispose() { disposed++; },
+					extensionRunner: { hasHandlers: () => false },
+					subscribe: () => () => {},
+					messages: [],
+					sessionId: "policy-child",
+				},
+			}),
+		}) as unknown as PiCodingAgentModule });
+		const launch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [requiredPath, ordinaryPath], requiredExtensions: [{ id: "policy", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, onExtensionError: ({ extensionPath, event }) => { if (event === "session_start") reported.push(extensionPath); }, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] } satisfies ChildSessionLaunch;
+		await assert.rejects(() => createFactory(requiredPath).create(launch), /Required child extension failed during startup: \/tmp\/required-policy\.mjs \(session_start\): policy init failed/);
+		assert.equal(disposed, 1);
+		assert.ok(await createFactory(ordinaryPath).create(launch));
+		assert.deepEqual(reported, [requiredPath, ordinaryPath]);
+	});
+
 	it("reports no queued messages for an agent-less wrapped session", async () => {
 		const factory = createDefaultChildSessionFactory({
 			loadPiCodingAgent: async () => ({
