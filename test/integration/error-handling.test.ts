@@ -244,6 +244,44 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 		assert.match(attention?.message ?? "", /tool 'bash' open/);
 	});
 
+	it("emits attention once per long-open foreground call after an earlier attention state", async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [{ type: "tool_execution_start", toolCallId: "first", toolName: "bash", args: { command: "sleep 2" } }] },
+			{ delay: 1600, jsonl: [{ type: "tool_execution_end", toolCallId: "first", toolName: "bash" }, events.toolResult("bash", "done")] },
+			{ jsonl: [{ type: "tool_execution_start", toolCallId: "second", toolName: "bash", args: { command: "sleep 2" } }] },
+			{ delay: 1600, jsonl: [{ type: "tool_execution_end", toolCallId: "second", toolName: "bash" }, events.toolResult("bash", "done"), events.assistantMessage("Done")] },
+		] });
+		const notices: Array<{ reason?: string; toolCallId?: string }> = [];
+		const result = await runSync(tempDir, makeAgentConfigs(["worker"]), "worker", "Run commands", {
+			runId: "foreground-sequential-attention",
+			controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 100, notifyOn: ["needs_attention"] },
+			onControlEvent: (event: { reason?: string; toolCallId?: string }) => notices.push(event),
+		});
+		assert.equal(result.exitCode, 0);
+		assert.deepEqual(notices.filter((event) => event.reason === "tool_open_threshold").map((event) => event.toolCallId), ["first", "second"]);
+	});
+
+	it("emits attention once for each overlapping long-open foreground call", async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [{ type: "tool_execution_start", toolCallId: "first", toolName: "bash", args: { command: "sleep 3" } }] },
+			{ delay: 50, jsonl: [{ type: "tool_execution_start", toolCallId: "second", toolName: "bash", args: { command: "sleep 3" } }] },
+			{ delay: 2600, jsonl: [
+				{ type: "tool_execution_end", toolCallId: "first", toolName: "bash" },
+				{ type: "tool_execution_end", toolCallId: "second", toolName: "bash" },
+				events.toolResult("bash", "done"),
+				events.assistantMessage("Done"),
+			] },
+		] });
+		const notices: Array<{ reason?: string; toolCallId?: string }> = [];
+		const result = await runSync(tempDir, makeAgentConfigs(["worker"]), "worker", "Run commands", {
+			runId: "foreground-overlapping-attention",
+			controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 100, notifyOn: ["needs_attention"] },
+			onControlEvent: (event: { reason?: string; toolCallId?: string }) => notices.push(event),
+		});
+		assert.equal(result.exitCode, 0);
+		assert.deepEqual(notices.filter((event) => event.reason === "tool_open_threshold").map((event) => event.toolCallId), ["first", "second"]);
+	});
+
 	it("handles abort signal (completes faster than delay)", async () => {
 		mockPi.onCall({ steps: [
 			{ jsonl: [events.toolStart("bash", { command: "wait" })] },

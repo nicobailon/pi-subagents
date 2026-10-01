@@ -786,7 +786,7 @@ async function runSingleAttempt(
 
 		let activeLongRunningNotified = false;
 		let pendingToolResult: { tool: string; path?: string; mutates: boolean; startedAt?: number } | undefined;
-		type ActiveToolCall = { key: string; tool: string; args: string; startedAt: number; path?: string };
+		type ActiveToolCall = { attentionEmitted?: boolean; key: string; tool: string; args: string; startedAt: number; path?: string };
 		let activeToolSequence = 0;
 		const activeToolCalls = new Map<string, ActiveToolCall>();
 		const activeToolKeysByName = new Map<string, string[]>();
@@ -842,12 +842,12 @@ async function runSingleAttempt(
 			return key ? removeActiveToolCallKey(key) : undefined;
 		};
 		const openToolAttentionTarget = (now: number): ActiveToolCall | undefined => [...activeToolCalls.values()]
-			.filter((active) => shouldEmitOpenToolAttention({ config: controlConfig, currentTool: active.tool, currentToolStartedAt: active.startedAt, now }))
+			.filter((active) => !active.attentionEmitted && shouldEmitOpenToolAttention({ config: controlConfig, currentTool: active.tool, currentToolStartedAt: active.startedAt, now }))
 			.sort((left, right) => left.startedAt - right.startedAt)[0];
 		const mutatingFailures = createMutatingFailureState();
 		const mutatingFailureWindowMs = 5 * 60_000;
 		const currentToolDurationMs = (now: number) => progress.currentToolStartedAt ? Math.max(0, now - progress.currentToolStartedAt) : undefined;
-		const emitNeedsAttention = (now: number, input: { message?: string; reason?: ControlEvent["reason"]; recentFailureSummary?: string; currentTool?: string; currentPath?: string; currentToolDurationMs?: number } = {}): boolean => {
+		const emitNeedsAttention = (now: number, input: { message?: string; reason?: ControlEvent["reason"]; recentFailureSummary?: string; currentTool?: string; toolCallId?: string; currentPath?: string; currentToolDurationMs?: number } = {}): boolean => {
 			if (!controlConfig.enabled) return false;
 			const previous = progress.activityState;
 			progress.activityState = "needs_attention";
@@ -866,13 +866,14 @@ async function runSingleAttempt(
 				tokens: progress.tokens,
 				toolCount: progress.toolCount,
 				currentTool: input.currentTool ?? progress.currentTool,
+				toolCallId: input.toolCallId,
 				currentToolDurationMs: input.currentToolDurationMs ?? currentToolDurationMs(now),
 				currentPath: input.currentPath ?? progress.currentPath,
 				recentFailureSummary: input.recentFailureSummary,
 				taskPreview: task,
 			});
 			emitControlEvent(event);
-			return previous !== "needs_attention";
+			return previous !== "needs_attention" || input.reason === "tool_open_threshold";
 		};
 		const emitActiveLongRunning = (now: number, reason: ControlEvent["reason"]): boolean => {
 			if (!controlConfig.enabled || activeLongRunningNotified || progress.activityState === "needs_attention") return false;
@@ -914,13 +915,15 @@ async function runSingleAttempt(
 			if (idleState === "needs_attention") {
 				return progress.activityState === "needs_attention" ? false : emitNeedsAttention(now);
 			}
-			const toolAttentionTarget = progress.activityState !== "needs_attention" ? openToolAttentionTarget(now) : undefined;
+			const toolAttentionTarget = openToolAttentionTarget(now);
 			if (toolAttentionTarget) {
+				toolAttentionTarget.attentionEmitted = true;
 				const durationMs = Math.max(0, now - toolAttentionTarget.startedAt);
 				return emitNeedsAttention(now, {
 					message: `${agent.name} has had tool '${toolAttentionTarget.tool}' open for ${Math.floor(durationMs / 1000)}s`,
 					reason: "tool_open_threshold",
 					currentTool: toolAttentionTarget.tool,
+					toolCallId: toolAttentionTarget.key.startsWith("id:") ? toolAttentionTarget.key.slice(3) : undefined,
 					currentPath: toolAttentionTarget.path,
 					currentToolDurationMs: durationMs,
 				});

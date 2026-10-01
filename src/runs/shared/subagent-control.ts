@@ -190,7 +190,8 @@ export function shouldNotifyControlEvent(config: ResolvedControlConfig, event: C
 export function controlNotificationKey(event: ControlEvent, childIntercomTarget?: string): string {
 	const childKey = childIntercomTarget ?? (event.index !== undefined ? `${event.runId}:${event.index}` : event.runId);
 	const contextHash = createHash("sha256").update(formatControlNudge(event)).digest("hex").slice(0, 8);
-	return `${childKey}:${event.type}:${event.reason ?? "idle"}:${contextHash}`;
+	const callKey = event.reason === "tool_open_threshold" && event.toolCallId ? `:${event.toolCallId}` : "";
+	return `${childKey}:${event.type}:${event.reason ?? "idle"}${callKey}:${contextHash}`;
 }
 
 export function claimControlNotification(config: ResolvedControlConfig, event: ControlEvent, seenKeys: Set<string>, childIntercomTarget?: string): boolean {

@@ -1191,6 +1191,28 @@ setTimeout(() => process.exit(90), 15000).unref();
 		}
 	});
 
+	it("notifies once for each distinct long-open background command", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [{ type: "tool_execution_start", toolCallId: "bash-first", toolName: "bash", args: { command: "sleep 2" } }] },
+			{ delay: 2200, jsonl: [{ type: "tool_execution_end", toolCallId: "bash-first", toolName: "bash" }, events.toolResult("bash", "done")] },
+			{ jsonl: [{ type: "tool_execution_start", toolCallId: "bash-second", toolName: "bash", args: { command: "sleep 2" } }] },
+			{ delay: 2200, jsonl: [{ type: "tool_execution_end", toolCallId: "bash-second", toolName: "bash" }, events.toolResult("bash", "done"), events.assistantMessage("Done")] },
+		] });
+		const id = `async-sequential-attention-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Run commands", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+			controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 100, failedToolAttemptsBeforeAttention: 3, notifyOn: ["needs_attention"], notifyChannels: ["event", "async"] },
+		});
+		const result = await readAsyncPayload(id);
+		assert.equal(result.success, true);
+		const rows = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+		const attention = rows.filter((row) => row.type === "subagent.control" && row.event?.reason === "tool_open_threshold").map((row) => row.event.toolCallId);
+		assert.deepEqual(attention, ["bash-first", "bash-second"]);
+	});
+
 	it("background runs emit active-long-running control events from child turns", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [

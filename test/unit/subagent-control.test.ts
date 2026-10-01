@@ -18,6 +18,14 @@ const config = resolveControlConfig(undefined, {
 });
 
 describe("subagent control attention state", () => {
+	it("notifies once for each distinct long-open tool call even when notice text matches", () => {
+		const seen = new Set<string>();
+		const event = buildControlEvent({ to: "needs_attention", runId: "run", agent: "worker", reason: "tool_open_threshold", currentTool: "bash", toolCallId: "first" });
+		assert.equal(claimControlNotification(resolveControlConfig(), event, seen), true);
+		assert.equal(claimControlNotification(resolveControlConfig(), { ...event, ts: event.ts + 1000 }, seen), false);
+		assert.equal(claimControlNotification(resolveControlConfig(), { ...event, toolCallId: "second" }, seen), true);
+	});
+
 	it("marks a run as needing attention only after the idle threshold", () => {
 		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, now: 50 }), undefined);
 		assert.equal(deriveActivityState({ config, startedAt: 0, lastActivityAt: 0, turnCount: 1, now: 400 }), "needs_attention");
