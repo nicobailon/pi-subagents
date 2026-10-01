@@ -2900,7 +2900,7 @@ function materializedWidgetChildLines(job: AsyncJobState, theme: Theme, width: n
 	return lines;
 }
 
-function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"]): (tui: { requestRender(): void }, theme: Theme) => Component {
+function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"], initiallyCollapsed = false): (tui: { requestRender(): void }, theme: Theme) => Component {
 	return (tui, theme) => {
 		const container = new Container();
 		let cachedRenderWidth: number | undefined;
@@ -2908,7 +2908,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"])
 		let cachedExpanded: boolean | undefined;
 		let cachedLines: string[] | undefined;
 		let cachedCoverage = "[]";
-		let collapsed = false;
+		let collapsed = initiallyCollapsed;
 		const invalidate = (): void => {
 			cachedLines = undefined;
 			resetWidgetLayoutSession();
@@ -3080,7 +3080,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 /**
  * Render the async jobs widget
  */
-export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void {
+export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[], initiallyCollapsed = false): void {
 	if (jobs.length === 0) {
 		resetWidgetLayoutSession();
 		asyncWidgetUpdates.delete(ctx.ui);
@@ -3096,7 +3096,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[]): void
 	// component instead so progress cannot move it past other extensions' widgets.
 	const update = asyncWidgetUpdates.get(ctx.ui);
 	if (update) update(jobs);
-	else ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui));
+	else ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui, initiallyCollapsed));
 }
 
 function renderSingleCompact(

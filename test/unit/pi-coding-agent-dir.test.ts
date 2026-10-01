@@ -287,6 +287,11 @@ Package skill content.
 		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "fresh" }));
 		assert.equal(loadConfig().defaultSubagentContext, "fresh");
 
+		writeFile(configPath, JSON.stringify({ asyncWidgetCollapsed: true }));
+		assert.equal(loadConfig().asyncWidgetCollapsed, true);
+		writeFile(configPath, JSON.stringify({ asyncWidgetCollapsed: "true" }));
+		assert.deepEqual(loadConfig(), {});
+
 		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "other" }));
 		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh" or "fork"/);
 	});

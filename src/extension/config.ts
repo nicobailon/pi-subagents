@@ -172,6 +172,9 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.resultScanLogging !== undefined && config.resultScanLogging !== "all" && config.resultScanLogging !== "activity" && config.resultScanLogging !== "off") {
 		throw new Error('config.resultScanLogging must be "all", "activity", or "off"');
 	}
+	if (config.asyncWidgetCollapsed !== undefined && typeof config.asyncWidgetCollapsed !== "boolean") {
+		throw new Error("config.asyncWidgetCollapsed must be a boolean");
+	}
 	if (config.toolActivation !== undefined && config.toolActivation !== "auto" && config.toolActivation !== "dynamic" && config.toolActivation !== "eager") {
 		throw new Error('config.toolActivation must be "auto", "dynamic", or "eager"');
 	}

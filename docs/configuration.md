@@ -294,6 +294,14 @@ Prompt modes keep their fixed keys. For example, `Esc` still cancels steer text 
 
 Controls the under-editor widget for active background runs. It defaults to `true`, including when FleetView is enabled, so active work remains visible after reload. Set it to `false` to hide this widget while keeping FleetView available.
 
+## `asyncWidgetCollapsed`
+
+```json
+{ "asyncWidgetCollapsed": true }
+```
+
+Starts each newly mounted under-editor async widget in its one-line folded state. It defaults to `false`. A header click still toggles the widget, and the folded state still resets when the widget is removed or Pi reloads.
+
 ## `waitTool`
 
 ```json

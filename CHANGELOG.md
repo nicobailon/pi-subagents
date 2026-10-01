@@ -5,6 +5,7 @@
 ### Added
 
 - `schedule.create` accepts an existing `missionId`, so each scheduled workflow can reuse its mission state across fires and session restoration. Attachment follows ordinary mission lifecycle and retention rules. Mission-bound definitions use schema version 2 so older schedulers reject them instead of dropping the attachment; unbound definitions remain version 1. Thanks to [@quifox](https://github.com/quifox) for [#2616](https://github.com/nicobailon/pi-subagents/pull/2616).
+- `asyncWidgetCollapsed: true` starts newly mounted under-editor async widgets in their one-line folded state. Header clicks still toggle the widget, and the default remains unfolded. Thanks to [@unrelentingfox](https://github.com/unrelentingfox) for [#2621](https://github.com/nicobailon/pi-subagents/pull/2621).
 
 ### Fixed
 

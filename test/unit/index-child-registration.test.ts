@@ -644,6 +644,50 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("mounts an initially collapsed async widget when configured", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-async-widget-collapsed-config-"));
+		try {
+			const configDir = path.join(agentDir, "extensions", "subagent");
+			fs.mkdirSync(configDir, { recursive: true });
+			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ asyncWidgetCollapsed: true }), "utf-8");
+			const script = String.raw`
+				import registerSubagentExtension from "./index.ts";
+				const eventHandlers = new Map();
+				const handlers = new Map();
+				const events = { on(channel, handler) { eventHandlers.set(channel, handler); return () => {}; }, emit() {} };
+				const fakePi = new Proxy({
+					events,
+					on(channel, handler) { handlers.set(channel, [...(handlers.get(channel) ?? []), handler]); },
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+					sendMessage() {}, getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				let widget;
+				const ctx = {
+					cwd: process.cwd(), hasUI: true,
+					ui: {
+						setWidget(key, value) { if (key === "subagent-async") widget = value; },
+						requestRender() {}, getToolsExpanded() { return false; },
+						theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } },
+					},
+					sessionManager: { getSessionId() { return "session-widget"; }, getSessionFile() { return null; }, getEntries() { return []; } },
+					modelRegistry: { getAvailable() { return []; } },
+				};
+				registerSubagentExtension(fakePi);
+				for (const handler of handlers.get("session_start")) await handler({}, ctx);
+				eventHandlers.get("subagent:async-started")({ id: "widget-run", pid: 1, sessionId: "session-widget", mode: "single", agent: "worker", asyncDir: "/tmp/widget-run" });
+				if (!widget) throw new Error("async widget was not mounted");
+				const component = widget({ requestRender() {} }, ctx.ui.theme);
+				const lines = component.render(120);
+				if (lines.length !== 1) throw new Error("configured collapsed widget must render one line: " + JSON.stringify(lines));
+				for (const handler of handlers.get("session_shutdown")) await handler();
+			`;
+			const env = parentToolEnv(agentDir);
+			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("shows active async work in the under-editor widget when FleetView is enabled", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-async-widget-fleet-"));
 		try {
