@@ -187,7 +187,8 @@ export function collectSubagentCost(
 		if (parentUsage) addUsage(parent, parentUsage);
 		const details = detailsFromSessionEntry(entry);
 		if (!details) continue;
-		if (details.mode === "workflow" && details.runId) workflowRunIds.add(details.runId);
+		// Only async workflows persist a receipt file; foreground workflow child usage is already in results.
+		if (details.mode === "workflow" && details.runId && details.asyncId) workflowRunIds.add(details.runId);
 		// An async launch result has no child results; its usage lands in run artifacts.
 		else if (details.asyncId && details.results.length === 0) asyncRunIds.add(details.asyncId);
 		for (const result of details.results) {

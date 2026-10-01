@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `/subagent-cost` and the RPC `cost` method no longer log `Workflow receipt '<id>' was not found.` for every foreground workflow in the session. Only async workflows write a receipt file, so cost collection no longer looks for one for foreground workflows, whose child usage is already in their results. Unreadable async workflow receipts are still logged. (#2614)
 - Headless sessions now deliver goal-mission notices even when draining background work fails, while preserving the drain rejection for callers. Thanks to [@quifox](https://github.com/quifox) for [#2605](https://github.com/nicobailon/pi-subagents/pull/2605).
 - A damaged linked-run status or mission state no longer prevents healthy goal missions from receiving continuation notices. The failing mission is reported separately. Thanks to [@quifox](https://github.com/quifox) for [#2604](https://github.com/nicobailon/pi-subagents/pull/2604).
 - On Linux, zombie runners no longer leave runs marked running or workflow reattachment waiting for an unpublished result when their recorded PID namespace matches the observer. Uncertain PID identities are still handled conservatively. Thanks to [@quifox](https://github.com/quifox) for [#2606](https://github.com/nicobailon/pi-subagents/pull/2606).

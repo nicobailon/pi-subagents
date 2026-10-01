@@ -1,7 +1,51 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { describe, it } from "node:test";
+
 import { collectSubagentCost } from "../../src/slash/subagent-cost.ts";
-import { SLASH_RESULT_TYPE } from "../../src/shared/types.ts";
+import { DIRS, SLASH_RESULT_TYPE } from "../../src/shared/types.ts";
+
+function collectWithErrors(branch: unknown[]) {
+	const ctx = { cwd: process.cwd(), sessionManager: { getBranch: () => branch, getSessionFile: () => undefined } };
+	const errors: unknown[][] = [];
+	const originalError = console.error;
+	console.error = (...args: unknown[]) => { errors.push(args); };
+	try {
+		const report = collectSubagentCost(ctx as never, { baseCwd: process.cwd(), artifactDirPreference: "session" } as never);
+		return { report, errors };
+	} finally {
+		console.error = originalError;
+	}
+}
+
+describe("collectSubagentCost workflow receipts", () => {
+	it("does not read receipts for foreground workflows", () => {
+		const usage = { input: 12, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0.2, turns: 1 };
+		const { report, errors } = collectWithErrors([
+			{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "workflow", runId: `foreground-${process.pid}`, results: [{ agent: "scout", usage }] } } },
+		]);
+		assert.deepEqual(errors, []);
+		assert.equal(report.children.length, 1);
+		assert.equal(report.childTotal.input, 12);
+	});
+
+	it("still reports unreadable async workflow receipts", () => {
+		const workflowRunId = `async-malformed-${process.pid}`;
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), "{not json", "utf-8");
+		try {
+			const { errors } = collectWithErrors([
+				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "workflow", runId: workflowRunId, asyncId: workflowRunId, results: [] } } },
+			]);
+			assert.equal(errors.length, 1);
+			assert.match(String(errors[0]![0]), new RegExp(`Failed to resolve async subagent usage for '${workflowRunId}'`));
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+});
 
 describe("collectSubagentCost", () => {
 	it("counts each resumed foreground workflow round once even when rounds share a session file", () => {

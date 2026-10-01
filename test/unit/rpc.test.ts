@@ -1324,7 +1324,7 @@ describe("subagent extension RPC bridge", () => {
 						getSessionFile: () => sessionFile,
 						getBranch: () => [{
 							type: "message",
-							message: { role: "toolResult", toolName: "subagent", details: { mode: "workflow", runId: workflowRunId, results: [] } },
+							message: { role: "toolResult", toolName: "subagent", details: { mode: "workflow", runId: workflowRunId, asyncId: workflowRunId, results: [] } },
 						}],
 					},
 				}) as any,
