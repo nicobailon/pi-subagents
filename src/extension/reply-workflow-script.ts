@@ -26,7 +26,7 @@ export function readReplyWorkflowScript(sessionManager: Pick<ExtensionContext["s
 
 function scriptFromReply(content: AssistantMessage["content"]): ReplyWorkflowScript {
 	const replyCalls = content.filter((block) => block.type === "toolCall" && block.name === "subagent"
-		&& block.arguments?.workflow === true).length;
+		&& (block.arguments?.workflow === true || block.arguments?.workflow === "true")).length;
 	if (replyCalls > 1) return { error: `This reply has ${replyCalls} subagent calls with workflow: true; a reply can carry only one. Pass other scripts as workflow file paths.` };
 	const text = content.flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
 	const { blocks, unclosed } = workflowBlocks(text);

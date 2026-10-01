@@ -1577,6 +1577,31 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 1);
 	});
 
+	it("treats workflow: \"true\" from MCP clients as the reply block, not a resource named 'true' (#2600)", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "reply workflow" });
+		const ctx = makeMinimalCtx(tempDir);
+		const reply = {
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "text", text: "```js workflow\nconst child = await runs.run(\"main\", { agent: \"echo\", task: args.task });\nreturn child.output;\n```" },
+					{ type: "toolCall", id: "call-string-true", name: "subagent", arguments: { workflow: "true" } },
+				],
+			},
+		};
+		const replyCtx = { ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => [reply] } };
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const validation = await executor.executePublic("call-string-true", { action: "validate", workflow: "true", args: { task: "from reply" } }, new AbortController().signal, undefined, replyCtx);
+		assert.equal(validation.isError, undefined, validation.content[0]?.text ?? "reply workflow validation failed");
+
+		const result = await executor.executePublic("call-string-true", { workflow: "true", args: { task: "from reply" }, async: false }, new AbortController().signal, undefined, replyCtx);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "reply workflow failed");
+		assert.equal(result.details.workflow?.value, "reply workflow");
+		assert.equal(mockPi.callCount(), 1);
+	});
+
 	it("executes a workflow loaded from a script path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		fs.writeFileSync(path.join(tempDir, "workflow.js"), `return runs.run("main", { agent: "echo", task: "from file" });`);
 		mockPi.onCall({ output: "loaded workflow" });

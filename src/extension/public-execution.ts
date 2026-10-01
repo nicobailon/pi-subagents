@@ -101,6 +101,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	if (params.workflowScriptPath !== undefined) {
 		return { ok: false, error: REMOVED_WORKFLOW_SCRIPT_PATH, mode: params.action === undefined ? "workflow" : "management" };
 	}
+	// Some MCP clients send the boolean branch of the workflow union as the string "true" (#2600).
+	// Coerce it here so no path can resolve it as a named resource or script file called "true".
+	if (params.workflow === "true") params = { ...params, workflow: true };
 	const workflow = params.workflow;
 	if (workflow !== undefined && workflow !== true && (typeof workflow !== "string" || !workflow.trim())) {
 		return { ok: false, error: "workflow must be true (the ```js workflow block in this reply), a script path containing '/', or a named workflow resource.", mode: "workflow" };
