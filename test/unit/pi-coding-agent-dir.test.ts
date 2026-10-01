@@ -9,7 +9,7 @@ import { handleCreate } from "../../src/agents/agent-management.ts";
 import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../../src/agents/skills.ts";
 import { loadConfig, updateConfig } from "../../src/extension/config.ts";
 import { diagnoseIntercomBridge, resolveIntercomBridge } from "../../src/intercom/intercom-bridge.ts";
-import { loadRunsForAgent, recordRun } from "../../src/runs/shared/run-history.ts";
+import { backgroundRunHistoryTask, loadRunsForAgent, recordRun } from "../../src/runs/shared/run-history.ts";
 import { cleanupAllArtifactDirs, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 import { getAgentDir, getConfigDirName, getProjectConfigDir, resolveConfigDirName } from "../../src/shared/utils.ts";
@@ -489,5 +489,20 @@ Package skill content.
 		assert.equal(bridge.active, true);
 		assert.equal(bridge.extensionDir, "native:pi-subagents-supervisor-channel");
 		assert.match(bridge.instruction, /Native bridge for main/);
+	});
+
+	it("backgroundRunHistoryTask maps single and multi-step runs to a hashable task string", () => {
+		// Single step: the task text feeds the taskHash (redacted on disk), same as foreground.
+		assert.equal(backgroundRunHistoryTask([{ task: "fix the flaky test" }], "single"), "fix the flaky test");
+		// launchBindingTask (worktree-bound copy) wins when present.
+		assert.equal(
+			backgroundRunHistoryTask([{ task: "original", launchBindingTask: "bound COPY path" }], "single"),
+			"bound COPY path",
+		);
+		// Multi-step runs never leak per-step prompts: the census key is the mode label.
+		assert.equal(backgroundRunHistoryTask([{ task: "a" }, { task: "b" }], "parallel"), "parallel");
+		assert.equal(backgroundRunHistoryTask([{ task: "a" }, { task: "b" }], "chain"), "chain");
+		// Missing/empty task falls back rather than producing an empty hash input.
+		assert.equal(backgroundRunHistoryTask([{ task: "" }], "single"), "single");
 	});
 });

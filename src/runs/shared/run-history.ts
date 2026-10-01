@@ -133,6 +133,17 @@ function appendPrivateHistoryLine(historyPath: string, line: string): void {
 	}
 }
 
+export function backgroundRunHistoryTask(steps: readonly unknown[], resultMode: string): string {
+	const step = steps.length === 1 && typeof steps[0] === "object" && steps[0] !== null
+		? (steps[0] as { task?: unknown; launchBindingTask?: unknown })
+		: undefined;
+	if (step) {
+		const task = typeof step.launchBindingTask === "string" && step.launchBindingTask ? step.launchBindingTask : step.task;
+		if (typeof task === "string" && task) return task;
+	}
+	return resultMode || "run";
+}
+
 export function recordRun(
 	agent: string,
 	task: string,

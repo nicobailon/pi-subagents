@@ -99,6 +99,7 @@ import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { backgroundRunHistoryTask, recordRun } from "../shared/run-history.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import {
 	createMutatingFailureState,
@@ -5076,6 +5077,24 @@ export async function runSubagent(
 			totalCost: finalTotalCost,
 			usageBudget: statusPayload.usageBudget,
 		}),
+	);
+	// run-history parity with the foreground executor (subagent-executor.ts): without
+	// this, every async launch is invisible to the per-agent run census, because
+	// asyncByDefault routes all subagent tool calls through this runner. Paused runs
+	// record here too (outcome "interrupted", matching foreground); a later resume
+	// that reaches a new terminal state records again — one entry per attempt, the
+	// same census semantics an interrupted foreground rerun produces.
+	recordRun(
+		agentName,
+		backgroundRunHistoryTask(steps, resultMode),
+		statusPayload.state === "complete" ? 0 : 1,
+		runEndedAt - overallStartTime,
+		{
+			stopped,
+			interrupted,
+			timedOut,
+			processSignal: results.find((result) => result.processSignal)?.processSignal ?? null,
+		},
 	);
 	writeRunLog(logPath, omitUndefinedProperties({
 		id,
