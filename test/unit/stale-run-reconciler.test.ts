@@ -34,7 +34,7 @@ describe("async stale-run reconciliation", () => {
 		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
 	});
 
-	it("repairs a recent Linux zombie even when kill(pid, 0) succeeds", { skip: process.platform !== "linux", timeout: 10_000 }, async () => {
+	it("repairs a recent Linux zombie only with a verified PID namespace", { skip: process.platform !== "linux", timeout: 10_000 }, async () => {
 		const root = tempRoot("pi-stale-run-zombie-");
 		const script = String.raw`
 			const { spawn } = require("node:child_process");
@@ -60,23 +60,43 @@ describe("async stale-run reconciliation", () => {
 			}
 			assert.match(stat, /\(pi\) zombie\) Z /);
 			assert.equal(process.kill(pid, 0), true);
-			assert.equal(checkPidLiveness(pid), "dead");
+			assert.equal(checkPidLiveness(pid, process.kill, true), "dead");
+			const scope = fs.readlinkSync("/proc/self/ns/pid", "utf-8").trim();
 			const now = Date.now();
-			const asyncDir = path.join(root, "run-zombie");
 			const resultsDir = path.join(root, "results");
-			writeStatus(asyncDir, {
-				runId: "run-zombie", sessionId: "zombie-session", mode: "single", state: "running", pid,
-				startedAt: now - 100, lastUpdate: now - 100,
-				steps: [{ agent: "worker", status: "running", startedAt: now - 100 }],
-			});
-			const repaired = reconcileAsyncRun(asyncDir, { resultsDir, now: () => now });
-			assert.equal(repaired.repaired, true);
-			assert.equal(repaired.status?.state, "failed");
-			const resultPath = path.join(resultsDir, "run-zombie.json");
-			const receipt = fs.readFileSync(resultPath, "utf-8");
-			assert.equal(JSON.parse(receipt).state, "failed");
-			assert.equal(reconcileAsyncRun(asyncDir, { resultsDir, now: () => now + 100 }).repaired, false);
-			assert.equal(fs.readFileSync(resultPath, "utf-8"), receipt);
+			for (const scenario of [
+				{ name: "matching", recorded: scope, observed: scope, immediate: true },
+				{ name: "missing-recorded", recorded: undefined, observed: scope, immediate: false },
+				{ name: "different", recorded: "pid:[other]", observed: scope, immediate: false },
+				{ name: "missing-observed", recorded: scope, observed: undefined, immediate: false },
+				{ name: "both-missing", recorded: undefined, observed: undefined, immediate: false },
+			]) {
+				const runId = `run-zombie-${scenario.name}`;
+				const asyncDir = path.join(root, runId);
+				writeStatus(asyncDir, {
+					runId, sessionId: "zombie-session", mode: "single", state: "running", pid,
+					...(scenario.recorded !== undefined ? { pidNamespaceScope: scenario.recorded } : {}),
+					startedAt: now - 100, lastUpdate: now - 100,
+					steps: [{ agent: "worker", status: "running", startedAt: now - 100 }],
+				});
+				const options = { resultsDir, pidNamespaceScope: () => scenario.observed, now: () => now };
+				const repaired = reconcileAsyncRun(asyncDir, options);
+				assert.equal(repaired.repaired, scenario.immediate, scenario.name);
+				assert.equal(repaired.status?.state, scenario.immediate ? "failed" : "running", scenario.name);
+				const resultPath = path.join(resultsDir, `${runId}.json`);
+				assert.equal(fs.existsSync(resultPath), scenario.immediate, scenario.name);
+				if (!scenario.immediate) {
+					const stale = reconcileAsyncRun(asyncDir, { ...options, staleAlivePidMs: 1000, now: () => now + 2000 });
+					assert.equal(stale.repaired, true, scenario.name);
+					assert.equal(stale.status?.state, "failed", scenario.name);
+					assert.match(stale.message ?? "", /status has not updated for 2100ms.*PID ownership is unverified/);
+				}
+				const receipt = fs.readFileSync(resultPath, "utf-8");
+				assert.equal(JSON.parse(receipt).state, "failed");
+				assert.equal(reconcileAsyncRun(asyncDir, options).repaired, false);
+				assert.equal(fs.readFileSync(resultPath, "utf-8"), receipt);
+			}
+			assert.equal(checkPidLiveness(pid), "alive", "unscoped callers retain signal-only probing");
 		} finally {
 			parent.stdin.end("reap");
 			await closed;
