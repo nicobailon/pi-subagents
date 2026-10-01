@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -126,6 +127,59 @@ describe("awaitExistingAsyncRun", () => {
 		assert.equal(outcome.status, "unavailable");
 		assert.match(outcome.status === "unavailable" ? outcome.reason : "", /exited without publishing a result/);
 		assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "running");
+	});
+
+	it("ends a zombie wait only when the runner's PID namespace is verified", { skip: process.platform !== "linux", timeout: 10_000 }, async () => {
+		const script = String.raw`
+			const { spawn } = require("node:child_process");
+			const fs = require("node:fs");
+			const child = spawn(process.execPath, ["-e", 'process.title = "pi) zombie"; process.exit(0);'], { stdio: "ignore" });
+			process.stdout.write(String(child.pid) + "\n");
+			fs.readSync(0, Buffer.alloc(1), 0, 1, null);
+		`;
+		const parent = spawn(process.execPath, ["--eval", script], { stdio: ["pipe", "pipe", "pipe"] });
+		const closed = once(parent, "close");
+		parent.stdin.on("error", () => {});
+		try {
+			const [output] = await once(parent.stdout, "data", { signal: AbortSignal.timeout(5_000) });
+			const pid = Number(String(output).trim());
+			assert.ok(Number.isSafeInteger(pid) && pid > 0);
+			const deadline = Date.now() + 5_000;
+			let stat = "";
+			while (Date.now() < deadline) {
+				stat = fs.readFileSync(`/proc/${pid}/stat`, "utf-8");
+				if (stat[stat.lastIndexOf(") ") + 2] === "Z") break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			assert.match(stat, /\(pi\) zombie\) Z /);
+			assert.equal(process.kill(pid, 0), true);
+			const scope = fs.readlinkSync("/proc/self/ns/pid", "utf-8").trim();
+			for (const scenario of [
+				{ name: "matching", recorded: scope, exited: true },
+				{ name: "missing-recorded", recorded: undefined, exited: false },
+				{ name: "different", recorded: "pid:[other]", exited: false },
+			]) {
+				const runId = `zombie-${scenario.name}`;
+				const asyncDir = childDir(runId);
+				writeStatus(asyncDir, { pid, ...(scenario.recorded !== undefined ? { pidNamespaceScope: scenario.recorded } : {}) });
+				const statusPath = path.join(asyncDir, "status.json");
+				const before = fs.readFileSync(statusPath);
+				const publication = scenario.exited ? undefined : setTimeout(() => writeResult(asyncDir, "late output"), 50);
+				try {
+					const outcome = await awaitExistingAsyncRun(asyncDir, runId, AbortSignal.timeout(1500))
+						.catch((error) => ({ status: "aborted" as const, reason: String(error) }));
+					assert.equal(outcome.status, scenario.exited ? "unavailable" : "settled", scenario.name);
+					if (outcome.status === "unavailable") assert.match(outcome.reason, /exited without publishing a result/);
+					if (outcome.status === "settled") assert.equal(outcome.result.output, "late output");
+					assert.deepEqual(fs.readFileSync(statusPath), before, "the exit probe must remain read-only");
+				} finally {
+					clearTimeout(publication);
+				}
+			}
+		} finally {
+			parent.stdin.end("reap");
+			await closed;
+		}
 	});
 
 	it("rejects with the abort reason while waiting", async () => {

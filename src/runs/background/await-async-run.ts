@@ -18,8 +18,10 @@ function errorMessage(error: unknown): string {
 function runnerExitedWithoutResult(asyncDir: string, runId: string, resultPath: string): boolean {
 	const status = readStatus(asyncDir);
 	if (!status || (status.state !== "running" && status.state !== "queued") || typeof status.pid !== "number") return false;
-	if (status.pidNamespaceScope !== undefined && status.pidNamespaceScope !== currentPidNamespaceScope()) return false;
-	if (checkPidLiveness(status.pid) !== "dead") return false;
+	const observedScope = currentPidNamespaceScope();
+	if (status.pidNamespaceScope !== undefined && status.pidNamespaceScope !== observedScope) return false;
+	const pidScopeVerified = status.pidNamespaceScope !== undefined && status.pidNamespaceScope === observedScope;
+	if (checkPidLiveness(status.pid, undefined, pidScopeVerified) !== "dead") return false;
 	return !fs.existsSync(resultPath) && !(status.sessionId && resultPayloadPathForSessionRun(asyncDir, status.sessionId, runId));
 }
 

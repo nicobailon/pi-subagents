@@ -6,7 +6,7 @@
 
 - Headless sessions now deliver goal-mission notices even when draining background work fails, while preserving the drain rejection for callers. Thanks to [@quifox](https://github.com/quifox) for [#2605](https://github.com/nicobailon/pi-subagents/pull/2605).
 - A damaged linked-run status or mission state no longer prevents healthy goal missions from receiving continuation notices. The failing mission is reported separately. Thanks to [@quifox](https://github.com/quifox) for [#2604](https://github.com/nicobailon/pi-subagents/pull/2604).
-- On Linux, stale-run reconciliation now recognizes zombie runners immediately when their recorded PID namespace matches the observer. Runs with uncertain PID identity retain the existing stale threshold. Thanks to [@quifox](https://github.com/quifox) for [#2606](https://github.com/nicobailon/pi-subagents/pull/2606).
+- On Linux, zombie runners no longer leave runs marked running or workflow reattachment waiting for an unpublished result when their recorded PID namespace matches the observer. Uncertain PID identities are still handled conservatively. Thanks to [@quifox](https://github.com/quifox) for [#2606](https://github.com/nicobailon/pi-subagents/pull/2606).
 
 ## [0.74.0] - 2026-09-30
 
