@@ -777,7 +777,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	registerWaitTool(pi, state, waitToolConfig.enabled, waitSubscriptionManager, waitToolConfig.defaultTimeoutMs, undefined, supervisorChannel.hasPendingRequests);
 
 	pi.on("agent_end", async (_event, ctx) => {
-		if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events, hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests });
+		if (!ctx.hasUI) {
+			try {
+				await drainOutstandingWork({ state, events: pi.events, hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests });
+			} catch (error) {
+				console.error("Failed to auto-drain outstanding subagent work:", error);
+			}
+		}
 		const ownerSessionId = state.currentSessionId;
 		if (!ownerSessionId) return;
 		goalTurnId += 1;
