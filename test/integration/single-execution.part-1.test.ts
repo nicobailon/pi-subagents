@@ -1497,6 +1497,24 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("validate reports workflow args errors beside script errors without launching (#2608)", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const workflowScript = `return runs.run("bad key", { agent: "echo" });`;
+		const tooManyFields = Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`field${index}`, "x"]));
+		const oversize = { a: "x".repeat(9000), b: "y".repeat(9000) };
+		const scriptError = { message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", line: 1, column: 17 };
+
+		for (const [args, argsError] of [[tooManyFields, "workflow args contains too many fields."], [oversize, "workflow args exceed 16384 bytes."]] as const) {
+			const result = await executor.executePublic("args-validation", { action: "validate", workflowScript, args }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, true);
+			assert.equal(result.details.mode, "management");
+			assert.deepEqual(JSON.parse(result.content[0]?.text ?? "null"), { ok: false, errors: [scriptError, { message: argsError }] });
+		}
+		const argsOnly = await executor.executePublic("args-only-validation", { action: "validate", workflowScript: "return 1;", args: oversize }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.deepEqual(JSON.parse(argsOnly.content[0]?.text ?? "null"), { ok: false, errors: [{ message: "workflow args exceed 16384 bytes." }] });
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("reports missing and empty workflow script files before validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		fs.writeFileSync(path.join(tempDir, "empty.js"), " \n");
 		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), () => {

@@ -9,7 +9,10 @@ import type { WorkflowResourceProvenance } from "../shared/types.ts";
 import { buildStructuredWorkflowScript, isPlainRecord } from "./structured-workflow-scripts.ts";
 
 const RESOURCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const MAX_ARGS_BYTES = 16 * 1024;
+export const MAX_ARGS_BYTES = 16 * 1024;
+export const MAX_ARGS_FIELDS = 16;
+export const MAX_ARGS_ITEMS = 64;
+export const MAX_ARGS_DEPTH = 8;
 const MAX_STRING_BYTES = 16 * 1024;
 
 export interface ResolvedWorkflowResource {
@@ -96,7 +99,7 @@ function jsonByteLength(value: unknown): number {
 }
 
 function validatePlainJson(value: unknown, path: string, depth = 0): void {
-	if (depth > 8) throw new Error(`${path} is too deeply nested.`);
+	if (depth > MAX_ARGS_DEPTH) throw new Error(`${path} is too deeply nested.`);
 	if (value === null || typeof value === "boolean") return;
 	if (typeof value === "string") {
 		if (!value.trim()) throw new Error(`${path} must not be empty.`);
@@ -108,12 +111,12 @@ function validatePlainJson(value: unknown, path: string, depth = 0): void {
 		return;
 	}
 	if (Array.isArray(value)) {
-		if (value.length > 64) throw new Error(`${path} contains too many items.`);
+		if (value.length > MAX_ARGS_ITEMS) throw new Error(`${path} contains too many items.`);
 		for (const [index, entry] of value.entries()) validatePlainJson(entry, `${path}[${index}]`, depth + 1);
 		return;
 	}
 	if (!isPlainRecord(value)) throw new Error(`${path} must contain plain JSON data.`);
-	if (Object.keys(value).length > 16) throw new Error(`${path} contains too many fields.`);
+	if (Object.keys(value).length > MAX_ARGS_FIELDS) throw new Error(`${path} contains too many fields.`);
 	for (const [key, entry] of Object.entries(value)) {
 		if (!key.trim()) throw new Error(`${path} contains an empty field name.`);
 		validatePlainJson(entry, `${path}.${key}`, depth + 1);

@@ -5309,6 +5309,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					? currentParentModel
 					: rememberParentModel(deps.state, resolveCurrentSessionId(ctx.sessionManager), currentParentModel)) ?? null;
 			})();
+		// validate checks args with the same normalization launch uses, reported beside script errors.
+		const validateWorkflowRequest = () => {
+			const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd, () => resolveWorkflowParentModel()?.provider));
+			const normalizedArgs = normalizeWorkflowArgs(requestParams.args);
+			return "error" in normalizedArgs ? { ...validation, ok: false, errors: [...validation.errors, { message: normalizedArgs.error }] } : validation;
+		};
 		try {
 			if (requestParams.preflight !== undefined && requestParams.workflowScript === undefined) {
 				throw new Error("preflight requires workflow: true or a workflow script path.");
@@ -5318,7 +5324,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			if (requestParams.action?.trim() === "validate") {
-				const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd, () => resolveWorkflowParentModel()?.provider));
+				const validation = validateWorkflowRequest();
 				const invalidValidation = { ...validation, ok: false, errors: [...validation.errors, { message }] };
 				return {
 					content: [{ type: "text", text: JSON.stringify(invalidValidation) }],
@@ -5329,8 +5335,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return buildRequestedModeError(requestParams, message);
 		}
 		if (requestParams.action?.trim() === "validate") {
-			const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd, () => resolveWorkflowParentModel()?.provider));
-			return buildWorkflowValidationResult(validation, "management", workflowPreflight);
+			return buildWorkflowValidationResult(validateWorkflowRequest(), "management", workflowPreflight);
 		}
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
@@ -7896,7 +7901,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			workflowResourcePermits.set(publicParams, resolved.resource.permit);
 		} else if (workflow !== undefined || publicParams.workflowScript !== undefined) {
 			const normalizedArgs = normalizeWorkflowArgs(publicParams.args);
-			if ("error" in normalizedArgs) return errorResult(normalizedArgs.error);
+			// validate reports args errors with its script errors; launch rejects them here.
+			const validateOnly = publicParams.action === "validate";
+			if ("error" in normalizedArgs && !validateOnly) return errorResult(normalizedArgs.error);
 			let workflowScript = publicParams.workflowScript;
 			if (workflow !== undefined) {
 				const source = workflow === true ? readReplyWorkflowScript(ctx.sessionManager, id) : readWorkflowScriptFile(workflow, publicParams.cwd, ctx.cwd);
@@ -7904,7 +7911,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				workflowScript = source.script;
 			}
 			const { workflow: _workflow, ...withoutWorkflowSource } = publicParams;
-			publicParams = { ...withoutWorkflowSource, workflowScript, args: deepFreezeWorkflowArgs(normalizedArgs.args) };
+			publicParams = { ...withoutWorkflowSource, workflowScript, args: "error" in normalizedArgs ? publicParams.args : deepFreezeWorkflowArgs(normalizedArgs.args) };
 		}
 		publicExecutions.add(publicParams);
 		return executeWithSingleDispatchGuard(id, publicParams, signal, onUpdate, ctx);

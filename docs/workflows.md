@@ -395,7 +395,7 @@ A plain workflow creates one enclosing mission by default. Its children do not c
 
 ### Repeatable workflows
 
-Use stable child keys and keep process logic in ordinary JavaScript. `runs.run` launches one child, `runs.all` launches independent children together, and later steps can use each completed child's `output`. Put long task text in arrays joined with `"\n"` so Markdown fences do not conflict with the script string.
+Use stable child keys and keep process logic in ordinary JavaScript. `runs.run` launches one child, `runs.all` launches independent children together, and later steps can use each completed child's `output`. Put long task text in arrays joined with `"\n"` so Markdown fences do not conflict with the script string. Pass long child briefs as files and put only their paths in task text, not the briefs themselves in `args`, which is limited to 16 KiB.
 
 For a process you run often, save the task as a prompt template under `.pi/prompts/` or `~/.pi/agent/prompts/` and launch it with `/prompt-workflow`. The adapter compiles prompt steps into a workflow script, so templates describe the work instead of embedding raw `subagent` tool calls. You can ask the parent agent to create or update these prompt files from a process described in natural language.
 

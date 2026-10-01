@@ -211,7 +211,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const args = SubagentParams?.properties?.args;
 		assert.equal(args?.type, "object");
 		assert.equal(args?.maxProperties, 16);
-		assert.match(String(args?.description ?? ""), /bounded plain-JSON/i);
+		assert.match(String(args?.description ?? ""), /plain-JSON args for workflow; 16 fields\/object, 64 items\/array, depth 8, 16 KiB total;/i);
 		assert.match(String(args?.description ?? ""), /raw-script.*deeply frozen.*persisted.*secrets/i);
 		for (const name of ["globalConcurrencyLimit", "maxSubagentSpawnsPerRun"] as const) {
 			const capacity = SubagentParams?.properties?.[name];
