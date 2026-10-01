@@ -130,7 +130,9 @@ describe("model response identity", () => {
 
 	it("verifies a virtual-model child against its exact selection, not the dispatched model", () => {
 		assert.equal(formatSubagentModelVerificationError("openai/gpt-5-mini:high", "anthropic/claude-sonnet-4", models, undefined, "openai/gpt-5-mini"), undefined);
-		assert.match(formatSubagentModelVerificationError("openai/gpt-5-mini", "gpt-5-mini", models, undefined, "other-router/gpt-5-mini") ?? "", /model_verification_failed.*observed 'other-router\/gpt-5-mini'/);
+		const virtualMismatch = formatSubagentModelVerificationError("openai/gpt-5-mini", "gpt-5-mini", models, undefined, "other-router/gpt-5-mini") ?? "";
+		assert.match(virtualMismatch, /model_verification_failed: native Pi child selected virtual model 'other-router\/gpt-5-mini'/);
+		assert.doesNotMatch(virtualMismatch, /declare the exact mapping/);
 		assert.match(formatSubagentModelVerificationError("openai/gpt-5-mini", "gpt-5-mini", models, undefined, "gpt-5-mini") ?? "", /model_verification_failed/);
 		assert.match(formatSubagentModelVerificationError("openai/gpt-5-mini", "anthropic/claude-sonnet-4", models) ?? "", /model_verification_failed/);
 	});
