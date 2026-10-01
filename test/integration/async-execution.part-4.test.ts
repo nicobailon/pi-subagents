@@ -1403,6 +1403,50 @@ setTimeout(() => process.exit(90), 15000).unref();
 		await waitForAsyncResultFile(id);
 	});
 
+	it("background open-tool attention survives a supervisor request that ends first", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const id = `async-supervisor-then-tool-attention-${Date.now().toString(36)}`;
+		const supervisorReleasePath = path.join(tempDir, `${id}.supervisor`);
+		const finalReleasePath = path.join(tempDir, `${id}.final`);
+		mockPi.onCall({ steps: [
+			{ jsonl: [
+				{ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "sleep 5" } },
+				{ type: "tool_execution_start", toolCallId: "decision", toolName: "contact_supervisor", args: { reason: "need_decision", message: "Choose" } },
+			] },
+			{ waitForPath: supervisorReleasePath, jsonl: [{ type: "tool_execution_end", toolCallId: "decision", toolName: "contact_supervisor" }] },
+			{ waitForPath: finalReleasePath, jsonl: [{ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash" }, events.toolResult("bash", "done"), events.assistantMessage("Done")] },
+		] });
+		const eventsPath = path.join(ASYNC_DIR, id, "events.jsonl");
+		const statusPath = path.join(ASYNC_DIR, id, "status.json");
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Run the command", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+			controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 100, failedToolAttemptsBeforeAttention: 3, notifyOn: ["needs_attention"], notifyChannels: ["event", "async"] },
+		});
+		try {
+			const deadline = Date.now() + 10_000;
+			while (Date.now() < deadline && !(fs.existsSync(eventsPath) && fs.readFileSync(eventsPath, "utf-8").includes('"reason":"tool_open_threshold"'))) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			assert.match(fs.readFileSync(eventsPath, "utf-8"), /"reason":"tool_open_threshold"/);
+			fs.writeFileSync(supervisorReleasePath, "");
+			let status: AsyncStatusPayload | undefined;
+			while (Date.now() < deadline) {
+				status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+				if (status.currentTool === "bash") break;
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+			assert.equal(status?.currentTool, "bash");
+			assert.equal(status?.steps?.[0]?.activityState, "needs_attention");
+			assert.equal(status?.activityState, "needs_attention");
+		} finally {
+			fs.writeFileSync(supervisorReleasePath, "");
+			fs.writeFileSync(finalReleasePath, "");
+			await waitForAsyncResultFile(id);
+		}
+	});
+
 	it("bg_wait wakes when an async child is waiting on contact_supervisor", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const id = `async-supervisor-attention-${Date.now().toString(36)}`;
 		const replyReleasePath = path.join(tempDir, `${id}.reply`);

@@ -2752,6 +2752,8 @@ export async function runSubagent(
 		const target = openToolAttentionTarget(flatIndex, now);
 		if (!target) return false;
 		target.attentionEmitted = true;
+		// Keep this attention when a concurrent supervisor request ends and restores its saved state.
+		if (supervisorAttentionSteps.has(flatIndex)) supervisorAttentionSteps.set(flatIndex, "needs_attention");
 		const previous = step.activityState;
 		step.activityState = "needs_attention";
 		statusPayload.activityState = "needs_attention";
