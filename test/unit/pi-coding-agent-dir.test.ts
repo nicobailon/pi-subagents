@@ -541,11 +541,43 @@ Package skill content.
 		assert.equal(rows[1]?.terminal.processSignal, "SIGTERM");
 	});
 
-	it("planBackgroundRunHistory propagates run-level terminal flags to every row", () => {
+	it("planBackgroundRunHistory skips steps that never ran (pending after an early chain failure)", () => {
+		const rows = planBackgroundRunHistory({
+			steps: [{ task: "a" }, { task: "b" }, { task: "c" }],
+			resultMode: "chain",
+			statusSteps: [
+				{ agent: "worker", status: "failed", durationMs: 50 },
+				{ agent: "worker", status: "pending" },   // chain stopped here — never attempted
+				{ agent: "reviewer", status: "pending" },  // never attempted
+			],
+			runDurationMs: 60,
+		});
+		// Only the one child that actually ran gets a row; unrun agents accumulate no attempts.
+		assert.deepEqual(rows.map((row) => row.agent), ["worker"]);
+		assert.equal(rows[0]?.exitCode, 1);
+	});
+
+	it("planBackgroundRunHistory keeps a completed child's outcome when the run is interrupted later", () => {
 		const rows = planBackgroundRunHistory({
 			steps: [{ task: "a" }, { task: "b" }],
 			resultMode: "chain",
-			statusSteps: [{ agent: "worker", status: "paused" }, { agent: "worker", status: "paused" }],
+			statusSteps: [
+				{ agent: "worker", status: "complete", durationMs: 100 }, // finished before the interrupt
+				{ agent: "worker", status: "paused" },                     // interrupted mid-run
+			],
+			runDurationMs: 200,
+			interrupted: true,
+		});
+		assert.equal(rows[0]?.exitCode, 0);
+		assert.deepEqual(rows[0]?.terminal, {}); // completed child must NOT inherit the interrupt
+		assert.equal(rows[1]?.terminal.interrupted, true); // the interrupted child does
+	});
+
+	it("planBackgroundRunHistory propagates run-level terminal flags to non-terminal rows", () => {
+		const rows = planBackgroundRunHistory({
+			steps: [{ task: "a" }, { task: "b" }],
+			resultMode: "chain",
+			statusSteps: [{ agent: "worker", status: "paused" }, { agent: "worker", status: "stopped" }],
 			runDurationMs: 10,
 			interrupted: true,
 			timedOut: false,

@@ -160,6 +160,14 @@ const TERMINAL_STEP_STATUSES = new Set(["complete", "completed"]);
  * STEP so `loadRunsForAgent(agent)` sees every child — a composite-only row would
  * stay invisible to per-agent lookups. Per-step prompts are never hashed:
  * multi-step rows hash the mode label only.
+ *
+ * Fidelity rules:
+ * - steps still `pending` never ran (e.g. a chain stopped after a failure) and
+ *   get no row — unrun agents must not accumulate attempts or failures;
+ * - run-level terminal flags (stopped/interrupted/timedOut) apply only to steps
+ *   that did NOT already reach terminal success — a child that finished before
+ *   the run was interrupted keeps its `completed` outcome, because recordRun()
+ *   lets those flags override a successful exit code.
  */
 export function planBackgroundRunHistory(input: {
 	steps: readonly unknown[];
@@ -171,7 +179,7 @@ export function planBackgroundRunHistory(input: {
 	interrupted?: boolean;
 	timedOut?: boolean;
 }): BackgroundRunHistoryEntry[] {
-	const terminal: BackgroundRunHistoryEntry["terminal"] = {
+	const runTerminal: BackgroundRunHistoryEntry["terminal"] = {
 		...(input.stopped ? { stopped: true } : {}),
 		...(input.interrupted ? { interrupted: true } : {}),
 		...(input.timedOut ? { timedOut: true } : {}),
@@ -180,11 +188,14 @@ export function planBackgroundRunHistory(input: {
 	const rows: BackgroundRunHistoryEntry[] = [];
 	for (const [index, step] of input.statusSteps.entries()) {
 		if (typeof step.agent !== "string" || !step.agent) continue;
+		if (step.status === "pending") continue;
+		const succeeded = TERMINAL_STEP_STATUSES.has(step.status as string);
 		const processSignal = input.stepResults?.[index]?.processSignal;
+		const terminal = succeeded ? {} : runTerminal;
 		rows.push({
 			agent: step.agent,
 			task,
-			exitCode: TERMINAL_STEP_STATUSES.has(step.status as string) ? 0 : 1,
+			exitCode: succeeded ? 0 : 1,
 			durationMs: typeof step.durationMs === "number" ? step.durationMs : input.runDurationMs,
 			terminal: processSignal === undefined ? terminal : { ...terminal, processSignal: typeof processSignal === "string" ? processSignal : null },
 		});
