@@ -979,7 +979,7 @@ function parseToolsOverride(
 	throw new Error(`Builtin override '${meta.name}' in '${meta.filePath}' has invalid 'tools'; expected an array of strings, "inherit", or false.`);
 }
 
-function validateOptionalMachine(value: unknown, label: string): string | undefined {
+export function validateOptionalMachine(value: unknown, label: string): string | undefined {
 	if (value === undefined || value === false) return undefined;
 	if (typeof value !== "string" || !value.trim()) throw new Error(label + " must be a non-empty string or false.");
 	const machine = value.trim();

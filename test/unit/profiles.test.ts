@@ -117,6 +117,69 @@ describe("profiles helpers", () => {
 		});
 	});
 
+	it("rejects invalid profile machine values before changing settings", () => {
+		const profilesDir = getSubagentProfilesDir();
+		fs.mkdirSync(profilesDir, { recursive: true });
+		const settingsPath = path.join(homeDir, ".pi", "agent", "settings.json");
+		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+		const originalSettings = '{\n  "defaultModel": "openai/gpt-5",\n  "subagents": {\n    "agentOverrides": {\n      "worker": {\n        "machine": "workmac",\n        "model": "old"\n      }\n    }\n  }\n}\n';
+		fs.writeFileSync(settingsPath, originalSettings);
+		const agentDir = path.join(homeDir, ".pi", "agent", "agents");
+		fs.mkdirSync(agentDir, { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "worker.md"), `---\nname: worker\ndescription: Existing worker\n---\n\nDo work.\n`);
+
+		const invalidMachines: unknown[] = [7, {}, null, "", "   ", "m".repeat(129), "work\u0000mac"];
+		for (const [index, machine] of invalidMachines.entries()) {
+			fs.writeFileSync(path.join(profilesDir, `invalid-machine-${index}.json`), JSON.stringify({
+				subagents: { agentOverrides: { worker: { machine } } },
+			}));
+
+			assert.throws(() => applySubagentProfile(`invalid-machine-${index}`), /has invalid machine for 'worker'/u);
+			assert.equal(fs.readFileSync(settingsPath, "utf-8"), originalSettings);
+		}
+		const worker = discoverAgents(process.cwd(), "both").agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.machine, "workmac");
+	});
+
+	it("applies a normalized machine and discovers the resulting pin", () => {
+		const profilesDir = getSubagentProfilesDir();
+		fs.mkdirSync(profilesDir, { recursive: true });
+		fs.writeFileSync(path.join(profilesDir, "machine.json"), JSON.stringify({
+			subagents: { agentOverrides: { worker: { machine: " local-runner " } } },
+		}));
+		const agentDir = path.join(homeDir, ".pi", "agent", "agents");
+		fs.mkdirSync(agentDir, { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "worker.md"), `---\nname: worker\ndescription: Profile-managed worker\n---\n\nDo work.\n`);
+
+		applySubagentProfile("machine");
+		const settings = JSON.parse(fs.readFileSync(path.join(homeDir, ".pi", "agent", "settings.json"), "utf-8"));
+		assert.equal(settings.subagents.agentOverrides.worker.machine, "local-runner");
+		const worker = discoverAgents(process.cwd(), "both").agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.machine, "local-runner");
+	});
+
+	it("lets false clear an existing machine pin when applying a profile", () => {
+		const profilesDir = getSubagentProfilesDir();
+		fs.mkdirSync(profilesDir, { recursive: true });
+		fs.writeFileSync(path.join(profilesDir, "clear-machine.json"), JSON.stringify({
+			subagents: { agentOverrides: { worker: { machine: false } } },
+		}));
+		const agentDir = path.join(homeDir, ".pi", "agent", "agents");
+		fs.mkdirSync(agentDir, { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "worker.md"), `---\nname: worker\ndescription: Profile-managed worker\n---\n\nDo work.\n`);
+		const settingsPath = path.join(homeDir, ".pi", "agent", "settings.json");
+		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+		fs.writeFileSync(settingsPath, JSON.stringify({
+			subagents: { agentOverrides: { worker: { machine: "workmac" } } },
+		}));
+
+		applySubagentProfile("clear-machine");
+		const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+		assert.equal(settings.subagents.agentOverrides.worker.machine, false);
+		const worker = discoverAgents(process.cwd(), "both").agents.find((agent) => agent.name === "worker");
+		assert.equal(worker?.machine, undefined);
+	});
+
 	it("applies profile models and thinking to user agents without frontmatter pins", () => {
 		const profilesDir = getSubagentProfilesDir();
 		fs.mkdirSync(profilesDir, { recursive: true });

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { BUILTIN_AGENT_NAMES } from "../agents/agents.ts";
+import { BUILTIN_AGENT_NAMES, validateOptionalMachine } from "../agents/agents.ts";
 import { getPiSpawnCommand } from "../runs/shared/pi-spawn.ts";
 import { findModelInfo, getSupportedThinkingLevels, splitKnownThinkingSuffix, toModelInfo } from "../shared/model-info.ts";
 import { getAgentDir } from "../shared/utils.ts";
@@ -20,7 +20,7 @@ export type RecommendedRoleTier = "cheap" | "medium" | "strong";
 interface ProfileAgentOverride {
 	model?: string;
 	thinking?: string | false;
-	machine?: string;
+	machine?: string | false;
 }
 
 export interface SubagentProfileFile {
@@ -143,6 +143,9 @@ function validateSubagentProfile(filePath: string, parsed: Record<string, unknow
 		const thinking = override.thinking;
 		if (thinking !== undefined && thinking !== false && typeof thinking !== "string") {
 			throw new Error(`Profile '${filePath}' has invalid thinking for '${name}'; expected a string or false.`);
+		}
+		if (override.machine !== undefined && override.machine !== false) {
+			override.machine = validateOptionalMachine(override.machine, `Profile '${filePath}' has invalid machine for '${name}'`);
 		}
 		if ((override as Record<string, unknown>).fallbackModels !== undefined) throw new Error(`Profile '${filePath}' uses removed field fallbackModels for '${name}'; configure one model instead.`);
 	}
