@@ -425,6 +425,21 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});
+			// pi's own hosts emit `session_shutdown` before disposing a session so the
+			// extensions loaded into it (ambient extensions included) release their
+			// watchers, servers, and timers. Do the same, then dispose.
+			const shutdownSession = async (session: Awaited<ReturnType<PiCodingAgentModule["createAgentSession"]>>["session"]): Promise<void> => {
+				try {
+					const runner = session.extensionRunner;
+					if (runner.hasHandlers("session_shutdown")) {
+						await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }), new Promise<void>((resolve) => setTimeout(resolve, shutdownTimeoutMs).unref?.())]);
+					}
+				} catch (error) {
+					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
+				} finally {
+					session.dispose();
+				}
+			};
 			const open = async () => {
 				const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
 				applyProcessEnv(launch.processEnv);
@@ -488,7 +503,8 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					binding = false;
 				}
 				if (requiredStartupErrors.length > 0) {
-					session.dispose();
+					// Binding finished, so the other extensions' session_start handlers ran and may hold resources.
+					await shutdownSession(session);
 					throw new Error(`Required child extension failed during startup: ${requiredStartupErrors.join("; ")}`);
 				}
 				return session;
@@ -497,21 +513,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			loading = opened;
 			const session = await opened;
 			let pending: Promise<void> | undefined;
-			// pi's own hosts emit `session_shutdown` before disposing a session so the
-			// extensions loaded into it (ambient extensions included) release their
-			// watchers, servers, and timers. Do the same, then dispose.
-			const shutdown = async (): Promise<void> => {
-				try {
-					const runner = session.extensionRunner;
-					if (runner.hasHandlers("session_shutdown")) {
-						await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }), new Promise<void>((resolve) => setTimeout(resolve, shutdownTimeoutMs).unref?.())]);
-					}
-				} catch (error) {
-					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
-				} finally {
-					session.dispose();
-				}
-			};
+			const shutdown = () => shutdownSession(session);
 			// Outside the launch lock: MCP servers connect after `session_start` without reading the per-launch env.
 			if (builtinMcpTools.length) {
 				const disposed = () => disposals !== disposalsAtStart;

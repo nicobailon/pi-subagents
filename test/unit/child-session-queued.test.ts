@@ -118,7 +118,7 @@ describe("default factory queued-message probe", () => {
 		const requiredPath = "/tmp/required-policy.mjs";
 		const ordinaryPath = "/tmp/ordinary.mjs";
 		const reported: string[] = [];
-		let disposed = 0;
+		const lifecycle: string[] = [];
 		const createFactory = (failingPath: string) => createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
 			ModelRuntime: { create: async () => ({ refresh: async () => {} }) },
 			SettingsManager: { create: () => ({}) },
@@ -128,8 +128,8 @@ describe("default factory queued-message probe", () => {
 			createAgentSession: async () => ({
 				session: {
 					bindExtensions: async ({ onError }: { onError: (error: { extensionPath: string; event: string; error: string }) => void }) => { onError({ extensionPath: failingPath, event: "session_start", error: "policy init failed" }); },
-					dispose() { disposed++; },
-					extensionRunner: { hasHandlers: () => false },
+					dispose() { lifecycle.push("dispose"); },
+					extensionRunner: { hasHandlers: (event: string) => event === "session_shutdown", emit: async ({ type }: { type: string }) => { lifecycle.push(type); } },
 					subscribe: () => () => {},
 					messages: [],
 					sessionId: "policy-child",
@@ -138,7 +138,7 @@ describe("default factory queued-message probe", () => {
 		}) as unknown as PiCodingAgentModule });
 		const launch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [requiredPath, ordinaryPath], requiredExtensions: [{ id: "policy", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, onExtensionError: ({ extensionPath, event }) => { if (event === "session_start") reported.push(extensionPath); }, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] } satisfies ChildSessionLaunch;
 		await assert.rejects(() => createFactory(requiredPath).create(launch), /Required child extension failed during startup: \/tmp\/required-policy\.mjs \(session_start\): policy init failed/);
-		assert.equal(disposed, 1);
+		assert.deepEqual(lifecycle, ["session_shutdown", "dispose"]);
 		assert.ok(await createFactory(ordinaryPath).create(launch));
 		assert.deepEqual(reported, [requiredPath, ordinaryPath]);
 	});
