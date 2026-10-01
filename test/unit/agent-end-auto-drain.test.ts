@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 
 const script = String.raw`
@@ -10,6 +13,7 @@ const script = String.raw`
 	const os = await import("node:os");
 	const path = await import("node:path");
 	const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-end-goal-"));
+	const hasOwner = process.env.PI_SUBAGENTS_TEST_NO_OWNER !== "1";
 	console.error = (...args) => errors.push(args.map((value) => value instanceof Error ? value.message : String(value)).join(" "));
 	const { default: registerSubagentExtension } = await import("./src/extension/index.ts");
 	const { createEventBus } = await import("@earendil-works/pi-coding-agent");
@@ -33,59 +37,80 @@ const script = String.raw`
 		modelRegistry: { getAvailable() { return []; } },
 	};
 	registerSubagentExtension(pi);
-	for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
-	const mission = createMission(resolveMissionStoreLocation({ projectRoot }), {
+	if (hasOwner) for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
+	const mission = hasOwner ? createMission(resolveMissionStoreLocation({ projectRoot }), {
 		title: "Continue after drain", objective: "Deliver the goal reminder", goal: true,
 		budget: { tokens: 100 }, status: "active", ownerSessionId: "agent-end-drain-session",
-	});
+	}) : null;
+	const providerError = new Error("synthetic drain failure");
 	const dispose = registerBackgroundWorkProvider({
 		name: "agent-end-drain-test",
 		listActiveWork() {
-			if (process.env.PI_SUBAGENTS_TEST_DRAIN_FAILURE === "1") throw new Error("synthetic drain failure");
+			if (process.env.PI_SUBAGENTS_TEST_DRAIN_FAILURE === "1") throw providerError;
 			return [];
 		},
 	});
 	let rejected = null;
+	let preservedCause = false;
 	try {
 		for (const handler of handlers.get("agent_end") ?? []) {
 			await handler({ type: "agent_end", messages: [], willRetry: false }, ctx);
 		}
 	} catch (error) {
 		rejected = error instanceof Error ? error.message : String(error);
+		preservedCause = error instanceof Error && error.cause === providerError;
 	}
 	dispose();
 	for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
 	fs.rmSync(projectRoot, { recursive: true, force: true });
-	process.stdout.write(JSON.stringify({ rejected, errors, sent, missionId: mission.id }));
+	process.stdout.write(JSON.stringify({ rejected, preservedCause, errors, sent, missionId: mission?.id }));
 `;
 
 describe("headless agent_end auto-drain", () => {
-	for (const failedDrain of [true, false]) {
-		it(`delivers goal notices after ${failedDrain ? "a failed" : "a successful"} drain`, () => {
-			const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
-				cwd: process.cwd(),
-				encoding: "utf-8",
-				env: { ...process.env, PI_SUBAGENT_CHILD: undefined, PI_SUBAGENTS_TEST_DRAIN_FAILURE: failedDrain ? "1" : "0" },
-				timeout: 10_000,
-			});
-			assert.equal(result.status, 0, result.stderr);
-			const payload = JSON.parse(result.stdout) as {
-				rejected: string | null;
-				errors: string[];
-				missionId: string;
-				sent: Array<{ message: { content: string; details: { source?: string } }; options: { triggerTurn: boolean } }>;
-			};
-			assert.equal(payload.rejected, null);
-			assert.equal(
-				payload.errors.filter((message) => /Failed to auto-drain outstanding subagent work:.*synthetic drain failure/.test(message)).length,
-				failedDrain ? 1 : 0,
-			);
-			assert.deepEqual(payload.errors.filter((message) => /Failed to evaluate goal missions/.test(message)), []);
-			const notices = payload.sent.filter(({ message }) => message.details?.source === "goal");
-			assert.equal(notices.length, 1);
-			assert.match(notices[0]!.message.content, /Next ready action: Continue objective: Deliver the goal reminder/);
-			assert.ok(notices[0]!.message.content.includes(payload.missionId));
-			assert.deepEqual(notices[0]!.options, { triggerTurn: false });
+	for (const scenario of [
+		{ name: "delivers goal notices while preserving a failed drain", failedDrain: true, hasOwner: true },
+		{ name: "delivers goal notices after a successful drain", failedDrain: false, hasOwner: true },
+		{ name: "preserves the drain rejection when no session owns goal notices", failedDrain: false, hasOwner: false },
+	]) {
+		it(scenario.name, () => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-end-fixture-"));
+			try {
+				const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
+					cwd: process.cwd(),
+					encoding: "utf-8",
+					env: {
+						...process.env,
+						HOME: path.join(root, "home"), USERPROFILE: path.join(root, "home"),
+						PI_CODING_AGENT_DIR: path.join(root, "agent"),
+						TMPDIR: root, TMP: root, TEMP: root,
+						PI_SUBAGENT_CHILD: undefined,
+						PI_SUBAGENTS_TEST_DRAIN_FAILURE: scenario.failedDrain ? "1" : "0",
+						PI_SUBAGENTS_TEST_NO_OWNER: scenario.hasOwner ? "0" : "1",
+					},
+					timeout: 10_000,
+				});
+				assert.equal(result.status, 0, result.stderr);
+				const payload = JSON.parse(result.stdout) as {
+					rejected: string | null;
+					preservedCause: boolean;
+					errors: string[];
+					missionId: string;
+					sent: Array<{ message: { content: string; details: { source?: string } }; options: { triggerTurn: boolean } }>;
+				};
+				assert.equal(payload.rejected, !scenario.hasOwner
+					? "Cannot auto-drain background work without an active session identity."
+					: scenario.failedDrain ? "Background-work provider 'agent-end-drain-test' listActiveWork failed: synthetic drain failure" : null);
+				assert.equal(payload.preservedCause, scenario.failedDrain);
+				assert.deepEqual(payload.errors, []);
+				const notices = payload.sent.filter(({ message }) => message.details?.source === "goal");
+				assert.equal(notices.length, scenario.hasOwner ? 1 : 0);
+				if (!scenario.hasOwner) return;
+				assert.match(notices[0]!.message.content, /Next ready action: Continue objective: Deliver the goal reminder/);
+				assert.ok(notices[0]!.message.content.includes(payload.missionId));
+				assert.deepEqual(notices[0]!.options, { triggerTurn: false });
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+			}
 		});
 	}
 });

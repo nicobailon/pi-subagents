@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Headless sessions now deliver goal-mission notices even when draining background work fails, while preserving the drain rejection for callers. Thanks to [@quifox](https://github.com/quifox) for [#2605](https://github.com/nicobailon/pi-subagents/pull/2605).
+
 ## [0.74.0] - 2026-09-30
 
 ### Highlights
