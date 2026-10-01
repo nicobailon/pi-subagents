@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `schedule.create` accepts an existing `missionId`, so each scheduled workflow can reuse its mission state across fires and session restoration. Attachment follows ordinary mission lifecycle and retention rules. Mission-bound definitions use schema version 2 so older schedulers reject them instead of dropping the attachment; unbound definitions remain version 1.
+
 ### Fixed
 
 - The global mission list now reads title, status, update time, and latest run ID from each readable mission record. A stale index pointer therefore no longer makes a successfully updated mission appear out of date; listing still does not rewrite the pointer. Thanks to [@quifox](https://github.com/quifox) for [#2618](https://github.com/nicobailon/pi-subagents/pull/2618).

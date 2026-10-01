@@ -16,6 +16,7 @@ import { resolveGitRepositoryIdentity } from "../../workflows/chat-progress.ts";
 import { getConfigDirName } from "../../shared/utils.ts";
 import { normalizeWorktreeBaseRef } from "../shared/worktree.ts";
 import { deepFreezeWorkflowArgs, normalizeWorkflowArgs } from "../../workflows/workflow-resources.ts";
+import { readMission, resolveMissionStoreLocation, validateMissionId } from "../../missions/store.ts";
 
 export const SCHEDULED_RUN_ACTIONS = [
 	"schedule.create",
@@ -41,10 +42,10 @@ export type ScheduleRunState = "running" | "skipped" | "missed" | "completed" | 
 export type ScheduleTrigger =
 	| { kind: "once"; at: string; nextRunAt?: string }
 	| { kind: "interval"; every: string; everyMs: number; anchorAt: string; nextRunAt: string };
-export type ScheduleTarget = { workflowScript: string; args: Record<string, unknown>; baseRef?: string };
+export type ScheduleTarget = { workflowScript: string; args: Record<string, unknown>; baseRef?: string; missionId?: string };
 
 export interface ScheduleRecord {
-	schemaVersion: 1;
+	schemaVersion: 1 | 2;
 	id: string;
 	name: string;
 	cwd: string;
@@ -284,17 +285,23 @@ function readJson(file: string, label: string): unknown {
 
 function parseScheduleTarget(value: unknown, file: string): ScheduleTarget {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Schedule record '${file}' has invalid trigger or target.`);
-	const target = value as { workflowScript?: unknown; args?: unknown; baseRef?: unknown; agent?: unknown; task?: unknown };
+	const target = value as { workflowScript?: unknown; args?: unknown; baseRef?: unknown; missionId?: unknown; agent?: unknown; task?: unknown };
 	if (typeof target.workflowScript === "string" && target.workflowScript.trim()) {
 		let baseRef: string | undefined;
+		let missionId: string | undefined;
 		try {
 			baseRef = normalizeWorktreeBaseRef(target.baseRef);
 		} catch (error) {
 			throw new Error(`Schedule record '${file}' has an invalid baseRef: ${error instanceof Error ? error.message : String(error)}`);
 		}
+		try {
+			missionId = target.missionId === undefined ? undefined : validateMissionId(target.missionId);
+		} catch (error) {
+			throw new Error(`Schedule record '${file}' has an invalid missionId: ${error instanceof Error ? error.message : String(error)}`);
+		}
 		const normalizedArgs = normalizeWorkflowArgs(target.args);
 		if ("error" in normalizedArgs) throw new Error(`Schedule record '${file}' has invalid args: ${normalizedArgs.error}`);
-		return { workflowScript: target.workflowScript.trim(), args: deepFreezeWorkflowArgs(normalizedArgs.args), ...(baseRef === undefined ? {} : { baseRef }) };
+		return { workflowScript: target.workflowScript.trim(), args: deepFreezeWorkflowArgs(normalizedArgs.args), ...(baseRef === undefined ? {} : { baseRef }), ...(missionId === undefined ? {} : { missionId }) };
 	}
 	if (target.agent !== undefined || target.task !== undefined) throw new Error(`Schedule record '${file}' uses a removed legacy agent target; recreate it with schedule.create and workflow: true or a workflow script path.`);
 	throw new Error(`Schedule record '${file}' requires a workflowScript target.`);
@@ -303,7 +310,7 @@ function parseScheduleTarget(value: unknown, file: string): ScheduleTarget {
 function parseSchedule(value: unknown, file: string): ScheduleRecord {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Schedule record '${file}' must be a JSON object.`);
 	const record = value as Partial<ScheduleRecord>;
-	if (record.schemaVersion !== 1 || typeof record.id !== "string" || typeof record.name !== "string" || typeof record.cwd !== "string" || typeof record.createdAt !== "string" || typeof record.updatedAt !== "string" || typeof record.paused !== "boolean") throw new Error(`Schedule record '${file}' has invalid required fields.`);
+	if ((record.schemaVersion !== 1 && record.schemaVersion !== 2) || typeof record.id !== "string" || typeof record.name !== "string" || typeof record.cwd !== "string" || typeof record.createdAt !== "string" || typeof record.updatedAt !== "string" || typeof record.paused !== "boolean") throw new Error(`Schedule record '${file}' has invalid required fields.`);
 	validateScheduleId(record.id);
 	if (!record.trigger || typeof record.trigger !== "object" || !record.target || typeof record.target !== "object") throw new Error(`Schedule record '${file}' has invalid trigger or target.`);
 	if (record.overlap !== "skip" || (record.catchUp !== "none" && record.catchUp !== "latest")) throw new Error(`Schedule record '${file}' has unsupported policy fields.`);
@@ -315,7 +322,9 @@ function parseSchedule(value: unknown, file: string): ScheduleRecord {
 	if (record.sessionOnly !== undefined && typeof record.sessionOnly !== "boolean") throw new Error(`Schedule record '${file}' has invalid sessionOnly.`);
 	if (record.quiet !== undefined && typeof record.quiet !== "boolean") throw new Error(`Schedule record '${file}' has invalid quiet.`);
 	if (record.sessionOnly === true && (typeof record.ownerSessionFile !== "string" || !record.ownerSessionFile.trim())) throw new Error(`Schedule record '${file}' is session-only but has no owner session file.`);
-	return { ...record, target: parseScheduleTarget(record.target, file) } as ScheduleRecord;
+	const target = parseScheduleTarget(record.target, file);
+	if ((record.schemaVersion === 2) !== (target.missionId !== undefined)) throw new Error(`Schedule record '${file}' requires schemaVersion 2 exactly when missionId is present.`);
+	return { ...record, target } as ScheduleRecord;
 }
 
 class ScheduleStore {
@@ -444,8 +453,10 @@ function sanitizeTarget(params: SubagentParamsLike): { target?: ScheduleTarget; 
 	if (params.context === "fork") return { error: "Scheduled runs require fresh context." };
 	if (params.async === false) return { error: "Scheduled runs are always async." };
 	let baseRef: string | undefined;
+	let missionId: string | undefined;
 	try {
 		baseRef = normalizeWorktreeBaseRef(params.baseRef);
+		missionId = params.missionId === undefined ? undefined : validateMissionId(params.missionId);
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -453,7 +464,7 @@ function sanitizeTarget(params: SubagentParamsLike): { target?: ScheduleTarget; 
 	if (acceptanceErrors.length) return { error: acceptanceErrors.join(" ") };
 	const normalizedArgs = normalizeWorkflowArgs(params.args);
 	if ("error" in normalizedArgs) return { error: normalizedArgs.error };
-	return { target: { workflowScript: params.workflowScript.trim(), args: deepFreezeWorkflowArgs(normalizedArgs.args), ...(baseRef === undefined ? {} : { baseRef }) } };
+	return { target: { workflowScript: params.workflowScript.trim(), args: deepFreezeWorkflowArgs(normalizedArgs.args), ...(baseRef === undefined ? {} : { baseRef }), ...(missionId === undefined ? {} : { missionId }) } };
 }
 
 function executionParams(schedule: ScheduleRecord, quiet = false): SubagentParamsLike {
@@ -462,7 +473,7 @@ function executionParams(schedule: ScheduleRecord, quiet = false): SubagentParam
 		async: true,
 		context: "fresh",
 		cwd: schedule.cwd,
-		mission: false,
+		...(schedule.target.missionId === undefined ? { mission: false as const } : {}),
 		// Scheduled fires have no operator watching, so completions must name the origin.
 		scheduleOrigin: { id: schedule.id, ...(schedule.name ? { name: schedule.name } : {}), ...(quiet ? { quiet: true } : {}) },
 		...(schedule.timeoutMs === undefined ? {} : { timeoutMs: schedule.timeoutMs }),
@@ -618,7 +629,7 @@ export class ScheduledRunManager {
 		if (Boolean(at) === Boolean(every)) return textResult("schedule.create requires exactly one trigger: at or every.", undefined, undefined, true);
 		if (params.overlap !== undefined && params.overlap !== "skip") return textResult("This first recurring slice supports overlap='skip' only.", undefined, undefined, true);
 		if (params.catchUp !== undefined && params.catchUp !== "none" && params.catchUp !== "latest") return textResult("catchUp must be 'none' or 'latest'.", undefined, undefined, true);
-		if (params.missionId !== undefined || params.mission !== undefined || params.missionUpdate !== undefined || params.missionStatus !== undefined || params.missionScope !== undefined) return textResult("Mission attachment is deferred from this first schedule slice.", undefined, undefined, true);
+		if (params.mission !== undefined || params.missionUpdate !== undefined || params.missionStatus !== undefined || params.missionScope !== undefined) return textResult("Schedules accept only an existing missionId; mission creation and updates are unsupported.", undefined, undefined, true);
 		if (params.on !== undefined || params.timezone !== undefined || every === "day" || every === "week" || every === "month" || every === "year") return textResult("Calendar schedules are deferred from this first safe slice. Use a fixed interval such as every:'24h' or every:'7d'.", undefined, undefined, true);
 		if (params.quiet !== undefined && typeof params.quiet !== "boolean") return textResult("quiet must be a boolean.", undefined, undefined, true);
 		if (at && params.quiet === true) return textResult("quiet is only supported for recurring schedules.", undefined, undefined, true);
@@ -626,6 +637,9 @@ export class ScheduledRunManager {
 		if (sessionOnly && params.cwd !== undefined && !samePath(params.cwd, ctx.cwd)) return textResult("sessionOnly schedules cannot use an explicit cross-project cwd.", undefined, undefined, true);
 		const ownerSessionFile = sessionOnly ? ctx.sessionManager.getSessionFile() : undefined;
 		if (sessionOnly && !ownerSessionFile) return textResult("sessionOnly schedules require a persisted current session.", undefined, undefined, true);
+		if (target.target!.missionId !== undefined) {
+			readMission(resolveMissionStoreLocation({ projectRoot: path.resolve(params.cwd ?? ctx.cwd), ...(this.deps.config.missions ? { config: this.deps.config.missions } : {}) }), target.target!.missionId);
+		}
 		const sessionId = ctx.sessionManager.getSessionId() ?? "unknown";
 		if (this.deps.resolveCapabilityCeiling?.(sessionId)) return textResult("Cannot persist a schedule while a capability ceiling is active.", undefined, undefined, true);
 		const pendingCount = store.list().filter(hasPendingScheduleWork).length;
@@ -643,7 +657,8 @@ export class ScheduledRunManager {
 			trigger = { kind: "interval", every: every!, everyMs, anchorAt: timestamp(now), nextRunAt: timestamp(now + everyMs) };
 		}
 		const schedule: ScheduleRecord = {
-			schemaVersion: 1,
+			// Older readers ignore unknown target fields; they must reject mission-bound definitions.
+			schemaVersion: target.target!.missionId === undefined ? 1 : 2,
 			id,
 			name: params.name?.trim() || targetLabel(target.target!),
 			cwd: path.resolve(params.cwd ?? ctx.cwd),
@@ -661,18 +676,18 @@ export class ScheduledRunManager {
 		store.write(schedule);
 		store.appendEvent(schedule, "schedule.created");
 		this.arm(schedule, store);
-		return textResult(`Created schedule ${id}.\nName: ${schedule.name}\nTrigger: ${at ? `at ${at}` : `every ${every}`}\nSession only: ${schedule.sessionOnly === true ? "yes" : "no"}\nQuiet: ${schedule.quiet === true ? "yes" : "no"}\nNext: ${schedule.trigger.nextRunAt}\nTarget: ${targetLabel(schedule.target)}`, [schedule]);
+		return textResult(`Created schedule ${id}.\nName: ${schedule.name}\nTrigger: ${at ? `at ${at}` : `every ${every}`}\nSession only: ${schedule.sessionOnly === true ? "yes" : "no"}\nQuiet: ${schedule.quiet === true ? "yes" : "no"}\nNext: ${schedule.trigger.nextRunAt}\nTarget: ${targetLabel(schedule.target)}${schedule.target.missionId === undefined ? "" : `\nMission: ${schedule.target.missionId}`}`, [schedule]);
 	}
 
 	private list(): AgentToolResult<Details> {
 		const schedules = this.requireStore().list().sort((a, b) => (a.trigger.nextRunAt ?? "").localeCompare(b.trigger.nextRunAt ?? ""));
 		if (!schedules.length) return textResult("No project schedules.", []);
-		return textResult([`Project schedules: ${schedules.length}`, ...schedules.map((item) => `- ${item.id} | ${item.paused ? "paused" : item.activeRunId ? "running" : "scheduled"} | ${item.trigger.nextRunAt ?? "no next run"} | ${item.sessionOnly === true ? "session-only" : "project"} | ${item.name}`)].join("\n"), schedules);
+		return textResult([`Project schedules: ${schedules.length}`, ...schedules.map((item) => `- ${item.id} | ${item.paused ? "paused" : item.activeRunId ? "running" : "scheduled"} | ${item.trigger.nextRunAt ?? "no next run"} | ${item.sessionOnly === true ? "session-only" : "project"} | ${item.name}${item.target.missionId === undefined ? "" : ` | mission ${item.target.missionId}`}`)].join("\n"), schedules);
 	}
 
 	private show(params: SubagentParamsLike): AgentToolResult<Details> {
 		const schedule = this.resolve(params);
-		return textResult([`Schedule: ${schedule.id}`, `Name: ${schedule.name}`, `State: ${schedule.paused ? "paused" : schedule.activeRunId ? "running" : "scheduled"}`, `Session only: ${schedule.sessionOnly === true ? "yes" : "no"}`, `Quiet: ${schedule.quiet === true ? "yes" : "no"}`, `Target: ${targetLabel(schedule.target)}`, `CWD: ${shortenPath(schedule.cwd)}`, `Next: ${schedule.trigger.nextRunAt ?? "none"}`, `Catch up: ${schedule.catchUp}`, schedule.activeRunId ? `Active run: ${schedule.activeRunId}` : undefined].filter(Boolean).join("\n"), [schedule]);
+		return textResult([`Schedule: ${schedule.id}`, `Name: ${schedule.name}`, `State: ${schedule.paused ? "paused" : schedule.activeRunId ? "running" : "scheduled"}`, `Session only: ${schedule.sessionOnly === true ? "yes" : "no"}`, `Quiet: ${schedule.quiet === true ? "yes" : "no"}`, `Target: ${targetLabel(schedule.target)}`, schedule.target.missionId === undefined ? undefined : `Mission: ${schedule.target.missionId}`, `CWD: ${shortenPath(schedule.cwd)}`, `Next: ${schedule.trigger.nextRunAt ?? "none"}`, `Catch up: ${schedule.catchUp}`, schedule.activeRunId ? `Active run: ${schedule.activeRunId}` : undefined].filter(Boolean).join("\n"), [schedule]);
 	}
 
 	private history(params: SubagentParamsLike): AgentToolResult<Details> {

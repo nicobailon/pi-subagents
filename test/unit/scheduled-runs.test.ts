@@ -17,6 +17,7 @@ import {
 	type ScheduledRunManager,
 } from "../../src/runs/background/scheduled-runs.ts";
 import type { ExtensionConfig } from "../../src/shared/types.ts";
+import { createMission, readMission, resolveMissionStoreLocation } from "../../src/missions/store.ts";
 
 type Timer = { callback: () => void; delay: number };
 class FakeTimers {
@@ -388,6 +389,105 @@ describe("project schedule management", () => {
 		restoredLaunches[0]!.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "workflow", results: [], asyncId: "base-ref-async" } });
 		const result = await running;
 		assert.equal(result.isError, undefined);
+	});
+
+	it("attaches an existing mission without activating it and forwards it on manual and due fires", async () => {
+		const config: ExtensionConfig = { missions: { directory: ".missions", globalIndex: false, enabled: false } };
+		const h = harness({ config });
+		const location = resolveMissionStoreLocation({ projectRoot: h.ctx.cwd, config: config.missions });
+		const mission = createMission(location, { title: "Backlog", objective: "Track progress" });
+		const created = await h.manager.handleToolCall({ action: "schedule.create", id: "mission", every: "1h", workflowScript: "return 1", missionId: mission.id }, h.ctx);
+		assert.equal(created.isError, undefined);
+		assert.deepEqual(readMission(location, mission.id), mission, "scheduling must not activate the mission");
+		assert.equal((detailRecords(created)[0]?.target as { missionId?: string }).missionId, mission.id);
+		assert.equal(detailRecords(created)[0]?.schemaVersion, 2, "old readers must reject a mission-bound definition");
+		assert.match(text(created), new RegExp(`Mission: ${mission.id}`));
+		assert.match(text(await h.manager.handleToolCall({ action: "schedule.show", id: "mission" }, h.ctx)), new RegExp(`Mission: ${mission.id}`));
+		assert.match(text(await h.manager.handleToolCall({ action: "schedule.list" }, h.ctx)), new RegExp(`mission ${mission.id}`));
+		for (const [index, action] of ["schedule.run", "schedule.run-due"].entries()) {
+			if (index) h.clock.now += 3_600_000;
+			const pending = h.manager.handleToolCall({ action, id: "mission" }, h.ctx);
+			await flush();
+			const launch = h.launches[index]!;
+			assert.equal(launch.params.missionId, mission.id);
+			assert.equal(Object.hasOwn(launch.params, "mission"), false, "mission:false conflicts with an explicit ID");
+			const asyncId = `mission-${index}`;
+			launch.resolve({ content: [{ type: "text", text: "Async" }], details: { mode: "workflow", results: [], asyncId } });
+			assert.equal((await pending).isError, undefined);
+			h.manager.handleAsyncCompletion({ id: asyncId, success: true });
+		}
+	});
+
+	it("rejects missing or invalid mission attachment without persisting a schedule", async () => {
+		const h = harness({ config: { missions: { directory: ".missions", globalIndex: false } } });
+		for (const missionId of ["missing", "../escape", "", null]) {
+			const result = await h.manager.handleToolCall({ action: "schedule.create", id: "rejected", every: "1h", workflowScript: "return 1", missionId } as never, h.ctx);
+			assert.equal(result.isError, true);
+			assert.match(text(result), /missionId|was not found/);
+		}
+		assert.deepEqual(listScheduledRunSummaries(h.ctx.cwd, path.join(h.root, "stores")), []);
+		assert.equal(h.launches.length, 0);
+	});
+
+	it("resolves mission attachment from the target cwd and configured store", async () => {
+		const h = harness({ config: { missions: { directory: ".missions", globalIndex: false } } });
+		const targetCwd = path.join(h.root, "target-project");
+		fs.mkdirSync(targetCwd);
+		const location = resolveMissionStoreLocation({ projectRoot: targetCwd, config: { directory: ".missions", globalIndex: false } });
+		const mission = createMission(location, { title: "Target project", objective: "Keep project state" });
+		const request = { action: "schedule.create", id: "target-mission", every: "1h", workflowScript: "return 1", missionId: mission.id };
+		const wrongStore = await h.manager.handleToolCall(request, h.ctx);
+		assert.equal(wrongStore.isError, true);
+		h.manager.bindSession(context(targetCwd, "target-session"));
+		h.manager.bindSession(h.ctx);
+		const created = await h.manager.handleToolCall({ ...request, cwd: targetCwd }, h.ctx);
+		assert.equal(created.isError, undefined, text(created));
+		assert.equal(detailRecords(created)[0]?.cwd, targetCwd);
+		assert.deepEqual(readMission(location, mission.id), mission);
+
+		const shared = harness({ config: { missions: { directory: location.missionDir, globalIndex: false } } });
+		const sharedResult = await shared.manager.handleToolCall(request, shared.ctx);
+		assert.equal(sharedResult.isError, undefined, "an explicit shared store retains ordinary mission lookup semantics");
+		assert.deepEqual(readMission(location, mission.id), mission);
+	});
+
+	it("rejects a malformed persisted mission ID instead of dropping the attachment", async () => {
+		const config: ExtensionConfig = { missions: { directory: ".missions", globalIndex: false } };
+		const h = harness({ config });
+		const location = resolveMissionStoreLocation({ projectRoot: h.ctx.cwd, config: config.missions });
+		const mission = createMission(location, { title: "Backlog", objective: "Track progress" });
+		await h.manager.handleToolCall({ action: "schedule.create", id: "tampered-mission", every: "1h", workflowScript: "return 1", missionId: mission.id }, h.ctx);
+		h.manager.stop();
+		const file = path.join(scheduledRunStorePath(h.ctx.cwd, undefined, path.join(h.root, "stores")), "tampered-mission", "schedule.json");
+		const record = JSON.parse(fs.readFileSync(file, "utf-8"));
+		record.target.missionId = null;
+		fs.writeFileSync(file, JSON.stringify(record));
+		assert.throws(() => h.manager.bindSession(h.ctx), /invalid missionId/);
+		assert.equal(h.timers.values.size, 0);
+		assert.equal(h.launches.length, 0);
+	});
+
+	it("keeps unbound definitions readable and rejects inconsistent attachment versions", async () => {
+		const config: ExtensionConfig = { missions: { directory: ".missions", globalIndex: false } };
+		const h = harness({ config });
+		const plain = await h.manager.handleToolCall({ action: "schedule.create", id: "plain", every: "1h", workflowScript: "return 1" }, h.ctx);
+		assert.equal(detailRecords(plain)[0]?.schemaVersion, 1);
+		const location = resolveMissionStoreLocation({ projectRoot: h.ctx.cwd, config: config.missions });
+		const mission = createMission(location, { title: "Backlog", objective: "Track progress" });
+		await h.manager.handleToolCall({ action: "schedule.create", id: "bound", every: "1h", workflowScript: "return 1", missionId: mission.id }, h.ctx);
+		h.manager.stop();
+		const file = path.join(scheduledRunStorePath(h.ctx.cwd, undefined, path.join(h.root, "stores")), "bound", "schedule.json");
+		const record = JSON.parse(fs.readFileSync(file, "utf-8"));
+		for (const malformed of [
+			{ ...record, schemaVersion: 1 },
+			{ ...record, target: { workflowScript: record.target.workflowScript, args: record.target.args } },
+		]) {
+			fs.writeFileSync(file, JSON.stringify(malformed));
+			const rejected = await h.manager.handleToolCall({ action: "schedule.run", id: "bound" }, h.ctx);
+			assert.equal(rejected.isError, true);
+			assert.match(text(rejected), /requires schemaVersion 2/);
+		}
+		assert.equal(h.launches.length, 0);
 	});
 
 	it("pauses, resumes, lists, and deletes an inactive schedule", async () => {
