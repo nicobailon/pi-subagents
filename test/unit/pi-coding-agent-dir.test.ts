@@ -358,6 +358,12 @@ Package skill content.
 		assert.throws(() => loadConfig(), /config\.modelExclusions was removed/);
 	});
 
+	it("fails closed instead of dropping authorityPolicy when another config value is invalid", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ resultScanLogging: "bogus", authorityPolicy: { stopRun: "forbid" } }));
+		assert.throws(() => loadConfig(), /config\.resultScanLogging must be/);
+	});
+
 	it("rejects invalid artifactDir config values", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		writeFile(configPath, JSON.stringify({ artifactDir: "workspace" }));
