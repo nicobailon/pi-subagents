@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- The global mission list now reads title, status, update time, and latest run ID from each readable mission record. A stale index pointer therefore no longer makes a successfully updated mission appear out of date; listing still does not rewrite the pointer.
+- The global mission list now reads title, status, update time, and latest run ID from each readable mission record. A stale index pointer therefore no longer makes a successfully updated mission appear out of date; listing still does not rewrite the pointer. Thanks to [@quifox](https://github.com/quifox) for [#2618](https://github.com/nicobailon/pi-subagents/pull/2618).
 - `/subagent-cost` and the RPC `cost` method no longer log a missing workflow receipt error on every call. Foreground workflows write no receipt file and their child usage is already in their results, so cost collection no longer looks one up for them. An async workflow that has no receipt yet, such as one still running, is now reported as `Async child usage unavailable` instead of being left out of the totals without notice. Unreadable async workflow receipts are still logged. (#2614)
 - Headless sessions now deliver goal-mission notices even when draining background work fails, while preserving the drain rejection for callers. Thanks to [@quifox](https://github.com/quifox) for [#2605](https://github.com/nicobailon/pi-subagents/pull/2605).
 - A damaged linked-run status or mission state no longer prevents healthy goal missions from receiving continuation notices. The failing mission is reported separately. Thanks to [@quifox](https://github.com/quifox) for [#2604](https://github.com/nicobailon/pi-subagents/pull/2604).
