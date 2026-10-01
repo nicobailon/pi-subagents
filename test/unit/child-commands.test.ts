@@ -11,13 +11,15 @@ import { createChildCommandRuntime, controlChildCommand, readChildCommandState }
 
 const ctx = { sessionManager: { getSessionId: () => "test-session", getSessionFile: () => undefined } } as ExtensionContext;
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-async function until(predicate: () => boolean) {
+async function until(predicate: () => boolean, diagnostic?: () => unknown) {
 	const deadline = Date.now() + 3000;
-	while (!predicate()) { assert.ok(Date.now() < deadline, "condition did not become true"); await delay(10); }
+	while (!predicate()) { assert.ok(Date.now() < deadline, `condition did not become true${diagnostic ? `: ${JSON.stringify(diagnostic())}` : ""}`); await delay(10); }
 }
 function processAlive(pid: number) { try { process.kill(pid, 0); return true; } catch { return false; } }
 function serviceCommand(pidFile: string) {
-	return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(`require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); console.log('ready'); setInterval(() => {}, 1000);`)}`;
+	const script = `${pidFile}.cjs`;
+	fs.writeFileSync(script, `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); console.log('ready'); setInterval(() => {}, 1000);`);
+	return `${JSON.stringify(process.execPath.replaceAll("\\", "/"))} ${JSON.stringify(script.replaceAll("\\", "/"))}`;
 }
 
 describe("child commands using Pi's real bash backend", () => {
@@ -31,7 +33,7 @@ describe("child commands using Pi's real bash backend", () => {
 			const first = await bash.execute("first", { command: serviceCommand(firstPid), yieldTimeMs: 0 }, undefined, undefined, ctx);
 			assert.match(first.content[0].text, /not a successful exit/);
 			await bash.execute("second", { command: serviceCommand(secondPid), yieldTimeMs: 0 }, undefined, undefined, ctx);
-			await until(() => fs.existsSync(firstPid) && fs.existsSync(secondPid));
+			await until(() => fs.existsSync(firstPid) && fs.existsSync(secondPid), commands.state);
 			const pid1 = Number(fs.readFileSync(firstPid));
 			const pid2 = Number(fs.readFileSync(secondPid));
 			const continued = await bash.execute("continue", { command: "printf continued" }, undefined, undefined, ctx);
@@ -56,7 +58,7 @@ describe("child commands using Pi's real bash backend", () => {
 		try {
 			const pidFile = path.join(dir, "service.pid");
 			const pending = commands.wrap(createBashToolDefinition(dir)).execute("blocked", { command: serviceCommand(pidFile) }, undefined, undefined, ctx);
-			await until(() => fs.existsSync(pidFile));
+			await until(() => fs.existsSync(pidFile), commands.state);
 			assert.equal(commands.state().commands[0].state, "running");
 			await controlChildCommand(dir, "yield", "blocked");
 			assert.match((await pending).content[0].text, /still running/);
@@ -86,7 +88,7 @@ describe("child commands using Pi's real bash backend", () => {
 		try {
 			const pidFile = path.join(dir, "service.pid");
 			await commands.wrap(createBashToolDefinition(dir)).execute("unfinished", { command: serviceCommand(pidFile), yieldTimeMs: 0 }, undefined, undefined, ctx);
-			await until(() => fs.existsSync(pidFile));
+			await until(() => fs.existsSync(pidFile), commands.state);
 			const pid = Number(fs.readFileSync(pidFile));
 			await assert.rejects(commands.finish(), /unfinished commands: unfinished/);
 			await until(() => !processAlive(pid));
@@ -117,7 +119,7 @@ describe("Pi agent loop command cancellation", () => {
 		});
 		try {
 			const run = agent.prompt("Run the commands");
-			await until(() => fs.existsSync(pidFile));
+			await until(() => fs.existsSync(pidFile), commands.state);
 			await controlChildCommand(dir, "cancel", "blocked");
 			await run;
 			await commands.finish();

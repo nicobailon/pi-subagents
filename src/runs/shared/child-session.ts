@@ -199,9 +199,13 @@ function prioritizeChildPromptRuntime<T extends { extensions: Array<{ path: stri
 }
 
 /** Ambient bash overrides keep their original backend and priority. */
-function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: string }> }>(result: T): T {
+function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: string; tools?: Map<string, unknown> }> }>(result: T): T {
 	const index = result.extensions.findIndex(({ path }) => path === "<inline:pi-subagents:commands>");
-	if (index <= 0) return result;
+	if (index < 0) return result;
+	if (result.extensions.some((extension, otherIndex) => otherIndex !== index && extension.tools?.has("bash"))) {
+		return { ...result, extensions: result.extensions.filter((_, otherIndex) => otherIndex !== index) };
+	}
+	if (index === 0) return result;
 	const extensions = [...result.extensions];
 	const [commands] = extensions.splice(index, 1);
 	extensions.unshift(commands!);

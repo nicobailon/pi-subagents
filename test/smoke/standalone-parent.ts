@@ -45,8 +45,8 @@ export default function registerSmoke(pi: ExtensionAPI) {
 			const mode = process.env.PI_STANDALONE_SMOKE_MODE ?? "single";
 			assert.ok(["single", "workflow", "targeted-controls", "steer", "interrupt", "stop", "child-stop", "child-timeout", "run-timeout", "tool-timeout", "sdk-init-failure", "persistence-failure", "authorization-failure", "missing-bootstrap", "revival", "shared-run", "parallel-stop"].includes(mode), `unimplemented parent smoke mode: ${mode}`);
 			const expectedDeclaredTools = mode === "tool-timeout" ? ["bash"] : [];
-			// The default bridge adds upward coordination to nonempty menus, not explicit empty ones.
-			const expectedRuntimeTools = mode === "tool-timeout" ? ["bash", "contact_supervisor"] : [];
+			// Nonempty bash menus include command observation and upward coordination.
+			const expectedRuntimeTools = mode === "tool-timeout" ? ["bash", "subagent_command", "contact_supervisor"] : [];
 			const profile = parseFrontmatter(fs.readFileSync("/stage/work/.pi/agents/binary-smoke.md", "utf8"));
 			assert.deepEqual(parseFrontmatterList(profile.frontmatter.tools), expectedDeclaredTools);
 			const workflow = ["workflow", "targeted-controls", "child-timeout"].includes(mode);

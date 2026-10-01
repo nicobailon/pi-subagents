@@ -85,6 +85,7 @@ describe("default child factory command integration", () => {
 		try {
 			const child = await factory.create(launch(dir, runId));
 			assert.equal(fake.tools.get("bash"), original);
+			assert.equal(fake.tools.has("subagent_command"), false, "custom backends must not expose an unusable native controller");
 			await child.prompt("custom command");
 			assert.equal(readChildCommandState(channel), undefined, "custom backend must not be advertised as a controllable native command");
 		} finally { await factory.dispose(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }

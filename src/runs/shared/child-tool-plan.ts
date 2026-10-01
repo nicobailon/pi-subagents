@@ -395,6 +395,8 @@ export function resolvePiLaunchToolPlan(
 			...internalTools,
 		]),
 	];
+	// Automatically granted command observation is optional because custom bash
+	// overrides do not expose the native controller. An explicit declaration remains required.
 	// Upward contact stays in the --tools allowlist but is not a strict
 	// requirement: children register contact_supervisor at runtime through
 	// the native supervisor channel (or pi-intercom). The pre-0.50 bridge always
@@ -407,7 +409,7 @@ export function resolvePiLaunchToolPlan(
 				...new Set([
 					...(input.tools !== undefined ? effectiveDeclaredBuiltinTools : []),
 					...(input.mcpDirectTools?.length ? effectiveMcpTools : []),
-					...internalTools,
+					...internalTools.filter((tool) => tool !== "subagent_command"),
 				].filter((tool) => tool !== "contact_supervisor" && (!legacySupervisorPairing || tool !== "intercom"))),
 			]
 		: [];
