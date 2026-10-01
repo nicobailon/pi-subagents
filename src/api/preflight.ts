@@ -27,7 +27,7 @@ import { processTerminalCandidatePath, processTerminalPath } from "../runs/backg
 import { resultFilePath } from "../runs/background/result-files.ts";
 import { nestedResultsPath } from "../runs/shared/nested-events.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../runs/shared/extension-bindings.ts";
-import { resolveRequiredChildExtensions } from "../shared/required-child-extensions.ts";
+import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions } from "../shared/required-child-extensions.ts";
 
 // v3: the contract reports the resolved Intercom bridge state and binds its
 // prompt and tools into launchContractDigest, matching execution (#2127).
@@ -379,6 +379,13 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	if (resolvedSkills.missing.length > 0) diagnostics.push({ code: "missing_skill", severity: "error", message: `Missing skills: ${resolvedSkills.missing.join(", ")}` });
 
 	const externalRunner = agent.runner?.type === "external-cli" || agent.runner?.type === "external-job";
+	// Machine placement has no preflight input; execution enforces it. Preview the runner-type admission here.
+	try {
+		assertRequiredChildExtensionsAdmitted([resolveRequiredChildExtensions(input.parentSessionId)], { agent: agent.name, runnerType: agent.runner?.type });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { ok: false, code: "unsupported_mode", message, diagnostics };
+	}
 	if (externalRunner && behavior.outputSchema) {
 		return { ok: false, code: "unsupported_mode", message: `Agent '${agent.name}' uses runner.type='${agent.runner?.type}' and does not support: structured output.`, diagnostics };
 	}

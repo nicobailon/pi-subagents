@@ -266,6 +266,22 @@ describe("async runner execution", () => {
 		assert.deepEqual(rejected, { error: "Agent 'external' uses runner.type='external-cli' and does not support: model override." });
 	});
 
+	it("rejects an external runner step when the host required extensions are mandatory for all runners", (t) => {
+		const external = agent("external");
+		external.runner = { type: "external-cli", command: process.execPath, args: ["fake.mjs"] };
+		const registration = registerRequiredChildExtensions({ sessionId: ctx.currentSessionId, extensions: [{ id: "host-policy", path: import.meta.filename }], requireForAllRunners: true });
+		t.after(registration.dispose);
+		const rejected = buildAsyncRunnerSteps("external-mandatory", {
+			chain: [{ agent: "external", task: "review" }],
+			agents: [external],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-external-mandatory"),
+			maxSubagentDepth: 2,
+		});
+		assert.ok("error" in rejected);
+		assert.match(rejected.error, /requires child extensions \(host-policy\) for every runner/u);
+	});
+
 	it("refuses a pinned Claude Code model on a saved machine instead of dropping the flags", () => {
 		assert.throws(
 			() => assertClaudeCodeOverrideIsLocal("cc", "workmac", { args: ["--model", "opus"], model: "opus" }),

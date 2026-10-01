@@ -21,6 +21,8 @@ import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapac
 import { readPendingChainAppendRequests } from "../../src/runs/background/chain-append.ts";
 import { readActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
+import { writeRetainedRequiredChildExtensions } from "../../src/shared/required-child-extensions.ts";
+import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
 import { INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
@@ -1944,6 +1946,57 @@ syncBuiltinESMExports();
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
 			fs.rmSync(budget.directory, { recursive: true, force: true });
+		}
+	});
+
+	it("append-step admits against the run's retained mandatory extensions after the host registration is gone", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const runId = `append-required-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const budget = createRunFanoutBudget(runId, 8);
+		const snapshot = [{ id: "host-policy", path: fileURLToPath(import.meta.url), requireForAllRunners: true as const }];
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId, sessionId: "session-123", mode: "chain", state: "running", startedAt: 100, lastUpdate: 200, cwd: tempDir, chainStepCount: 1,
+				steps: [{ agent: "worker", status: "running" }],
+			}));
+			writeRunFanoutBudgetDescriptor(asyncDir, budget);
+			writeRetainedRequiredChildExtensions(asyncDir, snapshot);
+			const executor = makeAsyncExecutor([makeAgent("worker"), makeAgent("external", { runner: { type: "external-cli", command: process.execPath } })]);
+			const append = (agent: string) => executor.execute(`append-required-${agent}`, { action: "append-step", id: runId, step: { agent, task: "Review" } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir)) as Promise<AsyncExecutionResult>;
+
+			const rejected = await append("external");
+			assert.equal(rejected.isError, true);
+			assert.match(rejected.content[0]?.text ?? "", /requires child extensions \(host-policy\) for every runner/);
+			assert.equal(readPendingChainAppendRequests(asyncDir).length, 0);
+
+			const admitted = await append("worker");
+			assert.equal(admitted.isError, undefined, admitted.content[0]?.text ?? "append failed");
+			assert.deepEqual(readPendingChainAppendRequests(asyncDir)[0]?.steps[0]?.requiredExtensions, snapshot);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(budget.directory, { recursive: true, force: true });
+		}
+	});
+
+	it("workflow children keep the mandatory extensions admitted with the workflow after the host disposes its registration", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const childCwd = path.join(tempDir, "required-child");
+		fs.mkdirSync(childCwd, { recursive: true });
+		const registration = registerRequiredChildExtensions({ sessionId: "session-123", extensions: [{ id: "host-policy", path: fileURLToPath(import.meta.url) }], requireForAllRunners: true });
+		const agents = [makeAgent("external", { runner: { type: "external-cli", command: process.execPath, args: ["-e", ""] } })];
+		// The child's own agent discovery runs after workflow admission and before its launch: dispose there.
+		const executor = makeAsyncExecutor(agents, {}, (cwd) => {
+			if (cwd === childCwd) registration.dispose();
+			return { agents };
+		});
+		try {
+			const result = await executor.execute("workflow-required-disposed", {
+				async: false,
+				workflowScript: `return runs.run("ext", { agent: "external", task: "Review", cwd: ${JSON.stringify(childCwd)} });`,
+			}, new AbortController().signal, undefined, makeMinimalCtx(tempDir)) as AsyncExecutionResult;
+			assert.match(JSON.stringify(result), /requires child extensions \(host-policy\) for every runner/);
+		} finally {
+			registration.dispose();
 		}
 	});
 
