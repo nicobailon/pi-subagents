@@ -573,6 +573,32 @@ Package skill content.
 		assert.equal(rows[1]?.terminal.interrupted, true); // the interrupted child does
 	});
 
+	it("planBackgroundRunHistory keeps an earlier failure's outcome when a sibling is later interrupted", () => {
+		const rows = planBackgroundRunHistory({
+			steps: [{ task: "a" }, { task: "b" }],
+			resultMode: "parallel",
+			statusSteps: [
+				{ agent: "worker", status: "failed", durationMs: 40 }, // failed on its own, earlier
+				{ agent: "reviewer", status: "paused" },               // sibling interrupted later
+			],
+			runDurationMs: 100,
+			interrupted: true,
+		});
+		assert.deepEqual(rows[0]?.terminal, {}); // own failure must not be relabeled as interrupted
+		assert.equal(rows[0]?.exitCode, 1);       // outcome stays "failed"
+		assert.equal(rows[1]?.terminal.interrupted, true);
+	});
+
+	it("planBackgroundRunHistory honors a self-terminal step's own timeout flag", () => {
+		const rows = planBackgroundRunHistory({
+			steps: [{ task: "a" }],
+			resultMode: "single",
+			statusSteps: [{ agent: "worker", status: "failed", durationMs: 30, timedOut: true }],
+			runDurationMs: 30,
+		});
+		assert.deepEqual(rows[0]?.terminal, { timedOut: true }); // outcome "timed_out", not "failed"
+	});
+
 	it("planBackgroundRunHistory propagates run-level terminal flags to non-terminal rows", () => {
 		const rows = planBackgroundRunHistory({
 			steps: [{ task: "a" }, { task: "b" }],

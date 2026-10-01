@@ -153,6 +153,8 @@ export interface BackgroundRunHistoryEntry {
 }
 
 const TERMINAL_STEP_STATUSES = new Set(["complete", "completed"]);
+/** Steps that reached THEIR OWN terminal state — run-wide flags must not relabel them. */
+const SELF_TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", "rejected"]);
 
 /**
  * Census rows for one finished background run. Single-step runs keep the exact
@@ -165,14 +167,15 @@ const TERMINAL_STEP_STATUSES = new Set(["complete", "completed"]);
  * - steps still `pending` never ran (e.g. a chain stopped after a failure) and
  *   get no row — unrun agents must not accumulate attempts or failures;
  * - run-level terminal flags (stopped/interrupted/timedOut) apply only to steps
- *   that did NOT already reach terminal success — a child that finished before
- *   the run was interrupted keeps its `completed` outcome, because recordRun()
- *   lets those flags override a successful exit code.
+ *   that did not reach a terminal state of their own — a child that completed
+ *   or failed BEFORE a sibling was interrupted keeps its own outcome, because
+ *   recordRun() lets those flags override the exit code;
+ * - self-terminal steps carry their own timedOut/stopped flags instead.
  */
 export function planBackgroundRunHistory(input: {
 	steps: readonly unknown[];
 	resultMode: string;
-	statusSteps: ReadonlyArray<{ agent?: unknown; status?: unknown; durationMs?: number }>;
+	statusSteps: ReadonlyArray<{ agent?: unknown; status?: unknown; durationMs?: number; timedOut?: boolean; stopped?: boolean }>;
 	stepResults?: ReadonlyArray<{ processSignal?: unknown } | undefined>;
 	runDurationMs: number;
 	stopped?: boolean;
@@ -190,15 +193,21 @@ export function planBackgroundRunHistory(input: {
 		if (typeof step.agent !== "string" || !step.agent) continue;
 		if (step.status === "pending") continue;
 		const succeeded = TERMINAL_STEP_STATUSES.has(step.status as string);
+		const ownTerminal: BackgroundRunHistoryEntry["terminal"] = {
+			...(step.timedOut === true ? { timedOut: true } : {}),
+			...(step.stopped === true ? { stopped: true } : {}),
+		};
+		// A step that reached its own terminal state (completed, or failed/rejected
+		// before a sibling was interrupted) keeps its own outcome; run-wide flags
+		// would relabel it in recordRun().
+		const terminal = SELF_TERMINAL_STEP_STATUSES.has(step.status as string) ? ownTerminal : { ...runTerminal, ...ownTerminal };
 		const processSignal = input.stepResults?.[index]?.processSignal;
-		const terminal = succeeded ? {} : runTerminal;
 		rows.push({
 			agent: step.agent,
 			task,
 			exitCode: succeeded ? 0 : 1,
 			durationMs: typeof step.durationMs === "number" ? step.durationMs : input.runDurationMs,
-			terminal: processSignal === undefined ? terminal : { ...terminal, processSignal: typeof processSignal === "string" ? processSignal : null },
-		});
+			terminal: processSignal === undefined ? terminal : { ...terminal, processSignal: typeof processSignal === "string" ? processSignal : null },		});
 	}
 	return rows;
 }
