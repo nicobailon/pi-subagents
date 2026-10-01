@@ -1437,7 +1437,6 @@ export function executeAsyncChain(
 		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
 		fs.mkdirSync(asyncDir, { recursive: true });
 		writeRunFanoutBudgetDescriptor(asyncDir, runFanoutBudget);
-		writeRetainedRequiredChildExtensions(asyncDir, params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {
@@ -1526,6 +1525,12 @@ export function executeAsyncChain(
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
 	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
+	try {
+		writeRetainedRequiredChildExtensions(asyncDir, params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(launchParentSessionId ?? undefined));
+	} catch (error) {
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+		return formatAsyncStartError(resultMode, `Failed to record required child extensions: ${error instanceof Error ? error.message : String(error)}`);
+	}
 
 	let spawnResult: SpawnRunnerResult = {};
 	try {
