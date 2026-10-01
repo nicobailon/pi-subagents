@@ -78,7 +78,7 @@ describe("default child factory command integration", () => {
 			assert.equal(readChildCommandState(channel)?.commands.find((command) => command.toolCallId === "command")?.state, "yielded", "prompt return must not clean up before authoritative settlement");
 			await assert.rejects(child.finishCommands!(), /unfinished commands: command/);
 			assert.equal(readChildCommandState(channel)?.commands.find((command) => command.toolCallId === "command")?.state, "cancelled");
-		} finally { await factory.dispose(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
+		} finally { await factory.dispose(); await fs.promises.rm(channel, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
 	it("leaves an ambient custom bash backend in control", async () => {
@@ -96,7 +96,7 @@ describe("default child factory command integration", () => {
 			assert.equal(fake.tools.has("subagent_command"), false, "custom backends must not expose an unusable native controller");
 			await child.prompt("custom command");
 			assert.equal(readChildCommandState(channel), undefined, "custom backend must not be advertised as a controllable native command");
-		} finally { await factory.dispose(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
+		} finally { await factory.dispose(); await fs.promises.rm(channel, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 	it("keeps an explicitly required command tool available without claiming control of custom bash", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-command-explicit-override-"));
@@ -116,7 +116,7 @@ describe("default child factory command integration", () => {
 			await assert.rejects(commandTool.execute("status", { action: "status" }, undefined, undefined, {} as ExtensionContext), /unavailable.*custom bash/);
 			await child.prompt("custom command");
 			assert.equal(readChildCommandState(channel), undefined);
-		} finally { await factory.dispose(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
+		} finally { await factory.dispose(); await fs.promises.rm(channel, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
 	for (const tools of [undefined, ["bash"]]) {
@@ -136,7 +136,7 @@ describe("default child factory command integration", () => {
 				const result = await fake.tools.get("bash")!.execute("plain", { command: "printf plain" }, undefined, undefined, ctxForTest());
 				assert.equal(result.content[0].text, "plain");
 				assert.equal(readChildCommandState(channel), undefined);
-			} finally { await factory.dispose(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
+			} finally { await factory.dispose(); await fs.promises.rm(channel, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 		});
 	}
 
@@ -158,7 +158,7 @@ describe("default child factory command integration", () => {
 			const result = await custom.execute("status", { action: "status" }, undefined, undefined, ctxForTest());
 			assert.equal(result.content[0].text, "custom controls");
 			assert.equal(readChildCommandState(channel), undefined);
-		} finally { await factory.dispose(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
+		} finally { await factory.dispose(); await fs.promises.rm(channel, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
 });
