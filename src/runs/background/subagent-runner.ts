@@ -99,7 +99,7 @@ import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
-import { backgroundRunHistoryTask, recordRun } from "../shared/run-history.ts";
+import { planBackgroundRunHistory, recordRun } from "../shared/run-history.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import {
 	createMutatingFailureState,
@@ -5080,22 +5080,22 @@ export async function runSubagent(
 	);
 	// run-history parity with the foreground executor (subagent-executor.ts): without
 	// this, every async launch is invisible to the per-agent run census, because
-	// asyncByDefault routes all subagent tool calls through this runner. Paused runs
-	// record here too (outcome "interrupted", matching foreground); a later resume
-	// that reaches a new terminal state records again — one entry per attempt, the
-	// same census semantics an interrupted foreground rerun produces.
-	recordRun(
-		agentName,
-		backgroundRunHistoryTask(steps, resultMode),
-		statusPayload.state === "complete" ? 0 : 1,
-		runEndedAt - overallStartTime,
-		{
-			stopped,
-			interrupted,
-			timedOut,
-			processSignal: results.find((result) => result.processSignal)?.processSignal ?? null,
-		},
-	);
+	// asyncByDefault routes all subagent tool calls through this runner. Multi-step
+	// runs record one row per child step so loadRunsForAgent(agent) sees each child;
+	// paused runs record here too (outcome "interrupted", matching foreground), and
+	// a later resume that settles records again — one entry per attempt.
+	for (const historyEntry of planBackgroundRunHistory({
+		steps,
+		resultMode,
+		statusSteps: statusPayload.steps,
+		stepResults: results,
+		runDurationMs: runEndedAt - overallStartTime,
+		stopped,
+		interrupted,
+		timedOut,
+	})) {
+		recordRun(historyEntry.agent, historyEntry.task, historyEntry.exitCode, historyEntry.durationMs, historyEntry.terminal);
+	}
 	writeRunLog(logPath, omitUndefinedProperties({
 		id,
 		mode: statusPayload.mode,

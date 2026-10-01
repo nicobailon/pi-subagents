@@ -9,7 +9,7 @@ import { handleCreate } from "../../src/agents/agent-management.ts";
 import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../../src/agents/skills.ts";
 import { loadConfig, updateConfig } from "../../src/extension/config.ts";
 import { diagnoseIntercomBridge, resolveIntercomBridge } from "../../src/intercom/intercom-bridge.ts";
-import { backgroundRunHistoryTask, loadRunsForAgent, recordRun } from "../../src/runs/shared/run-history.ts";
+import { backgroundRunHistoryTask, loadRunsForAgent, planBackgroundRunHistory, recordRun } from "../../src/runs/shared/run-history.ts";
 import { cleanupAllArtifactDirs, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 import { getAgentDir, getConfigDirName, getProjectConfigDir, resolveConfigDirName } from "../../src/shared/utils.ts";
@@ -504,5 +504,64 @@ Package skill content.
 		assert.equal(backgroundRunHistoryTask([{ task: "a" }, { task: "b" }], "chain"), "chain");
 		// Missing/empty task falls back rather than producing an empty hash input.
 		assert.equal(backgroundRunHistoryTask([{ task: "" }], "single"), "single");
+	});
+
+	it("planBackgroundRunHistory maps a single-step run to one foreground-shaped row", () => {
+		const rows = planBackgroundRunHistory({
+			steps: [{ task: "fix the flaky test" }],
+			resultMode: "single",
+			statusSteps: [{ agent: "worker", status: "complete", durationMs: 4321 }],
+			runDurationMs: 5000,
+		});
+		assert.equal(rows.length, 1);
+		assert.equal(rows[0]?.agent, "worker");
+		assert.equal(rows[0]?.task, "fix the flaky test");
+		assert.equal(rows[0]?.exitCode, 0);
+		assert.equal(rows[0]?.durationMs, 4321);
+		assert.deepEqual(rows[0]?.terminal, {});
+	});
+
+	it("planBackgroundRunHistory records one row per child step so loadRunsForAgent sees every child", () => {
+		const rows = planBackgroundRunHistory({
+			steps: [{ task: "a" }, { task: "b" }, { task: "c" }],
+			resultMode: "parallel",
+			statusSteps: [
+				{ agent: "worker", status: "complete", durationMs: 100 },
+				{ agent: "worker", status: "failed" },            // duplicate agent stays two rows
+				{ agent: "reviewer", status: "complete", durationMs: 300 },
+			],
+			stepResults: [{}, { processSignal: "SIGTERM" }, {}],
+			runDurationMs: 999,
+		});
+		assert.deepEqual(rows.map((row) => row.agent), ["worker", "worker", "reviewer"]);
+		// Multi-step rows hash the mode label, never per-step prompts.
+		assert.ok(rows.every((row) => row.task === "parallel"));
+		assert.deepEqual(rows.map((row) => row.exitCode), [0, 1, 0]);
+		assert.equal(rows[1]?.durationMs, 999); // missing step duration falls back to the run duration
+		assert.equal(rows[1]?.terminal.processSignal, "SIGTERM");
+	});
+
+	it("planBackgroundRunHistory propagates run-level terminal flags to every row", () => {
+		const rows = planBackgroundRunHistory({
+			steps: [{ task: "a" }, { task: "b" }],
+			resultMode: "chain",
+			statusSteps: [{ agent: "worker", status: "paused" }, { agent: "worker", status: "paused" }],
+			runDurationMs: 10,
+			interrupted: true,
+			timedOut: false,
+		});
+		assert.ok(rows.length === 2);
+		assert.ok(rows.every((row) => row.terminal.interrupted === true && row.terminal.timedOut === undefined));
+		assert.ok(rows.every((row) => row.exitCode === 1)); // paused is not a terminal success
+	});
+
+	it("planBackgroundRunHistory skips steps without a usable agent name", () => {
+		const rows = planBackgroundRunHistory({
+			steps: [],
+			resultMode: "single",
+			statusSteps: [{ agent: "", status: "complete" }, { status: "complete" }, { agent: "worker", status: "complete", durationMs: 5 }],
+			runDurationMs: 7,
+		});
+		assert.deepEqual(rows.map((row) => row.agent), ["worker"]);
 	});
 });

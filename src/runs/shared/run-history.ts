@@ -144,6 +144,54 @@ export function backgroundRunHistoryTask(steps: readonly unknown[], resultMode: 
 	return resultMode || "run";
 }
 
+export interface BackgroundRunHistoryEntry {
+	agent: string;
+	task: string;
+	exitCode: number;
+	durationMs: number;
+	terminal: { stopped?: boolean; interrupted?: boolean; timedOut?: boolean; processSignal?: string | null };
+}
+
+const TERMINAL_STEP_STATUSES = new Set(["complete", "completed"]);
+
+/**
+ * Census rows for one finished background run. Single-step runs keep the exact
+ * foreground shape (agent + task text). Multi-step runs record ONE ROW PER CHILD
+ * STEP so `loadRunsForAgent(agent)` sees every child — a composite-only row would
+ * stay invisible to per-agent lookups. Per-step prompts are never hashed:
+ * multi-step rows hash the mode label only.
+ */
+export function planBackgroundRunHistory(input: {
+	steps: readonly unknown[];
+	resultMode: string;
+	statusSteps: ReadonlyArray<{ agent?: unknown; status?: unknown; durationMs?: number }>;
+	stepResults?: ReadonlyArray<{ processSignal?: unknown } | undefined>;
+	runDurationMs: number;
+	stopped?: boolean;
+	interrupted?: boolean;
+	timedOut?: boolean;
+}): BackgroundRunHistoryEntry[] {
+	const terminal: BackgroundRunHistoryEntry["terminal"] = {
+		...(input.stopped ? { stopped: true } : {}),
+		...(input.interrupted ? { interrupted: true } : {}),
+		...(input.timedOut ? { timedOut: true } : {}),
+	};
+	const task = backgroundRunHistoryTask(input.steps, input.resultMode);
+	const rows: BackgroundRunHistoryEntry[] = [];
+	for (const [index, step] of input.statusSteps.entries()) {
+		if (typeof step.agent !== "string" || !step.agent) continue;
+		const processSignal = input.stepResults?.[index]?.processSignal;
+		rows.push({
+			agent: step.agent,
+			task,
+			exitCode: TERMINAL_STEP_STATUSES.has(step.status as string) ? 0 : 1,
+			durationMs: typeof step.durationMs === "number" ? step.durationMs : input.runDurationMs,
+			terminal: processSignal === undefined ? terminal : { ...terminal, processSignal: typeof processSignal === "string" ? processSignal : null },
+		});
+	}
+	return rows;
+}
+
 export function recordRun(
 	agent: string,
 	task: string,
