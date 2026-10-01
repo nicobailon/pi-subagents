@@ -363,6 +363,14 @@ Package skill content.
 		assert.throws(() => loadConfig(), /config\.modelExclusions was removed/);
 	});
 
+	it("fails closed instead of dropping restrictions when another config value is invalid", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		for (const restriction of [{ authorityPolicy: { stopRun: "forbid" } }, { permissions: { rules: { write: "deny" } } }, { toolBudget: { hard: 5 } }]) {
+			writeFile(configPath, JSON.stringify({ resultScanLogging: "bogus", ...restriction }));
+			assert.throws(() => loadConfig(), /config\.resultScanLogging must be/);
+		}
+	});
+
 	it("rejects invalid artifactDir config values", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		writeFile(configPath, JSON.stringify({ artifactDir: "workspace" }));

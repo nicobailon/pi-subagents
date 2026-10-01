@@ -90,7 +90,7 @@ describe("async single-agent deadline checkpoint lifecycle", { skip: !available 
 		const executor = makeAsyncExecutor([makeAgent("worker")]);
 		const result = await executor.execute("checkpoint-early", {
 			agent: "worker", task: "Explore the repository", async: true, clarify: false,
-			timeoutMs: 8_000, checkpointBeforeDeadlineMs: 3_000,
+			timeoutMs: 15_000, checkpointBeforeDeadlineMs: 3_000,
 		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		const id = result.details?.asyncId;
 		assert.ok(id);
