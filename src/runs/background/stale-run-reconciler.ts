@@ -360,6 +360,15 @@ export function reconcileNestedAsyncDescendants(route: NestedRoute, options: Rec
 export function checkPidLiveness(pid: number, kill: KillFn = process.kill): PidLiveness {
 	try {
 		kill(pid, 0);
+		if (process.platform === "linux") {
+			try {
+				const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf-8");
+				const closeParen = stat.lastIndexOf(") ");
+				if (closeParen >= 0 && stat[closeParen + 2] === "Z") return "dead";
+			} catch {
+				// Fall back to kill(pid, 0) when procfs is unavailable or unreadable.
+			}
+		}
 		return "alive";
 	} catch (error) {
 		const code = typeof error === "object" && error !== null && "code" in error
