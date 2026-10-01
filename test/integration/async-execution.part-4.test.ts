@@ -1434,9 +1434,11 @@ setTimeout(() => process.exit(90), 15000).unref();
 			let status: AsyncStatusPayload | undefined;
 			while (Date.now() < deadline) {
 				status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-				if (status.currentTool === "bash") break;
+				// The supervisor call's end is in recentTools only after its cleanup ran.
+				if (status.steps?.[0]?.recentTools?.some((tool) => tool.tool === "contact_supervisor")) break;
 				await new Promise((resolve) => setTimeout(resolve, 50));
 			}
+			assert.ok(status?.steps?.[0]?.recentTools?.some((tool) => tool.tool === "contact_supervisor"), "expected the supervisor call to have ended");
 			assert.equal(status?.currentTool, "bash");
 			assert.equal(status?.steps?.[0]?.activityState, "needs_attention");
 			assert.equal(status?.activityState, "needs_attention");
