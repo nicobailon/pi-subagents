@@ -248,8 +248,8 @@ export function collectSubagentCost(
 				if (!usage || !addChild({ ...ref, usage })) unresolvedAsyncChildren += 1;
 			}
 		} catch (error) {
-			// A bg_wait completion already reported this workflow's children.
-			if (!completedRunIds.has(workflowRunId)) unresolvedAsyncChildren += 1;
+			// Without a receipt, a bg_wait completion cannot prove it reported every child (a stopped workflow may omit one).
+			unresolvedAsyncChildren += 1;
 			// A running workflow has no receipt yet; readWorkflowReceipt keeps the ENOENT as its cause.
 			const missing = (error as NodeJS.ErrnoException).code === "ENOENT" || ((error as Error).cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 			if (!missing) console.error(`Failed to resolve async subagent usage for '${workflowRunId}':`, error);
