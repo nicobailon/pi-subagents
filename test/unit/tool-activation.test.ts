@@ -151,6 +151,19 @@ describe("subagent tool activation", () => {
 		assert.equal(restricted.active().includes("subagents_enable"), false);
 	});
 
+	it("keeps subagent active when orchestration restore runs after a recorded native removal", async () => {
+		const tool = { name: "subagent", description: "historical", parameters: { type: "object" } };
+		const runtime = createRuntime([{ role: "system", content: "", toolsRemoved: [tool], timestamp: 1 }]);
+		// Persisted orchestration ON makes orchestration's session_start handler enter
+		// first; tool activation's restore handler runs after it and must not remove
+		// the subagent tool based on the stale recorded selection.
+		(runtime.context.sessionManager as any).getBranch = () => [
+			{ type: "custom", customType: "pi-subagents-orchestration-mode", data: { enabled: true, normalTools: ["read"] } },
+		];
+		await runtime.emit("session_start", { type: "session_start", reason: "reload" });
+		assert.ok(runtime.active().includes("subagent"), "orchestration restore must retain subagent despite a recorded native removal");
+	});
+
 	it("does not activate delegation from prompt keywords and reports an unavailable target", async () => {
 		const runtime = createRuntime([], [], [], DYNAMIC);
 		await runtime.emit("session_start", { type: "session_start", reason: "startup" });

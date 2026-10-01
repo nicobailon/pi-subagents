@@ -1914,6 +1914,31 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("rejects a foreground resume that resolves a different definition for the same agent name", async () => {
+		const sessionFile = path.join(tempDir, "foreground-identity-child.jsonl");
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("worker", { filePath: path.join(tempDir, "current", "worker.md") })] });
+		state.foregroundRuns.set("foreground-identity-run", {
+			runId: "foreground-identity-run",
+			mode: "single",
+			cwd: tempDir,
+			sessionId: "session-123",
+			updatedAt: Date.now(),
+			children: [{ agent: "worker", index: 0, status: "completed", sessionFile, resumeContract: { agentFilePath: path.join(tempDir, "persisted", "worker.md") } }],
+		});
+
+		const resumed = await executor.execute(
+			"foreground-identity-resume",
+			{ action: "resume", id: "foreground-identity-run", message: "Follow up" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(resumed.isError, true);
+		assert.match(resumed.content[0]?.text ?? "", /persisted agent 'worker'/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("resume action keeps exact foreground validation errors over async prefix matches", async () => {
 		const base = `exact-invalid-${Date.now()}`;
 		const asyncSession = path.join(tempDir, "async-exact-prefix.jsonl");

@@ -316,7 +316,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
 		return;
 	}
-	registerOrchestrationMode(pi);
+	const orchestrationMode = registerOrchestrationMode(pi);
 	const runtimeRegistry = getRuntimeRegistry();
 	setMainThinkingLevelSource(() => readMainThinkingLevel(() => pi.getThinkingLevel()));
 
@@ -414,6 +414,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		storeRoot: scheduledStoreRoot,
 		launch: async (params, ctx, signal) => {
 			await waitForAdvertisement();
+			// Scheduled automation is a non-coordinator execution lane and intentionally
+			// bypasses explicit orchestration-mode policy (executeScheduled, not
+			// executeSubagentReady). Do not route it through the coordinator gate.
 			return (await getExecutor()).executeScheduled(randomUUID(), params, signal, ctx);
 		},
 		resolveCapabilityCeiling: (sessionId) => resolveCurrentSubagentCapabilityCeiling(sessionId),
@@ -680,7 +683,20 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const executeSubagentReady = async (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
 		await waitForAdvertisement();
-		return (await getExecutor()).executePublic(id, params, signal, onUpdate, ctx);
+		// Explicit orchestration policy is enforced here for every governed public
+		// execution path (model tool calls, slash commands, prompt workflows, RPC). The
+		// tool_call hook is the early gate for model calls; this is the shared one.
+		// applyPolicy returns a normalized clone and never mutates `params`, which may be
+		// caller-owned or frozen.
+		const orchestration = orchestrationMode.applyPolicy(params as unknown as Record<string, unknown>);
+		if (orchestration.block) {
+			return {
+				content: [{ type: "text" as const, text: orchestration.block.reason }],
+				isError: true,
+				details: { mode: ((params as { action?: unknown }).action === undefined ? "workflow" : "management") as Details["mode"], results: [] },
+			};
+		}
+		return (await getExecutor()).executePublic(id, orchestration.params as unknown as SubagentParamsLike, signal, onUpdate, ctx);
 	};
 	const executeSubagentCollapsed = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
 		if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
@@ -699,6 +715,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		getContext: () => state.lastUiContext,
 		execute: (requestId, params, signal, ctx, onUpdate) =>
 			executeSubagentCollapsed(requestId, params, signal, onUpdate, ctx),
+		// Structured owned delegation (ownerRunId nodes) is a non-coordinator execution
+		// lane and intentionally bypasses explicit orchestration-mode policy. Do not
+		// route it through executeSubagentReady/the coordinator gate.
 		executeStructured: async (requestId, params, signal, ctx, onUpdate) => {
 			if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
 			await waitForAdvertisement();
@@ -1156,5 +1175,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			await waitForAdvertisement();
 			return buildAdvertisedAgentPrompt(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(state.currentSessionId ?? undefined));
 		},
+		// Orchestration mode sets the subagent tool active; a stale recorded native
+		// selection must not remove it when the restore handlers run after ours.
+		shouldPreserveSubagent: () => orchestrationMode.isEnabled(),
 	});
 }

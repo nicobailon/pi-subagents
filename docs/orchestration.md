@@ -18,6 +18,18 @@ At each transition ask what material evidence is still missing, then take the sm
 - **Challenge when warranted:** use a fresh `reviewer` when independent review is requested, required, or materially useful to acceptance. Do not add review ceremony solely because a mutation occurred.
 - **Repair until proven:** adjudicate concrete findings, repair accepted defects, and re-establish affected evidence before finishing.
 
+## Compile the contract into existing primitives
+
+For substantial delegated work, avoid making the operator restate the same workflow contract at every transition. Use the primitives Pi already owns:
+
+- put the bounded objective, authority, constraints, and expected result in the child `task`;
+- bind any required domain procedure explicitly with `skill` instead of hoping a generic child rediscovers it;
+- use `acceptance` for criteria, evidence, review expectation, and stop rules, but not `acceptance.verify` shell commands in orchestration mode;
+- use an explicit `mission` when human-readable recovery/cross-run continuity matters, then reuse its `missionId` for later implementation/review runs;
+- use relative managed `output`/`outputMode: "file-only"` when a large handoff must survive the child; reserve absolute durable destinations for an operator-approved path.
+
+Do not introduce a parallel task-state model. Missions already own durable run links, decisions, artifacts, acceptance evidence, and external receipts; repository state remains authoritative for code and project status. `mission.update` may record evidence/decisions/receipts, but a receipt is never permission to merge, deploy, or release.
+
 ## Writer continuity
 
 For sequential mutation in the same working state, resume the most recent writer by default. Start a fresh writer only when fresh context or isolation is itself useful. This keeps implementation ownership singular without repeatedly reconstructing the same local state.
@@ -46,6 +58,14 @@ subagent({ agent: "worker", task: "Implement the bounded change." })
 subagent({ agent: "reviewer", task: "Review the concrete result." })
 subagent({ action: "resume", id: "<worker-run>", message: "Repair these accepted findings: ..." })
 subagent({ action: "status", id: "<run>" })
+subagent({ action: "children.list" })
+subagent({ action: "mission.show", missionId: "<mission>" })
 ```
 
+Read-only `children.list` discovers retained resumable workflow writers. It is workflow-only and is not an exhaustive list of direct native children; when an intended child's exact run id is known, inspect it with `status` and attempt `resume`, which authoritatively checks eligibility.
+
 A supported blocker is a valid terminal outcome. Do not manufacture another execution route merely to keep the loop moving.
+
+## Scope of the policy
+
+Explicit orchestration mode governs only coordinator-initiated public execution: model `subagent` tool calls, the slash/prompt-template bridges, and RPC. Scheduled automation (`executeScheduled`) and structured owned delegation (`executeDelegated`, ownerRunId workflow nodes) are separate non-coordinator execution lanes. They run with their own persisted launch contracts and are intentionally exempt from the transient orchestration-mode policy; do not route them through the coordinator gate.

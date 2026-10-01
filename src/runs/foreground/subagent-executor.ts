@@ -774,7 +774,7 @@ function foregroundChildActivityFromProgress(progress: SingleResult["progress"] 
 	};
 }
 
-function rememberForegroundRun(state: SubagentState, input: { modelResponseAliases?: Record<string, string[]>; runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[]; params: SubagentParamsLike; effectiveOutput?: string | boolean; effectiveOutputMode: OutputMode; extensionBindings?: ExtensionBindings; requiredExtensions?: SteeringRecoveryDescriptor["requiredExtensions"] }): void {
+function rememberForegroundRun(state: SubagentState, input: { modelResponseAliases?: Record<string, string[]>; runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[]; params: SubagentParamsLike; effectiveOutput?: string | boolean; effectiveOutputMode: OutputMode; extensionBindings?: ExtensionBindings; requiredExtensions?: SteeringRecoveryDescriptor["requiredExtensions"]; agentFilePath?: string }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
 	const updatedAt = Date.now();
@@ -792,6 +792,7 @@ function rememberForegroundRun(state: SubagentState, input: { modelResponseAlias
 				acceptance: input.params.acceptance,
 				output: input.effectiveOutput,
 				outputMode: input.effectiveOutputMode,
+				agentFilePath: input.agentFilePath,
 			});
 			const child = {
 				agent: result.agent,
@@ -1959,6 +1960,7 @@ async function resumeAsyncRun(input: {
 	const modelScope = discovered.modelScope;
 	const sessionName = resolveIntercomSessionTarget(input.deps.childRuntime?.intercomSessionName ?? input.deps.pi.getSessionName(), input.ctx.sessionManager.getSessionId());
 	const recoveryDescriptor = "recoveryDescriptor" in target ? target.recoveryDescriptor : undefined;
+	const foregroundContract = target.source === "foreground" ? target.resumeContract : undefined;
 	const recoveryContext = recoveryDescriptor?.context ?? (input.params.context === "profile" ? undefined : input.params.context);
 	const intercomBridge = resolveIntercomBridge({
 		config: input.deps.config.intercomBridge,
@@ -1985,6 +1987,18 @@ async function resumeAsyncRun(input: {
 	if (!baseAgentConfig) {
 		return {
 			content: [{ type: "text", text: formatUnknownAgentError(target.agent, unknownAgentDiagnosticContext, "Unknown agent for resume") }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
+	// Scoped discovery can resolve a same-named agent from a different source than
+	// the persisted recovery target (for example orchestration narrows resume
+	// discovery to the user catalog). When the persisted definition file is known,
+	// fail closed instead of silently substituting a different role contract.
+	const persistedAgentFilePath = recoveryDescriptor?.agentFilePath ?? foregroundContract?.agentFilePath;
+	if (persistedAgentFilePath && discoveredAgentConfig && discoveredAgentConfig.filePath !== persistedAgentFilePath) {
+		return {
+			content: [{ type: "text", text: `Cannot resume: persisted agent '${target.agent}' is defined at '${persistedAgentFilePath}', but the current '${scope}' scope resolves '${target.agent}' from '${discoveredAgentConfig.filePath}'. Start a new run instead of substituting a different role.` }],
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
@@ -2114,7 +2128,7 @@ async function resumeAsyncRun(input: {
 			childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
 			globalConcurrencyLimit: input.deps.config.globalConcurrencyLimit,
 			runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
-			capabilityCeiling: intersectSubagentCapabilityCeilings("capabilityCeiling" in target ? target.capabilityCeiling : undefined, resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
+			capabilityCeiling: intersectSubagentCapabilityCeilings(input.params.capabilityCeiling, "capabilityCeiling" in target ? target.capabilityCeiling : undefined, resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
 			thinkingCeiling: target.thinkingCeiling,
 			activeAsyncCapacity,
 		}));
@@ -2152,7 +2166,6 @@ async function resumeAsyncRun(input: {
 	}
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : baseAgentConfig;
 	const agentConfig = intercomBridge.active ? applyIntercomBridgeToAgent(recoveryAgentConfig, intercomBridge) : recoveryAgentConfig;
-	const foregroundContract = target.source === "foreground" ? target.resumeContract : undefined;
 	const outputSchema = Object.hasOwn(input.params, "outputSchema")
 		? input.params.outputSchema
 		: Object.hasOwn(foregroundContract ?? {}, "outputSchema")
@@ -2271,8 +2284,11 @@ async function resumeAsyncRun(input: {
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
 		// Recovery descriptors, remembered foreground runs, and current workflow roots
-		// preserve parent authority before the selected agent's descendant ceiling.
-		capabilityCeiling: intersectSubagentCapabilityCeilings(recoveryDescriptor?.capabilityCeiling ?? (target.source === "foreground" || (target.source === "async" && target.mode === "workflow") ? target.capabilityCeiling : undefined), resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
+		// preserve parent authority before the selected agent's descendant ceiling. The
+		// request's own ceiling is intersected in too, so a resume issued under
+		// orchestration cannot revive a persisted recovery agent outside the active
+		// user role catalog.
+		capabilityCeiling: intersectSubagentCapabilityCeilings(input.params.capabilityCeiling, recoveryDescriptor?.capabilityCeiling ?? (target.source === "foreground" || (target.source === "async" && target.mode === "workflow") ? target.capabilityCeiling : undefined), resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
 		runFanoutBudget: input.params.runFanoutBudget ?? recoveryDescriptor?.runFanoutBudget ?? createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 		parentWorkflowRunId: input.params.workflowParentRunId,
 		workflowKey: input.params.workflowKey,
@@ -4405,7 +4421,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		usageBudget: usageBudgetState(data.usageBudget, totalCost),
 		...(worktreeHandoff?.reference ? { parallelHandoff: worktreeHandoff.reference } : {}),
 	}));
-	rememberForegroundRun(deps.state, { modelResponseAliases, runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: details.results, params, effectiveOutput, effectiveOutputMode, extensionBindings: params.extensionBindings, requiredExtensions });
+	rememberForegroundRun(deps.state, { modelResponseAliases, runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: details.results, params, effectiveOutput, effectiveOutputMode, extensionBindings: params.extensionBindings, requiredExtensions, agentFilePath: agentConfig.filePath });
 
 	const suppressRoutineResultIntercom = shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: params.suppressRoutineResultIntercom, results: [r] });
 	if (!r.detached && !r.interrupted && !suppressRoutineResultIntercom) {

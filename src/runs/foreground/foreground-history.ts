@@ -78,7 +78,8 @@ function isRestorableResumeContract(value: unknown): boolean {
 		return false;
 	}
 	const contract = value as NonNullable<ForegroundResumeChild["resumeContract"]>;
-	if (Object.keys(contract).some((key) => !["modelResponseAliases", "outputSchema", "agentContract", "acceptance", "output", "outputMode"].includes(key))) return false;
+	if (Object.keys(contract).some((key) => !["modelResponseAliases", "outputSchema", "agentContract", "acceptance", "output", "outputMode", "agentFilePath"].includes(key))) return false;
+	if (contract.agentFilePath !== undefined && (typeof contract.agentFilePath !== "string" || !contract.agentFilePath.trim())) return false;
 	if (contract.outputSchema !== undefined && contract.outputSchema !== false && (!contract.outputSchema || typeof contract.outputSchema !== "object" || Array.isArray(contract.outputSchema))) return false;
 	if (contract.agentContract !== undefined && (!contract.agentContract || typeof contract.agentContract !== "object" || Array.isArray(contract.agentContract) || contract.agentContract.version !== 1)) return false;
 	if (validateAcceptanceInput(contract.acceptance).length > 0) return false;

@@ -1512,6 +1512,109 @@ export default function() {
 		});
 	});
 
+	it("intersects a resume request capability ceiling with persisted recovery authority", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const agents = [makeAgent("planner"), makeAgent("researcher")];
+		const parentSessionFile = path.join(tempDir, "request-ceiling-parent.jsonl");
+		const plannerSessionFile = path.join(tempDir, "request-ceiling-planner.jsonl");
+		const header = JSON.stringify({ type: "session", version: 1, id: "request-ceiling", cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${header}\n`);
+		fs.writeFileSync(plannerSessionFile, `${header}\n`);
+		const sessionId = "request-ceiling-session";
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			sessionManager: {
+				getSessionId: () => sessionId,
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf",
+				openSession: () => ({ createBranchedSession: () => plannerSessionFile }),
+			},
+		};
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state: { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents }),
+		});
+		mockPi.onCall({ output: "Initial planning complete" });
+		const launch = await executor.execute(
+			"request-ceiling-launch",
+			{ agent: "planner", task: "Plan", async: true, context: "fork", acceptance: false },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		assert.equal((await readAsyncPayload(launch.details.asyncId)).success, true);
+
+		// An orchestration-mode resume carries the active user role catalog as its
+		// request ceiling. The persisted planner recovery target is outside it, so
+		// the revived launch must be rejected rather than widening the catalog.
+		mockPi.onCall({ output: "should not run" });
+		const rejected = await executor.execute(
+			"request-ceiling-resume",
+			{ action: "resume", id: launch.details.asyncId, message: "Continue", acceptance: false, capabilityCeiling: { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["orchestration-mode:user-role-catalog"] } },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.equal(rejected.isError, true);
+		assert.match(rejected.content[0]?.text ?? "", /does not allow agent 'planner'/);
+	});
+
+	it("rejects substituting a colliding user agent for a persisted project recovery target", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const projectAgent = makeAgent("worker", { source: "project", filePath: path.join(tempDir, "project", "worker.md") });
+		const userAgent = makeAgent("worker", { source: "user", filePath: path.join(tempDir, "user", "worker.md") });
+		const parentSessionFile = path.join(tempDir, "same-name-parent.jsonl");
+		const workerSessionFile = path.join(tempDir, "same-name-worker.jsonl");
+		const header = JSON.stringify({ type: "session", version: 1, id: "same-name", cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${header}\n`);
+		fs.writeFileSync(workerSessionFile, `${header}\n`);
+		const sessionId = "same-name-session";
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			sessionManager: {
+				getSessionId: () => sessionId,
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf",
+				openSession: () => ({ createBranchedSession: () => workerSessionFile }),
+			},
+		};
+		let discoveredAgents = [projectAgent];
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state: { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents: discoveredAgents }),
+		});
+		mockPi.onCall({ output: "Initial work complete" });
+		const launch = await executor.execute(
+			"same-name-launch",
+			{ agent: "worker", task: "Implement", async: true, context: "fork", acceptance: false },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		assert.equal((await readAsyncPayload(launch.details.asyncId)).success, true);
+
+		// Orchestration narrows resume discovery to the user catalog. A same-named
+		// user agent must not stand in for the persisted project writer.
+		discoveredAgents = [userAgent];
+		mockPi.onCall({ output: "should not run" });
+		const rejectedSubstitution = await executor.execute(
+			"same-name-resume",
+			{ action: "resume", id: launch.details.asyncId, message: "Continue", acceptance: false, agentScope: "user" },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.equal(rejectedSubstitution.isError, true);
+		assert.match(rejectedSubstitution.content[0]?.text ?? "", /persisted agent 'worker'/);
+		assert.match(rejectedSubstitution.content[0]?.text ?? "", /user/);
+	});
+
 	it("fails closed when a retained workflow child lacks original-authority metadata", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
 		const runId = `legacy-workflow-resume-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, runId);

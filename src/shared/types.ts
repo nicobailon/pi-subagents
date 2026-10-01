@@ -2161,6 +2161,8 @@ export interface ForegroundResumeChild {
 		acceptance?: AcceptanceInput;
 		output?: string | boolean;
 		outputMode?: OutputMode;
+		/** Definition file of the originally resolved agent, for identity checks on resume. */
+		agentFilePath?: string;
 	};
 	launchContractDigest?: string;
 	/** Private retained launch authority. Never project into status or result output. */

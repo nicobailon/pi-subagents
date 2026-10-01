@@ -81,6 +81,7 @@ describe("registered subagent tool description", () => {
 				/action:"list",capabilities:true.*executable, non-disabled.*runner.available === true/,
 				/Passive PATH\/PATHEXT\/X_OK.*not authentication\/version\/launch proof/,
 				/exactly one top-level subagent workflow call with async:true/,
+				/explicit orchestration mode \(\/orchestrate\) is active.*raw workflowScript\/workflow resources and model overrides are unavailable.*direct semantic role launches.*action:"guide",topic:"orchestration"/,
 				/explicit return, top-level await.*nested async function\/arrow\/method helpers are rejected/,
 				/Await runs.run.*before .output.*ordered array, not a key map/,
 				/every stored run promise with direct await, Promise.race or Promise.all/,
