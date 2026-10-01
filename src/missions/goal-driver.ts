@@ -31,7 +31,14 @@ function readLinkedRun(run: MissionRunLink): MissionRunLink {
 	if (!run.asyncDir) return run;
 	const statusPath = path.join(run.asyncDir, "status.json");
 	if (!fs.existsSync(statusPath)) return run;
-	const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as Record<string, unknown>;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+	} catch (error) {
+		throw new Error(`Failed to read linked run status '${statusPath}': ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`Linked run status '${statusPath}' must be an object`);
+	const status = parsed as Record<string, unknown>;
 	if (typeof status.state !== "string" || !status.state.trim()) throw new Error(`Linked run status '${statusPath}' is missing state`);
 	const tokens = tokenUsage(status.totalTokens)
 		?? (Array.isArray(status.steps)
@@ -123,42 +130,48 @@ export function collectGoalContinuationNotices(input: {
 	retainedChildren: RetainedChild[];
 	turnId: number;
 	now?: number;
+	onError?: (missionId: string, error: unknown) => void;
 }): GoalContinuationNotice[] {
 	const notices: GoalContinuationNotice[] = [];
 	const seen = new Set<string>();
+	const onError = input.onError ?? ((missionId: string, error: unknown) => console.error("Failed to evaluate goal mission", missionId, error));
 	for (const listed of listMissions(input.location).records) {
 		if (listed.ownerSessionId !== input.ownerSessionId || !listed.goal || TERMINAL_MISSION_STATUSES.has(listed.status)) continue;
-		let record = refreshGoalMission(input.location, readMission(input.location, listed.id));
-		if (!record.goal || record.goal.status !== "active" || !record.budget) continue;
-		if ((record.usage?.tokens ?? 0) >= record.budget.tokens) {
-			record = updateMission(input.location, record.id, { usage: record.usage ?? { tokens: 0 } });
-			if (record.goal?.status === "budget-exhausted") continue;
-		}
-		if (record.runs.some((run) => run.status && ACTIVE_RUN_STATUSES.has(run.status))) continue;
-		if (seen.has(record.id) || !record.budget) continue;
-		seen.add(record.id);
-		const budget = record.budget.tokens;
-		const used = record.usage?.tokens ?? 0;
-		const remaining = Math.max(0, budget - used);
-		const message = [
-			`Goal mission needs attention: ${bounded(record.title)}`,
-			`Mission: ${record.id}`,
-			`Remaining budget: ${remaining} tokens (${used}/${budget} used)`,
-			`Next ready action: ${nextReadyAction(input.location, record, input.retainedChildren)}`,
-		].join("\n");
-		notices.push({
-			missionId: record.id,
-			message,
-			event: {
-				type: "needs_attention",
-				to: "needs_attention",
-				ts: input.now ?? Date.now(),
-				runId: `goal-${record.id}-turn-${input.turnId}`,
-				agent: "goal mission",
+		try {
+			let record = refreshGoalMission(input.location, readMission(input.location, listed.id));
+			if (!record.goal || record.goal.status !== "active" || !record.budget) continue;
+			if ((record.usage?.tokens ?? 0) >= record.budget.tokens) {
+				record = updateMission(input.location, record.id, { usage: record.usage ?? { tokens: 0 } });
+				if (record.goal?.status === "budget-exhausted") continue;
+			}
+			if (record.runs.some((run) => run.status && ACTIVE_RUN_STATUSES.has(run.status))) continue;
+			if (seen.has(record.id) || !record.budget) continue;
+			seen.add(record.id);
+			const budget = record.budget.tokens;
+			const used = record.usage?.tokens ?? 0;
+			const remaining = Math.max(0, budget - used);
+			const message = [
+				`Goal mission needs attention: ${bounded(record.title)}`,
+				`Mission: ${record.id}`,
+				`Remaining budget: ${remaining} tokens (${used}/${budget} used)`,
+				`Next ready action: ${nextReadyAction(input.location, record, input.retainedChildren)}`,
+			].join("\n");
+			notices.push({
+				missionId: record.id,
 				message,
-				reason: "idle",
-			},
-		});
+				event: {
+					type: "needs_attention",
+					to: "needs_attention",
+					ts: input.now ?? Date.now(),
+					runId: `goal-${record.id}-turn-${input.turnId}`,
+					agent: "goal mission",
+					message,
+					reason: "idle",
+				},
+			});
+		} catch (error) {
+			onError(listed.id, error);
+		}
 	}
 	return notices;
 }

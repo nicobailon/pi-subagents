@@ -64,6 +64,70 @@ describe("goal mission continuation", () => {
 		}
 	});
 
+	for (const damaged of [
+		{ name: "malformed linked-run JSON", contents: "{not-json", file: "run" },
+		{ name: "null linked-run status", contents: "null", file: "run" },
+		{ name: "array linked-run status", contents: "[]", file: "run" },
+		{ name: "missing linked-run state", contents: "{}", file: "run" },
+		{ name: "malformed mission state", contents: "{not-json", file: "mission" },
+	]) {
+		it(`isolates ${damaged.name} without suppressing healthy goal notices`, () => {
+			const test = fixture();
+			try {
+				const broken = createMission(test.location, {
+					title: "Broken linked run",
+					objective: "Recover corrupt state",
+					goal: true,
+					budget: { tokens: 100 },
+					status: "active",
+					ownerSessionId: "session-1",
+				});
+				const brokenDir = path.join(test.root, "broken-run");
+				fs.mkdirSync(brokenDir);
+				fs.writeFileSync(path.join(brokenDir, "status.json"), damaged.file === "run" ? damaged.contents : JSON.stringify({ state: "complete" }), "utf-8");
+				updateMission(test.location, broken.id, {
+					addRuns: [{ runId: "broken-workflow", mode: "workflow", asyncDir: brokenDir, status: "running" }],
+				});
+				if (damaged.file === "mission") {
+					const statePath = missionStatePath(test.location, broken.id);
+					fs.mkdirSync(path.dirname(statePath), { recursive: true });
+					fs.writeFileSync(statePath, damaged.contents, "utf-8");
+				}
+
+				const healthy = createMission(test.location, {
+					title: "Healthy mission",
+					objective: "Continue healthy work",
+					goal: true,
+					budget: { tokens: 100 },
+					status: "active",
+					ownerSessionId: "session-1",
+				});
+				const errors: Array<{ missionId: string; error: unknown }> = [];
+				const notices = collectGoalContinuationNotices({
+					location: test.location,
+					ownerSessionId: "session-1",
+					retainedChildren: [],
+					turnId: 7,
+					now: 123,
+					onError: (missionId, error) => errors.push({ missionId, error }),
+				});
+
+				assert.equal(notices.length, 1);
+				assert.equal(notices[0]!.missionId, healthy.id);
+				assert.match(notices[0]!.message, /Next ready action: Continue objective: Continue healthy work/);
+				assert.equal(errors.length, 1);
+				assert.equal(errors[0]!.missionId, broken.id);
+				if (damaged.file === "run") {
+					assert.match(errors[0]!.error instanceof Error ? errors[0]!.error.message : String(errors[0]!.error), /status\.json/);
+				} else {
+					assert.ok(errors[0]!.error instanceof SyntaxError);
+				}
+			} finally {
+				fs.rmSync(test.root, { recursive: true, force: true });
+			}
+		});
+	}
+
 	it("resumes retained children from the latest linked run", () => {
 		const test = fixture();
 		try {
