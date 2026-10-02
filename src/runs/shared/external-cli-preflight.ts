@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 
 const MAX_PROBE_OUTPUT_BYTES = 256 * 1024;
 const MAX_PROBE_TIMEOUT_MS = 5_000;
@@ -40,20 +41,28 @@ export type ExternalCliBinaryAvailability =
 	| { available: true }
 	| { available: false; unavailableReason: string };
 
-function resolveBinary(command: string, env: NodeJS.ProcessEnv): string {
-	if (path.isAbsolute(command) || command.includes(path.sep)) {
+const BATCH_FILE = /\.(cmd|bat)$/i;
+
+function resolveBinary(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
+	const windows = platform === "win32";
+	if (path.isAbsolute(command) || command.includes(path.sep) || (windows && command.includes("/"))) {
 		const resolved = path.resolve(command);
 		fs.accessSync(resolved, fs.constants.X_OK);
 		return resolved;
 	}
-	const extensions = process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";") : [""];
-	for (const directory of (env.PATH ?? "").split(path.delimiter)) {
+	// Windows environment names are case-insensitive, and a copied process.env keeps its spelling (often `Path`).
+	const read = (name: string) => windows ? Object.entries(env).find(([key]) => key.toUpperCase() === name)?.[1] : env[name];
+	const pathExt = windows ? (read("PATHEXT") ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean) : [];
+	const named = pathExt.some((extension) => command.toLowerCase().endsWith(extension.toLowerCase()));
+	const extensions = windows ? (named ? ["", ...pathExt] : pathExt) : [""];
+	for (const directory of (read("PATH") ?? "").split(path.delimiter)) {
 		if (!directory) continue;
 		for (const extension of extensions) {
 			const candidate = path.join(directory, `${command}${extension}`);
 			try {
 				fs.accessSync(candidate, fs.constants.X_OK);
-				return fs.realpathSync(candidate);
+				// A batch shim resolves its target from its own directory (%dp0%), so keep the path it was found at.
+				return windows && BATCH_FILE.test(candidate) ? candidate : fs.realpathSync(candidate);
 			} catch {}
 		}
 	}
@@ -71,8 +80,47 @@ export function resolveExternalCliBinaryAvailability(command: string, env: NodeJ
 	}
 }
 
+// npm's cmd-shim output for a `#!/usr/bin/env node` bin, with CRLF normalized; the target path sits between the two parts.
+const NPM_NODE_SHIM_HEAD = '@ECHO off\nGOTO start\n:find_dp0\nSET dp0=%~dp0\nEXIT /b\n:start\nSETLOCAL\nCALL :find_dp0\n\nIF EXIST "%dp0%\\node.exe" (\n  SET "_prog=%dp0%\\node.exe"\n) ELSE (\n  SET "_prog=node"\n  SET PATHEXT=%PATHEXT:;.JS;=;%\n)\n\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\';
+const NPM_NODE_SHIM_TAIL = '" %*\n';
+
+export interface ExternalCliSpawn {
+	command: string;
+	args: readonly string[];
+}
+
+/**
+ * Node refuses to spawn `.cmd`/`.bat` files without a shell (CVE-2024-27980), and a shell would expand
+ * `%` and `!` inside operator- and project-controlled arguments. On Windows, an npm Node shim is launched
+ * by running Node on its script directly; every other batch wrapper is rejected.
+ */
+export function resolveExternalCliSpawn(command: string, args: readonly string[], env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): ExternalCliSpawn {
+	const unchanged = { command, args };
+	if (platform !== "win32") return unchanged;
+	let resolved: string;
+	try {
+		resolved = resolveBinary(command, env, platform);
+	} catch (error) {
+		if (BATCH_FILE.test(command)) throw error;
+		return unchanged;
+	}
+	if (!BATCH_FILE.test(resolved)) return unchanged;
+	const shim = fs.readFileSync(resolved, "utf-8").replace(/\r\n/g, "\n");
+	const target = /\.cmd$/i.test(resolved) && shim.startsWith(NPM_NODE_SHIM_HEAD) && shim.endsWith(NPM_NODE_SHIM_TAIL)
+		? shim.slice(NPM_NODE_SHIM_HEAD.length, shim.length - NPM_NODE_SHIM_TAIL.length)
+		: "";
+	const directory = path.dirname(resolved);
+	const script = path.resolve(directory, target.split("\\").join(path.sep));
+	if (!target || /^\\|["%:/\n]/.test(target) || !fs.statSync(script, { throwIfNoEntry: false })?.isFile()) {
+		throw new Error(`External CLI '${resolved}' is a batch wrapper that cannot run without a shell. On Windows, only npm-generated Node shims and .exe files can launch.`);
+	}
+	const bundledNode = path.join(directory, "node.exe");
+	return { command: fs.existsSync(bundledNode) ? bundledNode : resolveNodeExecutable(), args: [script, ...args] };
+}
+
 function probeWithTimeout(binaryPath: string, args: readonly string[], env: NodeJS.ProcessEnv, label: string, timeoutMs: number, cwd?: string): string {
-	const result = spawnSync(binaryPath, [...args], {
+	const launch = resolveExternalCliSpawn(binaryPath, args, env);
+	const result = spawnSync(launch.command, launch.args, {
 		cwd,
 		env,
 		encoding: "utf-8",

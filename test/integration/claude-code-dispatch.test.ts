@@ -3,11 +3,7 @@
  *
  * These launch the real background runner against a fake `claude` that records
  * its argv, so they prove the tokens travel from a launch request to the CLI.
- * The adapter runs its command with `shell: false`, and Node refuses to spawn a
- * `.cmd` file that way, so they cannot run on Windows. The same contract is
- * asserted on every platform by `test/unit/claude-code-dispatch.test.ts`, which
- * builds the steps without spawning, and by the real-Node spawn in
- * `test/unit/claude-code-adapter.test.ts`.
+ * On Windows the fake is an npm-style `.cmd` shim, as an npm install would create.
  */
 
 import { afterEach, describe, it } from "node:test";
@@ -61,12 +57,11 @@ function claudeCodeRunner(command: string): Record<string, unknown> {
 
 const artifactConfig = { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 };
 const asyncOnly = { skip: !isAsyncAvailable() ? "jiti not available" : undefined };
-const posixOnly = { skip: process.platform === "win32" ? "the adapter spawns its command with shell: false, so a fake .cmd command cannot run on Windows; the unit tests assert the same contract on every platform" : undefined };
 
 describe("Claude Code override launch", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installAsyncExecutionHooks();
 
-	it("carries a model suffix into --model and --effort through a real launch", { skip: asyncOnly.skip ?? posixOnly.skip }, async () => {
+	it("carries a model suffix into --model and --effort through a real launch", asyncOnly, async () => {
 		const claude = fakeClaude();
 		const id = `cc-dispatch-suffix-${Date.now().toString(36)}`;
 		const launched = executeAsyncSingle(id, {
@@ -89,7 +84,7 @@ describe("Claude Code override launch", { skip: !available ? "pi packages not av
 		assert.deepEqual(calls.filter((args) => args[0] === "--version" || args[0] === "--help"), [["--version"], ["--help"]]);
 	});
 
-	it("gives each chain step and each parallel item its own flags", { skip: asyncOnly.skip ?? posixOnly.skip }, async () => {
+	it("gives each chain step and each parallel item its own flags", asyncOnly, async () => {
 		const claude = fakeClaude();
 		const id = `cc-dispatch-chain-${Date.now().toString(36)}`;
 		const launched = executeAsyncChain(id, {
@@ -113,7 +108,7 @@ describe("Claude Code override launch", { skip: !available ? "pi packages not av
 		assert.deepEqual(launch[1]?.slice(-4), ["--model", "haiku", "--effort", "xhigh"]);
 	});
 
-	it("rejects an effort above maxThinking before the CLI runs", { skip: asyncOnly.skip ?? posixOnly.skip }, () => {
+	it("rejects an effort above maxThinking before the CLI runs", asyncOnly, () => {
 		const claude = fakeClaude();
 		const launched = executeAsyncSingle(`cc-dispatch-ceiling-${Date.now().toString(36)}`, {
 			agent: "claude-code",

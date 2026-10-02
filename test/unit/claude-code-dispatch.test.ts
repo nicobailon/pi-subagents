@@ -3,11 +3,8 @@
  *
  * These drive the real step builder and the real launch validation, so they
  * prove the request reaches the adapter instead of only that the token helper
- * returns the expected array. They assert on built steps rather than on a
- * spawned CLI: the adapter runs its command with `shell: false`, and Node
- * refuses to spawn a `.cmd` that way, so a fake command cannot run on Windows.
- * The tokens-to-argv link is covered by `claude-code-adapter.test.ts`, which
- * spawns the real Node binary.
+ * returns the expected array. They assert on built steps; a real launch is
+ * covered by `test/integration/claude-code-dispatch.test.ts`.
  */
 
 import assert from "node:assert/strict";
