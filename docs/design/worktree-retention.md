@@ -106,7 +106,7 @@ Compute excess as `max(0, ownedCount - worktreeRetainCount)`. Select the oldest 
 
 For example, with 18 owned worktrees and a limit of 15, remove up to three eligible old worktrees. If only one is eligible, retain 17 and report why the target was not reached. A safety condition always takes precedence over the number.
 
-Run count maintenance after durable worktree/handoff settlement in the parent host: foreground finalization and the first delivery of a newly persisted background result. Coalesce duplicate events to one pending job per canonical repo. The detached runner does not create a competing independent automatic cleanup service.
+Run count maintenance after durable worktree/handoff settlement in the parent host: foreground finalization and the first delivery of a newly persisted background result. Foreground workflow children report their actual source checkout and handoff at the same settlement boundary; an outer workflow cwd does not substitute for child source repositories. Coalesce duplicate events to one pending job per canonical repo. The detached runner does not create a competing independent automatic cleanup service.
 
 Use existing verifiable terminal ownership in the parent. After a restart, a foreground run without sufficient remembered/durable ownership proof remains protected; the first version does not invent a new ownership ledger to make it removable. A stopped or shutting-down host defers maintenance; there is no new daemon, periodic directory sweep or cleanup work on every Fleet/status refresh.
 

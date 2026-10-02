@@ -25,6 +25,8 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	createEventBus,
+	createTempDir,
+	removeTempDir,
 	makeAgentConfigs,
 	makeAgent,
 	makeMinimalCtx,
@@ -62,6 +64,8 @@ import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handof
 import { createWorktrees } from "../../src/runs/shared/worktree.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
+import { createWorktreeCountManager } from "../../src/runs/background/worktree-count-manager.ts";
+import type { WorktreeCountReport } from "../../src/runs/background/worktree-count-policy.ts";
 import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
 import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
@@ -212,6 +216,42 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, undefined, result.content[0]?.text);
 		assert.equal(result.details.results[0]?.exitCode, 0);
 		assert.deepEqual(observed, [childCwd]);
+	});
+
+	it("checks the actual source repo and handoffs of cross-cwd foreground workflow children", { skip: !createSubagentExecutor ? "executor not importable" : process.platform === "win32" ? "POSIX worktree setup hook fixture" : undefined, timeout: 20_000 }, async () => {
+		const outer = path.join(tempDir, "outer"), repo = path.join(tempDir, "child-repo");
+		const worktreeBaseDir = createTempDir("pi-workflow-count-trees-");
+		fs.mkdirSync(outer); fs.mkdirSync(repo);
+		for (const args of [["init"], ["config", "user.name", "Fixture"], ["config", "user.email", "fixture@example.com"]]) execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+		fs.writeFileSync(path.join(repo, "base.txt"), "base");
+		fs.writeFileSync(path.join(repo, ".gitignore"), ".pi/\n");
+		execFileSync("git", ["-C", repo, "add", "."]); execFileSync("git", ["-C", repo, "commit", "-m", "base"], { stdio: "ignore" });
+		const hook = path.join(tempDir, "lock-count-worktree.cjs");
+		fs.writeFileSync(hook, `#!/usr/bin/env node\nconst cp=require('node:child_process');let raw='';process.stdin.on('data',x=>raw+=x);process.stdin.on('end',()=>{const x=JSON.parse(raw);cp.execFileSync('git',['-C',x.repoRoot,'worktree','lock',x.worktreePath]);console.log('{}');});\n`, { mode: 0o755 });
+		let finish: (report: WorktreeCountReport) => void;
+		const finished = new Promise<WorktreeCountReport>((resolve) => { finish = resolve; });
+		const manager = createWorktreeCountManager({ config: { worktreeRetainCount: 1, worktreeBaseDir, authorityPolicy: { discardWorktree: "auto" } }, coalesceMs: 0,
+			report: (report) => { if ("removed" in report) finish(report); else assert.fail(JSON.stringify(report)); },
+		});
+		const observed: Array<{ cwd: string; handoff?: string }> = [];
+		const executor = makeExecutor([makeAgent("echo")], { artifactDir: "session", worktreeBaseDir, worktreeSetupHook: hook }, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, undefined, (cwd, handoff) => {
+			observed.push({ cwd, handoff }); manager.request(cwd, handoff);
+		});
+		mockPi.onCall({ output: "first done", writeFiles: [{ path: "base.txt", content: "first changed" }] });
+		mockPi.onCall({ output: "second done", writeFiles: [{ path: "base.txt", content: "second changed" }] });
+		const children = ["a", "b"].map((key) => ({ key, agent: "echo", task: `Change ${key}`, async: false, cwd: repo, worktree: true, acceptance: false }));
+		try {
+			const result = await executor.executePublic("cross-cwd-worktree-count", { async: false, workflowScript: `return await runs.all(${JSON.stringify(children)});` }, new AbortController().signal, undefined, makeMinimalCtx(outer));
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			assert.deepEqual(observed.map((item) => item.cwd), [repo, repo]);
+			assert.ok(observed.every((item) => item.handoff && fs.existsSync(item.handoff)));
+			const timeout = setTimeout(() => finish({ repoRoot: repo, countExact: false, limit: 1, before: 0, retained: 0, removed: 0, state: "deferred", warnings: ["fixture timeout"] }), 8_000);
+			try {
+				const report = await finished;
+				assert.equal(report.repoRoot, fs.realpathSync(repo));
+				assert.equal(report.before, 2); assert.equal(report.retained, 2); assert.equal(report.state, "protected");
+			} finally { clearTimeout(timeout); }
+		} finally { manager.stop(); removeTempDir(worktreeBaseDir); }
 	});
 
 	it("rejects invalid foreground cwd before spawning Pi", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

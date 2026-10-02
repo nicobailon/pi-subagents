@@ -5306,7 +5306,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (error) throw new Error(error);
 		}
 	};
-	const execute = async (
+	const executeInner = async (
 		_id: string,
 		params: SubagentParamsLike,
 		signal: AbortSignal,
@@ -7921,6 +7921,23 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}, contextPolicy.contextSummary);
 	};
 
+	// Workflow children call this private boundary too. Use each actual source
+	// checkout and handoff after settlement, rather than the workflow's outer cwd.
+	const execute = async (...args: Parameters<typeof executeInner>): Promise<AgentToolResult<Details>> => {
+		let sourceCheckout: string | undefined;
+		const result = await executeInner(args[0], args[1], args[2], args[3], args[4], args[5], args[6], (cwd) => {
+			sourceCheckout = cwd;
+			args[7]?.(cwd);
+		});
+		if (!args[1].action && sourceCheckout && !result.details?.asyncId && result.details?.mode !== "workflow" && result.details?.results.length
+			&& !result.details.results.some((child) => child.detached || child.nativeMachine || (child.runner?.type === "external-cli" && child.runner.machine))
+			&& checkSubagentDepth(deps.config.maxSubagentDepth, deps.childRuntime).depth === 0) {
+			try { deps.onForegroundSettled?.(sourceCheckout, result.details.parallelHandoff?.path); }
+			catch (error) { console.warn("Worktree maintenance could not be queued:", error); }
+		}
+		return result;
+	};
+
 	const executeWithSingleDispatchGuard = async (
 		id: string,
 		params: SubagentParamsLike,
@@ -7938,13 +7955,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(requestParams);
 		deps.state.subagentInProgress = true;
 		try {
-			let sourceCheckout: string | undefined;
-			const result = withAggregatedToolUsage(await execute(id, requestParams, signal, onUpdate, ctx, false, undefined, (cwd) => { sourceCheckout = cwd; }));
-			if (depth === 0 && sourceCheckout && result.details?.results.length && !result.details.results.some((child) => child.detached || child.nativeMachine || (child.runner?.type === "external-cli" && child.runner.machine))) {
-				try { deps.onForegroundSettled?.(sourceCheckout, result.details.parallelHandoff?.path); }
-				catch (error) { console.warn("Worktree maintenance could not be queued:", error); }
-			}
-			return result;
+			return withAggregatedToolUsage(await execute(id, requestParams, signal, onUpdate, ctx));
 		} finally {
 			deps.state.subagentInProgress = false;
 		}
