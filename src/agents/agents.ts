@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { createAtomicJsonWriter } from "../shared/atomic-json.ts";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, JsonSchemaObject, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
+import { isClaudeCodeAdapterId } from "../runs/shared/claude-code-adapter.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { expandHomePath } from "../shared/settings.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
@@ -975,18 +976,29 @@ function writeSettingsFile(filePath: string, settings: Record<string, unknown>):
 }
 
 function resolveSettingsWriteTarget(filePath: string): string {
-	let targetPath = path.resolve(filePath);
-	for (let linkCount = 0; linkCount <= 40; linkCount++) {
+	let targetPath = filePath;
+	for (;;) {
 		try {
-			const stats = fs.lstatSync(targetPath);
-			if (!stats.isSymbolicLink()) return targetPath;
-			targetPath = path.resolve(fs.realpathSync(path.dirname(targetPath)), fs.readlinkSync(targetPath));
+			return fs.realpathSync.native(targetPath);
 		} catch (error) {
 			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-			return path.join(fs.realpathSync(path.dirname(targetPath)), path.basename(targetPath));
+			// A trailing separator requires a directory; it cannot name a new settings file.
+			if (targetPath.endsWith("/") || targetPath.endsWith(path.sep)) throw error;
 		}
+
+		// A missing target is allowed only when its physical parent already exists.
+		const parentPath = fs.realpathSync.native(path.dirname(targetPath));
+		const unresolvedPath = path.join(parentPath, path.basename(targetPath));
+		let linkText: string;
+		try {
+			linkText = fs.readlinkSync(unresolvedPath);
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+			return unresolvedPath;
+		}
+		// Keep link text intact so the filesystem follows directory links before "..".
+		targetPath = path.isAbsolute(linkText) ? linkText : `${parentPath}${path.sep}${linkText}`;
 	}
-	throw new Error(`Too many symbolic links while resolving settings file '${filePath}'.`);
 }
 
 function parseOverrideStringArrayOrFalse(
@@ -2075,8 +2087,11 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 
 function validateExternalRunnerProfile(frontmatter: Record<string, string>, agentName: string, runner: AgentRunnerConfig | undefined): void {
 	if (runner?.type !== "external-cli" && runner?.type !== "external-job") return;
+	// The code-owned Claude Code adapters accept an explicit model and thinking level:
+	// both are translated into their own argv rather than into a Pi child model.
+	const adapterAcceptsOverrides = runner.type === "external-cli" && isClaudeCodeAdapterId(runner.adapter);
 	const unsupported = ["tools", "excludeTools", "allowNestedSubagents", "allowedAgents", "model", "thinking", "extensions", "subagentOnlyExtensions", "mutationTools", "maxSubagentDepth", "skills", "skill", "skillPath", "toolBudget", "permission", "permissions"]
-		.filter((field) => frontmatter[field] !== undefined);
+		.filter((field) => frontmatter[field] !== undefined && !(adapterAcceptsOverrides && (field === "model" || field === "thinking")));
 	if (unsupported.length > 0) {
 		throw new Error(`Agent '${agentName}' uses runner.type='${runner.type}' and declares unsupported Pi-only fields: ${unsupported.join(", ")}.`);
 	}

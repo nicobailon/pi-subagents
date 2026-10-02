@@ -133,6 +133,92 @@ function appendPrivateHistoryLine(historyPath: string, line: string): void {
 	}
 }
 
+function backgroundRunHistoryTask(steps: readonly unknown[], resultMode: string): string {
+	const step = steps.length === 1 && typeof steps[0] === "object" && steps[0] !== null
+		? (steps[0] as { task?: unknown; launchBindingTask?: unknown })
+		: undefined;
+	if (step) {
+		const task = typeof step.launchBindingTask === "string" && step.launchBindingTask ? step.launchBindingTask : step.task;
+		if (typeof task === "string" && task) return task;
+	}
+	return resultMode || "run";
+}
+
+export interface BackgroundRunHistoryEntry {
+	agent: string;
+	task: string;
+	exitCode: number;
+	durationMs: number;
+	terminal: { stopped?: boolean; interrupted?: boolean; timedOut?: boolean; processSignal?: string | null };
+}
+
+const TERMINAL_STEP_STATUSES = new Set(["complete", "completed"]);
+/** Steps that reached THEIR OWN terminal state — run-wide flags must not relabel them. */
+const SELF_TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", "rejected"]);
+
+/**
+ * Census rows for one finished background run. Single-step runs keep the exact
+ * foreground shape (agent + task text). Multi-step runs record ONE ROW PER CHILD
+ * STEP so `loadRunsForAgent(agent)` sees every child — a composite-only row would
+ * stay invisible to per-agent lookups. Per-step prompts are never hashed:
+ * multi-step rows hash the mode label only.
+ *
+ * Fidelity rules:
+ * - a row is recorded only for children that actually LAUNCHED (a child
+ *   session was dispatched). Status alone cannot decide this: `stopRunner()`,
+ *   `timeoutRunner()`, fail-fast skips, and usage-budget skips all relabel
+ *   never-launched steps to terminal statuses (`stopped`, `failed`+`timedOut,
+ *   `failed`+`skipped) before the run ends — the runner therefore threads an
+ *   explicit `launched` fact per step. `pending` and `launched: false` steps
+ *   get no row — unrun agents must not accumulate attempts or failures;
+ * - run-level terminal flags (stopped/interrupted/timedOut) apply only to steps
+ *   that did not reach a terminal state of their own — a child that completed
+ *   or failed BEFORE a sibling was interrupted keeps its own outcome, because
+ *   recordRun() lets those flags override the exit code;
+ * - self-terminal steps carry their own timedOut/stopped flags instead.
+ */
+export function planBackgroundRunHistory(input: {
+	steps: readonly unknown[];
+	resultMode: string;
+	statusSteps: ReadonlyArray<{ agent?: unknown; status?: unknown; durationMs?: number; timedOut?: boolean; stopped?: boolean; launched?: boolean }>;
+	stepResults?: ReadonlyArray<{ processSignal?: unknown } | undefined>;
+	runDurationMs: number;
+	stopped?: boolean;
+	interrupted?: boolean;
+	timedOut?: boolean;
+}): BackgroundRunHistoryEntry[] {
+	const runTerminal: BackgroundRunHistoryEntry["terminal"] = {
+		...(input.stopped ? { stopped: true } : {}),
+		...(input.interrupted ? { interrupted: true } : {}),
+		...(input.timedOut ? { timedOut: true } : {}),
+	};
+	const task = backgroundRunHistoryTask(input.steps, input.resultMode);
+	const rows: BackgroundRunHistoryEntry[] = [];
+	for (const [index, step] of input.statusSteps.entries()) {
+		if (typeof step.agent !== "string" || !step.agent) continue;
+		// `launched === false` marks steps the runner never dispatched a child
+		// session for, regardless of the status they were later relabeled to.
+		if (step.status === "pending" || step.launched === false) continue;
+		const succeeded = TERMINAL_STEP_STATUSES.has(step.status as string);
+		const ownTerminal: BackgroundRunHistoryEntry["terminal"] = {
+			...(step.timedOut === true ? { timedOut: true } : {}),
+			...(step.stopped === true ? { stopped: true } : {}),
+		};
+		// A step that reached its own terminal state (completed, or failed/rejected
+		// before a sibling was interrupted) keeps its own outcome; run-wide flags
+		// would relabel it in recordRun().
+		const terminal = SELF_TERMINAL_STEP_STATUSES.has(step.status as string) ? ownTerminal : { ...runTerminal, ...ownTerminal };
+		const processSignal = input.stepResults?.[index]?.processSignal;
+		rows.push({
+			agent: step.agent,
+			task,
+			exitCode: succeeded ? 0 : 1,
+			durationMs: typeof step.durationMs === "number" ? step.durationMs : input.runDurationMs,
+			terminal: processSignal === undefined ? terminal : { ...terminal, processSignal: typeof processSignal === "string" ? processSignal : null },		});
+	}
+	return rows;
+}
+
 export function recordRun(
 	agent: string,
 	task: string,

@@ -110,6 +110,8 @@ export interface ChildSession {
 	readonly sessionFile: string | undefined;
 	readonly sessionId: string;
 	readonly modelId: string | undefined;
+	/** Live provider/id of the selected model when Pi marks it virtual (`api === "pi-virtual"`); assistant messages then name the dispatched physical model. */
+	readonly virtualModelId?: string;
 	readonly contextWindow?: number;
 	readonly machineEvidence?: { machineId: string; initial?: HerdrRemoteGitStatus; final?: HerdrRemoteGitStatus };
 	/** Event-updated pane-native status; reading it performs no network work. */
@@ -292,6 +294,25 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
 		}
 	}
 	if (Array.isArray(runtime.pendingNativeProviderRegistrations)) runtime.pendingNativeProviderRegistrations = [];
+	// Pi core flushes pendingVirtualModelRegistrations when a session binds extensions
+	// (agent-session-services), but this factory resolves the requested model before that
+	// binding, so an extension-registered virtual model never resolves for the child. The
+	// structural cast keeps compiling against SDK versions that predate virtual models;
+	// there the queue is absent and the loop is a no-op.
+	const virtualModelRuntime = modelRuntime as ModelRuntimeInstance & { registerVirtualModel?: (definition: unknown) => void };
+	const virtualModelQueue = runtime as { pendingVirtualModelRegistrations?: Array<{ definition: unknown; extensionPath: string }> };
+	const pendingVirtualModelRegistrations = virtualModelQueue.pendingVirtualModelRegistrations ?? [];
+	for (const { definition, extensionPath } of pendingVirtualModelRegistrations) {
+		if (typeof virtualModelRuntime.registerVirtualModel !== "function") break;
+		try {
+			virtualModelRuntime.registerVirtualModel(definition);
+			registered = true;
+		} catch (error) {
+			onError?.({ extensionPath, event: "register_virtual_model", error });
+			if (requiredPaths.has(extensionPath)) throw new Error(`Required child extension virtual model registration failed for '${extensionPath}': ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	if (Array.isArray(virtualModelQueue.pendingVirtualModelRegistrations)) virtualModelQueue.pendingVirtualModelRegistrations = [];
 	return { claimedProviderIds, registered };
 }
 
@@ -404,6 +425,21 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});
+			// pi's own hosts emit `session_shutdown` before disposing a session so the
+			// extensions loaded into it (ambient extensions included) release their
+			// watchers, servers, and timers. Do the same, then dispose.
+			const shutdownSession = async (session: Awaited<ReturnType<PiCodingAgentModule["createAgentSession"]>>["session"]): Promise<void> => {
+				try {
+					const runner = session.extensionRunner;
+					if (runner.hasHandlers("session_shutdown")) {
+						await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }), new Promise<void>((resolve) => setTimeout(resolve, shutdownTimeoutMs).unref?.())]);
+					}
+				} catch (error) {
+					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
+				} finally {
+					session.dispose();
+				}
+			};
 			const open = async () => {
 				const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
 				applyProcessEnv(launch.processEnv);
@@ -449,14 +485,27 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					sessionStartEvent: { type: "session_start", reason: "startup" },
 				});
 				pinChildCacheRetention(session.agent);
+				// Pi reports handler failures through onError instead of throwing, so required startup failures must be collected here.
+				const requiredStartupErrors: string[] = [];
+				let binding = true;
 				try {
 					await session.bindExtensions({
 						mode: "print",
-						onError: (error) => launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
+						onError: (error) => {
+							if (binding && requiredPaths.has(error.extensionPath)) requiredStartupErrors.push(`${error.extensionPath} (${error.event}): ${error.error}`);
+							launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error });
+						},
 					});
 				} catch (error) {
 					session.dispose();
 					throw error;
+				} finally {
+					binding = false;
+				}
+				if (requiredStartupErrors.length > 0) {
+					// Binding finished, so the other extensions' session_start handlers ran and may hold resources.
+					await shutdownSession(session);
+					throw new Error(`Required child extension failed during startup: ${requiredStartupErrors.join("; ")}`);
 				}
 				return session;
 			};
@@ -464,21 +513,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			loading = opened;
 			const session = await opened;
 			let pending: Promise<void> | undefined;
-			// pi's own hosts emit `session_shutdown` before disposing a session so the
-			// extensions loaded into it (ambient extensions included) release their
-			// watchers, servers, and timers. Do the same, then dispose.
-			const shutdown = async (): Promise<void> => {
-				try {
-					const runner = session.extensionRunner;
-					if (runner.hasHandlers("session_shutdown")) {
-						await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }), new Promise<void>((resolve) => setTimeout(resolve, shutdownTimeoutMs).unref?.())]);
-					}
-				} catch (error) {
-					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
-				} finally {
-					session.dispose();
-				}
-			};
+			const shutdown = () => shutdownSession(session);
 			// Outside the launch lock: MCP servers connect after `session_start` without reading the per-launch env.
 			if (builtinMcpTools.length) {
 				const disposed = () => disposals !== disposalsAtStart;
@@ -513,6 +548,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				get sessionFile() { return session.sessionFile; },
 				get sessionId() { return session.sessionId; },
 				get modelId() { return session.model ? `${session.model.provider}/${session.model.id}` : undefined; },
+				get virtualModelId() { return session.model?.api === "pi-virtual" ? `${session.model.provider}/${session.model.id}` : undefined; },
 				get contextWindow() { return session.model?.contextWindow; },
 			};
 			live.add(child);

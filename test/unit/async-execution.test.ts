@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, emitProcessTerminalEvent, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
+import { buildAsyncRunnerSteps, assertClaudeCodeOverrideIsLocal, DEFAULT_ASYNC_TIMEOUT_MS, emitProcessTerminalEvent, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
@@ -264,6 +264,36 @@ describe("async runner execution", () => {
 			maxSubagentDepth: 2,
 		});
 		assert.deepEqual(rejected, { error: "Agent 'external' uses runner.type='external-cli' and does not support: model override." });
+	});
+
+	it("rejects an external runner step when the host required extensions are mandatory for all runners", (t) => {
+		const external = agent("external");
+		external.runner = { type: "external-cli", command: process.execPath, args: ["fake.mjs"] };
+		const registration = registerRequiredChildExtensions({ sessionId: ctx.currentSessionId, extensions: [{ id: "host-policy", path: import.meta.filename }], requireForAllRunners: true });
+		t.after(registration.dispose);
+		const rejected = buildAsyncRunnerSteps("external-mandatory", {
+			chain: [{ agent: "external", task: "review" }],
+			agents: [external],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-external-mandatory"),
+			maxSubagentDepth: 2,
+		});
+		assert.ok("error" in rejected);
+		assert.match(rejected.error, /requires child extensions \(host-policy\) for every runner/u);
+	});
+
+	it("refuses a pinned Claude Code model on a saved machine instead of dropping the flags", () => {
+		assert.throws(
+			() => assertClaudeCodeOverrideIsLocal("cc", "workmac", { args: ["--model", "opus"], model: "opus" }),
+			/Agent 'cc' requested machine 'workmac', but a Claude Code model or thinking level cannot be honored on a saved machine/u,
+		);
+		assert.throws(
+			() => assertClaudeCodeOverrideIsLocal("cc", "workmac", { args: ["--effort", "low"] }),
+			/cannot be honored on a saved machine/u,
+		);
+		// A local launch, or one that pins nothing, is unaffected.
+		assert.doesNotThrow(() => assertClaudeCodeOverrideIsLocal("cc", undefined, { args: ["--model", "opus"], model: "opus" }));
+		assert.doesNotThrow(() => assertClaudeCodeOverrideIsLocal("cc", "workmac", undefined));
 	});
 
 	it("uses config default when no step, run, or agent budget exists", () => {

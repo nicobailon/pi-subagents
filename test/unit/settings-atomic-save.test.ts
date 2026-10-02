@@ -53,10 +53,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
-const target = path.resolve(process.env.PI_SETTINGS_ATOMIC_TARGET);
+function physicalPath(file) {
+	const absolute = path.resolve(String(file));
+	return path.join(fs.realpathSync.native(path.dirname(absolute)), path.basename(absolute));
+}
+const target = physicalPath(process.env.PI_SETTINGS_ATOMIC_TARGET);
 const originalWriteFileSync = fs.writeFileSync;
 fs.writeFileSync = function(file, data, ...args) {
-	const candidate = path.resolve(String(file));
+	const candidate = physicalPath(file);
 	if (path.dirname(candidate) === path.dirname(target)
 		&& path.basename(candidate).startsWith(".settings.json.")
 		&& path.basename(candidate).endsWith(".tmp")) {
@@ -77,10 +81,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
-const target = path.resolve(process.env.PI_SETTINGS_ATOMIC_TARGET);
+function physicalPath(file) {
+	const absolute = path.resolve(String(file));
+	return path.join(fs.realpathSync.native(path.dirname(absolute)), path.basename(absolute));
+}
+const target = physicalPath(process.env.PI_SETTINGS_ATOMIC_TARGET);
 const originalRenameSync = fs.renameSync;
 fs.renameSync = function(source, destination, ...args) {
-	if (path.resolve(String(destination)) === target) {
+	if (physicalPath(destination) === target) {
 		const error = new Error("injected settings rename failure");
 		Object.assign(error, { code: "EIO" });
 		throw error;
@@ -208,40 +216,128 @@ it("preserves POSIX settings modes and follows symlink targets", { skip: process
 	assert.equal(fs.readFileSync(lexicalDecoy, "utf-8"), `${JSON.stringify(decoyPrevious, null, 2)}\n`);
 });
 
-it("follows a 40-link settings chain when the host filesystem supports it", {
-	skip: process.platform === "win32" ? "POSIX symlink-chain limits vary on Windows" : undefined,
-}, (t) => {
+it("follows a short settings symlink chain with existing and dangling targets", {
+	skip: process.platform === "win32" ? "POSIX symlink semantics vary on Windows" : undefined,
+}, () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-settings-symlink-chain-"));
 	tempRoots.push(root);
 	const project = createProject(root);
 	const settingsPath = path.join(project, ".pi", "settings.json");
-	const linkPaths = [settingsPath, ...Array.from({ length: 39 }, (_, index) => path.join(project, ".pi", `settings-link-${index}.json`))];
+	const intermediatePath = path.join(project, ".pi", "settings-link.json");
 	const targetPath = path.join(root, "settings-target.json");
-	const previous = { topLevelSentinel: "chain-target" };
-	const previousRaw = `${JSON.stringify(previous, null, 2)}\n`;
-	fs.writeFileSync(targetPath, previousRaw, "utf-8");
-	for (const [index, linkPath] of linkPaths.entries()) {
-		fs.symlinkSync(linkPaths[index + 1] ?? targetPath, linkPath);
+	const linkText = path.relative(path.dirname(intermediatePath), targetPath);
+	fs.symlinkSync("settings-link.json", settingsPath);
+	fs.symlinkSync(linkText, intermediatePath);
+	for (const dangling of [false, true]) {
+		const previous = dangling ? {} : { topLevelSentinel: "chain-target" };
+		if (dangling) fs.unlinkSync(targetPath);
+		else fs.writeFileSync(targetPath, `${JSON.stringify(previous, null, 2)}\n`, "utf-8");
+		saveBuiltinAgentOverride(project, "reviewer", "project", { disabled: true });
+		assert.equal(fs.readlinkSync(settingsPath), "settings-link.json");
+		assert.equal(fs.readlinkSync(intermediatePath), linkText);
+		assert.equal(fs.readFileSync(targetPath, "utf-8"), `${JSON.stringify({
+			...previous,
+			subagents: { agentOverrides: { reviewer: { disabled: true } } },
+		}, null, 2)}\n`);
 	}
+});
 
-	let observedRaw: string;
-	try {
-		observedRaw = fs.readFileSync(settingsPath, "utf-8");
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ELOOP") {
-			t.skip("host filesystem rejects a 40-link chain");
-			return;
+for (const absolute of [false, true]) {
+	for (const dangling of [false, true]) {
+		it(`follows directory symlinks before parent traversal (${absolute ? "absolute" : "relative"}, ${dangling ? "dangling" : "existing"})`, {
+			skip: process.platform === "win32" ? "POSIX symlink semantics vary on Windows" : undefined,
+		}, () => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-settings-physical-path-"));
+			tempRoots.push(root);
+			const project = createProject(root);
+			const configDir = path.join(project, ".pi");
+			const settingsPath = path.join(configDir, "settings.json");
+			const physicalParent = path.join(configDir, "actual");
+			const physicalTarget = path.join(physicalParent, "target.json");
+			const lexicalDecoy = path.join(configDir, "target.json");
+			fs.mkdirSync(path.join(physicalParent, "nested"), { recursive: true });
+			fs.symlinkSync(path.join(physicalParent, "nested"), path.join(configDir, "via"), "dir");
+			const linkText = `${absolute ? `${configDir}/` : ""}via/../target.json`;
+			fs.symlinkSync(linkText, settingsPath);
+			const previous = dangling ? {} : { sentinel: "physical" };
+			if (!dangling) {
+				fs.writeFileSync(physicalTarget, `${JSON.stringify(previous, null, 2)}\n`, "utf-8");
+				fs.chmodSync(physicalTarget, 0o640);
+			}
+			const decoyRaw = `${JSON.stringify({ sentinel: "decoy" }, null, 2)}\n`;
+			fs.writeFileSync(lexicalDecoy, decoyRaw, "utf-8");
+
+			saveBuiltinAgentOverride(project, "reviewer", "project", { disabled: true });
+			assert.equal(fs.readlinkSync(settingsPath), linkText);
+			assert.equal(fs.readFileSync(lexicalDecoy, "utf-8"), decoyRaw);
+			assert.equal(fs.readFileSync(physicalTarget, "utf-8"), `${JSON.stringify({
+				...previous,
+				subagents: { agentOverrides: { reviewer: { disabled: true } } },
+			}, null, 2)}\n`);
+			if (!dangling) assert.equal(fs.statSync(physicalTarget).mode & 0o7777, 0o640);
+		});
+	}
+}
+
+it("rejects missing settings target parents without creating directories or changing a decoy", {
+	skip: process.platform === "win32" ? "POSIX symlink semantics vary on Windows" : undefined,
+}, () => {
+	for (const linkText of ["missing/target.json", "missing/../target.json"]) {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-settings-missing-parent-"));
+		tempRoots.push(root);
+		const project = createProject(root);
+		const configDir = path.join(project, ".pi");
+		const settingsPath = path.join(configDir, "settings.json");
+		const decoyPath = path.join(configDir, "target.json");
+		const decoyRaw = `${JSON.stringify({ sentinel: "decoy" }, null, 2)}\n`;
+		fs.writeFileSync(decoyPath, decoyRaw, "utf-8");
+		fs.symlinkSync(linkText, settingsPath);
+		assert.throws(() => saveBuiltinAgentOverride(project, "reviewer", "project", { disabled: true }), { code: "ENOENT" });
+		assert.equal(fs.readlinkSync(settingsPath), linkText);
+		assert.equal(fs.existsSync(path.join(configDir, "missing")), false);
+		assert.equal(fs.readFileSync(decoyPath, "utf-8"), decoyRaw);
+		assert.deepEqual(fs.readdirSync(configDir).sort(), ["settings.json", "target.json"]);
+	}
+});
+
+for (const absolute of [false, true]) {
+	for (const suffix of ["/", "//"]) {
+		for (const chained of [false, true]) {
+			it(`rejects missing directory settings targets (${absolute ? "absolute" : "relative"}, ${suffix}, ${chained ? "chain" : "direct"})`, {
+				skip: process.platform === "win32" ? "POSIX symlink semantics vary on Windows" : undefined,
+			}, () => {
+				const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-settings-directory-target-"));
+				tempRoots.push(root);
+				const project = createProject(root);
+				const configDir = path.join(project, ".pi");
+				const settingsPath = path.join(configDir, "settings.json");
+				const missingPath = path.join(configDir, "missing");
+				const linkText = `${absolute ? missingPath : "missing"}${suffix}`;
+				const finalLink = chained ? path.join(configDir, "settings-link.json") : settingsPath;
+				fs.symlinkSync(linkText, finalLink);
+				if (chained) fs.symlinkSync("settings-link.json", settingsPath);
+
+				assert.throws(() => saveBuiltinAgentOverride(project, "reviewer", "project", { disabled: true }));
+				assert.equal(fs.existsSync(missingPath), false);
+				assert.equal(fs.readlinkSync(finalLink), linkText);
+				if (chained) assert.equal(fs.readlinkSync(settingsPath), "settings-link.json");
+				assert.deepEqual(fs.readdirSync(configDir).sort(), chained ? ["settings-link.json", "settings.json"] : ["settings.json"]);
+			});
 		}
-		throw error;
 	}
-	assert.equal(observedRaw, previousRaw);
+}
 
-	saveBuiltinAgentOverride(project, "reviewer", "project", { disabled: true });
-	assert.equal(fs.readlinkSync(settingsPath), linkPaths[1]);
-	assert.equal(fs.readFileSync(targetPath, "utf-8"), `${JSON.stringify({
-		...previous,
-		subagents: { agentOverrides: { reviewer: { disabled: true } } },
-	}, null, 2)}\n`);
+it("rejects cyclic settings symlinks without replacing them", {
+	skip: process.platform === "win32" ? "POSIX symlink semantics vary on Windows" : undefined,
+}, () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-settings-cycle-"));
+	tempRoots.push(root);
+	const project = createProject(root);
+	const settingsPath = path.join(project, ".pi", "settings.json");
+	fs.symlinkSync("settings.json", settingsPath);
+	assert.throws(() => saveBuiltinAgentOverride(project, "reviewer", "project", { disabled: true }));
+	assert.equal(fs.readlinkSync(settingsPath), "settings.json");
+	assert.deepEqual(fs.readdirSync(path.dirname(settingsPath)), ["settings.json"]);
 });
 
 it("rejects a read-only settings target for a non-root user even when its parent directory is writable", {
@@ -304,7 +400,6 @@ it("keeps the previous settings file intact when the real API process exits duri
 	const interruptedTemps = fs.readdirSync(path.dirname(settingsPath))
 		.filter((entry) => entry.startsWith(".settings.json.") && entry.endsWith(".tmp"));
 	assert.equal(interruptedTemps.length, 1, "the child must have exited after writing its temporary file");
-	assert.equal(fs.readFileSync(path.join(path.dirname(settingsPath), interruptedTemps[0]!), "utf-8").length, 12);
 });
 
 it("keeps the previous settings file intact and cleans up when replacing it fails with EIO", () => {

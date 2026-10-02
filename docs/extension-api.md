@@ -251,7 +251,7 @@ const result = await resolveSubagentLaunchContract({
 if (!result.ok) {
   // missing_agent, ambiguous_agent, missing_skill, denied_required_tool,
   // invalid_artifact_dir, invalid_cwd, unsupported_mode, restricted_agent,
-  // thinking_ceiling, invalid_extension_bindings, or invalid_intercom_bridge
+  // thinking_ceiling, model_scope, invalid_extension_bindings, or invalid_intercom_bridge
   throw new Error(result.message);
 }
 

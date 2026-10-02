@@ -110,12 +110,20 @@ The built-in `claude-code` and `claude-code-writer` profiles are the supported C
 
 Both adapters own `claude -p` argv with stream JSON, strict empty MCP configuration, user-only setting sources, no session persistence, disabled slash commands, and disabled Chrome integration. The writer mode does not include Bash or any permission bypass. Neither mode uses `--bare`, which does not read normal OAuth/keychain authentication. Neither mode requires `--safe-mode`, which is absent from the installed 2.1.150 help. User profiles cannot add argv. Selecting the code-owned `claude-code-writer` adapter identity is the only way to opt into its write tools; the read-only adapter cannot be widened with user argv.
 
+A `model`, and a thinking level carried on it as a `:level` suffix, are the one thing these two adapters do accept from a launch; the same two fields work in agent frontmatter. They become Claude Code's own `--model` and `--effort` rather than a Pi child model, so one launch can pin `claude-opus-5.5` with `high` effort without changing the operator's global Claude Code settings. The model must be an alias or a model id, and both values are checked before launch, so an unusable value fails the launch by name and no other token can be added.
+
+The level travels as the same `:level` suffix Pi children use, on the `model` field: `model: "claude-opus-5.5:high"` pins the model and the effort, and `model: ":high"` asks for the effort alone. A suffix wins over the frontmatter `thinking` value. `off` passes no `--effort` and `minimal` maps to `low`, and a launch that requests no level leaves the flag out, so Claude Code's own default effort applies and this repository cannot bound it. `off` therefore means "pass no flag", not "no thinking".
+
+`subagents.maxThinking` applies here the way it does to a native Pi child: a request above the ceiling fails before the child starts, compared on the requested level rather than on the effort it maps to. An enforced `subagents.modelScope` applies too, checked against the id that will reach the CLI; a launch that pins no model at all fails closed, because the CLI's own default cannot be checked. Every other external runner still refuses both fields.
+
 Run it asynchronously:
 
 ```text
 Use claude-code to analyze this handoff without editing files.
 
 Use claude-code-writer to make the requested file changes.
+
+Use claude-code-writer with model claude-sonnet-5:high to make the requested file changes.
 ```
 
 The adapter validates `claude --version` and `claude --help` only when a run launches. Discovery, list, status, and native Pi launches do not execute Claude Code or probe authentication. A capabilities listing performs only a passive PATH/PATHEXT/X_OK lookup and exposes the command as `runner.available`; that does not prove authentication or launch compatibility. JSONL, stderr, and stdout are untrusted. A run succeeds only after bounded valid JSONL contains exactly one successful terminal `result` with non-empty final text. Missing or revoked local authentication, limit stops, malformed JSON, duplicate terminal results, and EOF before a terminal result fail closed.
@@ -351,8 +359,8 @@ Field notes:
 | `allowedAgents` | Restricts which canonical, case-sensitive agent names this agent may launch. Omitted adds no restriction; an empty list denies every descendant launch. This only narrows an existing nesting grant: `tools: subagent` or `allowNestedSubagents: true` is still required. Inherited/runtime allowlists are intersected and cannot be widened. |
 | `extensions` | Omitted means a background child loads the parent's ambient extensions; empty means no ambient extensions; list values load exactly those extensions. Foreground children never load ambient extensions, so for them only listed values apply. |
 | `subagentOnlyExtensions` | Extension paths loaded only in this agent's child sessions. Tools registered there are unavailable to the main agent unless also installed through normal Pi extension configuration. |
-| `model` | Default model. Bare ids prefer the current provider when possible, then unique registry matches. |
-| `thinking` | Appended as a `:level` suffix at runtime unless a suffix is already present. |
+| `model` | Default model. Bare ids prefer the current provider when possible, then unique registry matches. On the two Claude Code adapters this is Claude Code's own alias or id, and a trailing `:level` picks the effort. |
+| `thinking` | Appended as a `:level` suffix at runtime unless a suffix is already present. On the two Claude Code adapters it becomes `--effort`, and a suffix on `model` wins over it. |
 | `systemPromptMode` | `replace` by default; `append` keeps Pi's base prompt. |
 | `inheritProjectContext` | Keeps or strips inherited repository instruction blocks. |
 | `inheritGlobalContext` | Keeps or strips the operator's global context file from the Pi config agent directory (e.g. `~/.pi/agent/AGENTS.md`). It has an effect only when `inheritProjectContext` is `true`; otherwise all context files are already disabled. Defaults to `false`. |
@@ -375,9 +383,11 @@ Field notes:
 
 ### Required host extensions
 
-Hosts can import `registerRequiredChildExtensions` from `pi-subagents/required-child-extensions` and register `{ sessionId, extensions: [{ id, path }] }`. Paths resolve to existing files and are canonicalized into an immutable launch snapshot; bounded safe IDs appear in evidence instead of paths. One registration is allowed per parent session until its idempotent `dispose()` runs, normally on `session_shutdown`.
+Hosts can import `registerRequiredChildExtensions` from `pi-subagents/required-child-extensions` and register `{ sessionId, extensions: [{ id, path }], requireForAllRunners? }`. Paths resolve to existing files and are canonicalized into an immutable launch snapshot; bounded safe IDs appear in evidence instead of paths. One registration is allowed per parent session until its idempotent `dispose()` runs, normally on `session_shutdown`.
 
-Required paths follow ordinary extension resolution and survive agent defaults and `extensions: []` across native foreground, detached, nested, and recovery launches. A `capabilityCeiling.denyExtensions` conflict or required load/provider-registration failure rejects before model resolution. External runners are excluded, and status/watch paths do not query the registry.
+Required paths follow ordinary extension resolution and survive agent defaults and `extensions: []` across native foreground, detached, nested, and recovery launches. A `capabilityCeiling.denyExtensions` conflict or required load/provider-registration failure rejects before model resolution. An error a required extension reports while the child binds its extensions, such as a throwing `session_start` handler, disposes the child and rejects the launch before its first prompt. By default external runners are excluded (they run without the required extensions), and status/watch paths do not query the registry.
+
+With `requireForAllRunners: true`, a launch that resolves to an external CLI runner, an external-job runner, or a machine placement is rejected before a runner process, provider job, or remote owner starts, because only local native Pi children load these extensions. The requirement stays with the run through nested, detached, resumed, recovered, workflow-script, and appended launches, so disposing the registration or setting `extensions: []` cannot drop it. Launch preflight previews the runner-type rejection for the session's current registration; machine placement and requirements retained by nested or resumed runs are checked at launch.
 
 Successful completion is determined by observable gates such as process outcome, required outputs, explicit acceptance, verification commands, independent review, and staged-index integrity. Best-effort mutation observations remain diagnostic: unchanged or unknown evidence does not fail a run, and observed changes do not prove correctness.
 

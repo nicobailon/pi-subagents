@@ -13,6 +13,8 @@ Builtin agents inherit your current Pi default model. This keeps new installs fr
 
 Precedence, strongest first: per-run override → provider-scoped role override → `agentOverrides.<name>.model` → agent frontmatter `model` → `subagents.defaultModel` → the parent session model. A provider preference does not replace this order; it only resolves bare model ids when the active registry has more than one match. Fully qualified `provider/model` strings still win exactly.
 
+On the two Claude Code adapters a model is Claude Code's own alias or id rather than a Pi child model, so a value set for one of them resolves nothing against the registry. `subagents.defaultModel` is ignored there, because it is a default for Pi children. An explicit `agentOverrides.<name>.model` or agent frontmatter `model` is passed on as given, and Claude Code reports it when it does not recognize the value. See [agents](agents.md).
+
 Each launch resolves one model. Provider errors, including HTTP 429 responses, are returned from that model rather than selecting another one. Separately, a verified compaction abort after useful progress may continue the retained child session once on the same resolved model; this lifecycle recovery preserves work and is not model fallback.
 
 Use `model: "inherit"` in agent frontmatter or `agentOverrides.<name>.model` to select the current parent session model explicitly.
@@ -122,7 +124,7 @@ If your provider rejects model IDs with thinking suffixes, set `subagents.disabl
 
 ### Thinking ceiling
 
-Set `subagents.maxThinking` to enforce a hard maximum for every native Pi child. The supported levels, from least to most thinking, are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`:
+Set `subagents.maxThinking` to enforce a hard maximum for every child that can ask for a thinking level: native Pi children and the two Claude Code adapters. The supported levels, from least to most thinking, are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`:
 
 ```json
 {
@@ -133,7 +135,7 @@ Set `subagents.maxThinking` to enforce a hard maximum for every native Pi child.
 }
 ```
 
-Requests above the ceiling fail before child startup; the setting covers frontmatter, `agentOverrides`, per-run overrides, parallel/chain children, nested launches, and resumed children. Project settings take precedence over user settings. External runners retain their existing behavior.
+Requests above the ceiling fail before child startup; the setting covers frontmatter, `agentOverrides`, per-run overrides, parallel/chain children, nested launches, and resumed children. Project settings take precedence over user settings. External runners keep their existing behavior, except the two Claude Code adapters, which translate the requested level into `--effort` and enforce the same ceiling. An enforced `subagents.modelScope` also covers them: the model id that will reach the CLI is checked, and a launch that pins no model fails closed.
 
 ## Extension defaults
 

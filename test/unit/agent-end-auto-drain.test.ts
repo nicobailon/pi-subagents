@@ -62,7 +62,7 @@ const script = String.raw`
 	}
 	dispose();
 	for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
-	fs.rmSync(projectRoot, { recursive: true, force: true });
+	fs.rmSync(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 	process.stdout.write(JSON.stringify({ rejected, preservedCause, errors, sent, missionId: mission?.id }));
 `;
 
@@ -109,7 +109,7 @@ describe("headless agent_end auto-drain", () => {
 				assert.ok(notices[0]!.message.content.includes(payload.missionId));
 				assert.deepEqual(notices[0]!.options, { triggerTurn: false });
 			} finally {
-				fs.rmSync(root, { recursive: true, force: true });
+				fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 			}
 		});
 	}

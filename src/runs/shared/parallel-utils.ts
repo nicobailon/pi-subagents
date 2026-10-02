@@ -40,6 +40,8 @@ export interface RunnerSubagentStep {
 	contextLimit?: number;
 	fast?: boolean;
 	thinking?: string;
+	/** Trailing Claude Code argv for an explicit model/thinking request. */
+	claudeCodeOverrideArgs?: string[];
 	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
 	requestedModel?: string;
 	/** The primary model is inherited from the parent session and should not be verified against the child-reported active registry model. */

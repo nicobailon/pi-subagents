@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { discoverAgents, discoverAgentsAll, resolveAgentName } from "../../src/agents/agents.ts";
-import { CLAUDE_CODE_ADAPTER_ID, CLAUDE_CODE_ENV_ALLOWLIST, CLAUDE_CODE_WRITER_ADAPTER_ID, CLAUDE_CODE_WRITER_TOOLS, createClaudeCodeJsonlParser, resolveClaudeCodeLaunch } from "../../src/runs/shared/claude-code-adapter.ts";
+import { CLAUDE_CODE_ADAPTER_ID, CLAUDE_CODE_ENV_ALLOWLIST, CLAUDE_CODE_WRITER_ADAPTER_ID, CLAUDE_CODE_WRITER_TOOLS, createClaudeCodeJsonlParser, resolveClaudeCodeLaunch, resolveClaudeCodeOverride } from "../../src/runs/shared/claude-code-adapter.ts";
 import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import { clearExternalCliPreflightCacheForTests } from "../../src/runs/shared/external-cli-preflight.ts";
 import { runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
@@ -230,6 +230,109 @@ describe("Claude Code adapter", () => {
 			if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
 		}
+	});
+
+	it("derives the model and the effort from the model suffix", () => {
+		assert.equal(resolveClaudeCodeOverride({}), undefined);
+		assert.deepEqual(resolveClaudeCodeOverride({ model: "claude-opus-5.5" }), { args: ["--model", "claude-opus-5.5"], model: "claude-opus-5.5" });
+		assert.deepEqual(resolveClaudeCodeOverride({ model: " sonnet " }), { args: ["--model", "sonnet"], model: "sonnet" });
+		assert.deepEqual(resolveClaudeCodeOverride({ model: "claude-opus-5.5:high" }), { args: ["--model", "claude-opus-5.5", "--effort", "high"], model: "claude-opus-5.5" });
+		// A bare ":level" asks for the effort without pinning a model.
+		assert.deepEqual(resolveClaudeCodeOverride({ model: ":medium" }), { args: ["--effort", "medium"] });
+		// The suffix wins over the frontmatter value, which is the Pi child precedence.
+		assert.deepEqual(resolveClaudeCodeOverride({ model: "opus:low", thinking: "max" }), { args: ["--model", "opus", "--effort", "low"], model: "opus" });
+		assert.deepEqual(resolveClaudeCodeOverride({ thinking: "medium" }), { args: ["--effort", "medium"] });
+		// Pi's wider thinking scale collapses onto Claude Code's five-value effort scale.
+		assert.equal(resolveClaudeCodeOverride({ thinking: "off" }), undefined);
+		assert.deepEqual(resolveClaudeCodeOverride({ model: "haiku:minimal" }), { args: ["--model", "haiku", "--effort", "low"], model: "haiku" });
+		assert.deepEqual(resolveClaudeCodeOverride({ thinking: "xhigh" }), { args: ["--effort", "xhigh"] });
+	});
+
+	it("runs a bare level on the agent's own model and keeps a Pi default out of --model", () => {
+		// A bare level means the agent's model at that effort, so the two forms agree.
+		assert.deepEqual(resolveClaudeCodeOverride({ model: ":high", agent: { model: "claude-opus-5.5" } }), { args: ["--model", "claude-opus-5.5", "--effort", "high"], model: "claude-opus-5.5" });
+		assert.deepEqual(resolveClaudeCodeOverride({ agent: { model: "claude-opus-5.5" } }), { args: ["--model", "claude-opus-5.5"], model: "claude-opus-5.5" });
+		// A launch model replaces the agent's model entirely.
+		assert.deepEqual(resolveClaudeCodeOverride({ model: "haiku:low", agent: { model: "claude-opus-5.5" } }), { args: ["--model", "haiku", "--effort", "low"], model: "haiku" });
+		// subagents.defaultModel is a Pi child model, so the CLI never sees it.
+		const fromSettings = { model: "anthropic/claude-sonnet-4-5", modelSource: { type: "subagents.defaultModel", model: "anthropic/claude-sonnet-4-5" } };
+		assert.equal(resolveClaudeCodeOverride({ agent: fromSettings }), undefined);
+		assert.deepEqual(resolveClaudeCodeOverride({ agent: fromSettings, thinking: "low" }), { args: ["--effort", "low"] });
+		// A frontmatter model the operator wrote stays the agent's own model.
+		assert.deepEqual(resolveClaudeCodeOverride({ agent: { model: "claude-opus-5.5", modelSource: { type: "subagents.defaultModel", model: "anthropic/claude-sonnet-4-5" } } }), { args: ["--model", "claude-opus-5.5"], model: "claude-opus-5.5" });
+	});
+
+	it("rejects a model or thinking value it cannot pass as its own argv element", () => {
+		assert.throws(() => resolveClaudeCodeOverride({ model: "" }), /Invalid Claude Code model/);
+		assert.throws(() => resolveClaudeCodeOverride({ model: ":" }), /Invalid Claude Code model/);
+		assert.throws(() => resolveClaudeCodeOverride({ model: ":turbo" }), /Invalid Claude Code model/);
+		assert.throws(() => resolveClaudeCodeOverride({ model: "--dangerously-skip-permissions" }), /Invalid Claude Code model/);
+		assert.throws(() => resolveClaudeCodeOverride({ model: "opus --tools Bash" }), /Invalid Claude Code model/);
+		assert.throws(() => resolveClaudeCodeOverride({ thinking: "turbo" }), /Invalid thinking level/);
+		assert.throws(() => resolveClaudeCodeOverride({ thinking: "off; rm -rf /" }), /Invalid thinking level/);
+		// A Bedrock inference profile keeps its colon, because "0" is not a level.
+		assert.deepEqual(resolveClaudeCodeOverride({ model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0" }), {
+			args: ["--model", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"],
+			model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		});
+	});
+
+	it("rejects an effort above the ceiling and keeps the boundary level", () => {
+		assert.throws(
+			() => resolveClaudeCodeOverride({ model: "sonnet:max", thinkingCeiling: "low", agentName: "cc", runId: "run-1" }),
+			/Thinking level 'max' exceeds configured maximum 'low' for agent 'cc' run 'run-1'\./,
+		);
+		// The ceiling compares the requested level, not the effort it maps to, so a
+		// "minimal" request stays legal under a "minimal" ceiling although it emits low.
+		assert.deepEqual(resolveClaudeCodeOverride({ model: "sonnet:minimal", thinkingCeiling: "minimal" }), { args: ["--model", "sonnet", "--effort", "low"], model: "sonnet" });
+		assert.deepEqual(resolveClaudeCodeOverride({ model: "sonnet:max", thinkingCeiling: "max" }), { args: ["--model", "sonnet", "--effort", "max"], model: "sonnet" });
+		// No requested level means no ceiling to check.
+		assert.deepEqual(resolveClaudeCodeOverride({ model: "sonnet", thinkingCeiling: "low" }), { args: ["--model", "sonnet"], model: "sonnet" });
+	});
+
+	it("appends an override after the fixed argv and keeps it out of preflight", () => {
+		const overrideArgs = resolveClaudeCodeOverride({ model: "claude-opus-5.5:medium" })?.args;
+		const launch = resolveClaudeCodeLaunch({ adapter: CLAUDE_CODE_ADAPTER_ID, command: "claude", overrideArgs });
+		assert.deepEqual(launch.args.slice(-4), ["--model", "claude-opus-5.5", "--effort", "medium"]);
+		assert.deepEqual(launch.args.slice(0, 2), ["-p", "--input-format"]);
+		assert.equal(launch.args.includes("--no-chrome"), true);
+		assert.deepEqual(launch.preflight.versionArgs, ["--version"]);
+		assert.deepEqual(launch.preflight.helpArgs, ["--help"]);
+		const writer = resolveClaudeCodeLaunch({ adapter: CLAUDE_CODE_WRITER_ADAPTER_ID, command: "claude", overrideArgs });
+		assert.deepEqual(writer.args.slice(-4), ["--model", "claude-opus-5.5", "--effort", "medium"]);
+	});
+
+	it("passes an explicit model and effort to a real launch", async () => {
+		const dir = tempDir();
+		const scriptPath = path.join(dir, "claude-argv.cjs");
+		fs.writeFileSync(scriptPath, String.raw`
+const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log("2.1.150 (Claude Code)"); process.exit(0); }
+if (args[0] === "--help") { console.log("Claude Code - starts an interactive session --print --input-format text --output-format stream-json --verbose --permission-mode plan acceptEdits --tools --strict-mcp-config --mcp-config --setting-sources --no-session-persistence --disable-slash-commands --no-chrome"); process.exit(0); }
+process.stdin.resume();
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "argv:" + args.join(" ") }) + "\n");
+});
+`.replace(/^\+/gm, ""), "utf-8");
+
+		const overrideArgs = resolveClaudeCodeOverride({ model: "claude-opus-5.5:high" })?.args;
+		const launch = resolveClaudeCodeLaunch({ adapter: CLAUDE_CODE_ADAPTER_ID, command: process.execPath, commandPrefixArgs: [scriptPath], overrideArgs });
+		const result = await runExternalCli({ ...launch, cwd: dir, prompt: "review", asyncDir: dir, stepIndex: 0 });
+		assert.equal(result.parserTerminal?.state, "completed");
+		assert.match(result.output ?? "", /--model claude-opus-5.5 --effort high$/);
+	});
+
+	it("accepts model and thinking frontmatter only on the Claude Code adapters", () => {
+		const dir = tempDir();
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "cc-pinned.md"), `---\nname: cc-pinned\ndescription: Pinned Claude\nmodel: claude-opus-5.5\nthinking: medium\nrunner:\n  type: external-cli\n  adapter: claude-code\n  command: claude\n---\nReview.\n`, "utf-8");
+		fs.writeFileSync(path.join(agentsDir, "ccx-pinned.md"), `---\nname: ccx-pinned\ndescription: Pinned Codex\nmodel: gpt-5\nrunner:\n  type: external-cli\n  adapter: codex-exec\n  command: codex\n---\nReview.\n`, "utf-8");
+		const discovered = discoverAgentsAll(dir);
+		assert.equal(discovered.project.find((candidate) => candidate.name === "cc-pinned")?.model, "claude-opus-5.5");
+		assert.equal(discovered.agentDiagnostics?.some((diagnostic) => diagnostic.name === "cc-pinned"), false);
+		assert.equal(discovered.project.some((candidate) => candidate.name === "ccx-pinned"), false);
+		assert.match(discovered.agentDiagnostics?.find((diagnostic) => diagnostic.name === "ccx-pinned")?.error ?? "", /declares unsupported Pi-only fields: model/);
 	});
 
 	it("rejects frontmatter argv that would widen the packaged adapter", () => {
