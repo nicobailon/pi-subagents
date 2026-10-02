@@ -106,6 +106,7 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 				...(sessionFile ? { sessionFile } : {}),
 				...(typeof child.success === "boolean" ? { success: child.success } : {}),
 				...(outputState ? { outputState } : {}),
+				...(child.outputPartial === true ? { outputPartial: true } : {}),
 				...(structuredOutput !== undefined ? { structuredOutput } : {}),
 				...(structuredOutputPath ? { structuredOutputPath } : {}),
 				...(error ? { error } : {}),

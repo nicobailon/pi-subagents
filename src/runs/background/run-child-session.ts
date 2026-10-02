@@ -24,6 +24,7 @@ import { formatChildModelResolutionDiagnostic, isChildModelResolutionFailure } f
 import { isMutatingTool, resolveCurrentPath } from "../shared/long-running-guard.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { createReportedChildSessionInput, type InProcessChildLaunch } from "../shared/child-launch.ts";
+import { createPartialOutputTracker, formatPartialOutput, type PartialOutputCause } from "../shared/partial-output.ts";
 import { childSessionHasQueuedMessages, projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent, type ChildSessionFactory } from "../shared/child-session.ts";
 import { reconcileAttemptUsage } from "../shared/usage-reconciliation.ts";
 import { formatSteerMessage } from "../shared/subagent-prompt-runtime.ts";
@@ -114,6 +115,8 @@ export interface RunChildSessionResult {
 	error?: string;
 	finalOutput: string;
 	outputState: SubagentOutputState;
+	/** Unfinished streamed text recovered after a timeout or child error. */
+	outputPartial?: boolean;
 	interrupted?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -175,6 +178,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 		let assistantError: string | undefined;
 		let interrupted = false;
 		let timedOut = false;
+		const partialOutput = createPartialOutputTracker();
 		let stopped = false;
 		let observedMutationAttempt = false;
 		let structuredOutputToolInvoked = false;
@@ -411,6 +415,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 
 		const processEvent = (raw: ChildSessionEvent): void => {
 			if (settled) return;
+			partialOutput.observe(raw);
 			const event = raw as ChildSessionEvent & ChildEvent;
 			appendChildEvent(projectChildSessionEventForJson(raw) as Record<string, unknown>);
 			input.transcriptWriter?.writeChildEvent(projectChildSessionEventForJson(raw) as ChildEvent);
@@ -582,7 +587,14 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				? reconcileAttemptUsage(usage, session.messages, messageBaseline)
 				: usage;
 			const closed = finish();
-			const finalOutput = getFinalOutput(messages);
+			const completedOutput = getFinalOutput(messages);
+			// Text still streaming at a timeout or thrown session error never reached a
+			// completed message; keep it, labeled. The run still fails.
+			const partialCause: PartialOutputCause | undefined = timedOut
+				? "timeout"
+				: promptError !== undefined && !stopped && !interrupted ? "child error" : undefined;
+			const streamedPartial = partialCause ? partialOutput.text() : undefined;
+			const finalOutput = partialCause && streamedPartial ? formatPartialOutput(streamedPartial, partialCause) : completedOutput;
 			let finalError = error ?? assistantError;
 			const promptErrorMessage = promptError === undefined ? undefined : promptError instanceof Error ? promptError.message : String(promptError);
 			if (!finalError && promptErrorMessage !== undefined) {
@@ -623,6 +635,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					error: stopped ? stopMessage() : timedOut ? (error ?? timeoutMessage()) : interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal && !commandError) ? undefined : finalError,
 					finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage() : error ?? timeoutMessage()) : finalOutput,
 					outputState: finalOutput.trim() ? "present" : "absent",
+					outputPartial: partialCause && streamedPartial ? true : undefined,
 					interrupted: interrupted || undefined,
 					timedOut: timedOut || undefined,
 					stopped: stopped || undefined,

@@ -135,3 +135,80 @@ it("verifies a virtual-model child against its selection and keeps the dispatche
 	assert.equal(result.exitCode, 0);
 	assert.equal(result.model, "gpt-6.1-sol");
 });
+
+// Unfinished streamed text recovered on timeout or a thrown session error.
+type PartialScenario = "timeout" | "child error" | "completed reply" | "provider error";
+
+async function runPartialScenario(mode: "foreground" | "background", scenario: PartialScenario) {
+	let listener: Parameters<ChildSession["subscribe"]>[0] = () => {};
+	let timeout: (() => void) | undefined;
+	let releasePrompt!: () => void;
+	const hung = new Promise<void>((resolve) => { releasePrompt = resolve; });
+	const messages: ChildSession["messages"] = [];
+	const streaming = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
+	const session: ChildSession = {
+		subscribe(handler) { listener = handler; return () => {}; },
+		async prompt() {
+			listener({ type: "message_update", message: streaming("half a th"), assistantMessageEvent: { type: "text_delta", delta: "half a th" } });
+			listener({ type: "message_update", message: streaming("half a thought"), assistantMessageEvent: { type: "text_delta", delta: "ought" } });
+			if (scenario === "completed reply") {
+				const message = fauxAssistantMessage("half a thought, finished");
+				messages.push(message);
+				listener({ type: "message_end", message });
+			}
+			if (scenario === "provider error") {
+				const message = { ...fauxAssistantMessage("text before the provider error"), stopReason: "error", errorMessage: "overloaded" };
+				messages.push(message);
+				listener({ type: "message_end", message });
+				throw new Error("overloaded");
+			}
+			if (scenario === "child error") throw new Error("session blew up");
+			if (mode === "background") timeout?.();
+			await hung;
+		},
+		async steer() {}, async followUp() {}, async abort() { releasePrompt(); }, async dispose() {},
+		messages, sessionId: "partial-session", modelId: "mock/model",
+	};
+	const factory: ChildSessionFactory = { create: async () => session, async dispose() {} };
+	return mode === "foreground"
+		? runSync(process.cwd(), makeAgentConfigs(["worker"]), "worker", "Finish", { childSessionFactory: factory, timeoutMs: 100 })
+		: runChildSession({
+			factory, launch, prompt: "Finish", timeoutMessage: "Subagent timed out.",
+			appendChildEvent() {}, writeOutputLine() {},
+			registerTimeout(handler) { timeout = handler; },
+		});
+}
+
+for (const mode of ["foreground", "background"] as const) {
+	it(`${mode}: returns unfinished streamed text as flagged partial output on timeout`, { timeout: 10_000 }, async () => {
+		const result = await runPartialScenario(mode, "timeout");
+		assert.equal(result.timedOut, true);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.outputState, "present");
+		assert.equal(result.outputPartial, true);
+		assert.match(result.finalOutput ?? "", /Partial output before timeout:\nhalf a thought$/);
+	});
+
+	it(`${mode}: returns unfinished streamed text as flagged partial output on a thrown session error`, { timeout: 10_000 }, async () => {
+		const result = await runPartialScenario(mode, "child error");
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.outputPartial, true);
+		assert.equal(result.finalOutput, "Partial output before child error:\nhalf a thought");
+		assert.match(result.error ?? "", /session blew up/);
+	});
+
+	it(`${mode}: keeps the text of a failed provider message as partial output`, { timeout: 10_000 }, async () => {
+		const result = await runPartialScenario(mode, "provider error");
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.outputPartial, true);
+		assert.equal(result.finalOutput, "Partial output before child error:\ntext before the provider error");
+	});
+
+	it(`${mode}: never marks a completed reply as partial`, { timeout: 10_000 }, async () => {
+		const result = await runPartialScenario(mode, "completed reply");
+		assert.equal(result.timedOut, true);
+		assert.equal(result.outputPartial, undefined);
+		assert.doesNotMatch(result.finalOutput ?? "", /Partial output before child error/);
+		assert.match(result.finalOutput ?? "", /half a thought, finished/);
+	});
+}

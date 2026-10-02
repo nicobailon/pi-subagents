@@ -912,6 +912,8 @@ export interface SubagentResultIntercomChild {
 	status: SubagentResultStatus;
 	/** Whether the child produced substantive output before its process ended. */
 	outputState?: SubagentOutputState;
+	/** True when the output is unfinished streamed text recovered after a timeout or child error. */
+	outputPartial?: boolean;
 	summary: string;
 	index?: number;
 	artifactPath?: string;
@@ -1324,6 +1326,8 @@ export interface SingleResult {
 	finalOutput?: string;
 	/** Provenance-aware state for substantive child output, excluding synthetic lifecycle messages. */
 	outputState?: SubagentOutputState;
+	/** True when the output is unfinished streamed text recovered after a timeout or child error. */
+	outputPartial?: boolean;
 	outputMode?: OutputMode;
 	savedOutputPath?: string;
 	outputReference?: SavedOutputReference;
@@ -1381,6 +1385,8 @@ export interface WaitCompletionChild {
 	sessionFile?: string;
 	success?: boolean;
 	outputState?: SubagentOutputState;
+	/** True when the output is unfinished streamed text recovered after a timeout or child error. */
+	outputPartial?: boolean;
 	structuredOutput?: unknown;
 	structuredOutputPath?: string;
 	error?: string;
@@ -2145,6 +2151,8 @@ export interface ForegroundResumeChild {
 	error?: string;
 	finalOutput?: string;
 	outputState?: SubagentOutputState;
+	/** True when the output is unfinished streamed text recovered after a timeout or child error. */
+	outputPartial?: boolean;
 	outputMode?: OutputMode;
 	savedOutputPath?: string;
 	outputSaveError?: string;

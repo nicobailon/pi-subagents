@@ -242,6 +242,7 @@ interface StepResult {
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
 	output: string;
 	outputState?: SubagentOutputState;
+	outputPartial?: boolean;
 	error?: string;
 	success?: boolean;
 	exitCode: number | null;
@@ -1395,7 +1396,8 @@ export async function runSingleStepInner(
 	if (finalResult?.stopped && !outputForSummary.trim()) {
 		outputForSummary = ctx.stopMessage ?? "Subagent stopped by user.";
 	}
-	const outputForAcceptance = rawOutput;
+	// Unfinished streamed text never stands in for the child's completed reply.
+	const outputForAcceptance = finalResult?.outputPartial ? "" : rawOutput;
 	const childWrittenOutput = step.outputPath
 		? extractChildWrittenOutput(finalResult?.messages, step.outputPath, step.cwd ?? ctx.cwd)
 		: undefined;
@@ -1526,6 +1528,7 @@ export async function runSingleStepInner(
 		launchContractDigest: actualLaunchContractDigest,
 		output: outputForSummary,
 		outputState,
+		outputPartial: finalResult?.outputPartial,
 		exitCode: effectiveFinalExitCode,
 		error: effectiveFinalError,
 		sessionFile: step.sessionFile,
@@ -3841,6 +3844,7 @@ export async function runSubagent(
 					runtimeAcknowledgedExtensions: pr.runtimeAcknowledgedExtensions,
 					output: pr.output,
 					outputState: pr.outputState,
+					outputPartial: pr.outputPartial,
 					error: pr.error,
 					success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0 && pr.execution?.status !== "partial",
 					exitCode: pr.interrupted === true ? 0 : pr.exitCode,
@@ -4289,6 +4293,7 @@ export async function runSubagent(
 						launchResolvedExtensions: pr.launchResolvedExtensions,
 						output: pr.output,
 						outputState: pr.outputState,
+						outputPartial: pr.outputPartial,
 						error: pr.error,
 						success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0 && pr.execution?.status !== "partial",
 						exitCode: pr.interrupted === true ? 0 : pr.exitCode,
@@ -4595,6 +4600,7 @@ export async function runSubagent(
 				runtimeAcknowledgedExtensions: singleResult.runtimeAcknowledgedExtensions,
 				output: stopped || childStopped ? stopMessage : timedOut ? singleResult.output || (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
 				outputState: singleResult.outputState,
+				outputPartial: singleResult.outputPartial,
 				error: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
 				success: !stopped && !childStopped && !timedOut && singleResult.interrupted !== true && singleResult.exitCode === 0 && singleResult.execution?.status !== "partial",
 				exitCode: stopped || childStopped ? 1 : timedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
@@ -4990,6 +4996,7 @@ export async function runSubagent(
 				context: r.context,
 				output: r.output,
 				outputState: r.outputState,
+				outputPartial: r.outputPartial,
 				error: r.error,
 				success: r.success,
 				skipped: r.skipped || undefined,
