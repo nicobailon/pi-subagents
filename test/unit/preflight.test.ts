@@ -89,6 +89,41 @@ describe("public launch contract preflight", () => {
 		} finally { registration.dispose(); }
 	});
 
+	it("validates a Claude Code model and level the way the launch does", async () => {
+		const cwd = path.join(tempDir, "cc-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "cc.md"), `---\nname: cc\ndescription: Claude Code agent\nrunner:\n  type: external-cli\n  adapter: claude-code\n  command: claude\n---\nReview.\n`);
+
+		const overCeiling = await resolveSubagentLaunchContract({ agent: "cc", cwd, model: "sonnet:max", thinkingCeiling: "low" });
+		assert.equal(overCeiling.ok, false);
+		if (overCeiling.ok) return;
+		assert.equal(overCeiling.code, "thinking_ceiling");
+		assert.match(overCeiling.message, /exceeds configured maximum 'low'/u);
+
+		const invalidModel = await resolveSubagentLaunchContract({ agent: "cc", cwd, model: ":turbo" });
+		assert.equal(invalidModel.ok, false);
+		if (invalidModel.ok) return;
+		assert.equal(invalidModel.code, "unsupported_mode");
+		assert.match(invalidModel.message, /Invalid Claude Code model/u);
+
+		const agentDir = process.env.PI_CODING_AGENT_DIR;
+		assert.equal(typeof agentDir, "string");
+		writeJson(path.join(agentDir!, "settings.json"), { subagents: { modelScope: { enforce: true, allow: ["anthropic/claude-opus-4-5"] } } });
+
+		// An enforced scope fails closed, for a model outside it and for a launch with none.
+		const outsideScope = await resolveSubagentLaunchContract({ agent: "cc", cwd, model: "opus" });
+		assert.equal(outsideScope.ok, false);
+		if (outsideScope.ok) return;
+		assert.equal(outsideScope.code, "model_scope");
+		assert.match(outsideScope.message, /outside the configured subagent model scope/u);
+
+		const unnamed = await resolveSubagentLaunchContract({ agent: "cc", cwd });
+		assert.equal(unnamed.ok, false);
+		if (unnamed.ok) return;
+		assert.equal(unnamed.code, "model_scope");
+		assert.match(unnamed.message, /cannot be checked against an enforced subagent model scope/u);
+	});
+
 	it("resolves an ordinary single-agent contract without creating launch directories", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });

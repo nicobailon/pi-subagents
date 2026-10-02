@@ -35,6 +35,7 @@ interface AsyncJobTrackerOptions {
 	pollIntervalMs?: number;
 	resultsDir?: string;
 	widgetEnabled?: boolean;
+	widgetCollapsed?: boolean;
 	platform?: NodeJS.Platform;
 	onJobTerminal?: () => void;
 	watch?: typeof fs.watch;
@@ -104,7 +105,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
 		if (state.widgetsSuspended) return;
-		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);
+		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs, options.widgetCollapsed);
 		(ctx.ui as { requestRender?: () => void }).requestRender?.();
 	};
 	const rerenderLastWidget = (jobs = Array.from(state.asyncJobs.values())) => {
@@ -124,7 +125,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			if (state.widgetsSuspended) return;
 			const requestRender = (ctx.ui as { requestRender?: () => void }).requestRender;
 			if (requestRender) requestRender.call(ctx.ui);
-			else renderWidget(ctx, Array.from(state.asyncJobs.values()));
+			else renderWidget(ctx, Array.from(state.asyncJobs.values()), options.widgetCollapsed);
 		});
 	};
 	const refreshWidget = (ctx: ExtensionContext) => rerenderWidget(ctx);

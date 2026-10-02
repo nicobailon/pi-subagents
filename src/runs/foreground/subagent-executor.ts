@@ -74,7 +74,7 @@ import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContract } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
-import { resolveRequiredChildExtensions } from "../../shared/required-child-extensions.ts";
+import { assertRequiredChildExtensionsAdmitted, hasMandatoryRequiredChildExtensions, readRetainedRequiredChildExtensions, resolveRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, PROMPT_REDACTED, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
@@ -535,6 +535,8 @@ interface ExecutionContextData {
 	usageBudget?: UsageBudgetConfig;
 	/** Parent workflow owns this allowance; presence vetoes unverifiable child continuation. */
 	inheritedUsageBudget?: UsageBudgetConfig;
+	/** Mandatory host extensions retained by a parent workflow; they outlive a later registration disposal. */
+	requiredExtensions?: RequiredChildExtensionSnapshot;
 	allowZeroToolBudget?: boolean;
 	configToolBudget?: ResolvedToolBudget;
 	contextPolicy: AgentDefaultContextPolicy;
@@ -1338,6 +1340,16 @@ function appendStepToAsyncChain(input: {
 		};
 	}
 
+	let retainedRequiredExtensions: RequiredChildExtensionSnapshot | undefined;
+	try {
+		retainedRequiredExtensions = readRetainedRequiredChildExtensions(resolved.location.asyncDir);
+	} catch (error) {
+		return {
+			content: [{ type: "text", text: `Cannot append step to run '${resolved.id}': ${error instanceof Error ? error.message : String(error)}` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
 	const pendingAppendRequests = readPendingChainAppendRequests(resolved.location.asyncDir);
 	const reservedOutputNames = new Set<string>([
 		...Object.keys(status.outputs ?? {}),
@@ -1408,6 +1420,7 @@ function appendStepToAsyncChain(input: {
 		asyncDir: resolved.location.asyncDir,
 		validateOutputBindings: false,
 		capabilityCeiling: intersectSubagentCapabilityCeilings(status.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(asyncCtx.currentSessionId)),
+		requiredExtensions: retainedRequiredExtensions,
 	}));
 	if ("error" in built) {
 		return {
@@ -3549,6 +3562,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			goal: params.task ?? "",
 			agentConfig: a,
 			recoveryAgentConfig: data.recoveryAgents.find((agent) => agent.name === params.agent),
+			requiredExtensions: data.requiredExtensions,
 			ctx: asyncCtx,
 			availableModels,
 			cwd: effectiveCwd,
@@ -4035,8 +4049,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}
 	let foregroundMachine: import("../../shared/types.ts").HerdrMachineReference | undefined;
 	const requestedMachine = params.machine ?? agentConfig.machine;
+	const requiredExtensions = data.requiredExtensions ?? deps.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(data.parentPiSessionId);
 	if (requestedMachine) {
-		try { foregroundMachine = resolveHerdrMachinePlacement({ machine: requestedMachine, cwd: ctx.cwd, stepCwd: params.machineCwd }).machine; }
+		try {
+			assertRequiredChildExtensionsAdmitted([requiredExtensions], { agent: agentConfig.name, runnerType: agentConfig.runner?.type, machine: requestedMachine });
+			foregroundMachine = resolveHerdrMachinePlacement({ machine: requestedMachine, cwd: ctx.cwd, stepCwd: params.machineCwd }).machine;
+		}
 		catch (error) { return toExecutionErrorResult(params, error instanceof Error ? error : new Error(String(error)), data.contextPolicy.contextSummary); }
 	}
 	const effectiveToolBudget = resolveEffectiveToolBudget(omitUndefinedProperties({ runBudget: data.toolBudget, agentBudget: agentConfig.toolBudget, configBudget: data.configToolBudget }));
@@ -4231,7 +4249,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		: undefined;
 
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
-	const requiredExtensions = deps.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(data.parentPiSessionId);
 	let r: Awaited<ReturnType<typeof runSync>> | undefined;
 	let resolveDetachedWorkflowChild: ((result: Awaited<ReturnType<typeof runSync>>) => void) | undefined;
 	const detachedWorkflowChild = params.workflowAwaitDetached === true
@@ -4484,6 +4501,7 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 
 const workflowLaunchObservers = new WeakMap<object, (launch: { agent: string; sessionName?: string; sessionFile?: string; async: boolean; runId?: string }) => void>();
 const workflowOwnedUsageBudgets = new WeakMap<object, UsageBudgetConfig>();
+const workflowRetainedRequiredExtensions = new WeakMap<object, RequiredChildExtensionSnapshot>();
 
 /**
  * Terminal-mission retention can remove a mission while its children still
@@ -5288,6 +5306,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	): Promise<AgentToolResult<Details>> => {
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
+		const retainedRequiredExtensions = workflowRetainedRequiredExtensions.get(params);
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
 		const delegatedExecution = delegatedExecutions.has(params);
@@ -5370,6 +5389,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			const acceptanceErrors = validateAcceptanceInput(requestParams.acceptance);
 			if (acceptanceErrors.length > 0) return buildRequestedModeError(requestParams, acceptanceErrors.join(" "));
+			// Capture mandatory host extensions at admission: script children may launch after the host disposes its registration.
+			const admittedRequiredExtensions = retainedRequiredExtensions ?? deps.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(ctx.sessionManager.getSessionId() ?? undefined);
+			const workflowRequiredExtensions = hasMandatoryRequiredChildExtensions(admittedRequiredExtensions) ? admittedRequiredExtensions : undefined;
 			const foregroundWorkflowRunId = encodeIndexSegment(_id);
 			if (delegatedWorkflowPermit) {
 				const permitError = validateWorkflowChildPermitRoot(delegatedWorkflowPermit, foregroundWorkflowRunId);
@@ -6170,6 +6192,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									);
 									preparedChildParams = childRequest;
 									if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
+									if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
 									workflowLaunchObservers.set(childRequest, (launch) => {
 										if (launch.runId) appendWorkflowChildJournal(asyncDir, { type: "start", key, fingerprint: journalFingerprint, runId: launch.runId });
 										const step = status.steps?.find((candidate) => candidate.workflowKey === key);
@@ -6455,6 +6478,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							);
 							preparedChildParams = childRequest;
 							if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
+							if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
 							if (delegatedWorkflowPermit) {
 								if (childRequest.async !== false) throw new Error("Workflow child permit supports one foreground child only.");
 								const childCwd = resolveRequestedCwd(workflowCwd, childRequest.cwd);
@@ -7644,6 +7668,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			toolBudget: runToolBudget.toolBudget,
 			usageBudget: usageBudget.budget,
 			inheritedUsageBudget,
+			requiredExtensions: retainedRequiredExtensions,
 			allowZeroToolBudget,
 			configToolBudget: configToolBudget.toolBudget,
 			configToolTimeoutMs: deps.config.toolTimeoutMs,

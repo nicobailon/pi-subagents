@@ -14,7 +14,7 @@ import { validateDisabledFeatures } from "../shared/disabled-features.ts";
 
 // Explicit route identity, worktree, checkpoint, and tool-surface policies must not be silently
 // discarded and replaced by the built-in defaults after validation fails.
-const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation"];
+const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget"];
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -171,6 +171,9 @@ function validateConfig(config: Record<string, unknown>): void {
 	}
 	if (config.resultScanLogging !== undefined && config.resultScanLogging !== "all" && config.resultScanLogging !== "activity" && config.resultScanLogging !== "off") {
 		throw new Error('config.resultScanLogging must be "all", "activity", or "off"');
+	}
+	if (config.asyncWidgetCollapsed !== undefined && typeof config.asyncWidgetCollapsed !== "boolean") {
+		throw new Error("config.asyncWidgetCollapsed must be a boolean");
 	}
 	if (config.toolActivation !== undefined && config.toolActivation !== "auto" && config.toolActivation !== "dynamic" && config.toolActivation !== "eager") {
 		throw new Error('config.toolActivation must be "auto", "dynamic", or "eager"');

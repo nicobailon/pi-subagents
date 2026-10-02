@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
-import { resolveRequiredChildExtensions } from "../../src/shared/required-child-extensions.ts";
+import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, snapshotRequiredChildExtensions } from "../../src/shared/required-child-extensions.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
@@ -84,5 +84,31 @@ describe("required child extension host policy", () => {
 			assert.equal(nested.session.extensionPaths.at(-1), fs.realpathSync(file));
 			assert.deepEqual(nested.launchResolvedExtensions.required, ["nested-provider"]);
 		} finally { fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+});
+
+describe("require-for-all-runners admission", () => {
+	it("stamps requireForAllRunners on every entry and round-trips it through snapshot validation", () => {
+		const { dir, file } = fixture();
+		const sessionId = `required-${Date.now()}-all-runners`;
+		const handle = registerRequiredChildExtensions({ sessionId, extensions: [{ id: "host-policy", path: file }], requireForAllRunners: true });
+		try {
+			const snapshot = resolveRequiredChildExtensions(sessionId);
+			assert.equal(snapshot[0]?.requireForAllRunners, true);
+			assert.equal(snapshotRequiredChildExtensions(snapshot, "requiredExtensions")[0]?.requireForAllRunners, true);
+			assert.throws(() => snapshotRequiredChildExtensions([{ id: "host-policy", path: fs.realpathSync(file), requireForAllRunners: false }], "requiredExtensions"), /must be true when present/);
+		} finally { handle.dispose(); fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+
+	it("admits every runner for a legacy registration but rejects non-native routes for an opt-in one", () => {
+		const legacy = snapshotRequiredChildExtensions([{ id: "legacy", path: "/tmp/legacy.mjs" }], "requiredExtensions");
+		assertRequiredChildExtensionsAdmitted([legacy], { agent: "worker", runnerType: "external-cli" });
+		assertRequiredChildExtensionsAdmitted([legacy], { agent: "worker", runnerType: "pi", machine: "workmac" });
+		const optIn = snapshotRequiredChildExtensions([{ id: "policy", path: "/tmp/policy.mjs", requireForAllRunners: true }], "requiredExtensions");
+		assertRequiredChildExtensionsAdmitted([optIn], { agent: "worker", runnerType: "pi" });
+		assertRequiredChildExtensionsAdmitted([undefined, []], { agent: "worker", runnerType: "external-job" });
+		assert.throws(() => assertRequiredChildExtensionsAdmitted([optIn], { agent: "worker", runnerType: "external-cli" }), /requires child extensions \(policy\) for every runner/);
+		assert.throws(() => assertRequiredChildExtensionsAdmitted([optIn], { agent: "worker", runnerType: "external-job" }), /cannot run on runner.type='external-job'/);
+		assert.throws(() => assertRequiredChildExtensionsAdmitted([optIn], { agent: "worker", runnerType: "pi", machine: "workmac" }), /cannot run on machine 'workmac'/);
 	});
 });

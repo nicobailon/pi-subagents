@@ -8,8 +8,10 @@ import { parse as parseYaml } from "yaml";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createAtomicJsonWriter } from "../shared/atomic-json.ts";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, JsonSchemaObject, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
+import { isClaudeCodeAdapterId } from "../runs/shared/claude-code-adapter.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { expandHomePath } from "../shared/settings.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
@@ -944,7 +946,59 @@ function readSettingsFileStrict(filePath: string): Record<string, unknown> {
 
 function writeSettingsFile(filePath: string, settings: Record<string, unknown>): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	fs.writeFileSync(filePath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+	const targetPath = resolveSettingsWriteTarget(filePath);
+	let existingMode: number | undefined;
+	try {
+		existingMode = fs.statSync(targetPath).mode & 0o7777;
+	} catch (error) {
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+	}
+	if (existingMode !== undefined) fs.accessSync(targetPath, fs.constants.W_OK);
+
+	const tempMode = existingMode === undefined ? undefined : existingMode | 0o200;
+	// Reuse the atomic temp/rename path while retaining settings' newline and existing mode.
+	const writeAtomicSettings = createAtomicJsonWriter({
+		mode: tempMode,
+		fs: {
+			mkdirSync: fs.mkdirSync,
+			writeFileSync: (tempPath, data, options) => {
+				if (typeof data !== "string") throw new TypeError("Settings JSON serialization must produce a string.");
+				return fs.writeFileSync(tempPath, `${data}\n`, options);
+			},
+			renameSync: (sourcePath, destinationPath) => {
+				if (existingMode !== undefined) fs.chmodSync(sourcePath, existingMode);
+				fs.renameSync(sourcePath, destinationPath);
+			},
+			rmSync: fs.rmSync,
+		},
+	});
+	writeAtomicSettings(targetPath, settings);
+}
+
+function resolveSettingsWriteTarget(filePath: string): string {
+	let targetPath = filePath;
+	for (;;) {
+		try {
+			return fs.realpathSync.native(targetPath);
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+			// A trailing separator requires a directory; it cannot name a new settings file.
+			if (targetPath.endsWith("/") || targetPath.endsWith(path.sep)) throw error;
+		}
+
+		// A missing target is allowed only when its physical parent already exists.
+		const parentPath = fs.realpathSync.native(path.dirname(targetPath));
+		const unresolvedPath = path.join(parentPath, path.basename(targetPath));
+		let linkText: string;
+		try {
+			linkText = fs.readlinkSync(unresolvedPath);
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+			return unresolvedPath;
+		}
+		// Keep link text intact so the filesystem follows directory links before "..".
+		targetPath = path.isAbsolute(linkText) ? linkText : `${parentPath}${path.sep}${linkText}`;
+	}
 }
 
 function parseOverrideStringArrayOrFalse(
@@ -979,7 +1033,7 @@ function parseToolsOverride(
 	throw new Error(`Builtin override '${meta.name}' in '${meta.filePath}' has invalid 'tools'; expected an array of strings, "inherit", or false.`);
 }
 
-function validateOptionalMachine(value: unknown, label: string): string | undefined {
+export function validateOptionalMachine(value: unknown, label: string): string | undefined {
 	if (value === undefined || value === false) return undefined;
 	if (typeof value !== "string" || !value.trim()) throw new Error(label + " must be a non-empty string or false.");
 	const machine = value.trim();
@@ -2033,8 +2087,11 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 
 function validateExternalRunnerProfile(frontmatter: Record<string, string>, agentName: string, runner: AgentRunnerConfig | undefined): void {
 	if (runner?.type !== "external-cli" && runner?.type !== "external-job") return;
+	// The code-owned Claude Code adapters accept an explicit model and thinking level:
+	// both are translated into their own argv rather than into a Pi child model.
+	const adapterAcceptsOverrides = runner.type === "external-cli" && isClaudeCodeAdapterId(runner.adapter);
 	const unsupported = ["tools", "excludeTools", "allowNestedSubagents", "allowedAgents", "model", "thinking", "extensions", "subagentOnlyExtensions", "mutationTools", "maxSubagentDepth", "skills", "skill", "skillPath", "toolBudget", "permission", "permissions"]
-		.filter((field) => frontmatter[field] !== undefined);
+		.filter((field) => frontmatter[field] !== undefined && !(adapterAcceptsOverrides && (field === "model" || field === "thinking")));
 	if (unsupported.length > 0) {
 		throw new Error(`Agent '${agentName}' uses runner.type='${runner.type}' and declares unsupported Pi-only fields: ${unsupported.join(", ")}.`);
 	}

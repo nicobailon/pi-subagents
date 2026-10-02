@@ -5,10 +5,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { buildExternalCliPrompt, runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
-import { clearExternalCliPreflightCacheForTests } from "../../src/runs/shared/external-cli-preflight.ts";
+import { clearExternalCliPreflightCacheForTests, resolveExternalCliSpawn } from "../../src/runs/shared/external-cli-preflight.ts";
 import { resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import { PI_SUBAGENT_EXTENSION_BINDINGS_ENV } from "../../src/runs/shared/extension-bindings.ts";
-import { writeNodeCommand } from "../support/node-command.ts";
+import { writeNodeCommand, writeNpmNodeShim } from "../support/node-command.ts";
 
 const tempDirs: string[] = [];
 function tempDir(): string {
@@ -359,5 +359,106 @@ process.stdout.write('ok');`);
 		assert.equal(result.stopped, true);
 		const status = spawnSync("ps", ["-p", String(descendantPid), "-o", "stat="], { encoding: "utf-8" }).stdout.trim();
 		assert.ok(!status || status.startsWith("Z"), `descendant ${descendantPid} remained active (${status})`);
+	});
+});
+
+describe("external CLI launch of Windows batch files", () => {
+	const windowsOnly = { skip: process.platform === "win32" ? undefined : "spawns a real .cmd shim" };
+	const hostileArgs = ['^ & | < > % ! "', "back\\slash\\", "line one\nline two", "%PATH% !PATH!"];
+
+	function shimFixture(): { bin: string; shim: string; script: string } {
+		const root = path.join(tempDir(), "my tools");
+		const bin = path.join(root, "bin");
+		const script = path.join(root, "lib", "cli.js");
+		fs.mkdirSync(bin, { recursive: true });
+		fs.mkdirSync(path.dirname(script));
+		fs.writeFileSync(script, "");
+		return { bin, shim: writeNpmNodeShim(bin, "tool", "..\\lib\\cli.js"), script };
+	}
+
+	it("runs an npm Node shim's script with Node and the original arguments", () => {
+		const { bin, shim, script } = shimFixture();
+		assert.deepEqual(resolveExternalCliSpawn(shim, hostileArgs, {}, "win32"), { command: process.execPath, args: [script, ...hostileArgs] });
+		assert.deepEqual(resolveExternalCliSpawn("tool.cmd", hostileArgs, { PATH: bin }, "win32"), { command: process.execPath, args: [script, ...hostileArgs] });
+		assert.deepEqual(resolveExternalCliSpawn("tool", [], { Path: bin, PATHEXT: ".cmd" }, "win32"), { command: process.execPath, args: [script] });
+		fs.writeFileSync(path.join(bin, "node.exe"), "");
+		assert.equal(resolveExternalCliSpawn(shim, [], {}, "win32").command, path.join(bin, "node.exe"));
+		assert.deepEqual(resolveExternalCliSpawn(shim, ["x"], {}, "linux"), { command: shim, args: ["x"] });
+	});
+
+	it("rejects batch wrappers that are not npm Node shims", () => {
+		const { bin, shim } = shimFixture();
+		const shimText = fs.readFileSync(shim, "utf-8");
+		const wrappers = {
+			"handwritten.cmd": "@echo off\r\nnode \"%~dp0\\..\\lib\\cli.js\" %*\r\n",
+			"shim.bat": shimText,
+			"missing.cmd": shimText.replace("..\\lib\\cli.js", "..\\lib\\gone.js"),
+			"chained.cmd": shimText.replace("..\\lib\\cli.js", "..\\lib\\cli.js\" & \"%dp0%\\..\\lib\\cli.js"),
+			"slashed.cmd": shimText.replace("..\\lib\\cli.js", "../lib/cli.js"),
+		};
+		for (const [name, text] of Object.entries(wrappers)) {
+			fs.writeFileSync(path.join(bin, name), text, { mode: 0o755 });
+			assert.throws(() => resolveExternalCliSpawn(name, [], { PATH: bin }, "win32"), (error: Error) => {
+				assert.match(error.message, /batch wrapper that cannot run without a shell/);
+				assert.doesNotMatch(error.message, /dp0|ECHO/);
+				return true;
+			}, name);
+		}
+		assert.throws(() => resolveExternalCliSpawn("absent.bat", [], { PATH: bin }, "win32"), /binary 'absent.bat' was not found on PATH/);
+	});
+
+	it("resolves a shim found through a PATH symlink from the symlink's directory", { skip: process.platform === "win32" ? "file symlinks need elevated rights on Windows" : undefined }, () => {
+		const root = tempDir();
+		const [real, links] = [path.join(root, "real"), path.join(root, "links")];
+		for (const directory of [real, links]) {
+			fs.mkdirSync(directory);
+			fs.writeFileSync(path.join(directory, "cli.js"), "");
+		}
+		fs.symlinkSync(writeNpmNodeShim(real, "tool", "cli.js"), path.join(links, "tool.cmd"));
+		fs.writeFileSync(path.join(links, "node.exe"), "");
+		assert.deepEqual(resolveExternalCliSpawn("tool", [], { PATH: links, PATHEXT: ".cmd" }, "win32"), { command: path.join(links, "node.exe"), args: [path.join(links, "cli.js")] });
+	});
+
+	it("launches an npm shim from PATH and by absolute path with preflight, passing arguments literally", windowsOnly, async () => {
+		const dir = path.join(tempDir(), "dir with spaces");
+		fs.mkdirSync(dir);
+		const argvPath = path.join(dir, "argv.json");
+		const marker = path.join(dir, "injected");
+		const command = writeNodeCommand(dir, "argv-cli", `
+const args = process.argv.slice(2);
+if (args[0] === "--version") { process.stdout.write("argv-cli 1.0"); process.exit(0); }
+if (args[0] === "--help") { process.stdout.write("help"); process.exit(0); }
+require("fs").writeFileSync(${JSON.stringify(argvPath)}, JSON.stringify(args));
+`);
+		const args = [...hostileArgs, `& type nul > "${marker}"`];
+		const launches = [
+			{ command: "argv-cli" },
+			{ command, preflight: { id: "argv-cli", versionArgs: ["--version"], helpArgs: ["--help"] } },
+		];
+		// The child inherits the parent environment, whose Windows key is usually `Path`.
+		const previousPath = process.env.PATH;
+		process.env.PATH = `${dir}${path.delimiter}${previousPath}`;
+		try {
+			for (const [stepIndex, launch] of launches.entries()) {
+				fs.rmSync(argvPath, { force: true });
+				const result = await runExternalCli({ ...launch, args, cwd: dir, prompt: "x", asyncDir: dir, stepIndex });
+				assert.equal(result.exitCode, 0, result.error);
+				assert.deepEqual(JSON.parse(fs.readFileSync(argvPath, "utf-8")), args);
+			}
+		} finally {
+			process.env.PATH = previousPath;
+		}
+		assert.equal(fs.existsSync(marker), false);
+	});
+
+	it("refuses to run an unsupported batch wrapper", windowsOnly, async () => {
+		const dir = tempDir();
+		const marker = path.join(dir, "ran");
+		const command = path.join(dir, "wrapper.cmd");
+		fs.writeFileSync(command, `@echo off\r\ntype nul > "${marker}"\r\n`);
+		const result = await runExternalCli({ command, cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 0 });
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /batch wrapper that cannot run without a shell/);
+		assert.equal(fs.existsSync(marker), false);
 	});
 });

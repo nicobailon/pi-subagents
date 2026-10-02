@@ -99,6 +99,7 @@ import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
 import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { planBackgroundRunHistory, recordRun } from "../shared/run-history.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import {
 	createMutatingFailureState,
@@ -911,7 +912,7 @@ export async function runSingleStepInner(
 		const adapterLaunch = step.runner.adapter === "codex-exec" || step.runner.adapter === "codex-exec-writer"
 			? resolveCodexExecLaunch({ adapter: step.runner.adapter, command: step.runner.command, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 			: step.runner.adapter === "claude-code" || step.runner.adapter === "claude-code-writer"
-				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command })
+				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command, overrideArgs: step.claudeCodeOverrideArgs })
 				: step.runner.adapter === "cursor-agent" || step.runner.adapter === "cursor-agent-writer"
 					? resolveCursorAgentLaunch({ adapter: step.runner.adapter, command: step.runner.command, cwd: externalCwd, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 				: undefined;
@@ -1653,7 +1654,12 @@ function markParallelGroupSetupFailure(input: {
 		if (!task) throw new Error(`Missing parallel task at index ${taskIndex}`);
 		const stopped = statusStep.stopped || statusStep.stopRequested || input.statusPayload.stopped;
 		const paused = !stopped && input.statusPayload.state === "paused";
+		const timedOut = !stopped && !paused && input.statusPayload.timedOut === true;
 		statusStep.status = stopped ? "stopped" : paused ? "paused" : "failed";
+		// Mirror the run-level timeout onto the step so consumers (status readers,
+		// run-history recording) see timed_out rather than a bare failure — the
+		// StepResult below already carries it, the status step must too.
+		if (timedOut) statusStep.timedOut = true;
 		statusStep.startedAt = input.failedAt;
 		statusStep.endedAt = input.failedAt;
 		statusStep.durationMs = 0;
@@ -1870,6 +1876,11 @@ export async function runSubagent(
 	let previousOutput = "";
 	const outputs: ChainOutputMap = {};
 	const results: StepResult[] = [];
+	// Flat indices of steps a child session was actually dispatched for — the
+	// ground truth for run-history: stopRunner/timeoutRunner/fail-fast/budget
+	// skips relabel never-launched steps to terminal statuses, so status alone
+	// cannot distinguish them from steps that really ran.
+	const launchedFlatIndices = new Set<number>();
 	const overallStartTime = Date.now();
 	const shareEnabled = config.share === true;
 	const asyncDir = config.asyncDir;
@@ -3604,6 +3615,7 @@ export async function runSubagent(
 				return omitUndefinedProperties({
 					agent: task.agent,
 					...(task.sessionName ? { sessionName: task.sessionName } : {}),
+					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
 					...(task.phase ?? step.phase ? { phase: task.phase ?? step.phase } : {}),
@@ -3706,6 +3718,7 @@ export async function runSubagent(
 					return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
 				}
 				const taskStartTime = Date.now();
+				launchedFlatIndices.add(fi);
 				statusPayload.currentStep = fi;
 				requiredStatusStep(statusPayload, fi).status = "running";
 				delete requiredStatusStep(statusPayload, fi).error;
@@ -4109,6 +4122,7 @@ export async function runSubagent(
 						}
 
 						const taskStartTime = Date.now();
+						launchedFlatIndices.add(fi);
 						statusPayload.currentStep = fi;
 						requiredStatusStep(statusPayload, fi).status = "running";
 						delete requiredStatusStep(statusPayload, fi).error;
@@ -4496,6 +4510,7 @@ export async function runSubagent(
 			}
 			const singleCwd = singleWorktreeSetup?.worktrees[0]?.agentCwd ?? cwd;
 			const stepStartTime = Date.now();
+			launchedFlatIndices.add(flatIndex);
 			statusPayload.currentStep = flatIndex;
 			requiredStatusStep(statusPayload, flatIndex).status = "running";
 			delete requiredStatusStep(statusPayload, flatIndex).activityState;
@@ -5077,6 +5092,31 @@ export async function runSubagent(
 			usageBudget: statusPayload.usageBudget,
 		}),
 	);
+	// run-history parity with the foreground executor (subagent-executor.ts): without
+	// this, every async launch is invisible to the per-agent run census, because
+	// asyncByDefault routes all subagent tool calls through this runner. Multi-step
+	// runs record one row per child step so loadRunsForAgent(agent) sees each child;
+	// paused runs record here too (outcome "interrupted", matching foreground), and
+	// a later resume that settles records again — one entry per attempt.
+	for (const historyEntry of planBackgroundRunHistory({
+		steps,
+		resultMode,
+		statusSteps: statusPayload.steps.map((step, index) => ({
+			agent: step.agent,
+			status: step.status,
+			durationMs: step.durationMs,
+			timedOut: step.timedOut,
+			stopped: step.stopped,
+			launched: launchedFlatIndices.has(index),
+		})),
+		stepResults: results,
+		runDurationMs: runEndedAt - overallStartTime,
+		stopped,
+		interrupted,
+		timedOut,
+	})) {
+		recordRun(historyEntry.agent, historyEntry.task, historyEntry.exitCode, historyEntry.durationMs, historyEntry.terminal);
+	}
 	writeRunLog(logPath, omitUndefinedProperties({
 		id,
 		mode: statusPayload.mode,

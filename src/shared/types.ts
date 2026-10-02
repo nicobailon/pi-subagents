@@ -2667,6 +2667,8 @@ export interface ExtensionConfig {
 	fleetKeybindings?: FleetKeybindingsConfig;
 	/** Show the under-editor async runs widget. Defaults to true, including when FleetView is enabled. */
 	asyncWidget?: boolean;
+	/** Start the under-editor async runs widget folded. Defaults to false. */
+	asyncWidgetCollapsed?: boolean;
 	/** Exact provider/model candidates mapped to operator-declared equivalent response IDs. Empty arrays add no accepted IDs. */
 	modelResponseAliases?: Record<string, string[]>;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to split metadata. */

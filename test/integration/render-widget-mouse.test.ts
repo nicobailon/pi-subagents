@@ -28,7 +28,7 @@ it("toggles only the async header and retains live status without changing globa
 		asyncId, asyncDir: "/tmp/widget-mouse", status, mode: "single", agents: ["worker"], description: "Mouse test", startedAt: 1_000,
 	});
 	// SAFETY: the TUI path only reads hasUI, mode, and the supplied widget/expansion methods.
-	const render = (jobs: AsyncJobState[]) => renderWidget(ctx as never, jobs);
+	const render = (jobs: AsyncJobState[], initiallyCollapsed = false) => renderWidget(ctx as never, jobs, initiallyCollapsed);
 	const lines = (width = 120) => widget!.render(width);
 	const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
 	Object.defineProperty(process.stdout, "rows", { configurable: true, value: 60 });
@@ -70,6 +70,11 @@ it("toggles only the async header and retains live status without changing globa
 		assert.equal(widget, undefined);
 		render([job("new")]);
 		assert.ok(lines().length > 1, "a newly mounted widget starts unfolded");
+		render([]);
+		render([job("configured")], true);
+		assert.equal(lines().length, 1, "configured widgets start folded");
+		assert.deepEqual(widget!.handleMouse(click), { handled: true });
+		assert.ok(lines().length > 1, "a header click expands a configured folded widget");
 	} finally {
 		render([]);
 		Date.now = now;

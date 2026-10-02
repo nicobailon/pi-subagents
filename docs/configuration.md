@@ -76,6 +76,8 @@ For a native Pi `model_verification_failed` where your proxy accepts `claude-hai
 
 Replace `YOUR_PROVIDER` with the resolved Pi provider ID. Keep the outgoing model alias unchanged. This native remedy already exists in v0.65.1; it does not infer equivalence from provider prefixes or dates. The built-in external `claude-code` adapter does not invoke this verifier or use this setting. If an external run shows this diagnostic, identify the installed version, resolved runner kind/adapter, and error location before applying a native remedy. Thanks to [sixtus](https://github.com/sixtus) for the concrete request-ID/response-ID example in [#1922](https://github.com/nicobailon/pi-subagents/issues/1922).
 
+A local Pi child whose selected model is a virtual model (`pi.registerVirtualModel()`, such as a router) needs no alias. Its assistant messages name whichever physical model the router picked, so verification compares the child's selected virtual `provider/id` with the launch model instead, exactly. A different virtual selection fails, and `modelResponseAliases` does not override it.
+
 ## Tool activation lifecycle
 
 On Pi 0.86.1 or newer, when the model can take a new tool mid-conversation (see [`toolActivation`](#toolactivation)), a fresh unrestricted parent starts with `subagents_enable`, `bg_wait`, and `subagent_supervisor` active while `subagent` stays registered but inactive. Calling `subagents_enable({})` preserves unrelated active tools and exposes `subagent` on the next model request. It does not launch a child or infer authority from prompt keywords. With other models, a fresh parent starts with `subagent`, `bg_wait`, and `subagent_supervisor` active and no `subagents_enable`.
@@ -293,6 +295,14 @@ Prompt modes keep their fixed keys. For example, `Esc` still cancels steer text 
 ```
 
 Controls the under-editor widget for active background runs. It defaults to `true`, including when FleetView is enabled, so active work remains visible after reload. Set it to `false` to hide this widget while keeping FleetView available.
+
+## `asyncWidgetCollapsed`
+
+```json
+{ "asyncWidgetCollapsed": true }
+```
+
+Starts each newly mounted under-editor async widget in its one-line folded state. It defaults to `false`. A header click still toggles the widget, and the folded state still resets when the widget is removed or Pi reloads.
 
 ## `waitTool`
 

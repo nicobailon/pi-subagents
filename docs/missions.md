@@ -116,9 +116,23 @@ subagent({ action: "schedule.create", id: "nightly-sweep", every: "24h", quiet: 
 
 Manage schedules with `schedule.list`, `schedule.show`, `schedule.history`, `schedule.pause`, `schedule.resume`, `schedule.run`, `schedule.run-due`, and `schedule.delete`.
 
+Attach an existing mission to give each scheduled workflow access to the same durable `state.get/set`:
+
+```ts
+subagent({ action: "schedule.create", id: "backlog", every: "6h", workflow: "./.pi/workflows/backlog.js", missionId: "<mission-id>" })
+```
+
+The mission must be readable in the store resolved from the schedule's target `cwd` and current mission configuration. Creation checks it without changing its status. Every fire uses the normal explicit mission launch path, including after session restoration; missing or invalid records fail before workflow execution. Schedules accept only an existing `missionId`, not mission creation or updates. The script's fixed `args` and its mutable mission state remain separate.
+
+Attachment uses ordinary mission lifecycle and retention rules. A non-goal mission can become terminal after a run, and the next fire reactivates it. `mission.close` does not pause the schedule; use `schedule.pause` or `schedule.delete` to stop future fires. A schedule does not protect its mission from terminal retention (default 200 records). If it is removed, later fires record `failed_launch` rather than creating a replacement. Open mission decisions and goal notice pause/budget settings do not gate schedule launches. Multiple schedules sharing a mission still have independent overlap controls; attachment does not serialize their workflows.
+
+`missions.enabled:false` still permits explicit attachment; `disabledFeatures:["missions"]` rejects it. Each fire resolves the mission store using its target `cwd`, current mission configuration and Pi agent directory; the schedule does not pin the creation-time store. Sessions must resolve the same effective store to reuse the same state. Attachment does not search other worktrees or copy mission records; an explicitly shared `missions.directory` follows the existing storage rules.
+
+Mission-bound definitions use schedule schema version 2 so older versions reject them instead of dropping the attachment. Existing unbound definitions keep version 1 and need no migration. A project using mission attachment should use a version that supports it in every scheduler session.
+
 Behavior:
 
-- Runs always launch async with fresh context and disable automatic mission creation; mission attachment is deferred from this first slice.
+- Runs always launch async with fresh context. Without `missionId`, they disable mission creation and have no `state` global.
 - An optional top-level `baseRef` selects the safe Git ref used by managed worktrees (default `HEAD`); it is persisted with the schedule and forwarded on every fire. The source checkout must still be clean.
 - Definitions, bounded history, append-only events, and per-run receipts are stored with mode `0600`.
 - `overlap` is currently fixed to `skip`; `catchUp` supports `latest` (default) and `none`.

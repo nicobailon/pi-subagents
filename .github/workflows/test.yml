@@ -129,24 +129,27 @@ jobs:
   clean-install:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        pi-version: ["0.86.1", "1.0.0"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22.19.0
       - run: npm ci --ignore-scripts
-      - name: Real Pi 0.86.1 background child smoke
-        run: node --experimental-strip-types test/smoke/clean-install.mjs "${{ runner.temp }}/clean-install-smoke" 0.86.1
+      - name: Real Pi ${{ matrix.pi-version }} background child smoke
+        run: node --experimental-strip-types test/smoke/clean-install.mjs "${{ runner.temp }}/clean-install-smoke-${{ matrix.pi-version }}" ${{ matrix.pi-version }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: clean-install-smoke-logs
+          name: clean-install-smoke-logs-${{ matrix.pi-version }}
           path: |
-            ${{ runner.temp }}/clean-install-smoke/*.log
-            ${{ runner.temp }}/clean-install-smoke/aliases.json
-            ${{ runner.temp }}/clean-install-smoke/host/package-lock.json
-            ${{ runner.temp }}/clean-install-smoke/extension/package-lock.json
-
+            ${{ runner.temp }}/clean-install-smoke-${{ matrix.pi-version }}/*.log
+            ${{ runner.temp }}/clean-install-smoke-${{ matrix.pi-version }}/aliases.json
+            ${{ runner.temp }}/clean-install-smoke-${{ matrix.pi-version }}/host/package-lock.json
+            ${{ runner.temp }}/clean-install-smoke-${{ matrix.pi-version }}/extension/package-lock.json
   official-standalone:
     # The official Linux x64 release only; 22.04 permits bubblewrap namespaces.
     runs-on: ubuntu-22.04
