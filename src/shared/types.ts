@@ -2734,6 +2734,8 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	/** Opt-in managed worktree count target. Unset keeps current retention behavior. */
+	worktreeRetainCount?: number;
 	/** Enable managed worktrees when a launch does not provide an explicit value. */
 	worktree?: boolean;
 	/** Worktree allocator selection. Defaults to auto. */

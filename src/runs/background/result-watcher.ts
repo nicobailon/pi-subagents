@@ -48,6 +48,8 @@ type ResultWatcherDeps = {
 	notifier?: Pick<CompletionNotifier, "deliver">;
 	/** Receives persisted completions before active-session delivery filtering. */
 	observeCompletion?: (result: CompletionNotification & { runId: string }) => void;
+	/** Runs after durable delivery acceptance; failures cannot change the child outcome. */
+	observeDeliveredCompletion?: (result: CompletionNotification & { runId: string }) => void;
 	/** Returns cross-session run ids that the completion observer currently owns. */
 	observedCompletionRunIds?: () => Iterable<string>;
 	/** Parses a relevant result payload after its lightweight identity check. */
@@ -585,6 +587,8 @@ export function createResultWatcher(
 				return;
 			}
 			markSeenWithTtl(state.completionSeen, completionKey, Date.now(), completionTtlMs);
+			try { deps.observeDeliveredCompletion?.({ ...data, runId }); }
+			catch (error) { console.warn("Delivered-result maintenance observer failed:", error); }
 			try {
 				pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
 					...data,

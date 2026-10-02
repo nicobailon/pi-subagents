@@ -539,6 +539,20 @@ Sets the native dedicated root directory for `worktree: true` runs. Relative pat
 
 Each native worktree leaf is `{dedicatedRoot}/{projectName}/pi-worktree-{runId}-{index}`, where `{projectName}` is the repository directory name (`basename(repoRoot)`), `{runId}` identifies the run, and `{index}` counts the children within the run. `worktreeBaseDir` and `PI_SUBAGENTS_WORKTREE_DIR` override only the dedicated root; the `{projectName}/pi-worktree-{runId}-{index}` nesting under it always applies for native allocation. Unsafe locations are rejected instead of created: setup fails when the dedicated root sits inside the repository checkout or the Pi extensions directory, or when a worktree would land directly inside the repository parent.
 
+## `worktreeRetainCount`
+
+```json
+{ "worktreeRetainCount": 15, "authorityPolicy": { "discardWorktree": "auto" } }
+```
+
+Optional positive safe integer; omit it for unlimited count retention. This setting adds no count scan or removal when absent and does not change existing per-run cleanup. It is an extension config key, with no per-agent or per-call override. Reload or start a new session to apply changes; enabling it alone does not immediately sweep worktrees.
+
+After a foreground settlement or the first delivered durable background result, the parent coalesces a maintenance job for that source checkout. The worker counts unique Git worktrees with matching existing handoff metadata; it excludes the source checkout and unowned trees. Discovery uses project handoff records and handoffs observed in the current host session, not a global scan of sibling checkouts or session history. Using `artifactDir:"project"` makes those records discoverable again after reload. Foreground owners without current terminal proof are retained.
+
+Maintenance runs in a separate Node process. A standalone Pi host needs Node on `PATH` for this optional policy; a worker startup failure is reported and keeps the worktrees.
+
+If above the limit, it inspects oldest runs first using the owning manifest's fixed `createdAt` (path breaks ties), not the last visit or mutable `updatedAt`. It applies only the eligible excess through the reviewed cleanup path. Active, dirty, ignored-file, Git-locked and resumable trees count but remain protected; branches and durable artifacts remain. The target may therefore be exceeded. Incomplete inventories defer removal and report that the count is incomplete. Default `discardWorktree:"confirm"` reports that automatic authority is needed without opening background prompts; `forbid` also blocks automatic removal. Maintenance reports and receipts remain visible, and a maintenance failure does not change the child result. Reload or shutdown cancels queued work and asks an active worker to stop before its next removal. Any already admitted Git operation finishes while its worker keeps the repository lock; cancellation cannot undo that operation.
+
 ## `worktreeProvider`
 
 ```json

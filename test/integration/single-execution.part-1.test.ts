@@ -199,6 +199,21 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(readCall().runtime?.orchestratorTarget, "subagent-planner-run1-1");
 	});
 
+	it("queues foreground maintenance with the resolved source cwd and preserves success on observer failure", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const childCwd = path.join(tempDir, "child");
+		fs.mkdirSync(childCwd);
+		mockPi.onCall({ output: "finished" });
+		const observed: string[] = [];
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, undefined, (cwd) => {
+			observed.push(cwd);
+			throw new Error("fixture maintenance failure");
+		});
+		const result = await executor.executePublic("settled-relative-cwd", { agent: "echo", task: "Finish", async: false, cwd: "child" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined, result.content[0]?.text);
+		assert.equal(result.details.results[0]?.exitCode, 0);
+		assert.deepEqual(observed, [childCwd]);
+	});
+
 	it("rejects invalid foreground cwd before spawning Pi", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const requestedCwd = "missing-local-cwd";

@@ -465,6 +465,7 @@ interface ExecutorDeps {
 	asyncByDefault: boolean;
 	waitToolEnabled?: boolean;
 	waitToolDefaultTimeoutMs?: number;
+	onForegroundSettled?: (cwd: string, handoffPath?: string) => void;
 	handleScheduledRunAction?: (params: SubagentParamsLike, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>;
 	watchdog?: MainWatchdogRuntime;
 	tempArtifactsDir: string;
@@ -5313,6 +5314,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		ctx: ExtensionContext,
 		preserveActiveSession = false,
 		parentModelOverride?: ParentModel | null,
+		onSourceCheckoutResolved?: (cwd: string) => void,
 	): Promise<AgentToolResult<Details>> => {
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
@@ -5425,6 +5427,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
+			onSourceCheckoutResolved?.(workflowCwd);
 			const discoverWorkflowAgents = (cwd: string, scope: AgentScope) => deps.discoverAgents(cwd, scope, workflowParentModel?.provider);
 			const workflowAgents = discoverWorkflowAgents(workflowCwd, resolveExecutionAgentScope(requestParams.agentScope)).agents;
 			const workflowArtifactConfig: ArtifactConfig = omitUndefinedProperties({
@@ -6625,6 +6628,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const remotePlacement = directParams.action === undefined && (directParams.machine !== undefined || placedByAgent());
 		const requestedCwd = remotePlacement ? undefined : directParams.cwd;
 		const requestCwd = remotePlacement ? ctx.cwd : resolveRequestedCwd(ctx.cwd, directParams.cwd);
+		if (!remotePlacement) onSourceCheckoutResolved?.(requestCwd);
 		const paramsWithResolvedCwd = directParams.cwd === undefined
 			? directParams
 			: remotePlacement
@@ -7934,7 +7938,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(requestParams);
 		deps.state.subagentInProgress = true;
 		try {
-			return withAggregatedToolUsage(await execute(id, requestParams, signal, onUpdate, ctx));
+			let sourceCheckout: string | undefined;
+			const result = withAggregatedToolUsage(await execute(id, requestParams, signal, onUpdate, ctx, false, undefined, (cwd) => { sourceCheckout = cwd; }));
+			if (depth === 0 && sourceCheckout && result.details?.results.length && !result.details.results.some((child) => child.detached || child.nativeMachine || (child.runner?.type === "external-cli" && child.runner.machine))) {
+				try { deps.onForegroundSettled?.(sourceCheckout, result.details.parallelHandoff?.path); }
+				catch (error) { console.warn("Worktree maintenance could not be queued:", error); }
+			}
+			return result;
 		} finally {
 			deps.state.subagentInProgress = false;
 		}

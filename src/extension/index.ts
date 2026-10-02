@@ -42,6 +42,7 @@ import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
 import { cleanupResultIndexes, missionObserverResultCandidateFiles } from "../runs/background/result-files.ts";
 import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/background/async-retention.ts";
+import { createWorktreeCountManager } from "../runs/background/worktree-count-manager.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { createResultDeliveryOwnership } from "../runs/background/result-delivery-ownership.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
@@ -487,6 +488,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		onJobTerminal: () => refreshResultDelivery(),
 		supervisorRequestState: supervisorChannel.getSupervisorRequestState,
 	});
+	const worktreeCountManager = createWorktreeCountManager({ config, terminalForegroundRunIds: () => [...(state.foregroundRuns?.values() ?? [])]
+		.filter((run) => !state.foregroundControls.has(run.runId) && run.children.length > 0 && run.children.every((child) => ["completed", "failed", "stopped", "rejected"].includes(child.status)))
+		.map((run) => run.runId) });
 	const resultWatcher = createResultWatcher(
 		pi,
 		state,
@@ -496,6 +500,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			notifier: completionNotifier,
 			ownership: resultDeliveryOwnership,
 			observeCompletion: (result) => scheduledRunManager.handleAsyncCompletion(result),
+			observeDeliveredCompletion: (result) => {
+				if (result.cwd && !["paused", "running"].includes(result.state ?? "") && !result.results?.some((child) => child.detached)) worktreeCountManager.request(result.cwd, result.parallelHandoff?.path);
+			},
 			observedCompletionRunIds: () => scheduledRunManager.observedCompletionRunIds(),
 			hasDeliveryDemand: hasResultDeliveryDemand,
 			deliverIntercomResults: config.intercomBridge?.resultDelivery === true,
@@ -546,6 +553,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		asyncByDefault,
 		waitToolEnabled: waitToolConfig.enabled,
 		waitToolDefaultTimeoutMs: waitToolConfig.defaultTimeoutMs,
+		onForegroundSettled: (cwd, handoffPath) => worktreeCountManager.request(cwd, handoffPath),
 		handleScheduledRunAction: (params, ctx) => scheduledRunManager.handleToolCall(params, ctx),
 		watchdog: mainWatchdog,
 		tempArtifactsDir,
@@ -1007,6 +1015,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			completionNotifier.dispose();
 			mainWatchdog.dispose();
 			scheduledRunManager.stop();
+			worktreeCountManager.stop();
 			supervisorChannel.dispose();
 			waitSubscriptionManager.dispose();
 			fleetStatus?.dispose();

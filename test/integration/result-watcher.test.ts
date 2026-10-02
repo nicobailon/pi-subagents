@@ -70,6 +70,27 @@ async function waitForPredicate(predicate: () => boolean, timeoutMs = 2_500): Pr
 }
 
 describe("result watcher", () => {
+	it("queues maintenance only after persisted delivery and contains observer failure", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-maintenance-"));
+		const state = createState(); state.currentSessionId = "session-1";
+		let deliveries = 0, maintained = 0, completed = 0;
+		const watcher = createResultWatcher({ events: { on: () => () => {}, emit(event) { if (event === SUBAGENT_ASYNC_COMPLETE_EVENT) completed++; } } }, state, resultsDir, 60_000, {
+			notifier: { async deliver() { return ++deliveries >= 2; } },
+			observeDeliveredCompletion(result) {
+				assert.equal(result.runId, "maintenance");
+				assert.equal(state.completedResults?.get("maintenance")?.completion.success, true);
+				maintained++;
+				throw new Error("fixture maintenance failure");
+			},
+		});
+		try {
+			watcher.startResultWatcher();
+			writeIndexedResult(path.join(resultsDir, "maintenance.json"), { id: "maintenance", runId: "maintenance", cwd: "/fixture", state: "complete", success: true, sessionId: "session-1", summary: "successful child" });
+			assert.equal(await waitForPredicate(() => completed === 1), true);
+			assert.equal(maintained, 1); assert.equal(deliveries, 2);
+		} finally { watcher.stopResultWatcher(); fs.rmSync(resultsDir, { recursive: true, force: true }); }
+	});
+
 	it("keeps running workflow launch receipts nonterminal in notifications and completion events", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-dispatch-"));
 		const state = createState();

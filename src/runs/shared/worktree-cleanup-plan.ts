@@ -755,6 +755,30 @@ function stableEntrySort(left: WorktreeCleanupPlanEntry, right: WorktreeCleanupP
 	return comparablePath(left.path).localeCompare(comparablePath(right.path)) || left.branch.localeCompare(right.branch);
 }
 
+/** Ownership inventory only: no per-worktree status, patch or merge checks. */
+export function listOwnedWorktreeInventory(input: BuildWorktreeCleanupPlanInput): {
+	repoRoot: string; warnings: string[];
+	owned: Array<{ path: string; createdAt: number; handoffPath: string }>;
+} {
+	const repoRoot = resolveCleanupRepoRoot(input.repo);
+	const metadata = loadMetadata(input, repoRoot);
+	const git = listGitWorktrees(repoRoot);
+	const owned: Array<{ path: string; createdAt: number; handoffPath: string }> = [];
+	for (const tree of git) {
+		if (samePath(tree.path, repoRoot)) continue;
+		const records = metadata.records.filter((record) => samePath(metadataRecordPath(record), tree.path));
+		if (records.length !== 1) continue;
+		const record = records[0]!;
+		if (record.task.worktreeRemoved || !tree.branch || record.task.branch !== tree.branch || typeof record.manifest.runId !== "string" || !record.manifest.runId.trim()
+			|| !["async", "foreground"].includes(record.manifest.source) || !Number.isFinite(record.manifest.createdAt)
+			|| typeof record.group.repoRoot !== "string" || !samePath(record.group.repoRoot, repoRoot)) continue;
+		owned.push({ path: resolveExistingPath(tree.path), createdAt: record.manifest.createdAt, handoffPath: record.manifestPath });
+	}
+	if (owned.length > MAX_PLAN_ENTRIES) metadata.warnings.push(`owned worktree inventory capped at ${MAX_PLAN_ENTRIES}; count is incomplete`);
+	owned.sort((a, b) => a.createdAt - b.createdAt || comparablePath(a.path).localeCompare(comparablePath(b.path)));
+	return { repoRoot, owned: owned.slice(0, MAX_PLAN_ENTRIES), warnings: metadata.warnings };
+}
+
 export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): WorktreeCleanupPlan {
 	if (typeof input.repo !== "string" || !input.repo.trim()) throw new Error("worktree cleanup plan requires a repository path");
 	const repoRoot = resolveCleanupRepoRoot(input.repo);
@@ -805,7 +829,8 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 		if (missing) entries.push(missing);
 	}
 
-	entries.sort(stableEntrySort);
+	const order = new Map(input.candidatePaths?.map((candidate, index) => [comparablePath(candidate), index]));
+	entries.sort((left, right) => (order.get(comparablePath(left.path)) ?? Number.MAX_SAFE_INTEGER) - (order.get(comparablePath(right.path)) ?? Number.MAX_SAFE_INTEGER) || stableEntrySort(left, right));
 	const warnings = metadata.warnings;
 	if (entries.length > MAX_PLAN_ENTRIES) {
 		warnings.push(`cleanup plan entry count capped at ${MAX_PLAN_ENTRIES}; remaining worktrees are not evaluated`);

@@ -345,6 +345,7 @@ export function installSingleExecutionHooks() {
 		discoverAgentsForCwd?: (cwd: string, preferredModelProvider?: string) => typeof agents,
 		childRuntime?: ChildRuntimeConfig,
 		sendMessage?: (message: unknown, options: unknown) => void,
+		onForegroundSettled?: Parameters<typeof createSubagentExecutor>[0]["onForegroundSettled"],
 	) {
 		return createSubagentExecutor!({
 			pi: { events: piEvents, getSessionName: () => undefined, ...(sendMessage ? { sendMessage } : {}) },
@@ -361,6 +362,7 @@ export function installSingleExecutionHooks() {
 			config,
 			asyncByDefault,
 			tempArtifactsDir: tempDir,
+			...(onForegroundSettled ? { onForegroundSettled } : {}),
 			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
 			expandTilde: (value: string) => value,
 			discoverAgents: (cwd: string, _scope: unknown, preferredModelProvider?: string) => ({ agents: discoverAgentsForCwd ? discoverAgentsForCwd(cwd, preferredModelProvider) : agents }),

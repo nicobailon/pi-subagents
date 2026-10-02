@@ -1,6 +1,6 @@
 # Reviewed worktree cleanup and optional count retention
 
-Status: reviewed cleanup apply implemented for local review; count retention is the dependent implementation step. Publication and cross-platform CI are pending.
+Status: reviewed cleanup apply and count retention implemented for local review in dependent branches. Publication and cross-platform CI are pending.
 Baseline: main `9eb55dd93abdb3bb5aa468a286dad6bab3e7a7d9`.
 
 ## Problem and existing primitives
