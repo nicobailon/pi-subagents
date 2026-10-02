@@ -274,7 +274,7 @@ const SubagentParamProperties = {
 			{ type: "string", minLength: 1 },
 			{ type: "object", properties: { command: { type: "string", minLength: 1 }, output: { type: "string", enum: ["json"] }, schema: { type: "object" }, timeoutMs: { type: "integer", minimum: 1 } }, required: ["command"], additionalProperties: false },
 		],
-		description: "Host gate command run after the child finishes: a string, or an object; with output \"json\", passing stdout becomes structuredOutput (not with outputSchema). Rejects acceptance except false (treated as omitted).",
+		description: "Host gate command run after the child finishes: a string, or an object; with output \"json\", passing stdout becomes structuredOutput (not with outputSchema). Cannot be combined with acceptance except false (treated as omitted).",
 	})),
 };
 
