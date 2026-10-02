@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Schedules accept `every: "day"` or `"week"` with a local `HH:mm`, an explicit IANA timezone, and weekly weekday selections. Missing local times are skipped and repeated times fire once. Restoration re-resolves the pending local date; existing overlap, catch-up, quiet and mission controls apply. Thanks to [@quifox](https://github.com/quifox) for [#815](https://github.com/nicobailon/pi-subagents/issues/815).
+
 ## [0.75.0] - 2026-10-02
 
 ### Highlights

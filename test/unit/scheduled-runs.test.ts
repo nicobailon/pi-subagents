@@ -106,6 +106,123 @@ async function flush(): Promise<void> {
 	for (let i = 0; i < 8; i++) await Promise.resolve();
 }
 
+describe("calendar schedule execution", () => {
+	const script = "return runs.run('main', { agent: 'reviewer' })";
+	async function daily(h: Harness, extra: Record<string, unknown> = {}) {
+		const result = await h.manager.handleToolCall({ action: "schedule.create", id: "calendar", every: "day", at: "09:00", timezone: "Asia/Taipei", workflowScript: script, ...extra }, h.ctx);
+		assert.equal(result.isError, undefined, text(result));
+		return result;
+	}
+	async function trigger(h: Harness) {
+		return detailRecords(await h.manager.handleToolCall({ action: "schedule.show", id: "calendar" }, h.ctx))[0]!.trigger as Record<string, unknown>;
+	}
+	it("persists daily and weekly rules, displays the zone, and rearms an early timer", async () => {
+		const h = harness();
+		await daily(h, { every: "week", on: ["fri", "tue", "fri"], quiet: true });
+		assert.deepEqual((await trigger(h)).on, ["tue", "fri"]);
+		assert.equal((await trigger(h)).nextLocalDate, "2030-01-01");
+		assert.match(text(await h.manager.handleToolCall({ action: "schedule.show", id: "calendar" }, h.ctx)), /every week.*09:00 Asia\/Taipei/);
+		h.timers.fireAll();
+		await flush();
+		assert.equal(h.launches.length, 0);
+		assert.equal(h.timers.values.size, 1);
+		h.clock.now = Date.parse("2030-01-01T01:00:00Z");
+		h.timers.fireAll();
+		await flush();
+		assert.equal((h.launches[0]!.params.scheduleOrigin as Record<string, unknown>).quiet, true);
+		h.launches[0]!.resolve({ content: [], details: { asyncId: "calendar-run" } });
+		await flush();
+		assert.equal((await trigger(h)).nextLocalDate, "2030-01-04");
+	});
+	it("runs only the latest missed date after a long pause", async () => {
+		const h = harness();
+		await daily(h);
+		await h.manager.handleToolCall({ action: "schedule.pause", id: "calendar" }, h.ctx);
+		h.clock.now = Date.parse("2035-01-01T02:00:00Z");
+		await h.manager.handleToolCall({ action: "schedule.resume", id: "calendar" }, h.ctx);
+		const due = h.manager.handleToolCall({ action: "schedule.run-due" }, h.ctx);
+		await flush();
+		h.launches[0]!.resolve({ content: [], details: { asyncId: "latest" } });
+		const result = await due;
+		assert.equal(result.details?.schedules?.runs?.[0]?.plannedAt, "2035-01-01T01:00:00.000Z");
+		assert.equal(h.launches.length, 1);
+		assert.equal((await trigger(h)).nextLocalDate, "2035-01-02");
+	});
+	it("records one missed receipt for catchUp:none and advances past downtime", async () => {
+		const h = harness();
+		await daily(h, { catchUp: "none" });
+		await h.manager.handleToolCall({ action: "schedule.pause", id: "calendar" }, h.ctx);
+		h.clock.now = Date.parse("2035-01-01T02:00:00Z");
+		await h.manager.handleToolCall({ action: "schedule.resume", id: "calendar" }, h.ctx);
+		const history = await h.manager.handleToolCall({ action: "schedule.history", id: "calendar" }, h.ctx);
+		assert.equal(history.details?.schedules?.runs?.length, 1);
+		assert.equal(history.details?.schedules?.runs?.[0]?.state, "missed");
+		assert.equal(h.launches.length, 0);
+		assert.equal((await trigger(h)).nextLocalDate, "2035-01-02");
+	});
+	it("successful manual attachment satisfies the pending future date", async () => {
+		const h = harness();
+		await daily(h);
+		const manual = h.manager.handleToolCall({ action: "schedule.run", id: "calendar" }, h.ctx);
+		await flush();
+		h.launches[0]!.resolve({ content: [], details: { asyncId: "manual" } });
+		await manual;
+		assert.equal((await trigger(h)).nextLocalDate, "2030-01-02");
+		assert.equal((await trigger(h)).nextRunAt, "2030-01-02T01:00:00.000Z");
+	});
+	it("failed manual attachment preserves both pending fields", async () => {
+		const h = harness();
+		await daily(h);
+		const before = await trigger(h);
+		const manual = h.manager.handleToolCall({ action: "schedule.run", id: "calendar" }, h.ctx);
+		await flush();
+		h.launches[0]!.resolve({ content: [{ type: "text", text: "launch rejected" }], details: {}, isError: true });
+		assert.equal((await manual).isError, true);
+		assert.deepEqual(await trigger(h), before);
+	});
+	it("does not consume an extra date when a natural fire overlaps manual attachment", async () => {
+		const h = harness();
+		await daily(h);
+		const manual = h.manager.handleToolCall({ action: "schedule.run", id: "calendar" }, h.ctx);
+		await flush();
+		h.clock.now = Date.parse("2030-01-01T01:00:00Z");
+		h.timers.fireAll();
+		await flush();
+		h.launches[0]!.resolve({ content: [], details: { asyncId: "manual-overlap" } });
+		await manual;
+		assert.equal((await trigger(h)).nextLocalDate, "2030-01-02");
+		assert.equal(h.launches.length, 1);
+	});
+	it("re-resolves the pending date on restoration without list rewriting the cache", async () => {
+		const h = harness();
+		await daily(h);
+		const file = path.join(scheduledRunStorePath(h.ctx.cwd, undefined, path.join(h.root, "stores")), "calendar", "schedule.json");
+		const saved = JSON.parse(fs.readFileSync(file, "utf-8"));
+		saved.trigger.nextRunAt = "2030-01-01T03:00:00.000Z";
+		fs.writeFileSync(file, JSON.stringify(saved));
+		await h.manager.handleToolCall({ action: "schedule.list" }, h.ctx);
+		assert.equal(JSON.parse(fs.readFileSync(file, "utf-8")).trigger.nextRunAt, saved.trigger.nextRunAt);
+		h.manager.stop();
+		h.manager.bindSession(h.ctx);
+		assert.equal(JSON.parse(fs.readFileSync(file, "utf-8")).trigger.nextRunAt, "2030-01-01T01:00:00.000Z");
+	});
+	it("does not fire twice during a repeated hour, including restoration", async () => {
+		const h = harness({ now: Date.parse("2026-11-01T04:00:00Z") });
+		await daily(h, { at: "01:30", timezone: "America/New_York" });
+		h.clock.now = Date.parse("2026-11-01T05:30:00Z");
+		h.timers.fireAll();
+		await flush();
+		h.launches[0]!.resolve({ content: [], details: { asyncId: "fold" } });
+		await flush();
+		h.manager.handleAsyncCompletion({ id: "fold", success: true });
+		h.clock.now = Date.parse("2026-11-01T06:45:00Z");
+		h.manager.bindSession(h.ctx);
+		await h.manager.handleToolCall({ action: "schedule.run-due" }, h.ctx);
+		assert.equal(h.launches.length, 1);
+		assert.equal((await trigger(h)).nextRunAt, "2026-11-02T06:30:00.000Z");
+	});
+});
+
 describe("schedule helpers", () => {
 	it("recognizes only the dot-action schedule API", () => {
 		assert.deepEqual(SCHEDULED_RUN_ACTIONS, ["schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
@@ -339,7 +456,7 @@ describe("project schedule management", () => {
 		for (const params of [
 			{ action: "schedule.create", id: "../escape", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" },
 			{ action: "schedule.create", id: "both", at: "+1h", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" },
-			{ action: "schedule.create", id: "calendar", every: "day", at: "09:00", timezone: "UTC", workflowScript: "return runs.run('main', { agent: 'worker' })" },
+			{ action: "schedule.create", id: "calendar", every: "day", at: "09:00", workflowScript: "return runs.run('main', { agent: 'worker' })" },
 			{ action: "schedule.create", id: "two-targets", every: "1h", agent: "worker", workflowScript: "return 1" },
 			{ action: "schedule.create", id: "fork", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", context: "fork" },
 			{ action: "schedule.create", id: "invalid-base-ref", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", baseRef: "unsafe..ref" },

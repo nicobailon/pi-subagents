@@ -433,7 +433,7 @@ export interface SubagentParamsLike {
 	every?: string;
 	sessionOnly?: boolean;
 	quiet?: boolean;
-	on?: string | number;
+	on?: string[];
 	timezone?: string;
 	overlap?: "skip";
 	catchUp?: "none" | "latest";
