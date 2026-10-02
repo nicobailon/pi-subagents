@@ -1876,6 +1876,11 @@ export async function runSubagent(
 	let previousOutput = "";
 	const outputs: ChainOutputMap = {};
 	const results: StepResult[] = [];
+	// Flat indices of steps a child session was actually dispatched for — the
+	// ground truth for run-history: stopRunner/timeoutRunner/fail-fast/budget
+	// skips relabel never-launched steps to terminal statuses, so status alone
+	// cannot distinguish them from steps that really ran.
+	const launchedFlatIndices = new Set<number>();
 	const overallStartTime = Date.now();
 	const shareEnabled = config.share === true;
 	const asyncDir = config.asyncDir;
@@ -3712,6 +3717,7 @@ export async function runSubagent(
 					return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
 				}
 				const taskStartTime = Date.now();
+				launchedFlatIndices.add(fi);
 				statusPayload.currentStep = fi;
 				requiredStatusStep(statusPayload, fi).status = "running";
 				delete requiredStatusStep(statusPayload, fi).error;
@@ -4115,6 +4121,7 @@ export async function runSubagent(
 						}
 
 						const taskStartTime = Date.now();
+						launchedFlatIndices.add(fi);
 						statusPayload.currentStep = fi;
 						requiredStatusStep(statusPayload, fi).status = "running";
 						delete requiredStatusStep(statusPayload, fi).error;
@@ -4502,6 +4509,7 @@ export async function runSubagent(
 			}
 			const singleCwd = singleWorktreeSetup?.worktrees[0]?.agentCwd ?? cwd;
 			const stepStartTime = Date.now();
+			launchedFlatIndices.add(flatIndex);
 			statusPayload.currentStep = flatIndex;
 			requiredStatusStep(statusPayload, flatIndex).status = "running";
 			delete requiredStatusStep(statusPayload, flatIndex).activityState;
@@ -5092,7 +5100,14 @@ export async function runSubagent(
 	for (const historyEntry of planBackgroundRunHistory({
 		steps,
 		resultMode,
-		statusSteps: statusPayload.steps,
+		statusSteps: statusPayload.steps.map((step, index) => ({
+			agent: step.agent,
+			status: step.status,
+			durationMs: step.durationMs,
+			timedOut: step.timedOut,
+			stopped: step.stopped,
+			launched: launchedFlatIndices.has(index),
+		})),
 		stepResults: results,
 		runDurationMs: runEndedAt - overallStartTime,
 		stopped,

@@ -9,7 +9,7 @@ import { handleCreate } from "../../src/agents/agent-management.ts";
 import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../../src/agents/skills.ts";
 import { loadConfig, updateConfig } from "../../src/extension/config.ts";
 import { diagnoseIntercomBridge, resolveIntercomBridge } from "../../src/intercom/intercom-bridge.ts";
-import { backgroundRunHistoryTask, loadRunsForAgent, planBackgroundRunHistory, recordRun } from "../../src/runs/shared/run-history.ts";
+import { loadRunsForAgent, planBackgroundRunHistory, recordRun } from "../../src/runs/shared/run-history.ts";
 import { cleanupAllArtifactDirs, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 import { getAgentDir, getConfigDirName, getProjectConfigDir, resolveConfigDirName } from "../../src/shared/utils.ts";
@@ -491,19 +491,52 @@ Package skill content.
 		assert.match(bridge.instruction, /Native bridge for main/);
 	});
 
-	it("backgroundRunHistoryTask maps single and multi-step runs to a hashable task string", () => {
+	it("planBackgroundRunHistory maps single and multi-step runs to a hashable task string (via rows)", () => {
 		// Single step: the task text feeds the taskHash (redacted on disk), same as foreground.
-		assert.equal(backgroundRunHistoryTask([{ task: "fix the flaky test" }], "single"), "fix the flaky test");
+		const single = planBackgroundRunHistory({
+			steps: [{ task: "fix the flaky test" }], resultMode: "single",
+			statusSteps: [{ agent: "worker", status: "complete", durationMs: 10 }], runDurationMs: 10,
+		});
+		assert.equal(single[0]?.task, "fix the flaky test");
 		// launchBindingTask (worktree-bound copy) wins when present.
-		assert.equal(
-			backgroundRunHistoryTask([{ task: "original", launchBindingTask: "bound COPY path" }], "single"),
-			"bound COPY path",
-		);
+		assert.equal(planBackgroundRunHistory({
+			steps: [{ task: "original", launchBindingTask: "bound COPY path" }], resultMode: "single",
+			statusSteps: [{ agent: "worker", status: "complete", durationMs: 10 }], runDurationMs: 10,
+		})[0]?.task, "bound COPY path");
 		// Multi-step runs never leak per-step prompts: the census key is the mode label.
-		assert.equal(backgroundRunHistoryTask([{ task: "a" }, { task: "b" }], "parallel"), "parallel");
-		assert.equal(backgroundRunHistoryTask([{ task: "a" }, { task: "b" }], "chain"), "chain");
+		assert.equal(planBackgroundRunHistory({
+			steps: [{ task: "a" }, { task: "b" }], resultMode: "parallel",
+			statusSteps: [{ agent: "w", status: "complete", durationMs: 10 }, { agent: "r", status: "complete", durationMs: 10 }], runDurationMs: 20,
+		})[0]?.task, "parallel");
+		assert.equal(planBackgroundRunHistory({
+			steps: [{ task: "a" }, { task: "b" }], resultMode: "chain",
+			statusSteps: [{ agent: "w", status: "complete", durationMs: 10 }, { agent: "r", status: "complete", durationMs: 10 }], runDurationMs: 20,
+		})[0]?.task, "chain");
 		// Missing/empty task falls back rather than producing an empty hash input.
-		assert.equal(backgroundRunHistoryTask([{ task: "" }], "single"), "single");
+		assert.equal(planBackgroundRunHistory({
+			steps: [{ task: "" }], resultMode: "single",
+			statusSteps: [{ agent: "worker", status: "complete", durationMs: 10 }], runDurationMs: 10,
+		})[0]?.task, "single");
+	});
+
+	it("planBackgroundRunHistory records no row for steps the runner never launched, whatever their relabeled status", () => {
+		// stopRunner relabels pending steps to `stopped`; timeoutRunner to `failed`+timedOut;
+		// fail-fast and usage-budget skips to `failed`. Only the runner's `launched` fact
+		// distinguishes them from steps that really dispatched a child session.
+		const rows = planBackgroundRunHistory({
+			steps: [{ task: "a" }, { task: "b" }, { task: "c" }],
+			resultMode: "parallel",
+			statusSteps: [
+				{ agent: "stopped-ghost", status: "stopped", durationMs: 0, launched: false },
+				{ agent: "timeout-ghost", status: "failed", timedOut: true, durationMs: 0, launched: false },
+				{ agent: "launched-stopped", status: "stopped", durationMs: 50, launched: true },
+			],
+			runDurationMs: 50,
+			stopped: true,
+		});
+		assert.equal(rows.length, 1); // only the step that actually dispatched a child
+		assert.equal(rows[0]?.agent, "launched-stopped");
+		assert.equal(rows[0]?.terminal.stopped, true);
 	});
 
 	it("planBackgroundRunHistory maps a single-step run to one foreground-shaped row", () => {

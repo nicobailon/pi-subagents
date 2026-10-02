@@ -133,7 +133,7 @@ function appendPrivateHistoryLine(historyPath: string, line: string): void {
 	}
 }
 
-export function backgroundRunHistoryTask(steps: readonly unknown[], resultMode: string): string {
+function backgroundRunHistoryTask(steps: readonly unknown[], resultMode: string): string {
 	const step = steps.length === 1 && typeof steps[0] === "object" && steps[0] !== null
 		? (steps[0] as { task?: unknown; launchBindingTask?: unknown })
 		: undefined;
@@ -164,7 +164,12 @@ const SELF_TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", 
  * multi-step rows hash the mode label only.
  *
  * Fidelity rules:
- * - steps still `pending` never ran (e.g. a chain stopped after a failure) and
+ * - a row is recorded only for children that actually LAUNCHED (a child
+ *   session was dispatched). Status alone cannot decide this: `stopRunner()`,
+ *   `timeoutRunner()`, fail-fast skips, and usage-budget skips all relabel
+ *   never-launched steps to terminal statuses (`stopped`, `failed`+`timedOut,
+ *   `failed`+`skipped) before the run ends — the runner therefore threads an
+ *   explicit `launched` fact per step. `pending` and `launched: false` steps
  *   get no row — unrun agents must not accumulate attempts or failures;
  * - run-level terminal flags (stopped/interrupted/timedOut) apply only to steps
  *   that did not reach a terminal state of their own — a child that completed
@@ -175,7 +180,7 @@ const SELF_TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", 
 export function planBackgroundRunHistory(input: {
 	steps: readonly unknown[];
 	resultMode: string;
-	statusSteps: ReadonlyArray<{ agent?: unknown; status?: unknown; durationMs?: number; timedOut?: boolean; stopped?: boolean }>;
+	statusSteps: ReadonlyArray<{ agent?: unknown; status?: unknown; durationMs?: number; timedOut?: boolean; stopped?: boolean; launched?: boolean }>;
 	stepResults?: ReadonlyArray<{ processSignal?: unknown } | undefined>;
 	runDurationMs: number;
 	stopped?: boolean;
@@ -191,7 +196,9 @@ export function planBackgroundRunHistory(input: {
 	const rows: BackgroundRunHistoryEntry[] = [];
 	for (const [index, step] of input.statusSteps.entries()) {
 		if (typeof step.agent !== "string" || !step.agent) continue;
-		if (step.status === "pending") continue;
+		// `launched === false` marks steps the runner never dispatched a child
+		// session for, regardless of the status they were later relabeled to.
+		if (step.status === "pending" || step.launched === false) continue;
 		const succeeded = TERMINAL_STEP_STATUSES.has(step.status as string);
 		const ownTerminal: BackgroundRunHistoryEntry["terminal"] = {
 			...(step.timedOut === true ? { timedOut: true } : {}),
