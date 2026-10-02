@@ -191,6 +191,34 @@ describe("command identities and bounded observation", () => {
 		} finally { await commands.shutdown(); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
+	it("answers status without rewriting command state and persists a real change", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-child-status-"));
+		const commands = createChildCommandRuntime(dir);
+		const custom: ToolDefinition = {
+			name: "bash", label: "Custom shell", description: "Custom execution", parameters: Type.Object({ command: Type.String() }),
+			async execute(_id, params, inputSignal) {
+				if ((params as { command: string }).command === "done") return { content: [{ type: "text", text: "done" }], details: undefined };
+				await new Promise<void>((_resolve, reject) => { inputSignal!.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }); });
+				return { content: [], details: undefined };
+			},
+		};
+		const statePath = path.join(dir, "commands.json");
+		try {
+			const bash = commands.wrap(custom);
+			await bash.execute("finished", { command: "done" }, undefined, undefined, ctx);
+			await bash.execute("running", { command: "wait", yieldTimeMs: 0 }, undefined, undefined, ctx);
+			fs.rmSync(statePath);
+			await commands.tool().execute("check-finished", { action: "status", toolCallId: "finished", waitMs: 50 }, undefined, undefined, ctx);
+			await commands.tool().execute("check-running", { action: "status", toolCallId: "running" }, undefined, undefined, ctx);
+			assert.equal(fs.existsSync(statePath), false, "child status must not rewrite commands.json");
+			fs.writeFileSync(statePath, JSON.stringify({ ...commands.state(), commands: [] }));
+			assert.equal((await controlChildCommand(dir, "status", "running")).commands[0].state, "yielded");
+			assert.deepEqual(readChildCommandState(dir)?.commands, [], "supervisor status must not rewrite commands.json");
+			await controlChildCommand(dir, "cancel", "running");
+			assert.ok(readChildCommandState(dir)?.commands.some((command) => command.toolCallId === "running"), "cancel must persist");
+		} finally { await commands.shutdown(); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+	});
+
 	it("retains the native run abort signal after yielding", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-child-abort-"));
 		const commands = createChildCommandRuntime(dir);

@@ -3,7 +3,7 @@ import type { Details, SubagentState } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import type { ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { supervisorChannelDir } from "../shared/child-tool-plan.ts";
-import { controlChildCommand, readChildCommandState, type CommandOperation } from "../shared/child-commands.ts";
+import { controlChildCommand, type CommandOperation } from "../shared/child-commands.ts";
 
 function commandChildren(state: SubagentState, target: ResolvedSubagentRunId): Array<{ index: number; agent: string }> {
 	if (!state.currentSessionId) throw new Error("Command controls require an owning parent session.");
@@ -38,14 +38,4 @@ export async function commandAction(input: {
 		content: [{ type: "text", text: JSON.stringify({ runId: input.target.id, index: child.index, commands: result.commands, closed: result.closed }) }],
 		details: { mode: "management", results: [], commands: result.commands },
 	};
-}
-
-/** Explicit targeted status only; no extra disk work in untargeted fleet/status loops. */
-export function commandStatusLines(state: SubagentState, target: ResolvedSubagentRunId): string[] {
-	if (target.kind === "nested") return [];
-	return commandChildren(state, target).flatMap((child) => {
-		const snapshot = readChildCommandState(supervisorChannelDir(target.id, child.agent, child.index));
-		return (snapshot?.commands ?? []).filter((command) => command.endedAt === undefined).map((command) =>
-			`Command: child ${child.index} | ${command.toolCallId} | ${command.state}`);
-	});
 }

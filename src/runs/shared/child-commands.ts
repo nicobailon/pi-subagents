@@ -62,6 +62,7 @@ export function createChildCommandRuntime(channelDir: string) {
 		const job = toolCallId ? jobs.get(toolCallId) : undefined;
 		if (!job) throw new Error(`No retained command '${toolCallId ?? ""}' in this child session.`);
 		if (operation !== "status" && closed) throw new Error("Child command controller is closed.");
+		const before = job.snapshot.state;
 		if (active(job)) {
 			if (operation === "yield" && job.snapshot.state === "running") {
 				job.yielded = true;
@@ -72,7 +73,7 @@ export function createChildCommandRuntime(channelDir: string) {
 				job.controller.abort();
 			}
 		}
-		persist();
+		if (job.snapshot.state !== before) persist();
 		return { ownerId, closed, commands: [{ ...job.snapshot }] };
 	};
 	const startInbox = () => {

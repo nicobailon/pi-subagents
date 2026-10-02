@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createBashToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { commandAction, commandStatusLines } from "../../src/runs/foreground/command-action.ts";
+import { commandAction } from "../../src/runs/foreground/command-action.ts";
 import { createChildCommandRuntime } from "../../src/runs/shared/child-commands.ts";
 import { supervisorChannelDir } from "../../src/runs/shared/child-tool-plan.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
@@ -23,7 +23,7 @@ function liveState(runId: string): SubagentState {
 
 describe("supervisor command actions", () => {
 	for (const kind of ["foreground", "async"] as const) {
-		it(`targets one command in a ${kind} child and exposes it in targeted status`, async () => {
+		it(`targets one command in a ${kind} child`, async () => {
 			const runId = `command-action-${randomUUID()}`;
 			const channel = supervisorChannelDir(runId, "worker", 1);
 			const commands = createChildCommandRuntime(channel);
@@ -35,7 +35,6 @@ describe("supervisor command actions", () => {
 				await commands.wrap(createBashToolDefinition(dir)).execute("selected-command", { command: "sleep 10", yieldTimeMs: 0 }, undefined, undefined, ctx);
 				await assert.rejects(commandAction({ state, target, operation: "cancel", toolCallId: "selected-command" }), /explicit child index/);
 				await assert.rejects(commandAction({ state, target, operation: "cancel", index: 1 }), /exact toolCallId/);
-				assert.match(commandStatusLines(state, target).join("\n"), /child 1 \| selected-command \| yielded/);
 				const result = await commandAction({ state, target, operation: "status", index: 1, toolCallId: "selected-command" });
 				assert.equal(result.details.commands?.[0].state, "yielded");
 				state.currentSessionId = "different-session";
@@ -45,7 +44,6 @@ describe("supervisor command actions", () => {
 				await commands.shutdown();
 				const terminal = await commandAction({ state, target, operation: "status", index: 1 });
 				assert.equal(terminal.details.commands?.[0].state, "cancelled");
-				assert.deepEqual(commandStatusLines(state, target), []);
 			} finally { await commands.shutdown(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
 		});
 	}

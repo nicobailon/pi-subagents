@@ -229,60 +229,55 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 	const nudgeMessage = formatControlNudge(event);
 	const steerCommand = `subagent({ action: "steer", id: "${runTarget}", ${event.index !== undefined ? `index: ${event.index}, ` : ""}message: ${JSON.stringify(nudgeMessage)} })`;
 	const nestedResumeCommand = `subagent({ action: "resume", id: "${runTarget}", message: ${JSON.stringify(nudgeMessage)} })`;
+	const facts = formatLongRunningFacts(event);
+	const head = (title: string) => [
+		`${title}: ${event.agent}`,
+		`Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
+		`Signal: ${event.message}`,
+		facts ? `Facts: ${facts}` : undefined,
+	];
+	const status = `Status: subagent({ action: "status", id: "${runTarget}" })`;
+	const lines = (items: Array<string | undefined>) => items.filter((line): line is string => Boolean(line)).join("\n");
 	if (event.type === "active_long_running") {
-		const facts = formatLongRunningFacts(event);
-		return [
-			`Subagent active but long-running: ${event.agent}`,
-			`Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
-			`Signal: ${event.message}`,
-			facts ? `Facts: ${facts}` : undefined,
+		return lines([
+			...head("Subagent active but long-running"),
 			"Hint: Inspect status first. Use steer for a top-level live async child, routed resume for a live nested child, or resume to revive a paused/completed/failed child.",
 			`Top-level live async nudge: ${steerCommand}`,
 			`Routed live nested nudge: ${nestedResumeCommand}`,
 			childIntercomTarget ? `Direct intercom target: ${childIntercomTarget}` : undefined,
-			`Status: subagent({ action: "status", id: "${runTarget}" })`,
+			status,
 			`Interrupt: subagent({ action: "interrupt", id: "${runTarget}" })`,
-		].filter((line): line is string => Boolean(line)).join("\n");
+		]);
 	}
 
 	if (event.reason === "tool_open_threshold" && event.currentTool === "bash") {
-		const facts = formatLongRunningFacts(event);
-		return [
-			`Subagent needs attention: ${event.agent}`,
-			`Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
-			`Signal: ${event.message}`,
-			facts ? `Facts: ${facts}` : undefined,
+		const command = (label: string, action: string) => `${label}: subagent(${JSON.stringify({ action, id: runTarget, ...(event.index !== undefined ? { index: event.index } : {}), toolCallId: event.toolCallId })})`;
+		return lines([
+			...head("Subagent needs attention"),
 			"Hint: Inspect the running command and recent output before nudging. A queued steer does not cancel an in-flight bash call. A dev server or watch command may intentionally never return. Elapsed time alone does not prove the command is stuck.",
 			"Recovery: For a local Pi child explicitly granted subagent_command, yield a needed persistent command or cancel the exact incorrect command, then steer the child. Query command.status to confirm the result. If command controls are unavailable, inspect partial changes and interruption scope before interrupt/resume; interrupt is run-scoped and may affect siblings.",
-			...(event.toolCallId ? [
-				`Command: subagent(${JSON.stringify({ action: "command.status", id: runTarget, ...(event.index !== undefined ? { index: event.index } : {}), toolCallId: event.toolCallId })})`,
-				`Yield: subagent(${JSON.stringify({ action: "command.yield", id: runTarget, ...(event.index !== undefined ? { index: event.index } : {}), toolCallId: event.toolCallId })})`,
-				`Cancel: subagent(${JSON.stringify({ action: "command.cancel", id: runTarget, ...(event.index !== undefined ? { index: event.index } : {}), toolCallId: event.toolCallId })})`,
-			] : []),
-			`Status: subagent({ action: "status", id: "${runTarget}" })`,
+			...(event.toolCallId ? [command("Command", "command.status"), command("Yield", "command.yield"), command("Cancel", "command.cancel")] : []),
+			status,
 			`Transcript: subagent({ action: "status", id: "${runTarget}", view: "transcript"${event.index !== undefined ? `, index: ${event.index}` : ""} })`,
-		].filter((line): line is string => Boolean(line)).join("\n");
+		]);
 	}
 
 	const supervisorHint = event.reason === "supervisor_request"
 		? "Supervisor request: reply to the pending request. If subagent_supervisor pending is empty, check intercom pending because an external intercom tool may own the request."
 		: undefined;
-	const facts = formatLongRunningFacts(event);
-	return [
-		`Subagent needs attention: ${event.agent}`,
-		`Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
-		`Signal: ${event.message}`,
-		facts ? `Facts: ${facts}` : undefined,
+	return lines([
+		...head("Subagent needs attention"),
 		event.recentFailureSummary ? `Recent failures: ${event.recentFailureSummary}` : undefined,
 		supervisorHint,
 		"Hint: Inspect status first unless the run is clearly blocked. Use steer for a top-level live async child, routed resume for a live nested child, or resume to revive a paused/completed/failed child.",
 		`Top-level live async nudge: ${steerCommand}`,
 		`Routed live nested nudge: ${nestedResumeCommand}`,
 		childIntercomTarget ? `Direct intercom target: ${childIntercomTarget}` : undefined,
-		`Status: subagent({ action: "status", id: "${runTarget}" })`,
+		status,
 		`Interrupt: subagent({ action: "interrupt", id: "${runTarget}" })`,
-	].filter((line): line is string => Boolean(line)).join("\n");
+	]);
 }
+
 
 export function formatControlIntercomMessage(event: ControlEvent, childIntercomTarget?: string): string {
 	const statusLabel = event.type === "active_long_running"

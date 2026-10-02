@@ -27,7 +27,7 @@ import { isWorkflowScriptPath, normalizePublicSubagentExecution, validateWorkflo
 import { readReplyWorkflowScript } from "../../extension/reply-workflow-script.ts";
 import { disabledFeatureNotice, disabledFeatureUseError, resolveDisabledFeatureSurface, type DisabledFeatureSurface } from "../../shared/disabled-features.ts";
 import { runSync } from "./execution.ts";
-import { commandAction, commandStatusLines } from "./command-action.ts";
+import { commandAction } from "./command-action.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { applyWatchdogLaunchRules } from "../../watchdog/rules.ts";
@@ -6961,17 +6961,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const targetLabel = action === "debug.run" ? "Debug run" : formatStatusTargetLabel(paramsWithResolvedCwd, targetRunId);
 				const withBudget = (result: AgentToolResult<Details>) => {
 					const budgeted = withSpawnBudgetStatus(result, deps.state, deps.config, deps.state.currentSessionId);
-					let commands: string[] = [];
-					if (targetRunId && action === "status" && !paramsWithResolvedCwd.view && !result.isError) {
-						try {
-							const target = resolveSubagentRunId(targetRunId, { state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
-							if (target) commands = commandStatusLines(deps.state, target);
-						} catch (error) { commands = [`Command status unavailable: ${error instanceof Error ? error.message : String(error)}`]; }
-					}
 					return {
 						...budgeted,
 						content: budgeted.content.map((item, index) => index === 0 && item.type === "text"
-							? { ...item, text: `${targetLabel}\n${item.text}${commands.length ? `\n${commands.join("\n")}` : ""}` }
+							? { ...item, text: `${targetLabel}\n${item.text}` }
 							: item),
 					};
 				};
