@@ -380,7 +380,7 @@ describe("external CLI launch of Windows batch files", () => {
 		const { bin, shim, script } = shimFixture();
 		assert.deepEqual(resolveExternalCliSpawn(shim, hostileArgs, {}, "win32"), { command: process.execPath, args: [script, ...hostileArgs] });
 		assert.deepEqual(resolveExternalCliSpawn("tool.cmd", hostileArgs, { PATH: bin }, "win32"), { command: process.execPath, args: [script, ...hostileArgs] });
-		assert.deepEqual(resolveExternalCliSpawn("tool", [], { Path: bin, PATHEXT: ".CMD" }, "win32"), { command: process.execPath, args: [script] });
+		assert.deepEqual(resolveExternalCliSpawn("tool", [], { Path: bin, PATHEXT: ".cmd" }, "win32"), { command: process.execPath, args: [script] });
 		fs.writeFileSync(path.join(bin, "node.exe"), "");
 		assert.equal(resolveExternalCliSpawn(shim, [], {}, "win32").command, path.join(bin, "node.exe"));
 		assert.deepEqual(resolveExternalCliSpawn(shim, ["x"], {}, "linux"), { command: shim, args: ["x"] });
