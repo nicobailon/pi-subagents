@@ -181,7 +181,7 @@ const SubagentParamProperties = {
 	supersession: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true, description: "lane.recordSupersession evidence; read guide tool-reference." })),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child/transcript index." })),
 	childId: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: "Child-scoped stop identity." })),
-	toolCallId: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: "Command tool-call id." })),
+	toolCallId: Type.Optional(Type.String({ description: "Command tool-call id." })),
 	view: Type.Optional(Type.String({
 		enum: ["fleet", "transcript"],
 		description: "status view: fleet overview or transcript tail with id/dir and optional index.",
@@ -274,7 +274,7 @@ const SubagentParamProperties = {
 			{ type: "string", minLength: 1 },
 			{ type: "object", properties: { command: { type: "string", minLength: 1 }, output: { type: "string", enum: ["json"] }, schema: { type: "object" }, timeoutMs: { type: "integer", minimum: 1 } }, required: ["command"], additionalProperties: false },
 		],
-		description: "Host gate command run after the child finishes: a string, or { command, output: \"json\", schema?, timeoutMs? } whose passing stdout becomes structuredOutput (not with outputSchema). Cannot be combined with acceptance; an explicit acceptance of false is treated as omitted.",
+		description: "Host gate command run after the child finishes: a string, or an object whose passing stdout becomes structuredOutput (not with outputSchema). Cannot be combined with acceptance; an explicit acceptance of false is treated as omitted.",
 	})),
 };
 
