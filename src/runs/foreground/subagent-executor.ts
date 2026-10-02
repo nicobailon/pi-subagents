@@ -78,7 +78,7 @@ import { assertRequiredChildExtensionsAdmitted, hasMandatoryRequiredChildExtensi
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, PROMPT_REDACTED, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
-import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
+import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, protectRetainedWorktreeForResume, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
 import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import {
 	attachNestedChildrenToResultChildren,
@@ -157,6 +157,7 @@ import {
 	formatWorktreeDiffSummary,
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
+import { applyReviewedCleanupPlan, formatCleanupReceipt, loadReviewedCleanupPlan } from "../shared/worktree-cleanup-apply.ts";
 import { createWorktreeCleanupPlan, formatWorktreeCleanupPlan } from "../shared/worktree-cleanup-plan.ts";
 import {
 	type AgentProgress,
@@ -2211,6 +2212,16 @@ async function resumeAsyncRun(input: {
 	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const parentModel = input.parentModel;
 	const revivalAsyncDir = path.join(DIRS.async, runId);
+	if (target.source === "async" && target.managedWorktree && target.asyncDir) {
+		try {
+			const protectedCwd = await protectRetainedWorktreeForResume(parallelHandoffPath(target.asyncDir), target.runId, target.index, input.signal);
+			if (path.resolve(protectedCwd) !== path.resolve(effectiveCwd)) throw new Error("Retained worktree cwd changed during resume admission.");
+		} catch (error) {
+			activeAsyncCapacity?.rollback();
+			return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
+		}
+	}
+
 	const result = await executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target as Parameters<typeof buildRevivedAsyncTask>[0], effectiveFollowUp),
@@ -6641,11 +6652,30 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (deps.allowMutatingManagementActions === false) {
 					return { content: [{ type: "text", text: "Action 'worktree.cleanup' is not available from child-safe subagent fanout mode." }], isError: true, details: { mode: "management", results: [] } };
 				}
+				if (paramsWithResolvedCwd.mode === "apply") {
+					try {
+						if (!paramsWithResolvedCwd.repo?.trim() || !paramsWithResolvedCwd.planId?.trim() || paramsWithResolvedCwd.handoffPath !== undefined) throw new Error("worktree.cleanup apply requires explicit repo and planId, without handoffPath.");
+						const repo = path.resolve(requestCwd, paramsWithResolvedCwd.repo);
+						const plan = loadReviewedCleanupPlan(repo, paramsWithResolvedCwd.planId);
+						const decision = resolveAuthorityDecision({ action: "discardWorktree", ...(deps.config.authorityPolicy === undefined ? {} : { policy: deps.config.authorityPolicy }) });
+						if (decision === "forbid") throw new Error("Authority policy forbids worktree cleanup.");
+						if (decision === "confirm") {
+							if (!ctx.hasUI) throw new Error("Authority policy requires interactive confirmation for worktree cleanup.");
+							if (!await ctx.ui.confirm("Apply reviewed worktree cleanup?", `Repository: ${plan.repoRoot}\nPlan: ${plan.planId}\nRemove up to ${plan.entries.filter((entry) => entry.decision === "remove").length} eligible worktrees. All local branches are retained.`)) return { content: [{ type: "text", text: "Worktree cleanup canceled." }], details: { mode: "management", results: [] } };
+						}
+						const applied = await applyReviewedCleanupPlan({ repo: plan.repoRoot, planId: plan.planId, authorized: true, signal,
+							foregroundRunOwnership: (runId) => deps.state.foregroundControls.has(runId) ? "active" : (deps.state.foregroundRuns?.get(runId)?.children.length && deps.state.foregroundRuns.get(runId)!.children.every((child) => child.status !== "detached")) ? "terminal" : "unknown",
+						});
+						return { content: [{ type: "text", text: formatCleanupReceipt(applied) }], details: { mode: "management", results: [] } };
+					} catch (error) {
+						return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
+					}
+				}
 				if (paramsWithResolvedCwd.mode !== "plan") {
-					return { content: [{ type: "text", text: "worktree.cleanup currently supports mode='plan' only; apply/removal is not available yet." }], isError: true, details: { mode: "management", results: [] } };
+					return { content: [{ type: "text", text: "worktree.cleanup requires mode='plan' or mode='apply'." }], isError: true, details: { mode: "management", results: [] } };
 				}
 				if (paramsWithResolvedCwd.planId !== undefined) {
-					return { content: [{ type: "text", text: "worktree.cleanup plan mode does not accept planId; apply is not available yet." }], isError: true, details: { mode: "management", results: [] } };
+					return { content: [{ type: "text", text: "worktree.cleanup plan mode does not accept planId." }], isError: true, details: { mode: "management", results: [] } };
 				}
 				try {
 					const created = createWorktreeCleanupPlan({

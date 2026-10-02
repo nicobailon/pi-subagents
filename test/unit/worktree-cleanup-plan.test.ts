@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -14,6 +14,137 @@ import {
 } from "../../src/runs/shared/worktree-cleanup-plan.ts";
 import { DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS } from "../../src/runs/background/active-run-index.ts";
 import { createWorktrees, type WorktreeSetup } from "../../src/runs/shared/worktree.ts";
+import { applyReviewedCleanupPlan, loadReviewedCleanupPlan } from "../../src/runs/shared/worktree-cleanup-apply.ts";
+import { protectRetainedWorktreeForResume } from "../../src/runs/shared/parallel-handoff.ts";
+import { withRepositoryWorktreeLock } from "../../src/runs/shared/worktree-lock.ts";
+
+async function cleanupFixture(run: (fixture: { repo: string; baseDir: string; setup: WorktreeSetup; manifestPath: string; planId: string }) => Promise<void>): Promise<void> {
+	const repo = createRepo("pi-cleanup-apply-");
+	const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cleanup-apply-base-"));
+	let setup: WorktreeSetup | undefined;
+	try {
+		setup = await createWorktrees(repo, "apply", 1, { baseDir });
+		const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
+		writeManifest({ repo, manifestPath, setup });
+		const { plan } = createWorktreeCleanupPlan({ repo, worktreeBaseDir: baseDir, foregroundRunOwnership: () => "terminal" });
+		await run({ repo, baseDir, setup, manifestPath, planId: plan.planId });
+	} finally { removeGeneratedWorktrees(repo, setup); fs.rmSync(repo, { recursive: true, force: true }); fs.rmSync(baseDir, { recursive: true, force: true }); }
+}
+
+describe("reviewed cleanup apply", () => {
+	it("removes the reviewed tree, retains its branch, records ownership facts and refuses replay", () => cleanupFixture(async ({ repo, setup, manifestPath, planId }) => {
+		const args = { repo, planId, authorized: true, foregroundRunOwnership: () => "terminal" as const };
+		const applied = await applyReviewedCleanupPlan(args);
+		assert.equal(applied.receipt.state, "complete");
+		assert.equal(applied.receipt.entries[0]?.state, "removed");
+		assert.equal(fs.existsSync(setup.worktrees[0]!.path), false);
+		assert.ok(git(repo, ["branch", "--list", setup.worktrees[0]!.branch]));
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+		assert.equal(manifest.groups[0].cleanup.tasks[0].worktreeRemoved, true);
+		assert.equal(manifest.groups[0].cleanup.tasks[0].branchRemoved, false);
+		assert.equal(manifest.createdAt, 1);
+		assert.equal((await applyReviewedCleanupPlan(args)).reused, true);
+	}));
+
+	for (const drift of ["dirty", "ignored", "locked", "branch", "missing-artifact", "active"] as const) it(`keeps a reviewed tree after ${drift} drift`, () => cleanupFixture(async ({ repo, setup, manifestPath, planId }) => {
+		const tree = setup.worktrees[0]!;
+		if (drift === "dirty") fs.writeFileSync(path.join(tree.path, "new.txt"), "valuable");
+		if (drift === "ignored") {
+			fs.writeFileSync(path.join(tree.path, ".gitignore"), "secret.env\n");
+			git(tree.path, ["add", ".gitignore"]); git(tree.path, ["commit", "-m", "ignore secret"]);
+			fs.writeFileSync(path.join(tree.path, "secret.env"), "fixture-value");
+		}
+		if (drift === "locked") git(repo, ["worktree", "lock", tree.path]);
+		if (drift === "branch") { fs.writeFileSync(path.join(tree.path, "tracked.txt"), "changed"); git(tree.path, ["commit", "-am", "new work"]); }
+		if (drift === "missing-artifact") fs.rmSync(manifestPath);
+		const result = await applyReviewedCleanupPlan({ repo, planId, authorized: true, foregroundRunOwnership: () => drift === "active" ? "active" : "terminal" });
+		assert.equal(result.receipt.state, "partial");
+		assert.ok(fs.existsSync(tree.path));
+		if (drift === "locked") git(repo, ["worktree", "unlock", tree.path]);
+	}));
+
+	it("rejects unauthorized, expired and altered plans without claiming them", () => cleanupFixture(async ({ repo, planId }) => {
+		await assert.rejects(applyReviewedCleanupPlan({ repo, planId, authorized: false }), /authorization/);
+		const plan = loadReviewedCleanupPlan(repo, planId);
+		assert.throws(() => loadReviewedCleanupPlan(repo, planId, plan.expiresAt), /expired/);
+		const file = path.join(repo, ".pi", "subagents", "cleanup-plans", `${planId}.json`);
+		plan.entries[0]!.branch = "changed";
+		fs.writeFileSync(file, JSON.stringify(plan));
+		await assert.rejects(applyReviewedCleanupPlan({ repo, planId, authorized: true }), /invalid|hash/);
+		assert.equal(fs.existsSync(file.replace(/\.json$/, ".claim")), false);
+	}));
+
+	it("cancels before admission without deleting or claiming a plan", () => cleanupFixture(async ({ repo, setup, planId }) => {
+		const controller = new AbortController(); controller.abort();
+		await assert.rejects(applyReviewedCleanupPlan({ repo, planId, authorized: true, signal: controller.signal }), /abort/i);
+		assert.ok(fs.existsSync(setup.worktrees[0]!.path));
+	}));
+
+	it("publishes a retained resume blocker under the shared repository lock", () => cleanupFixture(async ({ repo, setup, manifestPath, planId }) => {
+		const cwd = await protectRetainedWorktreeForResume(manifestPath, "cleanup-run", 0);
+		assert.equal(cwd, setup.worktrees[0]!.path);
+		const result = await applyReviewedCleanupPlan({ repo, planId, authorized: true, foregroundRunOwnership: () => "terminal" });
+		assert.equal(result.receipt.entries[0]?.state, "kept");
+		assert.match(result.receipt.entries[0]!.reason, /retained child resume/);
+	}));
+
+	it("serializes two processes applying the same plan", () => cleanupFixture(async ({ repo, planId }) => {
+		const moduleUrl = new URL("../../src/runs/shared/worktree-cleanup-apply.ts", import.meta.url).href;
+		const source = `import { applyReviewedCleanupPlan } from ${JSON.stringify(moduleUrl)}; const result = await applyReviewedCleanupPlan({ ...JSON.parse(process.argv[1]), foregroundRunOwnership: () => 'terminal' }); console.log(JSON.stringify(result));`;
+		const run = () => new Promise<{ reused: boolean; receipt: { entries: Array<{ state: string }> } }>((resolve, reject) => {
+			const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", source, JSON.stringify({ repo, planId, authorized: true })], { stdio: ["ignore", "pipe", "pipe"] });
+			let output = "", errors = "";
+			child.stdout.on("data", (data) => output += data); child.stderr.on("data", (data) => errors += data);
+			child.on("error", reject); child.on("exit", (code) => code === 0 ? resolve(JSON.parse(output)) : reject(new Error(errors)));
+		});
+		const results = await Promise.all([run(), run()]);
+		assert.deepEqual(results.map((result) => result.reused).sort(), [false, true]);
+		assert.ok(results.every((result) => result.receipt.entries.filter((entry) => entry.state === "removed").length === 1));
+	}));
+
+	it("uses the same repository lock through a linked checkout", () => cleanupFixture(async ({ repo, setup }) => {
+		await withRepositoryWorktreeLock(repo, async () => {
+			await assert.rejects(withRepositoryWorktreeLock(setup.worktrees[0]!.path, () => {}, { waitMs: 0 }), /busy/);
+		});
+	}));
+
+	it("keeps a single-use applying receipt after an interrupted owner", () => cleanupFixture(async ({ repo, setup, planId }) => {
+		const plan = loadReviewedCleanupPlan(repo, planId);
+		const claim = path.join(repo, ".pi", "subagents", "cleanup-plans", `${planId}.claim`);
+		fs.mkdirSync(claim);
+		fs.writeFileSync(path.join(claim, "receipt.json"), JSON.stringify({ version: 1, planId, repoRoot: repo, contentHash: plan.contentHash, state: "applying", startedAt: Date.now(), entries: [] }));
+		const result = await applyReviewedCleanupPlan({ repo, planId, authorized: true, foregroundRunOwnership: () => "terminal" });
+		assert.equal(result.reused, true);
+		assert.equal(result.receipt.state, "applying");
+		assert.ok(fs.existsSync(setup.worktrees[0]!.path));
+	}));
+
+	it("records cancellation after the plan claim without attempting deletion", () => cleanupFixture(async ({ repo, setup, planId }) => {
+		const controller = new AbortController();
+		const result = await applyReviewedCleanupPlan({ repo, planId, authorized: true, signal: controller.signal,
+			select: () => { controller.abort(); return new Set(); },
+		});
+		assert.equal(result.receipt.state, "partial");
+		assert.match(result.receipt.error ?? "", /abort/i);
+		assert.ok(fs.existsSync(setup.worktrees[0]!.path));
+		assert.equal((await applyReviewedCleanupPlan({ repo, planId, authorized: true })).reused, true);
+	}));
+
+	it("recovers a proven dead repository-lock owner", { skip: process.platform !== "linux" ? "Linux process identity fixture" : undefined }, () => cleanupFixture(async ({ repo }) => {
+		const url = new URL("../../src/runs/shared/worktree-lock.ts", import.meta.url).href;
+		const source = `import { withRepositoryWorktreeLock } from ${JSON.stringify(url)}; await withRepositoryWorktreeLock(process.argv[1], async () => { console.log('owned'); setInterval(() => {}, 1000); await new Promise(() => {}); });`;
+		const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", source, repo], { stdio: ["ignore", "pipe", "pipe"] });
+		const exited = new Promise<void>((resolve) => child.on("exit", () => resolve()));
+		try {
+			await new Promise<void>((resolve, reject) => {
+				child.stdout.once("data", () => resolve()); child.once("error", reject); child.once("exit", () => reject(new Error("lock fixture exited before ownership")));
+			});
+			await assert.rejects(withRepositoryWorktreeLock(repo, () => {}, { waitMs: 0 }), /busy/);
+			child.kill("SIGKILL"); await exited;
+			await withRepositoryWorktreeLock(repo, () => {});
+		} finally { child.kill("SIGKILL"); await exited; }
+	}));
+});
 
 function git(cwd: string, args: string[]): string {
 	return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf-8" }).trim();
@@ -165,14 +296,14 @@ describe("worktree cleanup plan", () => {
 			assert.equal(first.entries.length, 1);
 			assert.equal(first.entries[0]?.decision, "remove");
 			assert.equal(first.entries[0]?.state, "safe");
-			assert.equal(first.entries[0]?.willDeleteBranch, true);
+			assert.equal(first.entries[0]?.willDeleteBranch, false);
 			assert.match(first.entries[0]?.preconditions.statusDigest ?? "", /^[0-9a-f]{64}$/);
 			assert.equal(first.entries.some((entry) => entry.path.includes("unrelated-directory")), false);
 
 			const created = createWorktreeCleanupPlan({ repo, worktreeBaseDir: baseDir, now: 10_000, planId: "fixed-plan", foregroundRunOwnership: () => "terminal" });
 			assert.equal(created.plan.planId, "fixed-plan");
 			assert.ok(fs.existsSync(created.planPath));
-			assert.match(formatWorktreeCleanupPlan(created), /Will remove[\s\S]*Will delete local branches[\s\S]*Plan-only mode: no worktrees or branches were removed/);
+			assert.match(formatWorktreeCleanupPlan(created), /Will remove[\s\S]*Local branches: all retained[\s\S]*Plan-only mode: no worktrees or branches were removed/);
 			assert.ok(fs.existsSync(setup.worktrees[0]!.path));
 			assert.notEqual(git(repo, ["branch", "--list", setup.worktrees[0]!.branch]), "");
 

@@ -169,7 +169,7 @@ describe("disabled feature discovery", () => {
 	it("removes disabled-feature text from the built-in descriptions and keeps the safety guidance", () => {
 		const enabled = buildSubagentToolDescription({ toolDescriptionMode: "full" });
 		for (const text of featureText) assert.ok(enabled.includes(text), `enabled description lacks ${text}`);
-		assert.match(enabled, /Management discovery: list\/get\/models\/guide; create\/update\/delete\/eject\/disable\/enable\/reset\/refine; mission\.\*, schedule\.\*, watchdog\.\*, inspector\.\*, project\.\*, lane\.status\/recordMerge\/recordSupersession; worktree\.discard and plan-only worktree\.cleanup; doctor and grant-spawn-budget\. /);
+		assert.match(enabled, /Management discovery: list\/get\/models\/guide; create\/update\/delete\/eject\/disable\/enable\/reset\/refine; mission\.\*, schedule\.\*, watchdog\.\*, inspector\.\*, project\.\*, lane\.status\/recordMerge\/recordSupersession; worktree\.discard and reviewed worktree\.cleanup; doctor and grant-spawn-budget\. /);
 
 		const disabledFeatures = resolveDisabledFeatureSurface(ALL_DISABLED);
 		for (const toolDescriptionMode of [undefined, "full"] as const) {

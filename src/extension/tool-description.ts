@@ -47,7 +47,7 @@ const managementDiscovery = (on: FeatureText) => [
 	["list/get/models/guide"],
 	[on("agent-management", "create/update/delete/eject/disable/enable/reset/refine")],
 	[on("missions", "mission.*"), on("schedules", "schedule.*"), on("watchdog", "watchdog.*"), on("panes", "inspector.*, project.*"), on("lane-management", "lane.status/recordMerge/recordSupersession")],
-	[on("lane-management", "worktree.discard and plan-only worktree.cleanup")],
+	[on("lane-management", "worktree.discard and reviewed worktree.cleanup")],
 	[`doctor${on("spawn-budget-grants", " and grant-spawn-budget")}`],
 ].map((group) => group.filter(Boolean).join(", ")).filter(Boolean).join("; ");
 

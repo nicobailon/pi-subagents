@@ -71,7 +71,7 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 |-------|------|---------|-------------|
 | `agent` | string | - | One direct child or agent-management target. Workflow child agents are set inside `runs.run` or `runs.all`. |
 | `task` | string | agent default | Direct child's task; requires `agent`, excludes `action` and workflow inputs. `agent` may also select a management target. |
-| `action` | string | - | Offline workflow `validate`, agent management (including `guide`, `children.list`, and `refine`/`refine.show`/`refine.rollback`), lane evidence (`lane.status`, `lane.recordMerge`, `lane.recordSupersession`), mission (`mission.create/list/show/update/resolve-decision/attach-run/close`), Inspect actions (`inspector.command/open/status/close`), Herdr project pane (`project.open/status/close`), status/control, plan-only `worktree.cleanup`, schedule, watchdog, or doctor action. |
+| `action` | string | - | Offline workflow `validate`, agent management (including `guide`, `children.list`, and `refine`/`refine.show`/`refine.rollback`), lane evidence (`lane.status`, `lane.recordMerge`, `lane.recordSupersession`), mission (`mission.create/list/show/update/resolve-decision/attach-run/close`), Inspect actions (`inspector.command/open/status/close`), Herdr project pane (`project.open/status/close`), status/control, reviewed `worktree.cleanup`, schedule, watchdog, or doctor action. |
 | `topic` | `overview \| workflows \| agents \| missions \| observability \| tool-reference \| configuration \| models \| watchdog \| extension-api \| council` | `overview` | Packaged guide topic for `action: "guide"`. |
 | `config` | object/string | - | Agent config for management create/update. |
 | `context` | `fresh \| fork \| profile` | global or per-agent default, else `fresh` | Explicit `fresh` or `fork` overrides every workflow child. `profile` requires the selected agent's declared `defaultContext` and ignores config `defaultSubagentContext`; missing agent defaults fail. When omitted, [`defaultSubagentContext`](configuration.md#defaultsubagentcontext) wins over each agent's `defaultContext`; implicit fork falls back to fresh without a persisted parent session and leaf. Explicit fork is strict. Packaged `worker` defaults to `fresh`; packaged `oracle` and `advisor` default to `fork`. |
@@ -79,9 +79,9 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `missionId` | string | - | Attach a workflow, including each fire of `schedule.create`, to an existing project mission. Scheduled attachment uses ordinary lifecycle and retention rules. |
 | `mission` | object/false | auto-create | Override the default enclosing mission with `{ title \| summary, objective?, goal?, budget?, labels? }`. Set exactly one non-empty `title` or `summary`; `objective` and `labels` are optional. `goal` may only be `true`, requires `budget.tokens`, and enables continuation notices. Pass `false` for an intentionally ephemeral workflow with no mission for it or its children and no `state` global. Explicit mission persistence failures are strict. |
 | `handoffPath` | string | - | Aggregate handoff manifest for `action: "worktree.discard"` or lane evidence actions, or optional explicit metadata for `action: "worktree.cleanup"`. |
-| `repo` | string | runtime cwd | Repository path for `action: "worktree.cleanup"`; plan mode only. The configured worktree base filters candidates by their per-project folder under it but never discovers them. |
-| `planId` | string | - | Reserved for a future `worktree.cleanup` apply action; rejected by the current plan-only action. |
-| `mode` | `steer \| follow_up \| auto \| plan \| apply` | - | Delivery mode for `action: "steer"`; `worktree.cleanup` currently accepts `plan` only. Apply/removal is reserved for a later change. |
+| `repo` | string | runtime cwd | Repository path for `action: "worktree.cleanup"`; required explicitly for apply. The configured worktree base filters candidates by their per-project folder under it but never discovers them. |
+| `planId` | string | - | Saved, reviewed cleanup plan ID; required for apply, rejected in plan mode. |
+| `mode` | `steer \| follow_up \| auto \| plan \| apply` | - | Delivery mode for `action: "steer"`; `worktree.cleanup` accepts `plan` or `apply`; apply requires an explicit repository and saved plan ID. |
 | `laneId` | string | - | Exact `runId` stored in the handoff manifest for `lane.status`, `lane.recordMerge`, or `lane.recordSupersession`. |
 | `merge` | object | - | Attested merge evidence for `lane.recordMerge`; requires a positive PR number, full reviewed/merge SHAs, tree-equivalence and post-merge-check statuses, attestor, and timestamp. |
 | `supersession` | object | - | Attested replacement-lane evidence for `lane.recordSupersession`; requires a different replacement lane id, attestor, and timestamp. |
@@ -523,3 +523,16 @@ subagent({ workflow: true, share: true });
 ```
 
 This is disabled by default. Session data may contain source code, paths, environment variables, credentials, or other sensitive output. You need `gh` installed and authenticated.
+
+### Reviewed worktree cleanup
+
+`worktree.cleanup` first saves a plan without removing anything:
+
+```ts
+subagent({ action: "worktree.cleanup", repo: "/path/to/repo", mode: "plan" })
+subagent({ action: "worktree.cleanup", repo: "/path/to/repo", mode: "apply", planId: "<reviewed-plan-id>" })
+```
+
+Apply uses the existing `authorityPolicy.discardWorktree` (`confirm` by default). It checks the saved plan's repository, hash and 30-minute expiry, then rechecks only reviewed candidates under a repository lock shared with retained resume admission. Only a clean, contained, provably owned terminal worktree with durable evidence can be removed. Dirty or untracked files, ignored files, Git locks, active/resumable ownership, changed heads and missing artifacts keep the tree. Every local branch is retained; apply never forces removal or prunes unrelated Git metadata.
+
+The plan is claimed once before deletion and records progress in a durable receipt. Repeating a claimed plan displays its receipt without attempting more removals; after an interruption, inspect that receipt and create a fresh plan for additional work. Cleanup failures leave child outcomes and artifacts intact. `worktree.discard` remains the separate explicitly authorized destructive discard operation.
