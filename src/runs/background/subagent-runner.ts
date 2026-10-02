@@ -5092,12 +5092,7 @@ export async function runSubagent(
 			usageBudget: statusPayload.usageBudget,
 		}),
 	);
-	// run-history parity with the foreground executor (subagent-executor.ts): without
-	// this, every async launch is invisible to the per-agent run census, because
-	// asyncByDefault routes all subagent tool calls through this runner. Multi-step
-	// runs record one row per child step so loadRunsForAgent(agent) sees each child;
-	// paused runs record here too (outcome "interrupted", matching foreground), and
-	// a later resume that settles records again — one entry per attempt.
+	// Paused runs record an interrupted attempt; a later resume records another.
 	for (const historyEntry of planBackgroundRunHistory({
 		steps,
 		resultMode,

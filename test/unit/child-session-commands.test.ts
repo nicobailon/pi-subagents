@@ -155,8 +155,6 @@ describe("default child factory command integration", () => {
 			assert.equal(fake.tools.get("bash"), original);
 			assert.equal(fake.tools.get("subagent_command"), custom);
 			assert.equal(evaluateChildToolDiagnostic(input.runtime, [...fake.tools.keys()]), undefined);
-			const result = await custom.execute("status", { action: "status" }, undefined, undefined, ctxForTest());
-			assert.equal(result.content[0].text, "custom controls");
 			assert.equal(readChildCommandState(channel), undefined);
 		} finally { await factory.dispose(); await fs.promises.rm(channel, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});

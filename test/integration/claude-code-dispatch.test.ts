@@ -17,6 +17,7 @@ import {
 	available, executeAsyncChain, executeAsyncSingle, installAsyncExecutionHooks, isAsyncAvailable, tempDir, waitForAsyncResultFile,
 } from "../support/async-execution-fixture.ts";
 import { clearExternalCliPreflightCacheForTests } from "../../src/runs/shared/external-cli-preflight.ts";
+import type { AgentConfig } from "../../src/agents/agents.ts";
 
 const CLAUDE_HELP =
 	"Claude Code - starts an interactive session --print --input-format text --output-format stream-json --verbose --permission-mode plan acceptEdits --tools --strict-mcp-config --mcp-config --setting-sources --no-session-persistence --disable-slash-commands --no-chrome";
@@ -51,7 +52,7 @@ process.stdin.on("end", () => {
 	};
 }
 
-function claudeCodeRunner(command: string): Record<string, unknown> {
+function claudeCodeRunner(command: string): NonNullable<AgentConfig["runner"]> {
 	return { type: "external-cli", adapter: "claude-code", command, promptDelivery: "stdin" };
 }
 

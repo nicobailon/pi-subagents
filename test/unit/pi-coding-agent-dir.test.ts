@@ -615,8 +615,8 @@ Package skill content.
 			interrupted: true,
 		});
 		assert.equal(rows[0]?.exitCode, 0);
-		assert.deepEqual(rows[0]?.terminal, {}); // completed child must NOT inherit the interrupt
-		assert.equal(rows[1]?.terminal.interrupted, true); // the interrupted child does
+		assert.deepEqual(rows[0]?.terminal, {});
+		assert.equal(rows[1]?.terminal.interrupted, true);
 	});
 
 	it("planBackgroundRunHistory keeps an earlier failure's outcome when a sibling is later interrupted", () => {
@@ -630,8 +630,8 @@ Package skill content.
 			runDurationMs: 100,
 			interrupted: true,
 		});
-		assert.deepEqual(rows[0]?.terminal, {}); // own failure must not be relabeled as interrupted
-		assert.equal(rows[0]?.exitCode, 1);       // outcome stays "failed"
+		assert.deepEqual(rows[0]?.terminal, {});
+		assert.equal(rows[0]?.exitCode, 1);
 		assert.equal(rows[1]?.terminal.interrupted, true);
 	});
 

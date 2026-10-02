@@ -79,7 +79,7 @@ it("reports the created child's context window before prompting", { timeout: 10_
 
 for (const mode of ["foreground", "background"] as const) {
 	it(`rejects unfinished commands at authoritative ${mode} settlement and still disposes the child`, async () => {
-		let listener: (event: any) => void = () => {};
+		let listener: Parameters<ChildSession["subscribe"]>[0] = () => {};
 		let prompted = false;
 		let finalized = 0;
 		let disposed = false;
@@ -114,11 +114,11 @@ for (const mode of ["foreground", "background"] as const) {
 }
 
 it("verifies a virtual-model child against its selection and keeps the dispatched model", { timeout: 10_000 }, async () => {
-	let listener: ((event: never) => void) | undefined;
+	let listener: Parameters<ChildSession["subscribe"]>[0] | undefined;
 	const session: ChildSession = {
-		subscribe(next) { listener = next as typeof listener; return () => {}; },
+		subscribe(next) { listener = next; return () => {}; },
 		async prompt() {
-			listener?.({ type: "message_end", message: { role: "assistant", model: "gpt-6.1-sol", stopReason: "stop", content: [{ type: "text", text: "done" }] } } as never);
+			listener?.({ type: "message_end", message: { ...fauxAssistantMessage("done"), model: "gpt-6.1-sol" } });
 		},
 		async steer() {}, async followUp() {}, async abort() {}, async dispose() {},
 		messages: [], sessionId: "virtual-session", modelId: "router/auto", virtualModelId: "router/auto",

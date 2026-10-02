@@ -12,7 +12,7 @@ function collectWithErrors(branch: unknown[]) {
 	const originalError = console.error;
 	console.error = (...args: unknown[]) => { errors.push(args); };
 	try {
-		const report = collectSubagentCost(ctx as never, { baseCwd: process.cwd(), artifactDirPreference: "session" } as never);
+		const report = collectSubagentCost(ctx as never, { baseCwd: process.cwd(), artifactDirPreference: "session" });
 		return { report, errors };
 	} finally {
 		console.error = originalError;
@@ -86,7 +86,7 @@ describe("collectSubagentCost", () => {
 		];
 		const ctx = { cwd: process.cwd(), sessionManager: { getBranch: () => branch, getSessionFile: () => undefined } };
 
-		const report = collectSubagentCost(ctx as never, { baseCwd: process.cwd() } as never);
+		const report = collectSubagentCost(ctx as never, { baseCwd: process.cwd() });
 
 		assert.deepEqual(report.children.map((child) => [child.runId, child.usage.turns]), [["child-round-1", 16], ["child-round-2", 16], ["child-round-3", 5]]);
 		assert.equal(report.childTotal.turns, 37);

@@ -38,10 +38,6 @@ export function formatSubagentModelVerificationError(
 		const expectedFullIdLeaf = expectedEntry.fullId.slice(expectedEntry.fullId.lastIndexOf("/") + 1);
 		if (expectedIdLeaf === observedBase || expectedFullIdLeaf === observedBase) return undefined;
 	}
-	return modelVerificationFailure(expectedModel, observedModel);
-}
-
-function modelVerificationFailure(expectedModel: string, observedModel: string): string {
 	return `model_verification_failed: native Pi child reported a different model than the launch candidate. Expected '${expectedModel}' but observed '${observedModel}'. If you have independently verified this response ID identifies the requested model, declare the exact mapping in modelResponseAliases in ~/.pi/agent/extensions/subagent/config.json (see docs/configuration.md#modelresponsealiases). Use the resolved provider/model ID without its thinking suffix as the key. This leaves the outgoing request unchanged. Configuration changes affect new independent native runs; resumed native runs retain their launch-time declaration. External CLI adapters do not use this setting.`;
 }
 

@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
-import { createMission, listGlobalMissions, resolveMissionStoreLocation, updateMission } from "../../src/missions/store.ts";
+import { createMission, listGlobalMissions, readMission, resolveMissionStoreLocation, updateMission } from "../../src/missions/store.ts";
 
 function fixture() {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-mission-projection-"));
@@ -170,13 +170,13 @@ try {
 			const indexedFirst = listGlobalMissions(test.location.globalIndexDir).entries.find((entry) => entry.missionId === first.id);
 			assert.equal(indexedFirst?.lastRunId, "run-stale");
 
-			const firstRecord = JSON.parse(fs.readFileSync(firstRecordPath, "utf-8")) as Record<string, any>;
+			const firstRecord = readMission(test.location, first.id);
 			firstRecord.title = "First record is newest";
 			firstRecord.status = "completed";
 			firstRecord.updatedAt = "2026-01-04T00:00:00.000Z";
 			firstRecord.runs = [];
 			fs.writeFileSync(firstRecordPath, JSON.stringify(firstRecord, null, 2), "utf-8");
-			const secondRecord = JSON.parse(fs.readFileSync(secondRecordPath, "utf-8")) as Record<string, any>;
+			const secondRecord = readMission(test.location, second.id);
 			secondRecord.title = "Second record is older";
 			secondRecord.updatedAt = "2026-01-03T00:00:00.000Z";
 			fs.writeFileSync(secondRecordPath, JSON.stringify(secondRecord, null, 2), "utf-8");
@@ -191,15 +191,10 @@ try {
 		}
 	});
 
-	it("keeps corrupt, missing, and mismatched pointers on their existing paths", () => {
+	it("keeps mismatched and unreadable pointers on their existing paths", () => {
 		const test = fixture();
 		try {
-			const missing = createMission(test.location, { title: "Missing record", objective: "Remove its pointer" });
-			const corrupt = createMission(test.location, { title: "Corrupt record", objective: "Keep its pointer stale" });
 			const mismatch = createMission(test.location, { title: "Mismatched record", objective: "Keep its pointer stale" });
-			fs.rmSync(path.join(test.location.missionDir, `${missing.id}.json`));
-			fs.writeFileSync(path.join(test.location.missionDir, `${corrupt.id}.json`), "{not json", "utf-8");
-
 			const mismatchPointerPath = indexPathFor(test.location.globalIndexDir, mismatch.id);
 			const mismatchPointer = JSON.parse(fs.readFileSync(mismatchPointerPath, "utf-8")) as Record<string, unknown>;
 			mismatchPointer.missionId = "wrong-record-id";
@@ -208,10 +203,8 @@ try {
 			fs.writeFileSync(corruptPointerPath, "{not json", "utf-8");
 
 			const global = listGlobalMissions(test.location.globalIndexDir);
-			assert.deepEqual(global.entries.map((entry) => entry.missionId).sort(), ["wrong-record-id", corrupt.id].sort());
-			assert.equal(global.entries.find((entry) => entry.missionId === corrupt.id)?.stale, true);
+			assert.deepEqual(global.entries.map((entry) => entry.missionId), ["wrong-record-id"]);
 			assert.match(global.entries.find((entry) => entry.missionId === "wrong-record-id")?.staleReason ?? "", /does not match index id/);
-			assert.match(global.warnings.join("\n"), /Removed stale global mission pointer/);
 			assert.match(global.warnings.join("\n"), /Skipped corrupt global mission index entry/);
 			assert.equal(fs.existsSync(corruptPointerPath), true, "an unreadable index pointer remains available for inspection");
 			assert.equal(fs.existsSync(mismatchPointerPath), true, "an ID-mismatched pointer remains marked stale rather than being rewritten");

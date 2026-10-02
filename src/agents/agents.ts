@@ -962,7 +962,6 @@ function writeSettingsFile(filePath: string, settings: Record<string, unknown>):
 		fs: {
 			mkdirSync: fs.mkdirSync,
 			writeFileSync: (tempPath, data, options) => {
-				if (typeof data !== "string") throw new TypeError("Settings JSON serialization must produce a string.");
 				return fs.writeFileSync(tempPath, `${data}\n`, options);
 			},
 			renameSync: (sourcePath, destinationPath) => {

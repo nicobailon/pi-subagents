@@ -384,9 +384,7 @@ export function resolvePiLaunchToolPlan(
 		input.tools !== undefined ||
 		(input.mcpDirectTools?.length ?? 0) > 0 ||
 		allowedToolSet !== undefined;
-	const internalTools = [
-		...(input.structuredOutput ? ["structured_output"] : []),
-	].filter((tool) => !excludedToolSet.has(tool));
+	const internalTools = (input.structuredOutput ? ["structured_output"] : []).filter((tool) => !excludedToolSet.has(tool));
 	const effectiveToolAllowlist = [
 		...new Set([
 			...effectiveDeclaredBuiltinTools,

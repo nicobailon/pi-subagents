@@ -147,7 +147,6 @@ it("saves settings with the existing JSON format and unrelated values intact", (
 	const healthyRaw = fs.readFileSync(settingsPath, "utf-8");
 	assert.equal(returnedPath, settingsPath);
 	assert.equal(healthyRaw, `${JSON.stringify(expected, null, 2)}\n`);
-	assert.deepEqual(JSON.parse(healthyRaw), expected);
 });
 
 it("preserves POSIX settings modes and follows symlink targets", { skip: process.platform === "win32" ? "POSIX mode and symlink semantics vary on Windows" : undefined }, () => {
@@ -188,7 +187,6 @@ it("preserves POSIX settings modes and follows symlink targets", { skip: process
 	assert.equal(fs.readlinkSync(linkedSettingsPath), symlinkText);
 	const linkedRaw = fs.readFileSync(settingsTarget, "utf-8");
 	assert.equal(linkedRaw, `${JSON.stringify(expected, null, 2)}\n`);
-	assert.deepEqual(JSON.parse(linkedRaw), expected);
 	assert.equal(fs.statSync(settingsTarget).mode & 0o7777, 0o604);
 
 	const nestedProject = path.join(root, "nested-project");
@@ -376,7 +374,6 @@ it("rejects a read-only settings target for a non-root user even when its parent
 	assert.equal(child.signal, null);
 	assert.equal(JSON.parse(child.stdout).code, "EACCES");
 	assert.equal(fs.readFileSync(settingsPath, "utf-8"), previousRaw);
-	assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")), previous);
 	assert.deepEqual(
 		fs.readdirSync(settingsDir).filter((entry) => entry.startsWith(".settings.json.") && entry.endsWith(".tmp")),
 		[],
@@ -396,7 +393,6 @@ it("keeps the previous settings file intact when the real API process exits duri
 	assert.equal(child.status, 73, child.stderr);
 	assert.equal(child.signal, null);
 	assert.equal(fs.readFileSync(settingsPath, "utf-8"), previousRaw);
-	assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")), previous);
 	const interruptedTemps = fs.readdirSync(path.dirname(settingsPath))
 		.filter((entry) => entry.startsWith(".settings.json.") && entry.endsWith(".tmp"));
 	assert.equal(interruptedTemps.length, 1, "the child must have exited after writing its temporary file");
@@ -416,7 +412,6 @@ it("keeps the previous settings file intact and cleans up when replacing it fail
 	assert.equal(child.signal, null);
 	assert.deepEqual(JSON.parse(child.stdout), { code: "EIO", message: "injected settings rename failure" });
 	assert.equal(fs.readFileSync(settingsPath, "utf-8"), previousRaw);
-	assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, "utf-8")), previous);
 	assert.deepEqual(
 		fs.readdirSync(path.dirname(settingsPath)).filter((entry) => entry.startsWith(".settings.json.") && entry.endsWith(".tmp")),
 		[],

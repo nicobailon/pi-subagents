@@ -33,7 +33,7 @@ const writeAtomicJson = createAtomicJsonWriter({ mode: 0o600 });
 const MAX_OUTPUT_BYTES = 8 * 1024;
 const RECENT_COMMANDS = 20;
 
-export function childCommandStatePath(channelDir: string): string {
+function childCommandStatePath(channelDir: string): string {
 	return path.join(channelDir, "commands.json");
 }
 export function readChildCommandState(channelDir: string): ChildCommandState | undefined {

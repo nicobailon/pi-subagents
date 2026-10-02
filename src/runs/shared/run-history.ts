@@ -149,7 +149,7 @@ export interface BackgroundRunHistoryEntry {
 	task: string;
 	exitCode: number;
 	durationMs: number;
-	terminal: { stopped?: boolean; interrupted?: boolean; timedOut?: boolean; processSignal?: string | null };
+	terminal: Pick<NonNullable<Parameters<typeof recordRun>[4]>, "stopped" | "interrupted" | "timedOut" | "processSignal">;
 }
 
 const TERMINAL_STEP_STATUSES = new Set(["complete", "completed"]);
@@ -199,7 +199,7 @@ export function planBackgroundRunHistory(input: {
 		// `launched === false` marks steps the runner never dispatched a child
 		// session for, regardless of the status they were later relabeled to.
 		if (step.status === "pending" || step.launched === false) continue;
-		const succeeded = TERMINAL_STEP_STATUSES.has(step.status as string);
+		const succeeded = typeof step.status === "string" && TERMINAL_STEP_STATUSES.has(step.status);
 		const ownTerminal: BackgroundRunHistoryEntry["terminal"] = {
 			...(step.timedOut === true ? { timedOut: true } : {}),
 			...(step.stopped === true ? { stopped: true } : {}),
@@ -207,14 +207,15 @@ export function planBackgroundRunHistory(input: {
 		// A step that reached its own terminal state (completed, or failed/rejected
 		// before a sibling was interrupted) keeps its own outcome; run-wide flags
 		// would relabel it in recordRun().
-		const terminal = SELF_TERMINAL_STEP_STATUSES.has(step.status as string) ? ownTerminal : { ...runTerminal, ...ownTerminal };
+		const terminal = typeof step.status === "string" && SELF_TERMINAL_STEP_STATUSES.has(step.status) ? ownTerminal : { ...runTerminal, ...ownTerminal };
 		const processSignal = input.stepResults?.[index]?.processSignal;
 		rows.push({
 			agent: step.agent,
 			task,
 			exitCode: succeeded ? 0 : 1,
 			durationMs: typeof step.durationMs === "number" ? step.durationMs : input.runDurationMs,
-			terminal: processSignal === undefined ? terminal : { ...terminal, processSignal: typeof processSignal === "string" ? processSignal : null },		});
+			terminal: processSignal === undefined ? terminal : { ...terminal, processSignal: typeof processSignal === "string" ? processSignal : null },
+		});
 	}
 	return rows;
 }

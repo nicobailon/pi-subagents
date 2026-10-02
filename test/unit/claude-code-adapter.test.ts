@@ -313,7 +313,7 @@ process.stdin.resume();
 process.stdin.on("end", () => {
   process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "argv:" + args.join(" ") }) + "\n");
 });
-`.replace(/^\+/gm, ""), "utf-8");
+`, "utf-8");
 
 		const overrideArgs = resolveClaudeCodeOverride({ model: "claude-opus-5.5:high" })?.args;
 		const launch = resolveClaudeCodeLaunch({ adapter: CLAUDE_CODE_ADAPTER_ID, command: process.execPath, commandPrefixArgs: [scriptPath], overrideArgs });

@@ -150,7 +150,6 @@ export function resolveClaudeCodeOverride(input: {
 			model = baseModel;
 			args.push("--model", baseModel);
 		} else if (!level) {
-			// The request reduced to nothing: neither a model nor a level survived.
 			throw new Error(`Invalid Claude Code model ${JSON.stringify(requested)}; ${INVALID_CLAUDE_CODE_MODEL}.`);
 		}
 	}

@@ -878,11 +878,6 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	}
 }
 
-/** `model: false` / `thinking: false` clear a value; only real strings reach a launch. */
-function requestString(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
-}
-
 /**
  * An explicit `thinking: false` clears the level, so only `undefined` falls
  * through to the agent's own value. Treating `false` as absent would silently
@@ -1106,7 +1101,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (claudeCodeAdapter) {
 			try {
 				claudeCodeOverride = resolveClaudeCodeOverride({
-					model: requestString(s.model),
+					model: typeof s.model === "string" ? s.model : undefined,
 					agent: a,
 					thinking: resolveClaudeCodeThinking(thinkingOverride, a.thinking),
 					thinkingCeiling: intersectThinkingCeilings(params.thinkingCeiling, a.maxThinking, ctx.childRuntime?.thinkingCeiling),
@@ -1923,7 +1918,7 @@ export function executeAsyncSingle(
 	if (claudeCodeAdapter) {
 		try {
 			singleClaudeCodeOverride = resolveClaudeCodeOverride({
-				model: requestString(params.modelOverride),
+				model: typeof params.modelOverride === "string" ? params.modelOverride : undefined,
 				agent: agentConfig,
 				thinking: resolveClaudeCodeThinking(params.thinkingOverride, agentConfig.thinking),
 				thinkingCeiling: intersectThinkingCeilings(params.thinkingCeiling, agentConfig.maxThinking, ctx.childRuntime?.thinkingCeiling),
