@@ -304,6 +304,10 @@ function listGitWorktrees(repoRoot: string): GitWorktreeRecord[] {
 	return parseGitWorktreeList(result.stdout);
 }
 
+export function isRegisteredCleanupWorktree(repoRoot: string, candidate: string): boolean {
+	return listGitWorktrees(repoRoot).some((tree) => samePath(tree.path, candidate));
+}
+
 function readJsonFile(filePath: string): unknown {
 	return JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
 }
@@ -650,6 +654,9 @@ function buildManagedEntry(input: {
 	if (git.branch === input.otherGitRecords.find((candidate) => comparablePath(candidate.path) === rootPath)?.branch) {
 		return blockedEntry(entry, "ineligible", "keep", "metadata-recorded branch is checked out at the repository root");
 	}
+
+	const retainedSession = record.child.sessionPath ?? record.status?.steps?.[record.child.index]?.sessionFile ?? record.status?.sessionFile;
+	if (typeof retainedSession === "string" && retainedSession.trim()) return blockedEntry(entry, "ineligible", "keep", "retained child resume still has a recorded session dependency");
 
 	const runState = inspectRunState(record, input.now, foregroundRunOwnership);
 	if (runState.kind === "unknown") return blockedEntry(entry, "unknown", "unknown", runState.reason ?? "owning run state is unknown");

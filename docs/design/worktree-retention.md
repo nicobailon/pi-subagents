@@ -110,14 +110,14 @@ Run count maintenance after durable worktree/handoff settlement in the parent ho
 
 Use existing verifiable terminal ownership in the parent. After a restart, a foreground run without sufficient remembered/durable ownership proof remains protected; the first version does not invent a new ownership ledger to make it removable. A stopped or shutting-down host defers maintenance; there is no new daemon, periodic directory sweep or cleanup work on every Fleet/status refresh.
 
-A bounded ownership inventory determines whether a count check is needed. Avoid expensive per-entry Git checks below the limit. Above it, inspect oldest candidates using asynchronous Git commands and stop after enough eligible entries are selected. Reuse/extract the planner's predicates rather than implementing a second notion of deletion safety. The current synchronous full planner is not suitable to call directly from a watcher callback. Truncated inventory or bounded-scan failures defer automatic removal and are reported; they must not appear as an exact complete count.
+A bounded ownership inventory determines whether a count check is needed. Avoid expensive per-entry Git checks below the limit. Above it, inspect oldest candidates in a separate worker process and stop after enough eligible entries are selected. Git checks stay outside the parent event loop. Cancellation keeps the worker and its repository lock alive until any already admitted Git command finishes, then stops before the next entry; it cannot roll back an admitted removal. Reuse/extract the planner's predicates rather than implementing a second notion of deletion safety. The current synchronous full planner is not suitable to call directly from a watcher callback. Truncated inventory or bounded-scan failures defer automatic removal and are reported; they must not appear as an exact complete count.
 
 ## Implementation split
 
 Deliver two narrow PRs for this feature:
 
 1. Reviewed `worktree.cleanup` apply: shared validators, plan claiming/receipt, per-repo mutation coordination, existing authority, ignored/locked protection, non-forced removal, branch retention, current-metadata reconciliation, focused tests and docs.
-2. Optional `worktreeRetainCount`: config validation, stable selection, parent lifecycle scheduling/coalescing, async bounded inspection, counts/reasons, default-off behavior and tests. Build on the first PR's apply/locking path.
+2. Optional `worktreeRetainCount`: config validation, stable selection, parent lifecycle scheduling/coalescing, worker-based bounded inspection, counts/reasons, default-off behavior and tests. Build on the first PR's apply/locking path.
 
 Likely touchpoints are `src/runs/shared/worktree-cleanup-plan.ts`, a small shared apply/lock module, `src/runs/foreground/subagent-executor.ts`, existing retained-worktree admission and handoff update boundaries, `src/policy/authority.ts` consumers, `src/extension/config.ts`, `src/shared/types.ts`, parent background result delivery, and relevant docs. The authority defaults themselves remain unchanged.
 

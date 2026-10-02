@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { readParallelHandoffManifest } from "./parallel-handoff.ts";
-import { buildWorktreeCleanupPlan, resolveCleanupRepoRoot, worktreeCleanupContentPayload, worktreeCleanupPlanPath, WORKTREE_CLEANUP_PLAN_TTL_MS, type BuildWorktreeCleanupPlanInput, type WorktreeCleanupPlan, type WorktreeCleanupPlanEntry } from "./worktree-cleanup-plan.ts";
+import { buildWorktreeCleanupPlan, isRegisteredCleanupWorktree, resolveCleanupRepoRoot, worktreeCleanupContentPayload, worktreeCleanupPlanPath, WORKTREE_CLEANUP_PLAN_TTL_MS, type BuildWorktreeCleanupPlanInput, type WorktreeCleanupPlan, type WorktreeCleanupPlanEntry } from "./worktree-cleanup-plan.ts";
 import { withHandoffWriteLock, withRepositoryWorktreeLock } from "./worktree-lock.ts";
 import { withWorktreeTransaction } from "./worktree.ts";
 
@@ -51,6 +51,7 @@ function recordRemoval(entry: WorktreeCleanupPlanEntry): void {
 	if (!manifest || manifest.runId !== entry.runId) throw new Error("Handoff ownership changed before recording removal.");
 	const tasks = manifest.groups.flatMap((group) => group.cleanup.tasks).filter((task) => task.index === entry.taskIndex && path.resolve(task.path) === entry.path && task.branch === entry.branch);
 	if (tasks.length !== 1) throw new Error("Handoff task no longer identifies exactly one removed worktree.");
+	if (tasks[0]!.worktreeRemoved) return;
 	tasks[0]!.worktreeRemoved = true;
 	tasks[0]!.branchRemoved = false;
 	tasks[0]!.preserved = true;
@@ -66,7 +67,7 @@ export async function applyReviewedCleanupPlan(input: {
 	select?: (plan: WorktreeCleanupPlan) => Set<string>;
 }): Promise<{ receipt: CleanupReceipt; receiptPath: string; reused: boolean }> {
 	if (!input.authorized) throw new Error("Worktree cleanup requires discardWorktree authorization.");
-	return withWorktreeTransaction(() => withRepositoryWorktreeLock(input.repo, () => {
+	return withWorktreeTransaction(() => withRepositoryWorktreeLock(input.repo, async () => {
 		const plan = loadReviewedCleanupPlan(input.repo, input.planId);
 		const claimPath = worktreeCleanupPlanPath(plan.repoRoot, plan.planId).replace(/\.json$/, ".claim");
 		const receiptPath = path.join(claimPath, "receipt.json");
@@ -78,6 +79,15 @@ export async function applyReviewedCleanupPlan(input: {
 			// A claimed plan is never destructively replayed, even after interruption.
 			const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8")) as CleanupReceipt;
 			if (receipt.version !== 1 || receipt.planId !== plan.planId || receipt.repoRoot !== plan.repoRoot || receipt.contentHash !== plan.contentHash || !Array.isArray(receipt.entries) || !["applying", "complete", "partial"].includes(receipt.state)) throw new Error("Claimed cleanup plan has an invalid receipt; inspect it before creating a fresh plan.");
+			// Repair only a journaled removal whose directory and Git registration
+			// are both gone. A recreated path is never changed or removed on replay.
+			for (const entry of plan.entries.filter((entry) => receipt.state !== "complete" && entry.decision === "remove" && receipt.entries.some((item) => item?.state === "removed" && item.path === entry.path && item.branch === entry.branch))) {
+				await new Promise<void>((resolve) => setImmediate(resolve));
+				input.signal?.throwIfAborted();
+				try { fs.lstatSync(entry.path); continue; }
+				catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+				if (!isRegisteredCleanupWorktree(plan.repoRoot, entry.path) && entry.handoffPath) withHandoffWriteLock(entry.handoffPath, () => recordRemoval(entry));
+			}
 			return { receipt, receiptPath, reused: true };
 		}
 		const receipt: CleanupReceipt = { version: 1, planId: plan.planId, repoRoot: plan.repoRoot, contentHash: plan.contentHash, state: "applying", startedAt: Date.now(), entries: [] };
@@ -85,6 +95,7 @@ export async function applyReviewedCleanupPlan(input: {
 		try {
 			const selected = input.select?.(plan);
 			for (const entry of plan.entries.filter((item) => item.decision === "remove")) {
+				await new Promise<void>((resolve) => setImmediate(resolve));
 				input.signal?.throwIfAborted();
 				if (selected && !selected.has(entry.path)) {
 					receipt.entries.push({ path: entry.path, branch: entry.branch, state: "kept", reason: "outside the current retention excess" });

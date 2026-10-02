@@ -2012,6 +2012,15 @@ async function resumeAsyncRun(input: {
 			: "External runners do not persist Pi sessions and cannot be resumed.";
 		return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 	}
+	if (target.source === "async" && target.managedWorktree && target.asyncDir) {
+		try {
+			const protectedCwd = await protectRetainedWorktreeForResume(parallelHandoffPath(target.asyncDir), target.runId, target.index, input.signal);
+			if (path.resolve(protectedCwd) !== path.resolve(effectiveCwd)) throw new Error("Retained worktree cwd changed during resume admission.");
+		} catch (error) {
+			return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
+		}
+	}
+
 	if (target.source === "async" && target.runner?.type === "external-job") {
 		if (attachChain) return { content: [{ type: "text", text: "External-job follow-up does not support chain attachment. Use action='resume' with message instead." }], isError: true, details: { mode: "management", results: [] } };
 		const resumed = await resumeExternalJobFollowUp({
@@ -2212,16 +2221,6 @@ async function resumeAsyncRun(input: {
 	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const parentModel = input.parentModel;
 	const revivalAsyncDir = path.join(DIRS.async, runId);
-	if (target.source === "async" && target.managedWorktree && target.asyncDir) {
-		try {
-			const protectedCwd = await protectRetainedWorktreeForResume(parallelHandoffPath(target.asyncDir), target.runId, target.index, input.signal);
-			if (path.resolve(protectedCwd) !== path.resolve(effectiveCwd)) throw new Error("Retained worktree cwd changed during resume admission.");
-		} catch (error) {
-			activeAsyncCapacity?.rollback();
-			return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
-		}
-	}
-
 	const result = await executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target as Parameters<typeof buildRevivedAsyncTask>[0], effectiveFollowUp),

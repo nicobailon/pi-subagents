@@ -62,6 +62,37 @@ describe("reviewed cleanup apply", () => {
 		assert.ok(fs.existsSync(tree.path));
 		if (drift === "locked") git(repo, ["worktree", "unlock", tree.path]);
 	}));
+	it("keeps a retained native session dependency without any Git drift", () => cleanupFixture(async ({ repo, setup, manifestPath, planId }) => {
+		const sessionPath = path.join(repo, "retained-session.jsonl");
+		fs.writeFileSync(sessionPath, "fixture session");
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+		manifest.groups[0].children[0].sessionPath = sessionPath;
+		fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+		const result = await applyReviewedCleanupPlan({ repo, planId, authorized: true, foregroundRunOwnership: () => "terminal" });
+		assert.equal(result.receipt.entries[0]?.state, "kept");
+		assert.match(result.receipt.entries[0]!.reason, /recorded session dependency/);
+		assert.ok(fs.existsSync(setup.worktrees[0]!.path));
+	}));
+
+	for (const recreated of [false, true]) it(`reconciles journaled removal facts without deleting a recreated path: ${recreated}`, () => cleanupFixture(async ({ repo, setup, manifestPath, planId }) => {
+		const args = { repo, planId, authorized: true, foregroundRunOwnership: () => "terminal" as const };
+		const applied = await applyReviewedCleanupPlan(args);
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+		manifest.groups[0].cleanup.tasks[0].worktreeRemoved = false;
+		manifest.groups[0].children[0].summary = "later evidence";
+		fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+		applied.receipt.state = "applying";
+		fs.writeFileSync(applied.receiptPath, JSON.stringify(applied.receipt));
+		const tree = setup.worktrees[0]!;
+		if (recreated) git(repo, ["worktree", "add", tree.path, tree.branch]);
+		const result = await applyReviewedCleanupPlan(args);
+		assert.equal(result.reused, true);
+		assert.equal(result.receipt.state, "applying");
+		const current = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+		assert.equal(current.groups[0].cleanup.tasks[0].worktreeRemoved, !recreated);
+		assert.equal(current.groups[0].children[0].summary, "later evidence");
+		assert.equal(fs.existsSync(tree.path), recreated);
+	}));
 
 	it("rejects unauthorized, expired and altered plans without claiming them", () => cleanupFixture(async ({ repo, planId }) => {
 		await assert.rejects(applyReviewedCleanupPlan({ repo, planId, authorized: false }), /authorization/);
