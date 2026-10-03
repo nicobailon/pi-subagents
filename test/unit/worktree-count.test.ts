@@ -17,7 +17,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 async function fixture(count: number, run: (args: { repo: string; worktreeBaseDir: string; paths: string[]; manifests: string[] }) => Promise<void>): Promise<void> {
-	const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-count-"));
+	const temp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-count-")));
 	const repo = path.join(temp, "repo");
 	const worktreeBaseDir = path.join(temp, "trees");
 	fs.mkdirSync(repo);
