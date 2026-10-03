@@ -117,7 +117,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		{ name: "async", asyncByDefault: true, id: "workflow-sibling-stop", reason: /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Workflow stopped before async child completed\.\nStatus: workflow finished$/ },
 	]) {
 		it(`reports ${name} workflow siblings stopped by a failed script as stopped`, { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-			mockPi.onCall({ matchArgIncludes: "Slow sibling", hangUntilAbort: true });
+			// hangUntilAbort still emits agent_settled first, which lets the 1s final-drain grace finish the sibling as failed before the stop lands.
+			// A release path that never appears keeps it mid-run, and its polling keeps a detached runner process alive, until the stop aborts it.
+			mockPi.onCall({ matchArgIncludes: "Slow sibling", waitForPath: path.join(tempDir, "never-released") });
 			mockPi.onCall({ matchArgIncludes: "Fails at launch", createError: "launch failed" });
 			const sent: Array<{ customType?: string; content?: string }> = [];
 			const executor = makeExecutor([makeAgent("echo")], {}, asyncByDefault, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, (message: unknown) => sent.push(message as { customType?: string; content?: string }));
