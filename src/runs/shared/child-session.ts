@@ -253,7 +253,9 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
  * default, which the child's `tools` allowlist cannot declare. Registering the selected names as
  * `direct` makes them model-declared and callable; `hidden` stays hidden. A name counts only when
  * the tool's raw identity, its `<server>/<tool>` label, matches the granting selector: Pi can give
- * the sanitized name of `srv/a.b` to `srv/a_b`. Every other tool the extension registers becomes
+ * the sanitized name of `srv/a.b` to `srv/a_b`. The selector's server part may be the configured
+ * name or its `-`→`_` form, which Pi's namespace uses: Pi refuses two servers whose names differ
+ * only in `-` and `_`, so both forms name the same server. Every other tool the extension registers becomes
  * `hidden`, so neither codemode nor `ctx.executeTool()` can call it, independent of the `tools`
  * allowlist. The `builtin` entry loads
  * through the explicit `builtin:mcp` path even with `noExtensions`, and `replaceable` lets an
@@ -264,10 +266,16 @@ function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, selections: Readon
 	const createMcpExtension = (pi as { createMcpExtension?: () => (api: ExtensionAPI) => void | Promise<void> }).createMcpExtension;
 	if (typeof createMcpExtension !== "function") throw new Error(`Selected built-in MCP tools (${selections.map(({ name }) => name).join(", ")}) need a Pi version with built-in MCP.`);
 	const selectors = new Map(selections.map(({ name, selector }) => [name, selector]));
+	const split = (value: string) => {
+		const slash = value.indexOf("/");
+		return { server: (slash === -1 ? value : value.slice(0, slash)).replace(/-/g, "_"), tool: slash === -1 ? undefined : value.slice(slash + 1) };
+	};
 	const granted = (tool: { name: string; label?: string; exposure?: string }) => {
 		const selector = selectors.get(tool.name);
 		if (selector === undefined || tool.exposure === "hidden" || tool.label === undefined) return false;
-		return selector.includes("/") ? tool.label === selector : tool.label.startsWith(`${selector}/`);
+		const want = split(selector);
+		const have = split(tool.label);
+		return have.tool !== undefined && have.server === want.server && (want.tool === undefined || want.tool === have.tool);
 	};
 	const mcp = createMcpExtension();
 	const factory = (api: ExtensionAPI) => mcp(new Proxy(api, {

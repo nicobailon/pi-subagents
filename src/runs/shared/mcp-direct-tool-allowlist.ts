@@ -174,10 +174,12 @@ function usesBuiltinMcp(host: McpRuntimeSnapshotHost | undefined): host is McpRu
 
 /**
  * Pi names built-in MCP tools `mcp__<server>__<tool>` with everything but `[A-Za-z0-9_]` replaced
- * by `_`, in the namespace `mcp__<server>` with `-` replaced by `_`. Selectors name the raw server
- * and tool. An overlong name, or one an earlier tool already took (`a_b`
+ * by `_`, in the namespace `mcp__<server>` with `-` replaced by `_`. Selectors name the raw tool;
+ * the server part may be the configured name or its `-`→`_` form, since Pi refuses two servers
+ * whose names differ only in `-` and `_`. An overlong name, or one an earlier tool already took (`a_b`
  * before `a.b`), gets a suffix hashed from the raw server and tool (Pi's `createMcpToolName`), so
- * that suffixed name identifies the tool. The unsuffixed name may belong to another raw tool; the
+ * that suffixed name identifies the tool, and only the configured server name selects it. The
+ * unsuffixed name may belong to another raw tool; the
  * child checks each granted tool's raw identity before it exposes the tool.
  */
 function resolveBuiltinMcpSelections(selectors: string[], tools: readonly McpHostToolInfo[]): McpDirectToolResolution {

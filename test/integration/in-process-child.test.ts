@@ -704,6 +704,15 @@ describe("selected built-in MCP tools in a child session", () => {
 		assert.deepEqual([...mcp.registry], [["mcp__srv__echo", "direct"], ["mcp__srv__add", "hidden"]]);
 	});
 
+	it("grants a server's tools for its configured name and for its `-`→`_` form", async () => {
+		const name = "mcp__codebase_memory__list_projects";
+		for (const selector of ["codebase-memory", "codebase_memory", "codebase_memory/list_projects"]) {
+			const mcp = builtinMcpPi([[name, "codebase-memory/list_projects"]]);
+			await createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 200, loadPiCodingAgent: async () => mcp.pi }).create({ ...stubLaunch, tools: [name], builtinMcpTools: [{ name, selector }] });
+			assert.deepEqual([...mcp.registry], [[name, "direct"]], selector);
+		}
+	});
+
 	it("fails the launch and shuts the session down when a selected tool never registers", async () => {
 		const mcp = builtinMcpPi();
 		const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 30, loadPiCodingAgent: async () => mcp.pi });
