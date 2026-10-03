@@ -6,6 +6,10 @@
 
 - `worktree.cleanup` can apply a saved, reviewed plan after discard authorization. It rechecks Git and ownership facts, protects ignored files and locked or resumed trees, retains local branches, and records a single-use cleanup receipt. Thanks to [@quifox](https://github.com/quifox) for [#1622](https://github.com/nicobailon/pi-subagents/issues/1622).
 
+### Fixed
+
+- Reviewed worktree cleanup keeps paths redirected outside their recorded creation directory and validates handoff metadata before deletion. Older handoffs without creation-directory proof stay kept. Thanks to [@quifox](https://github.com/quifox) for [#2655](https://github.com/nicobailon/pi-subagents/pull/2655).
+
 ## [0.75.0] - 2026-10-02
 
 ### Highlights

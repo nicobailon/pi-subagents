@@ -111,6 +111,8 @@ export async function applyReviewedCleanupPlan(input: {
 					try {
 						if (!entry.handoffPath) throw new Error("Reviewed entry has no handoff ownership.");
 						withHandoffWriteLock(entry.handoffPath, () => {
+							const manifest = readParallelHandoffManifest(entry.handoffPath!);
+							if (!manifest || manifest.runId !== entry.runId) throw new Error("Handoff ownership changed before cleanup validation.");
 							const fresh = buildWorktreeCleanupPlan({ repo: plan.repoRoot, candidatePaths: [entry.path], handoffPaths: plan.metadataPaths, worktreeBaseDir: path.dirname(plan.baseDirs[0]!), foregroundRunOwnership: input.foregroundRunOwnership });
 							const candidate = fresh.entries.find((item) => item.path === entry.path);
 							if (fresh.warnings?.some((warning) => /capped|failed to inspect/.test(warning)) || !candidate || candidate.decision !== "remove" || candidate.handoffPath !== entry.handoffPath || candidate.runId !== entry.runId || candidate.taskIndex !== entry.taskIndex || candidate.patchPath !== entry.patchPath || JSON.stringify(candidate.preconditions) !== JSON.stringify(entry.preconditions)) {

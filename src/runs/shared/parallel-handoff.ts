@@ -610,6 +610,7 @@ function writeParallelHandoffGroupUnlocked(input: {
 				branch: worktree.branch,
 				...(worktree.provider ? { provider: worktree.provider } : {}),
 				...(worktree.naming ? { naming: worktree.naming } : {}),
+				...(worktree.recordedBaseDir ? { recordedBaseDir: worktree.recordedBaseDir } : {}),
 				worktreeRemoved: false,
 				branchRemoved: false,
 				preserved: true,
@@ -706,7 +707,7 @@ export function writeWorktreeSetupHandoff(input: Omit<Parameters<typeof writePar
 				const task = cleanup?.tasks.find((candidate) => candidate.index === worktree.index);
 				return task ? { ...task, reason: task.reason && diagnostic(task.reason), errors: task.errors?.map(diagnostic) } : {
 					index: worktree.index, path: worktree.path, branch: worktree.branch,
-					provider: worktree.provider, naming: worktree.naming,
+					provider: worktree.provider, naming: worktree.naming, recordedBaseDir: worktree.recordedBaseDir,
 					worktreeRemoved: false, branchRemoved: false, preserved: true,
 					reason: "setup pending durable handoff capture",
 				};
@@ -748,6 +749,7 @@ function discardPreservedWorktreesUnlocked(
 				branch: task.branch,
 				...(task.provider ? { provider: task.provider } : {}),
 				...(task.naming ? { naming: task.naming } : {}),
+				...(task.recordedBaseDir ? { recordedBaseDir: task.recordedBaseDir } : {}),
 				index: task.index,
 				nodeModulesLinked: false,
 				syntheticPaths: [],

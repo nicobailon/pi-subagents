@@ -455,6 +455,8 @@ export interface ParallelHandoffLaneBinding {
 }
 
 export interface ParallelHandoffCleanupTask {
+	/** Canonical parent recorded when the worktree was created; missing proof keeps old trees. */
+	recordedBaseDir?: string;
 	index: number;
 	path: string;
 	branch: string;

@@ -14,7 +14,7 @@ import type {
 	ParallelHandoffManifest,
 } from "../../shared/types.ts";
 import { getAgentDir } from "../../shared/utils.ts";
-import { isTerminalParallelHandoffChildStatus } from "./parallel-handoff.ts";
+import { isTerminalParallelHandoffChildStatus, readParallelHandoffManifest } from "./parallel-handoff.ts";
 import { MACHINE_DIFF_OPTIONS, validateWorktreePatchRepresentsCurrentWorktree } from "./worktree.ts";
 
 export const WORKTREE_CLEANUP_PLAN_VERSION = 1 as const;
@@ -321,11 +321,11 @@ function readManifest(manifestPath: string): ManifestReadResult {
 		const stat = fs.lstatSync(manifestPath);
 		if (stat.isSymbolicLink() || !stat.isFile()) return { error: `parallel handoff manifest is not a regular file: ${manifestPath}` };
 		if (stat.size > MAX_METADATA_FILE_BYTES) return { error: `parallel handoff manifest exceeds the ${MAX_METADATA_FILE_BYTES}-byte limit: ${manifestPath}` };
-		const parsed = readJsonFile(manifestPath);
-		if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.groups)) {
+		const parsed = readParallelHandoffManifest(manifestPath);
+		if (!parsed) {
 			return { error: `invalid parallel handoff manifest version or groups: ${manifestPath}` };
 		}
-		return { manifest: parsed as unknown as ParallelHandoffManifest };
+		return { manifest: parsed };
 	} catch (error) {
 		const code = error && typeof error === "object" && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
 		if (code === "ENOENT") return { error: `parallel handoff manifest not found: ${manifestPath}` };
@@ -431,11 +431,10 @@ function loadMetadata(input: BuildWorktreeCleanupPlanInput, repoRoot: string): {
 	const discovered = discoverHandoffPaths(repoRoot, input);
 	const records: ManifestMetadataRecord[] = [];
 	const warnings = [...discovered.warnings];
-	const explicitPath = input.handoffPath ? path.isAbsolute(input.handoffPath) ? path.resolve(input.handoffPath) : path.resolve(repoRoot, input.handoffPath) : undefined;
 	for (const manifestPath of discovered.paths) {
 		const result = readManifest(manifestPath);
 		if (!result.manifest) {
-			if (explicitPath && comparablePath(manifestPath) === comparablePath(explicitPath)) warnings.push(result.error!);
+			warnings.push(result.error!);
 			continue;
 		}
 		const manifestRoot = resolveExistingPath(manifestPath);
@@ -534,7 +533,7 @@ function buildEntryBase(input: {
 	metadata?: ManifestMetadataRecord;
 	targetHead: string;
 }): WorktreeCleanupPlanEntry {
-	const recordedBaseDir = path.dirname(input.path);
+	const recordedBaseDir = input.metadata?.task.recordedBaseDir;
 	const patchPath = input.metadata ? metadataPatchPath(input.metadata) : undefined;
 	return {
 		path: input.path,
@@ -552,7 +551,7 @@ function buildEntryBase(input: {
 			branch: input.branch,
 			...(input.git?.head ? { worktreeHead: input.git.head } : {}),
 			...(input.metadata?.group.baseCommit ? { baseCommit: input.metadata.group.baseCommit } : {}),
-			recordedBaseDir,
+			...(recordedBaseDir ? { recordedBaseDir } : {}),
 			targetRef: input.targetHead,
 		},
 	};
@@ -634,6 +633,11 @@ function buildManagedEntry(input: {
 	const extensionsDir = path.join(getAgentDir(), "extensions");
 	if (pathInside(extensionsDir, pathInspection.realpath)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is inside Pi extensions directory '${extensionsDir}'`);
 	if (input.containmentInvalid || !pathInside(baseDir, pathInspection.realpath, true)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is outside configured base directory '${baseDir}'`);
+	const recordedBaseDir = record.task.recordedBaseDir;
+	if (typeof recordedBaseDir !== "string" || !path.isAbsolute(recordedBaseDir)) return blockedEntry(entry, "unknown", "keep", "handoff metadata has no creation-time base directory proof");
+	// Compare the saved canonical string, without following a newly replaced ancestor.
+	const creationRelative = path.relative(recordedBaseDir, pathInspection.realpath);
+	if (!creationRelative || creationRelative === ".." || creationRelative.startsWith(`..${path.sep}`) || path.isAbsolute(creationRelative)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is outside its creation-time recorded base directory '${recordedBaseDir}'`);
 
 	if (rootPath === comparablePath(pathInspection.realpath)) return blockedEntry(entry, "ineligible", "keep", "worktree is the repository root");
 	if (git.locked) return blockedEntry(entry, "ineligible", "keep", "Git worktree is locked");
