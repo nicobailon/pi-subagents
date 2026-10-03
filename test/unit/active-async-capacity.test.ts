@@ -462,7 +462,7 @@ describe("active async capacity", () => {
 	});
 
 	it("reclaims a terminal workflow only when every unresolved async child is an old failed run with a dead runner", () => {
-		type Child = { state: string; lastActivityAt?: number; pid?: "dead" | "alive"; sessionId?: string; runnerId?: unknown };
+		type Child = { state: string; lastActivityAt?: number; pid?: "dead" | "alive"; sessionId?: string; runnerId?: unknown; pidNamespace?: string };
 		const abandoned: Child = { state: "failed", lastActivityAt: 0, pid: "dead" };
 		const cases: Array<{ name: string; children: Child[]; endedAt?: number; threshold?: number | false; releases: boolean }> = [
 			{ name: "abandoned children", children: [abandoned, abandoned], releases: true },
@@ -471,6 +471,7 @@ describe("active async capacity", () => {
 			{ name: "child active recently", children: [{ ...abandoned, lastActivityAt: 9_500 }], releases: false },
 			{ name: "unresolved complete child", children: [{ ...abandoned, state: "complete" }], releases: false },
 			{ name: "child runner alive", children: [{ ...abandoned, pid: "alive" }], releases: false },
+			{ name: "child runner in another PID namespace", children: [{ ...abandoned, pidNamespace: "pid:[2]" }], releases: false },
 			{ name: "child from another session", children: [{ ...abandoned, sessionId: "other-session" }], releases: false },
 			{ name: "malformed child runner identity", children: [{ ...abandoned, runnerId: 42 }], releases: false },
 			{ name: "strict mode", children: [abandoned], threshold: false, releases: false },
@@ -488,12 +489,12 @@ describe("active async capacity", () => {
 					const runId = `child-${index}`;
 					const pid = 50_000 + index;
 					pids.set(pid, child.pid ?? "alive");
-					writeJson(path.join(asyncRoot, runId, "status.json"), { runId, sessionId: child.sessionId ?? "session-a", mode: "single", state: child.state, pid, startedAt: 0, lastActivityAt: child.lastActivityAt, processTerminal: { version: 1, state: "pending", runId, runnerProcessInstanceId: child.runnerId ?? `runner-${index}` } });
+					writeJson(path.join(asyncRoot, runId, "status.json"), { runId, sessionId: child.sessionId ?? "session-a", mode: "single", state: child.state, pid, pidNamespaceScope: child.pidNamespace ?? "pid:[1]", startedAt: 0, lastActivityAt: child.lastActivityAt, processTerminal: { version: 1, state: "pending", runId, runnerProcessInstanceId: child.runnerId ?? `runner-${index}` } });
 					writeJson(path.join(asyncRoot, runId, "process-terminal.json"), { version: 1, state: "pending", runId, runnerProcessInstanceId: `runner-${index}` });
 					return { agent: "worker", workflowKey: runId, runId, async: true, status: child.state };
 				});
 				writeJson(path.join(workflowDir, "status.json"), { runId: "workflow", sessionId: "session-a", mode: "workflow", state: "failed", startedAt: 0, endedAt: testCase.endedAt ?? 0, steps });
-				const options = { rootDir, now: () => 10_000, pidLiveness: (pid: number) => pids.get(pid) ?? "unknown" as const, abandonedSlotReleaseAfterMs: testCase.threshold ?? 1_000 };
+				const options = { rootDir, now: () => 10_000, pidLiveness: (pid: number) => pids.get(pid) ?? "unknown" as const, pidNamespaceScope: () => "pid:[1]", abandonedSlotReleaseAfterMs: testCase.threshold ?? 1_000 };
 
 				const inspection = inspectActiveAsyncCapacityOwner({ runId: "workflow", sessionId: "session-a" }, options);
 				assert.equal(inspection.release.state, testCase.releases ? "releasable" : "retained", testCase.name);
