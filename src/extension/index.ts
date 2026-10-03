@@ -780,7 +780,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		try {
-			if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events, hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests });
+			// A headless host may dispose the session as soon as this turn settles, so hand
+			// finished results to Pi now; Pi runs the queued completion turn after agent_end.
+			// A failed drain rejects without this step so its deadline stays exact.
+			if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events, hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests }).then(resultWatcher.deliverPendingResults);
 		} finally {
 			// Deliver notices after a failed drain without suppressing its rejection.
 			const ownerSessionId = state.currentSessionId;

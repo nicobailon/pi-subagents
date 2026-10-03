@@ -150,6 +150,8 @@ export interface RegisterSubagentNotifyOptions {
 export interface CompletionNotifier {
 	deliver(result: CompletionNotification): Promise<boolean>;
 	hasPendingDelivery(): boolean;
+	/** Send every batched completion now instead of waiting for its batch timer. */
+	flush(): void;
 	dispose(): void;
 }
 
@@ -893,6 +895,9 @@ export default function registerSubagentNotify(
 	return {
 		deliver,
 		hasPendingDelivery: () => pending.size > 0,
+		flush() {
+			for (const batcher of batchers.values()) batcher.flush();
+		},
 		dispose() {
 			if (disposed) return;
 			disposed = true;
