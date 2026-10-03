@@ -460,4 +460,55 @@ describe("active async capacity", () => {
 			}
 		}
 	});
+
+	it("reclaims a terminal workflow only when every unresolved async child is an old failed run with a dead runner", () => {
+		type Child = { state: string; lastActivityAt?: number; pid?: "dead" | "alive"; sessionId?: string; runnerId?: unknown; pidNamespace?: string };
+		const abandoned: Child = { state: "failed", lastActivityAt: 0, pid: "dead" };
+		const cases: Array<{ name: string; children: Child[]; endedAt?: number; threshold?: number | false; releases: boolean }> = [
+			{ name: "abandoned children", children: [abandoned, abandoned], releases: true },
+			{ name: "later child still running", children: [abandoned, { state: "running" }], releases: false },
+			{ name: "workflow ended recently", children: [abandoned], endedAt: 9_500, releases: false },
+			{ name: "child active recently", children: [{ ...abandoned, lastActivityAt: 9_500 }], releases: false },
+			{ name: "unresolved complete child", children: [{ ...abandoned, state: "complete" }], releases: false },
+			{ name: "child runner alive", children: [{ ...abandoned, pid: "alive" }], releases: false },
+			{ name: "child runner in another PID namespace", children: [{ ...abandoned, pidNamespace: "pid:[2]" }], releases: false },
+			{ name: "child from another session", children: [{ ...abandoned, sessionId: "other-session" }], releases: false },
+			{ name: "malformed child runner identity", children: [{ ...abandoned, runnerId: 42 }], releases: false },
+			{ name: "strict mode", children: [abandoned], threshold: false, releases: false },
+		];
+		for (const testCase of cases) {
+			const rootDir = tempRoot();
+			const asyncRoot = path.join(rootDir, "runs");
+			const workflowDir = path.join(asyncRoot, "workflow");
+			const pids = new Map<number, "dead" | "alive">();
+			try {
+				const workflow = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "workflow", kind: "workflow", asyncDir: workflowDir }, { rootDir });
+				assert.ok(workflow);
+				workflow.markWorkflowStarted();
+				const steps = testCase.children.map((child, index) => {
+					const runId = `child-${index}`;
+					const pid = 50_000 + index;
+					pids.set(pid, child.pid ?? "alive");
+					writeJson(path.join(asyncRoot, runId, "status.json"), { runId, sessionId: child.sessionId ?? "session-a", mode: "single", state: child.state, pid, pidNamespaceScope: child.pidNamespace ?? "pid:[1]", startedAt: 0, lastActivityAt: child.lastActivityAt, processTerminal: { version: 1, state: "pending", runId, runnerProcessInstanceId: child.runnerId ?? `runner-${index}` } });
+					writeJson(path.join(asyncRoot, runId, "process-terminal.json"), { version: 1, state: "pending", runId, runnerProcessInstanceId: `runner-${index}` });
+					return { agent: "worker", workflowKey: runId, runId, async: true, status: child.state };
+				});
+				writeJson(path.join(workflowDir, "status.json"), { runId: "workflow", sessionId: "session-a", mode: "workflow", state: "failed", startedAt: 0, endedAt: testCase.endedAt ?? 0, steps });
+				const options = { rootDir, now: () => 10_000, pidLiveness: (pid: number) => pids.get(pid) ?? "unknown" as const, pidNamespaceScope: () => "pid:[1]", abandonedSlotReleaseAfterMs: testCase.threshold ?? 1_000 };
+
+				const inspection = inspectActiveAsyncCapacityOwner({ runId: "workflow", sessionId: "session-a" }, options);
+				assert.equal(inspection.release.state, testCase.releases ? "releasable" : "retained", testCase.name);
+				assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, options), { used: testCase.releases ? 0 : 1, limit: 1 }, testCase.name);
+				if (testCase.releases) {
+					const event = JSON.parse(fs.readFileSync(path.join(workflowDir, "events.jsonl"), "utf-8"));
+					assert.equal(event.releasedBy, "abandoned-timeout");
+					assert.equal(event.processProof, "unknown");
+					assert.equal(event.controller, "unregistered");
+					assert.deepEqual(event.abandonedChildren.map((child: { runId: string }) => child.runId), ["child-0", "child-1"]);
+				}
+			} finally {
+				fs.rmSync(rootDir, { recursive: true, force: true });
+			}
+		}
+	});
 });
