@@ -12,7 +12,7 @@ export type CleanupReceipt = {
 	version: 1; planId: string; repoRoot: string; contentHash: string;
 	state: "applying" | "complete" | "partial";
 	startedAt: number; completedAt?: number; error?: string;
-	entries: Array<{ path: string; branch: string; state: "removed" | "kept" | "failed"; reason: string }>;
+	entries: Array<{ path: string; branch: string; state: "removing" | "removed" | "kept" | "failed"; reason: string }>;
 };
 
 function assertContainedRealPath(repoRoot: string, candidate: string, create = false): void {
@@ -79,14 +79,22 @@ export async function applyReviewedCleanupPlan(input: {
 			// A claimed plan is never destructively replayed, even after interruption.
 			const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf-8")) as CleanupReceipt;
 			if (receipt.version !== 1 || receipt.planId !== plan.planId || receipt.repoRoot !== plan.repoRoot || receipt.contentHash !== plan.contentHash || !Array.isArray(receipt.entries) || !["applying", "complete", "partial"].includes(receipt.state)) throw new Error("Claimed cleanup plan has an invalid receipt; inspect it before creating a fresh plan.");
-			// Repair only a journaled removal whose directory and Git registration
+			// Reconcile only a journaled attempt whose directory and Git registration
 			// are both gone. A recreated path is never changed or removed on replay.
-			for (const entry of plan.entries.filter((entry) => receipt.state !== "complete" && entry.decision === "remove" && receipt.entries.some((item) => item?.state === "removed" && item.path === entry.path && item.branch === entry.branch))) {
+			for (const entry of plan.entries.filter((entry) => receipt.state !== "complete" && entry.decision === "remove" && receipt.entries.some((item) => (item?.state === "removing" || item?.state === "removed") && item.path === entry.path && item.branch === entry.branch))) {
 				await new Promise<void>((resolve) => setImmediate(resolve));
 				input.signal?.throwIfAborted();
 				try { fs.lstatSync(entry.path); continue; }
 				catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-				if (!isRegisteredCleanupWorktree(plan.repoRoot, entry.path) && entry.handoffPath) withHandoffWriteLock(entry.handoffPath, () => recordRemoval(entry));
+				if (!isRegisteredCleanupWorktree(plan.repoRoot, entry.path) && entry.handoffPath) {
+					const item = receipt.entries.find((item) => item.path === entry.path && item.branch === entry.branch)!;
+					if (item.state === "removing") {
+						item.state = "removed";
+						item.reason = "interrupted removal reconciled; local branch retained";
+						writePrivateAtomicJson(receiptPath, receipt);
+					}
+					withHandoffWriteLock(entry.handoffPath, () => recordRemoval(entry));
+				}
 			}
 			return { receipt, receiptPath, reused: true };
 		}
@@ -110,17 +118,25 @@ export async function applyReviewedCleanupPlan(input: {
 								return;
 							}
 							input.signal?.throwIfAborted();
+							const journalEntry: CleanupReceipt["entries"][number] = { path: entry.path, branch: entry.branch, state: "removing", reason: "removal prepared; outcome not yet recorded" };
+							receipt.entries.push(journalEntry);
+							writePrivateAtomicJson(receiptPath, receipt); // Admit the attempt before Git can remove anything.
 							const removed = spawnSync("git", ["-C", plan.repoRoot, "worktree", "remove", "--", entry.path], { encoding: "utf-8", windowsHide: true });
 							if (removed.status !== 0) throw new Error(removed.error?.message || removed.stderr.trim() || "git worktree remove failed");
-							receipt.entries.push({ path: entry.path, branch: entry.branch, state: "removed", reason: "worktree removed; local branch retained" });
+							journalEntry.state = "removed";
+							journalEntry.reason = "worktree removed; local branch retained";
 							writePrivateAtomicJson(receiptPath, receipt); // Evidence precedes secondary manifest bookkeeping.
 							recordRemoval(entry);
 						});
 					} catch (error) {
 						const reason = error instanceof Error ? error.message : String(error);
 						const removed = receipt.entries.find((item) => item.path === entry.path && item.state === "removed");
-						if (removed) { removed.reason += `; handoff update failed: ${reason}`; receipt.error = reason; }
-						else receipt.entries.push({ path: entry.path, branch: entry.branch, state: "failed", reason });
+						if (removed) { removed.reason += `; removal bookkeeping failed: ${reason}`; receipt.error = reason; }
+						else {
+							const pending = receipt.entries.find((item) => item.path === entry.path && item.state === "removing");
+							if (pending) { pending.reason += `; operation failed: ${reason}`; receipt.error = reason; }
+							else receipt.entries.push({ path: entry.path, branch: entry.branch, state: "failed", reason });
+						}
 					}
 				}
 				writePrivateAtomicJson(receiptPath, receipt);

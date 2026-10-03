@@ -69,6 +69,18 @@ jobs:
           path: ${{ runner.temp }}/1906-terminal-evidence/shared-cwd-terminal.json
           if-no-files-found: ignore
 
+  worktree-cleanup-recovery:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - name: Worktree cleanup and lock recovery regressions
+        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/worktree-cleanup-plan.test.ts test/unit/worktree-lock.test.ts test/unit/parallel-handoff.test.ts
+
   native-nested-wait:
     strategy:
       matrix:
