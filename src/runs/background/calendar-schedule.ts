@@ -1,4 +1,12 @@
-import { Temporal } from "@js-temporal/polyfill";
+import { createRequire } from "node:module";
+import type { Temporal } from "@js-temporal/polyfill";
+
+const require = createRequire(import.meta.url);
+let cachedTemporal: typeof Temporal | undefined;
+
+function getTemporal(): typeof Temporal {
+	return cachedTemporal ??= (require("@js-temporal/polyfill") as typeof import("@js-temporal/polyfill")).Temporal;
+}
 
 export const CALENDAR_WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 export type CalendarWeekday = typeof CALENDAR_WEEKDAYS[number];
@@ -25,11 +33,11 @@ export function normalizeCalendarRule(input: { every?: unknown; at?: unknown; ti
 
 function localDate(value: string): Temporal.PlainDate {
 	if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Calendar nextLocalDate must use YYYY-MM-DD.");
-	return Temporal.PlainDate.from(value, { overflow: "reject" });
+	return getTemporal().PlainDate.from(value, { overflow: "reject" });
 }
 
 function referenceDate(rule: CalendarRule, reference: number): Temporal.PlainDate {
-	return Temporal.Instant.fromEpochMilliseconds(reference).toZonedDateTimeISO(rule.timezone).toPlainDate();
+	return getTemporal().Instant.fromEpochMilliseconds(reference).toZonedDateTimeISO(rule.timezone).toPlainDate();
 }
 
 function occurrence(rule: CalendarRule, date: Temporal.PlainDate): CalendarOccurrence | undefined {
@@ -43,7 +51,7 @@ function occurrence(rule: CalendarRule, date: Temporal.PlainDate): CalendarOccur
 
 export function nextCalendarOccurrence(rule: CalendarRule, after: number, minimumDate?: string): CalendarOccurrence {
 	let date = referenceDate(rule, after);
-	if (minimumDate && Temporal.PlainDate.compare(date, localDate(minimumDate)) < 0) date = localDate(minimumDate);
+	if (minimumDate && getTemporal().PlainDate.compare(date, localDate(minimumDate)) < 0) date = localDate(minimumDate);
 	for (let i = 0; i < SEARCH_DAYS; i++, date = date.add({ days: 1 })) {
 		const candidate = occurrence(rule, date);
 		if (candidate && Date.parse(candidate.nextRunAt) > after) return candidate;
@@ -55,7 +63,7 @@ export function latestCalendarOccurrence(rule: CalendarRule, now: number, minimu
 	const floor = localDate(minimumDate);
 	let date = referenceDate(rule, now);
 	for (let i = 0; i < SEARCH_DAYS; i++, date = date.subtract({ days: 1 })) {
-		if (Temporal.PlainDate.compare(date, floor) < 0) return undefined;
+		if (getTemporal().PlainDate.compare(date, floor) < 0) return undefined;
 		const candidate = occurrence(rule, date);
 		if (candidate && Date.parse(candidate.nextRunAt) <= now) return candidate;
 	}
@@ -65,7 +73,7 @@ export function latestCalendarOccurrence(rule: CalendarRule, now: number, minimu
 export function calendarDateAfter(rule: CalendarRule, consumedAt: number, pendingDate: string): string {
 	const consumed = referenceDate(rule, consumedAt);
 	const pending = localDate(pendingDate);
-	return (Temporal.PlainDate.compare(consumed, pending) > 0 ? consumed : pending).add({ days: 1 }).toString();
+	return (getTemporal().PlainDate.compare(consumed, pending) > 0 ? consumed : pending).add({ days: 1 }).toString();
 }
 
 /** Re-resolve the pending date using current timezone data, without consulting its UTC cache. */

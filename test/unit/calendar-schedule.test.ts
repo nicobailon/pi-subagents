@@ -1,8 +1,35 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import { latestCalendarOccurrence, nextCalendarOccurrence, normalizeCalendarRule, restoreCalendarTrigger } from "../../src/runs/background/calendar-schedule.ts";
 
 describe("calendar occurrence calculation", () => {
+	it("loads the polyfill only for calendar evaluation and reuses its synchronous module", () => {
+		const moduleUrl = new URL("../../src/runs/background/calendar-schedule.ts", import.meta.url).href;
+		const loader = `export async function resolve(specifier, context, next) {
+			if (specifier === '@js-temporal/polyfill') throw new Error('Calendar polyfill must not be imported eagerly');
+			return next(specifier, context);
+		}`;
+		const source = `
+			import assert from 'node:assert/strict';
+			import { createRequire } from 'node:module';
+			const calendar = await import(${JSON.stringify(moduleUrl)});
+			const require = createRequire(${JSON.stringify(moduleUrl)});
+			const polyfillPath = require.resolve('@js-temporal/polyfill');
+			assert.equal(require.cache[polyfillPath], undefined);
+			const rule = calendar.normalizeCalendarRule({ every: 'day', at: '09:00', timezone: 'UTC' });
+			assert.equal(require.cache[polyfillPath], undefined);
+			const occurrence = calendar.nextCalendarOccurrence(rule, Date.parse('2026-10-02T00:00:00Z'));
+			assert.equal(occurrence.nextRunAt, '2026-10-02T09:00:00.000Z');
+			const loaded = require.cache[polyfillPath];
+			assert.ok(loaded?.loaded);
+			assert.deepEqual(calendar.restoreCalendarTrigger({ kind: 'calendar', ...rule, ...occurrence }), { kind: 'calendar', ...rule, ...occurrence });
+			assert.equal(require.cache[polyfillPath], loaded);
+		`;
+		const child = spawnSync(process.execPath, ["--experimental-strip-types", "--experimental-loader", `data:text/javascript,${encodeURIComponent(loader)}`, "--input-type=module", "--eval", source], { encoding: "utf-8", timeout: 30_000 });
+		assert.equal(child.status, 0, child.error?.message || child.stderr);
+	});
+
 	for (const [name, timezone, at, after, expected] of [
 		["Taipei clock", "Asia/Taipei", "09:00", "2026-10-02T00:00:00Z", "2026-10-02T01:00:00Z"],
 		["strictly after", "Asia/Taipei", "09:00", "2026-10-02T01:00:00Z", "2026-10-03T01:00:00Z"],
