@@ -1360,7 +1360,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 					summary: "done",
 					patch: { path: path.join(repo, ".pi", "subagents", "artifacts", "worktree.patch"), branch: worktree.branch, changed: false, diffStat: "", filesChanged: 0, insertions: 0, deletions: 0 },
 				}],
-				cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: worktree.path, branch: worktree.branch, worktreeRemoved: false, branchRemoved: false, preserved: true }] },
+				cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: worktree.path, branch: worktree.branch, recordedBaseDir: worktree.recordedBaseDir, worktreeRemoved: false, branchRemoved: false, preserved: true }] },
 			}],
 		}, null, 2), "utf-8");
 		fs.writeFileSync(path.join(repo, ".pi", "subagents", "artifacts", "status.json"), JSON.stringify({ runId: "cleanup-action-run", state: "complete" }), "utf-8");

@@ -545,6 +545,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		fs.writeFileSync(path.join(sourceRepo, "base.txt"), "base");
 		execFileSync("git", ["add", "base.txt"], { cwd: sourceRepo }); execFileSync("git", ["commit", "-m", "base"], { cwd: sourceRepo, stdio: "ignore" });
 		execFileSync("git", ["worktree", "add", "-b", "fixture-retained", retainedTree], { cwd: sourceRepo, stdio: "ignore" });
+		const recordedBaseDir = fs.realpathSync.native(path.dirname(retainedTree));
 		const baseCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: sourceRepo, encoding: "utf-8" }).trim();
 		let followUps = 0;
 		registerExternalJobProvider({
@@ -582,7 +583,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			const handoffPath = path.join(sourceAsyncDir, "handoff.json");
 			fs.writeFileSync(handoffPath, JSON.stringify({ version: 1, runId: sourceRunId, source: "async", mode: "single", cwd: sourceRepo, createdAt: 1, updatedAt: 1, groups: [{ stepIndex: 0, repoRoot: sourceRepo, baseCommit,
 				children: [{ index: 0, taskIndex: 0, agent: "gpt-pro", status: "completed", summary: "done", patch: { path: path.join(sourceAsyncDir, "work.patch"), branch: "fixture-retained", changed: false } }],
-				cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: retainedTree, branch: "fixture-retained", preserved: true, worktreeRemoved: false, branchRemoved: false }] },
+				cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: retainedTree, branch: "fixture-retained", recordedBaseDir, preserved: true, worktreeRemoved: false, branchRemoved: false }] },
 			}] }));
 			const reviewed = createWorktreeCleanupPlan({ repo: sourceRepo, handoffPath, worktreeBaseDir: baseDir });
 			assert.equal(reviewed.plan.entries[0]?.decision, "remove");
