@@ -83,16 +83,20 @@ The repository lock must also cover admission to resume/reuse an existing manage
 
 Reuse the repository's asynchronous retention lock ownership/recovery pattern where appropriate, including process-start identity. Do not reclaim an unknown owner solely because a lock is old. A lock belonging to a provably dead local process can be recovered only with token/identity comparison; otherwise keep the worktree and surface the contention.
 
+Recovery atomically renames a proven-dead owner's nonempty directory to a token-specific retired path before acquiring a new lease. Retain that old owner record: it prevents a delayed recovery of the same token from moving a new live lease. An interruption after the rename leaves the ordinary lock path available; it does not leave an ownerless recovery guard blocking maintenance. Unknown main-lock owners still require inspection rather than automatic eviction.
+
 Apply is single-use and journaled:
 
 1. Validate the stored plan and resolve authority.
 2. Acquire locks; atomically claim the plan id and write a receipt in `applying` state before removal. A claimed plan is never replayed wholesale.
 3. For each originally selected entry, reread current Git, ownership, protection and artifact evidence. Compare with the reviewed facts. Skip drifted entries; never substitute newly discovered entries.
-4. Remove only that entry with plain Git, retaining its branch. Record per-entry result atomically.
+4. Atomically record that entry in `removing` state before invoking Git. If that write fails, do not remove it. Remove only that entry with plain Git, retaining its branch, then atomically change the same receipt entry to `removed`.
 5. Update the matching handoff task's removal fact through a current read-modify-write under the shared metadata mutation lock, preserving later lane evidence. Existing lane-evidence mutation and resume paths must participate or detect a cleanup claim; do not write a stale whole manifest.
 6. Publish a durable complete/partial receipt before releasing locks. Cancellation, process exit, or errors leave an honest per-entry record.
 
 After a crash, a subsequent invocation inspects the same receipt and current Git state. It can reconcile an already-missing worktree's metadata; it cannot replay unrecorded destructive operations from a claimed plan. A fresh plan is needed for further removals. Metadata/receipt write failures retain the journal and are reported as partial application, not a successful full cleanup.
+
+An interrupted `removing` entry is recorded as removed only when both its directory and Git registration are absent. Handoff reconciliation also requires the original run/task ownership to match. Existing or recreated paths, remaining registrations, and changed handoff ownership are preserved. Reconciliation does not claim that the entire interrupted batch completed or execute other reviewed entries.
 
 No cleanup error may turn a completed child result into a failed child or erase its result artifacts.
 

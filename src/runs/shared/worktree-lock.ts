@@ -38,13 +38,15 @@ function tryLease(lockPath: string): (() => void) | undefined {
 		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 		const previous = readOwner(lockPath);
 		if (!previous || !deadOwner(previous)) return undefined;
-		// Serialize recovery of this particular dead owner; a second reclaimer must
-		// not rename a replacement owner's directory after inspecting the old one.
-		const recovery = `${lockPath}.recover-${previous.token}`;
-		try { fs.mkdirSync(recovery, { mode: 0o700 }); } catch { return undefined; }
-		try {
-			if (readOwner(lockPath)?.token === previous.token) fs.rmSync(lockPath, { recursive: true });
-		} finally { fs.rmdirSync(recovery); }
+		// Retain the nonempty old directory as a fence: a delayed reclaimer of
+		// this token cannot rename a replacement lease over that destination.
+		const retired = `${lockPath}.retired-${previous.token}`;
+		try { fs.renameSync(lockPath, retired); }
+		catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT" || readOwner(retired)?.token === previous.token) return undefined;
+			throw error;
+		}
+		if (readOwner(retired)?.token !== previous.token) throw new Error("Retired worktree lock owner changed during recovery.");
 		return tryLease(lockPath);
 	}
 	try { fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify(owner), { flag: "wx", mode: 0o600 }); }

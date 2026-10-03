@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -29,6 +29,37 @@ async function cleanupFixture(run: (fixture: { repo: string; baseDir: string; se
 		const { plan } = createWorktreeCleanupPlan({ repo, worktreeBaseDir: baseDir, foregroundRunOwnership: () => "terminal" });
 		await run({ repo, baseDir, setup, manifestPath, planId: plan.planId });
 	} finally { removeGeneratedWorktrees(repo, setup); fs.rmSync(repo, { recursive: true, force: true }); fs.rmSync(baseDir, { recursive: true, force: true }); }
+}
+
+function interruptCleanup(repo: string, planId: string, boundary: "after-intent" | "after-git" | "intent-write-failure"): void {
+	const moduleUrl = new URL("../../src/runs/shared/worktree-cleanup-apply.ts", import.meta.url).href;
+	const source = `
+		import fs from 'node:fs';
+		import { syncBuiltinESMExports } from 'node:module';
+		import { applyReviewedCleanupPlan } from ${JSON.stringify(moduleUrl)};
+		const rename = fs.renameSync;
+		let injected = false;
+		fs.renameSync = (from, to) => {
+			if (String(to).endsWith('receipt.json')) {
+				const entries = JSON.parse(fs.readFileSync(from, 'utf8')).entries;
+				const boundary = ${JSON.stringify(boundary)};
+				if (boundary === 'after-git' && entries.some(item => item.state === 'removed')) process.exit(73);
+				if (boundary === 'after-intent' && entries.some(item => item.state === 'removing')) {
+					rename(from, to);
+					process.exit(72);
+				}
+				if (boundary === 'intent-write-failure' && !injected && entries.some(item => item.state === 'removing')) {
+					injected = true;
+					throw new Error('fixture: removal intent write failed');
+				}
+			}
+			return rename(from, to);
+		};
+		syncBuiltinESMExports();
+		await applyReviewedCleanupPlan({ ...JSON.parse(process.argv[1]), foregroundRunOwnership: () => 'terminal' });
+	`;
+	const child = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", source, JSON.stringify({ repo, planId, authorized: true })], { encoding: "utf-8", timeout: 30_000 });
+	assert.equal(child.status, boundary === "after-git" ? 73 : boundary === "after-intent" ? 72 : 0, child.error?.message || child.stderr);
 }
 
 describe("reviewed cleanup apply", () => {
@@ -103,6 +134,65 @@ describe("reviewed cleanup apply", () => {
 		assert.equal(current.groups[0].cleanup.tasks[0].worktreeRemoved, !recreated);
 		assert.equal(current.groups[0].children[0].summary, "later evidence");
 		assert.equal(fs.existsSync(tree.path), recreated);
+	}));
+
+	it("repairs an exit after Git removal but before the completed receipt is published", () => cleanupFixture(async ({ repo, setup, manifestPath, planId }) => {
+		interruptCleanup(repo, planId, "after-git");
+		assert.equal(fs.existsSync(setup.worktrees[0]!.path), false);
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+		assert.equal(manifest.groups[0].cleanup.tasks[0].worktreeRemoved, false);
+		manifest.groups[0].children[0].summary = "later evidence";
+		fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+		const args = { repo, planId, authorized: true, foregroundRunOwnership: () => "terminal" as const };
+		const repaired = await applyReviewedCleanupPlan(args);
+		assert.equal(repaired.reused, true);
+		assert.equal(repaired.receipt.state, "applying");
+		assert.equal(repaired.receipt.entries.length, 1);
+		assert.equal(repaired.receipt.entries[0]!.state, "removed");
+		const current = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+		assert.equal(current.groups[0].cleanup.tasks[0].worktreeRemoved, true);
+		assert.equal(current.groups[0].children[0].summary, "later evidence");
+		assert.ok(git(repo, ["show-ref", "--verify", `refs/heads/${setup.worktrees[0]!.branch}`]));
+		assert.equal((await applyReviewedCleanupPlan(args)).receipt.entries.length, 1);
+	}));
+
+	for (const drift of ["none", "recreated", "registered", "ownership"] as const) it(`reconciles an interrupted intent conservatively after ${drift}`, () => cleanupFixture(async ({ repo, setup, manifestPath, planId }) => {
+		interruptCleanup(repo, planId, drift === "recreated" || drift === "ownership" ? "after-git" : "after-intent");
+		const tree = setup.worktrees[0]!;
+		if (drift === "recreated") {
+			git(repo, ["worktree", "add", tree.path, tree.branch]);
+			fs.writeFileSync(path.join(tree.path, "later-user-file"), "keep me");
+		}
+		if (drift === "registered") {
+			fs.rmSync(tree.path, { recursive: true });
+			assert.ok(git(repo, ["worktree", "list", "--porcelain"]).includes(tree.branch));
+		}
+		const args = { repo, planId, authorized: true, foregroundRunOwnership: () => "terminal" as const };
+		if (drift === "ownership") {
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+			manifest.runId = "new-owner";
+			const latest = JSON.stringify(manifest);
+			fs.writeFileSync(manifestPath, latest);
+			await assert.rejects(applyReviewedCleanupPlan(args), /ownership changed/);
+			assert.equal(fs.readFileSync(manifestPath, "utf-8"), latest);
+		} else {
+			const result = await applyReviewedCleanupPlan(args);
+			assert.equal(result.receipt.entries.length, 1);
+			assert.equal(result.receipt.entries[0]!.state, "removing");
+			assert.equal(JSON.parse(fs.readFileSync(manifestPath, "utf-8")).groups[0].cleanup.tasks[0].worktreeRemoved, false);
+			assert.equal(fs.existsSync(tree.path), drift !== "registered");
+			if (drift === "recreated") assert.equal(fs.readFileSync(path.join(tree.path, "later-user-file"), "utf-8"), "keep me");
+		}
+	}));
+
+	it("does not remove a worktree when recording its intent fails", () => cleanupFixture(async ({ repo, setup, manifestPath, planId }) => {
+		interruptCleanup(repo, planId, "intent-write-failure");
+		const result = await applyReviewedCleanupPlan({ repo, planId, authorized: true });
+		assert.equal(result.receipt.state, "partial");
+		assert.match(result.receipt.error ?? "", /intent write failed/);
+		assert.equal(result.receipt.entries.length, 1);
+		assert.ok(fs.existsSync(setup.worktrees[0]!.path));
+		assert.equal(JSON.parse(fs.readFileSync(manifestPath, "utf-8")).groups[0].cleanup.tasks[0].worktreeRemoved, false);
 	}));
 
 	it("rejects unauthorized, expired and altered plans without claiming them", () => cleanupFixture(async ({ repo, planId }) => {
