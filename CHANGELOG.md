@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- When several async jobs crowd the widget and some of them leave the list, the widget now shrinks to the remaining jobs instead of keeping blank rows at its earlier height. Status updates while the same jobs are listed still keep the height fixed. Thanks to [@tara-marchand](https://github.com/tara-marchand) for [#2651](https://github.com/nicobailon/pi-subagents/issues/2651).
+
 ## [0.75.0] - 2026-10-02
 
 ### Highlights

@@ -1069,7 +1069,8 @@ describe("subagent async widget rendering", () => {
 				],
 			}]);
 			const settledLines = renderWidgetLines(ui.widgets.at(-1));
-			assert.equal(settledLines.length, 4, "collapsed widget keeps its locked row count until cleared or resized");
+			assert.equal(settledLines.length, 2, "the card shrinks to header plus the remaining job when jobs leave");
+			assert.equal(settledLines.filter((line) => line.trim() === "").length, 0);
 			assert.match(settledLines.join("\n"), /parallel · done/);
 
 			renderWidget(ui.ctx as never, []);
@@ -1178,7 +1179,63 @@ describe("subagent async widget rendering", () => {
 			assert.equal(grown.filter((line) => line.trim() === "").length, 0, text);
 
 			renderWidget(ui.ctx as never, [wide, { ...late, status: "complete", currentTool: undefined }]);
-			assert.equal(renderWidgetLines(ui.widgets.at(-1)).length, 3, "the grown lock does not shrink when the job finishes");
+			assert.equal(renderWidgetLines(ui.widgets.at(-1)).length, 3, "a finished job that is still listed keeps the grown height");
+
+			renderWidget(ui.ctx as never, [wide]);
+			assert.equal(renderWidgetLines(ui.widgets.at(-1)).length, 2, "the card shrinks once the finished job leaves the list");
+		});
+		resetWidgetLayout();
+	});
+
+	it("shrinks the progressive card without blank rows when root jobs leave (#2651)", () => {
+		const singles = Array.from({ length: 6 }, (_, index) => ({
+			asyncId: `solo-${index}`, asyncDir: `/tmp/solo-${index}`, mode: "single", agents: ["worker"], status: "running", currentTool: "read",
+		}));
+		const lanes = ["lane-1", "lane-2", "lane-3", "lane-4"].map((key) => ({
+			asyncId: `child-${key}`, asyncDir: `/tmp/${key}`, parentWorkflowRunId: "wf", workflowKey: key,
+			mode: "single", agents: ["scout"], status: "running", currentTool: "read",
+		}));
+		const workflow = { asyncId: "wf", asyncDir: "/tmp/wf", mode: "workflow", status: "running",
+			steps: lanes.map((lane, index) => ({ index, workflowKey: lane.workflowKey, runId: lane.asyncId, agent: "scout", status: "running" })) };
+		const single = singles[0]!;
+		for (const { rows, before, after } of [
+			{ rows: 26, before: singles, after: [single] },
+			{ rows: 36, before: [workflow, ...lanes, single], after: [single] },
+		]) {
+			resetWidgetLayout();
+			withStdoutSize(rows, 120, () => {
+				const ui = createUiContext();
+				renderWidget(ui.ctx as never, before);
+				assert.equal(renderWidgetLines(ui.widgets.at(-1), 120).length, 7, `${rows} rows: progressive card before jobs leave`);
+				for (let pass = 0; pass < 2; pass++) {
+					renderWidget(ui.ctx as never, after);
+					const lines = renderWidgetLines(ui.widgets.at(-1), 120);
+					assert.equal(lines.length, 2, `${rows} rows, pass ${pass}: ${lines.join("\n")}`);
+					assert.equal(lines.filter((line) => line.trim() === "").length, 0, lines.join("\n"));
+				}
+			});
+		}
+		resetWidgetLayout();
+	});
+
+	it("keeps the progressive height when content shrinks but every root job remains", () => {
+		resetWidgetLayout();
+		withStdoutSize(36, 120, () => {
+			const lanes = ["lane-1", "lane-2", "lane-3", "lane-4"].map((key) => ({
+				asyncId: `child-${key}`, asyncDir: `/tmp/${key}`, parentWorkflowRunId: "wf", workflowKey: key,
+				mode: "single", agents: ["scout"], status: "running", currentTool: "read",
+			}));
+			const steps = lanes.map((lane, index) => ({ index, workflowKey: lane.workflowKey, runId: lane.asyncId, agent: "scout", status: "running" }));
+			const workflow = { asyncId: "wf", asyncDir: "/tmp/wf", mode: "workflow", status: "running", steps };
+			const single = { asyncId: "solo", asyncDir: "/tmp/solo", mode: "single", agents: ["worker"], status: "running", currentTool: "bash" };
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [workflow, ...lanes, single]);
+			assert.equal(renderWidgetLines(ui.widgets.at(-1), 120).length, 7);
+
+			renderWidget(ui.ctx as never, [{ ...workflow, steps: steps.slice(0, 2) }, lanes[0]!, lanes[1]!, single]);
+			const lines = renderWidgetLines(ui.widgets.at(-1), 120);
+			assert.equal(lines.length, 7, "dropping two lanes with the same root jobs keeps the locked height");
+			assert.doesNotMatch(lines.join("\n"), /lane-3/);
 		});
 		resetWidgetLayout();
 	});
