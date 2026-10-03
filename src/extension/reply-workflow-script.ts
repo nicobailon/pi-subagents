@@ -40,7 +40,7 @@ function scriptFromReply(content: AssistantMessage["content"]): ReplyWorkflowScr
 		return { error: `workflow: true needs one fenced block in the same reply as the tool call, opened with the exact line "\`\`\`js workflow" and closed with "\`\`\`"; found ${tagged.length}.${untagged} ${FILE_FALLBACK}` };
 	}
 	const script = blocks[0]!;
-	if (!script.trim()) return { error: "The ```js workflow block in this reply is empty." };
+	if (!script.trim()) return { error: "The script's fenced block in this reply is empty." };
 	return { script };
 }
 
