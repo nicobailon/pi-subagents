@@ -1,4 +1,4 @@
-import { buildWorktreeCleanupPlan, createWorktreeCleanupPlan, listOwnedWorktreeInventory, type BuildWorktreeCleanupPlanInput } from "../shared/worktree-cleanup-plan.ts";
+import { buildWorktreeCleanupPlan, createWorktreeCleanupPlan, listOwnedWorktreeInventory, samePath, type BuildWorktreeCleanupPlanInput } from "../shared/worktree-cleanup-plan.ts";
 import { applyReviewedCleanupPlan } from "../shared/worktree-cleanup-apply.ts";
 
 export type WorktreeCountReport = {
@@ -21,8 +21,8 @@ export async function enforceWorktreeRetainCount(input: BuildWorktreeCleanupPlan
 	for (const tree of inventory.owned) {
 		input.signal?.throwIfAborted();
 		const plan = buildWorktreeCleanupPlan({ ...input, handoffPaths: inventory.owned.map((item) => item.handoffPath), candidatePaths: [tree.path] });
-		const entry = plan.entries.find((item) => item.path === tree.path);
-		if (entry?.decision === "remove") candidates.push(tree.path);
+		const entry = plan.entries.find((item) => samePath(item.path, tree.path));
+		if (entry?.decision === "remove") candidates.push(entry.path);
 		else report.warnings.push(`${tree.path}: ${entry?.reasons.join("; ") || "ownership is not provable"}`);
 		if (candidates.length >= excess) break;
 	}
@@ -30,12 +30,16 @@ export async function enforceWorktreeRetainCount(input: BuildWorktreeCleanupPlan
 	input.signal?.throwIfAborted();
 	const created = createWorktreeCleanupPlan({ ...input, handoffPaths: inventory.owned.map((item) => item.handoffPath), candidatePaths: candidates });
 	const applied = await applyReviewedCleanupPlan({ repo: inventory.repoRoot, planId: created.plan.planId, authorized: true, signal: input.signal, foregroundRunOwnership: input.foregroundRunOwnership,
-		select: () => {
+		select: (plan) => {
 			const current = listOwnedWorktreeInventory(input);
 			if (current.warnings.length) return new Set<string>();
 			const currentExcess = Math.max(0, current.owned.length - input.limit);
 			const stillOwned = new Set(current.owned.map((item) => item.path));
-			return new Set(candidates.filter((candidate) => stillOwned.has(candidate)).slice(0, currentExcess));
+			const selected = candidates.filter((candidate) => stillOwned.has(candidate) || current.owned.some((tree) => samePath(tree.path, candidate))).slice(0, currentExcess);
+			return new Set(selected.flatMap((candidate) => {
+				const entry = plan.entries.find((item) => samePath(item.path, candidate));
+				return entry?.decision === "remove" ? [entry.path] : [];
+			}));
 		},
 	});
 	report.receiptPath = applied.receiptPath;

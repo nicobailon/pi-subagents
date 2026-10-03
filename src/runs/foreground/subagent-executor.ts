@@ -2013,6 +2013,9 @@ async function resumeAsyncRun(input: {
 			: "External runners do not persist Pi sessions and cannot be resumed.";
 		return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 	}
+	if (input.params.baseRef !== undefined && "managedWorktree" in target && target.managedWorktree === true) {
+		return { content: [{ type: "text", text: "Cannot resume with baseRef: retained managed-worktree children continue in their existing worktree. Start a new worktree run from that base ref instead." }], isError: true, details: { mode: "management", results: [] } };
+	}
 	if (target.source === "async" && target.managedWorktree && target.asyncDir) {
 		try {
 			const protectedCwd = await protectRetainedWorktreeForResume(parallelHandoffPath(target.asyncDir), target.runId, target.index, input.signal);
@@ -2166,9 +2169,6 @@ async function resumeAsyncRun(input: {
 	const revivalSessionFile = target.sessionFile;
 	if (!revivalSessionFile) {
 		return { content: [{ type: "text", text: `Async run '${target.runId}' child ${target.index} does not have a persisted session file to resume from.` }], isError: true, details: { mode: "management", results: [] } };
-	}
-	if (input.params.baseRef !== undefined && "managedWorktree" in target && target.managedWorktree === true) {
-		return { content: [{ type: "text", text: "Cannot resume with baseRef: retained managed-worktree children continue in their existing worktree. Start a new worktree run from that base ref instead." }], isError: true, details: { mode: "management", results: [] } };
 	}
 	if (target.source === "async" && asyncReviveRequiresRecoveryDescriptor(target)) {
 		return { content: [{ type: "text", text: `Async child '${target.runId}' is missing its required run fan-out recovery identity. Start a new run instead.` }], isError: true, details: { mode: "management", results: [] } };

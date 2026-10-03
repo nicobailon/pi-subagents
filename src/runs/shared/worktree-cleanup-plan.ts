@@ -197,7 +197,7 @@ function comparablePath(candidate: string): string {
 	return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-function samePath(left: string, right: string): boolean {
+export function samePath(left: string, right: string): boolean {
 	if (comparablePath(left) === comparablePath(right)) return true;
 	if (process.platform !== "win32") return false;
 	// Git for Windows and Node can spell the same temp directory with different
