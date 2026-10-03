@@ -5,6 +5,7 @@
 ### Fixed
 
 - When several async jobs crowd the widget and some of them leave the list, the widget now shrinks to the remaining jobs instead of keeping blank rows at its earlier height. Status updates while the same jobs are listed still keep the height fixed. Thanks to [@tara-marchand](https://github.com/tara-marchand) for [#2651](https://github.com/nicobailon/pi-subagents/issues/2651).
+- `workflow: true` failed with "found 0" when the model fenced its script as plain ```` ```js ```` instead of ```` ```js workflow ````. A reply with exactly one plain `js` block and no tagged block now runs that block. When no block is found, the error now shows the exact opening line and suggests passing a script file path instead. Thanks to [@thetechpadawan](https://github.com/thetechpadawan) for [#2659](https://github.com/nicobailon/pi-subagents/issues/2659).
 
 ## [0.75.0] - 2026-10-02
 
