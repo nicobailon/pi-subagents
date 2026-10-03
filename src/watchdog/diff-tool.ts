@@ -77,8 +77,8 @@ export function createWatchdogDiffTool(
 		description: !baseline
 			? "Report that a Git HEAD diff baseline is unavailable in this cwd. No diff is generated."
 			: workingTreeAtLaunch
-			? "Show the current staged and unstaged working-tree delta against reviewer-launch HEAD, plus untracked file paths. Committed ranges are not included. Optional path narrows it; stat:true returns per-file counts only."
-			: "Show the repository diff since the review baseline, plus untracked file paths. Optional path narrows it; stat:true returns per-file counts only.",
+			? "Show the current staged and unstaged working-tree delta against reviewer-launch HEAD, plus untracked file paths, including edits by other sessions in this checkout. Committed ranges are not included. Optional path narrows it; stat:true returns per-file counts only."
+			: "Show the repository diff since the review baseline, plus untracked file paths, including edits by other sessions in this checkout. Optional path narrows it; stat:true returns per-file counts only.",
 		parameters: WatchdogDiffParams,
 		executionMode: "sequential",
 		async execute(_toolCallId, params: WatchdogDiffParams) {

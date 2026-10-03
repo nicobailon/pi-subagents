@@ -98,7 +98,7 @@ describe("main watchdog runtime", () => {
 				key = "edited";
 				const boundary = runtime.handleAgentEnd({}, ctx);
 				await ready;
-				if (edge === "input") runtime.handleUserInput();
+				if (edge === "input") runtime.handleUserInput({ text: "New input", source: "interactive" });
 				else if (edge === "model") runtime.handleModelChange();
 				else { config = { ...config, main: { ...config.main, model: "mock/new-model" } }; runtime.refreshConfig(); }
 				assert.equal(signal?.aborted, true, edge);
@@ -250,7 +250,7 @@ describe("main watchdog runtime", () => {
 				assert.equal(f.messages.length, 0);
 				const epoch = f.runtime.getSnapshot().epoch;
 				f.runtime.handleModelChange();
-				f.runtime.handleUserInput();
+				f.runtime.handleUserInput({ text: "New input", source: "interactive" });
 				assert.equal(f.runtime.getSnapshot().epoch, epoch, "disabled clarification lifecycle handlers are inert");
 			} finally { f.runtime.dispose(); }
 		}
@@ -275,7 +275,7 @@ describe("main watchdog runtime", () => {
 			await tick();
 			if (edge === "clarification disabled") config = { ...config, clarification: false };
 			else if (edge === "watchdog model changed") config = { ...config, main: { ...config.main, model: "mock/new" } };
-			else runtime.handleUserInput();
+			else runtime.handleUserInput({ text: "New input", source: "interactive" });
 			runtime.refreshConfig();
 			assert.equal(signal?.aborted, true);
 			const epoch = runtime.getSnapshot().epoch;
@@ -699,7 +699,7 @@ describe("main watchdog runtime", () => {
 		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: repo });
 
 		assert.equal(reviewCalls, 1);
-		assert.match(reviewedDelta, /Changed repo paths:/);
+		assert.match(reviewedDelta, /Changed repo paths: every dirty path in the working tree\. Authorship is not verified/);
 		assert.match(reviewedDelta, /src\/file\.ts/);
 		assert.match(reviewedDelta, /src\/other\.ts/);
 
@@ -1097,6 +1097,29 @@ describe("main watchdog runtime", () => {
 		assert.match(reviewedDelta, /^Current scope:/);
 		assert.match(reviewedDelta, /Only update docs\./);
 		assert.match(reviewedDelta, /category 'scope-drift'/);
+	});
+
+	it("adds user messages sent while the agent streams to the scope record", async () => {
+		let reviewedDelta = "";
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig()),
+			review: (request) => {
+				reviewedDelta = request.delta;
+				return { stopReason: "stop" };
+			},
+		});
+		const ctx = { cwd: "/tmp/project" };
+
+		runtime.handleUserInput({ text: "Idle prompt.", source: "interactive" });
+		runtime.handleBeforeAgentStart({ prompt: "Idle prompt." }, ctx);
+		runtime.handleUserInput({ text: "Also fix the tests.", source: "interactive", streamingBehavior: "steer" });
+		runtime.handleUserInput({ text: "Then purge them.", source: "rpc", streamingBehavior: "followUp" });
+		runtime.handleUserInput({ text: "Extension text.", source: "extension", streamingBehavior: "steer" });
+		runtime.enqueueDelta("Assistant:\nWorking.");
+		await runtime.handleAgentEnd({ type: "agent_end" }, ctx);
+
+		const prompts = [...reviewedDelta.matchAll(/^Scope prompt \d+ \(.*\):\n(.*)$/gm)].map((match) => match[1]);
+		assert.deepEqual(prompts, ["Idle prompt.", "Also fix the tests.", "Then purge them."]);
 	});
 
 	it("runs visible steer corrections at cadence multiples and skips overlapping mid-run reviews", async () => {

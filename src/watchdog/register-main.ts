@@ -423,7 +423,7 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 		rememberContext(ctx);
 		runtime.handleTurnEnd(event, ctx);
 	});
-	pi.on("input", (event) => { if (event.source !== "extension") runtime.handleUserInput(); });
+	pi.on("input", (event) => runtime.handleUserInput(event));
 	pi.on("model_select", () => runtime.handleModelChange());
 	pi.on("tool_result", (_event, ctx) => {
 		rememberContext(ctx);

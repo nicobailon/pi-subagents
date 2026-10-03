@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, InputEvent } from "@earendil-works/pi-coding-agent";
 import { computeWatchdogRepoChangeSignature, eventIndicatesRepoEdit, type WatchdogRepoChangeSignature } from "./change-signature.ts";
 import { WatchdogEmissionGuard } from "./emission-guard.ts";
 import {
@@ -509,9 +509,11 @@ export class MainWatchdogRuntime {
 		};
 	}
 
-	/** A real mid-stream user input can steer without emitting before_agent_start. */
-	handleUserInput(): void {
+	/** A real user input sent while the agent streams reaches the loop without before_agent_start, so record it in scope here. */
+	handleUserInput(event: Pick<InputEvent, "text" | "source" | "streamingBehavior">): void {
+		if (this.disposed || event.source === "extension") return;
 		if (this.displayClarification && this.configResult.config.clarification && (this.reviewing || this.waitingAtAgentEnd)) this.reset("new user input");
+		if (event.streamingBehavior) this.scope.addPrompt(event.text);
 	}
 
 	handleModelChange(): void {
@@ -850,7 +852,7 @@ export class MainWatchdogRuntime {
 		const input = this.pendingDeltas.join(REVIEW_DELTA_SEPARATOR);
 		const scopeBlock = this.scopeBlock();
 		const changes = changeSignature?.changedPaths.length
-			? ["Changed repo paths:", ...changeSignature.changedPaths.slice(0, 200).map((file) => `- ${file}`)].join("\n")
+			? ["Changed repo paths: every dirty path in the working tree. Authorship is not verified; a path may predate this session or come from another session.", ...changeSignature.changedPaths.slice(0, 200).map((file) => `- ${file}`)].join("\n")
 			: "";
 		const activity = this.activityTail ? `Recent delivered orchestration activity (oldest first; bounded observations, not a task board; waits/holds are not evidence of neglect):\n${this.activityTail}` : "";
 		const contextPieces = [scopeBlock, changes, lspBlock, activity].filter(Boolean);
