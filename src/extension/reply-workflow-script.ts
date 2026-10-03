@@ -30,6 +30,7 @@ function scriptFromReply(content: AssistantMessage["content"]): ReplyWorkflowScr
 	const replyCalls = content.filter((block) => block.type === "toolCall" && block.name === "subagent"
 		&& (block.arguments?.workflow === true || block.arguments?.workflow === "true")).length;
 	if (replyCalls > 1) return { error: `This reply has ${replyCalls} subagent calls with workflow: true; a reply can carry only one. Pass other scripts as workflow file paths.` };
+	if (!content.some((block) => block.type === "text")) return { error: "The assistant message that issued this call has no text in the session, so the reply's visible text, including any ```js workflow block, never reached it. Write the script to a file and pass its path, such as workflow: \"./script.js\"." };
 	const text = content.flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
 	const { tagged, plain, unclosed } = workflowBlocks(text);
 	if (unclosed) return { error: "The script's fenced block in this reply is not closed." };
