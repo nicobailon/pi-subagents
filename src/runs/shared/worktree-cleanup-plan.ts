@@ -14,7 +14,7 @@ import type {
 	ParallelHandoffManifest,
 } from "../../shared/types.ts";
 import { getAgentDir } from "../../shared/utils.ts";
-import { isTerminalParallelHandoffChildStatus } from "./parallel-handoff.ts";
+import { isTerminalParallelHandoffChildStatus, readParallelHandoffManifest } from "./parallel-handoff.ts";
 import { MACHINE_DIFF_OPTIONS, validateWorktreePatchRepresentsCurrentWorktree } from "./worktree.ts";
 
 export const WORKTREE_CLEANUP_PLAN_VERSION = 1 as const;
@@ -72,6 +72,8 @@ export interface WorktreeCleanupPlan {
 
 export interface BuildWorktreeCleanupPlanInput {
 	repo: string;
+	/** Internal maintenance seam: inspect only these paths with the same safety predicates. */
+	candidatePaths?: string[];
 	handoffPath?: string;
 	/** Internal test and migration seam for explicitly supplied handoff records. */
 	handoffPaths?: string[];
@@ -99,6 +101,7 @@ interface GitWorktreeRecord {
 	head: string;
 	branch?: string;
 	prunable?: string;
+	locked?: boolean;
 }
 
 interface ManifestMetadataRecord {
@@ -194,7 +197,7 @@ function comparablePath(candidate: string): string {
 	return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-function samePath(left: string, right: string): boolean {
+export function samePath(left: string, right: string): boolean {
 	if (comparablePath(left) === comparablePath(right)) return true;
 	if (process.platform !== "win32") return false;
 	// Git for Windows and Node can spell the same temp directory with different
@@ -239,7 +242,7 @@ function validatePlanId(planId: string): string {
 	return planId;
 }
 
-function resolveRepoRoot(repo: string): string {
+export function resolveCleanupRepoRoot(repo: string): string {
 	const requested = path.resolve(repo);
 	const toplevel = runGitChecked(requested, ["rev-parse", "--show-toplevel"]);
 	return realpathExisting(toplevel);
@@ -288,6 +291,7 @@ export function parseGitWorktreeList(raw: string): GitWorktreeRecord[] {
 		if (line.startsWith("HEAD ")) current.head = line.slice("HEAD ".length).trim();
 		else if (line.startsWith("branch refs/heads/")) current.branch = line.slice("branch refs/heads/".length).trim();
 		else if (line === "detached") delete current.branch;
+		else if (line === "locked" || line.startsWith("locked ")) current.locked = true;
 		else if (line.startsWith("prunable ")) current.prunable = line.slice("prunable ".length).trim();
 	}
 	flush();
@@ -298,6 +302,10 @@ function listGitWorktrees(repoRoot: string): GitWorktreeRecord[] {
 	const result = runGit(repoRoot, ["worktree", "list", "--porcelain"]);
 	if (result.status !== 0) throw new Error(gitFailure(result, `git -C ${repoRoot} worktree list --porcelain`));
 	return parseGitWorktreeList(result.stdout);
+}
+
+export function isRegisteredCleanupWorktree(repoRoot: string, candidate: string): boolean {
+	return listGitWorktrees(repoRoot).some((tree) => samePath(tree.path, candidate));
 }
 
 function readJsonFile(filePath: string): unknown {
@@ -313,11 +321,11 @@ function readManifest(manifestPath: string): ManifestReadResult {
 		const stat = fs.lstatSync(manifestPath);
 		if (stat.isSymbolicLink() || !stat.isFile()) return { error: `parallel handoff manifest is not a regular file: ${manifestPath}` };
 		if (stat.size > MAX_METADATA_FILE_BYTES) return { error: `parallel handoff manifest exceeds the ${MAX_METADATA_FILE_BYTES}-byte limit: ${manifestPath}` };
-		const parsed = readJsonFile(manifestPath);
-		if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.groups)) {
+		const parsed = readParallelHandoffManifest(manifestPath);
+		if (!parsed) {
 			return { error: `invalid parallel handoff manifest version or groups: ${manifestPath}` };
 		}
-		return { manifest: parsed as unknown as ParallelHandoffManifest };
+		return { manifest: parsed };
 	} catch (error) {
 		const code = error && typeof error === "object" && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
 		if (code === "ENOENT") return { error: `parallel handoff manifest not found: ${manifestPath}` };
@@ -423,11 +431,10 @@ function loadMetadata(input: BuildWorktreeCleanupPlanInput, repoRoot: string): {
 	const discovered = discoverHandoffPaths(repoRoot, input);
 	const records: ManifestMetadataRecord[] = [];
 	const warnings = [...discovered.warnings];
-	const explicitPath = input.handoffPath ? path.isAbsolute(input.handoffPath) ? path.resolve(input.handoffPath) : path.resolve(repoRoot, input.handoffPath) : undefined;
 	for (const manifestPath of discovered.paths) {
 		const result = readManifest(manifestPath);
 		if (!result.manifest) {
-			if (explicitPath && comparablePath(manifestPath) === comparablePath(explicitPath)) warnings.push(result.error!);
+			warnings.push(result.error!);
 			continue;
 		}
 		const manifestRoot = resolveExistingPath(manifestPath);
@@ -526,7 +533,7 @@ function buildEntryBase(input: {
 	metadata?: ManifestMetadataRecord;
 	targetHead: string;
 }): WorktreeCleanupPlanEntry {
-	const recordedBaseDir = path.dirname(input.path);
+	const recordedBaseDir = input.metadata?.task.recordedBaseDir;
 	const patchPath = input.metadata ? metadataPatchPath(input.metadata) : undefined;
 	return {
 		path: input.path,
@@ -544,7 +551,7 @@ function buildEntryBase(input: {
 			branch: input.branch,
 			...(input.git?.head ? { worktreeHead: input.git.head } : {}),
 			...(input.metadata?.group.baseCommit ? { baseCommit: input.metadata.group.baseCommit } : {}),
-			recordedBaseDir,
+			...(recordedBaseDir ? { recordedBaseDir } : {}),
 			targetRef: input.targetHead,
 		},
 	};
@@ -626,8 +633,14 @@ function buildManagedEntry(input: {
 	const extensionsDir = path.join(getAgentDir(), "extensions");
 	if (pathInside(extensionsDir, pathInspection.realpath)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is inside Pi extensions directory '${extensionsDir}'`);
 	if (input.containmentInvalid || !pathInside(baseDir, pathInspection.realpath, true)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is outside configured base directory '${baseDir}'`);
+	const recordedBaseDir = record.task.recordedBaseDir;
+	if (typeof recordedBaseDir !== "string" || !path.isAbsolute(recordedBaseDir)) return blockedEntry(entry, "unknown", "keep", "handoff metadata has no creation-time base directory proof");
+	// Compare the saved canonical string, without following a newly replaced ancestor.
+	const creationRelative = path.relative(recordedBaseDir, pathInspection.realpath);
+	if (!creationRelative || creationRelative === ".." || creationRelative.startsWith(`..${path.sep}`) || path.isAbsolute(creationRelative)) return blockedEntry(entry, "ineligible", "keep", `worktree real path is outside its creation-time recorded base directory '${recordedBaseDir}'`);
 
 	if (rootPath === comparablePath(pathInspection.realpath)) return blockedEntry(entry, "ineligible", "keep", "worktree is the repository root");
+	if (git.locked) return blockedEntry(entry, "ineligible", "keep", "Git worktree is locked");
 	if (!git.branch) return blockedEntry(entry, "unknown", "unknown", "detached worktrees have no metadata-recorded branch");
 	if (record.task.branch !== git.branch) return blockedEntry(entry, "unknown", "unknown", `metadata branch '${record.task.branch}' does not match Git branch '${git.branch}'`);
 	if (record.task.worktreeRemoved) return blockedEntry(entry, "stale", "unknown", "handoff metadata already records this worktree as removed");
@@ -645,6 +658,9 @@ function buildManagedEntry(input: {
 	if (git.branch === input.otherGitRecords.find((candidate) => comparablePath(candidate.path) === rootPath)?.branch) {
 		return blockedEntry(entry, "ineligible", "keep", "metadata-recorded branch is checked out at the repository root");
 	}
+
+	const retainedSession = record.child.sessionPath ?? record.status?.steps?.[record.child.index]?.sessionFile ?? record.status?.sessionFile;
+	if (typeof retainedSession === "string" && retainedSession.trim()) return blockedEntry(entry, "ineligible", "keep", "retained child resume still has a recorded session dependency");
 
 	const runState = inspectRunState(record, input.now, foregroundRunOwnership);
 	if (runState.kind === "unknown") return blockedEntry(entry, "unknown", "unknown", runState.reason ?? "owning run state is unknown");
@@ -667,6 +683,10 @@ function buildManagedEntry(input: {
 	if (status.error) return blockedEntry(entry, "unknown", "unknown", `git status failed: ${status.error}`);
 	entry.preconditions.statusDigest = status.digest;
 	if (status.output && status.output.trim()) return blockedEntry(entry, "dirty", "keep", "worktree has uncommitted or untracked changes");
+
+	const ignored = runGit(worktreePath, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
+	if (ignored.status !== 0) return blockedEntry(entry, "unknown", "unknown", `ignored-file inspection failed: ${gitFailure(ignored, "git ls-files")}`);
+	if (ignored.stdout) return blockedEntry(entry, "ineligible", "keep", "worktree contains ignored files; cleanup preserves them");
 
 	const diff = runGit(worktreePath, ["diff", "--quiet", ...MACHINE_DIFF_OPTIONS, resolvedBase.value, "--"]);
 	if (diff.status !== 0 && diff.status !== 1) return blockedEntry(entry, "unknown", "unknown", `git diff safety check failed: ${gitFailure(diff, "git diff")}`);
@@ -704,7 +724,7 @@ function buildManagedEntry(input: {
 
 	entry.state = "safe";
 	entry.decision = "remove";
-	entry.willDeleteBranch = branchTipIsAncestor;
+	entry.willDeleteBranch = false;
 	entry.reasons.push("extension-owned metadata, terminal run, contained clean worktree, and local divergence checks passed");
 	if (!branchTipIsAncestor) entry.reasons.push("local branch tip is not an ancestor of target HEAD; future apply must retain the branch");
 	return entry;
@@ -723,7 +743,7 @@ function buildMissingMetadataEntry(input: { record: ManifestMetadataRecord; targ
 	return blockedEntry(entry, "stale", "unknown", "handoff metadata records a worktree that is not present in Git worktree state");
 }
 
-function contentPayload(plan: Omit<WorktreeCleanupPlan, "contentHash" | "planId" | "createdAt" | "expiresAt">): unknown {
+export function worktreeCleanupContentPayload(plan: Omit<WorktreeCleanupPlan, "contentHash" | "planId" | "createdAt" | "expiresAt">): unknown {
 	return {
 		version: plan.version,
 		repoRoot: plan.repoRoot,
@@ -741,7 +761,7 @@ function stableEntrySort(left: WorktreeCleanupPlanEntry, right: WorktreeCleanupP
 
 export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): WorktreeCleanupPlan {
 	if (typeof input.repo !== "string" || !input.repo.trim()) throw new Error("worktree cleanup plan requires a repository path");
-	const repoRoot = resolveRepoRoot(input.repo);
+	const repoRoot = resolveCleanupRepoRoot(input.repo);
 	const now = input.now ?? Date.now();
 	if (!Number.isFinite(now)) throw new Error("worktree cleanup plan timestamp must be finite");
 	const baseDir = resolveCleanupBaseDir(repoRoot, input.worktreeBaseDir);
@@ -762,6 +782,7 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 	const entries: WorktreeCleanupPlanEntry[] = [];
 	const matchedMetadataRecords = new Set<ManifestMetadataRecord>();
 	for (const git of linkedGit) {
+		if (input.candidatePaths && !input.candidatePaths.some((candidate) => samePath(candidate, git.path))) continue;
 		const records = metadataByPath.get(comparablePath(git.path)) ?? (git.branch
 			? metadata.records.filter((record) => record.task.branch === git.branch && samePath(metadataRecordPath(record), git.path))
 			: []);
@@ -807,7 +828,7 @@ export function buildWorktreeCleanupPlan(input: BuildWorktreeCleanupPlanInput): 
 		pruneCandidates,
 		...(warnings.length ? { warnings: [...new Set(warnings)].sort() } : {}),
 	};
-	const contentHash = sha256(JSON.stringify(contentPayload(basePlan)));
+	const contentHash = sha256(JSON.stringify(worktreeCleanupContentPayload(basePlan)));
 	const planId = validatePlanId(input.planId ?? randomUUID());
 	return {
 		...basePlan,
@@ -837,7 +858,7 @@ function formatPlanEntry(entry: WorktreeCleanupPlanEntry): string {
 export function formatWorktreeCleanupPlan(created: CreatedWorktreeCleanupPlan): string {
 	const { plan, planPath } = created;
 	const removable = plan.entries.filter((entry) => entry.decision === "remove");
-	const branches = removable.filter((entry) => entry.willDeleteBranch === true);
+
 	const kept = plan.entries.filter((entry) => entry.decision === "keep");
 	const unknown = plan.entries.filter((entry) => entry.decision === "unknown");
 	const section = (title: string, entries: WorktreeCleanupPlanEntry[], empty: string): string[] => [
@@ -852,7 +873,7 @@ export function formatWorktreeCleanupPlan(created: CreatedWorktreeCleanupPlan): 
 		"",
 		...section("Will remove", removable, "none"),
 		"",
-		...section("Will delete local branches", branches, "none (plan-only mode; no branch will be deleted)"),
+		"Local branches: all retained, including after apply.",
 		"",
 		...section("Will keep, with reasons", kept, "none"),
 		"",
@@ -864,6 +885,7 @@ export function formatWorktreeCleanupPlan(created: CreatedWorktreeCleanupPlan): 
 		"",
 		`Plan saved: ${planPath}`,
 		"Plan-only mode: no worktrees or branches were removed.",
+		`Apply this reviewed plan: subagent({ action: "worktree.cleanup", mode: "apply", repo: ${JSON.stringify(plan.repoRoot)}, planId: ${JSON.stringify(plan.planId)} })`,
 	];
 	return lines.join("\n");
 }

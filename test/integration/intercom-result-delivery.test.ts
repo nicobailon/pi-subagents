@@ -9,6 +9,8 @@ import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapac
 import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { serviceExternalJobBridgeRequests } from "../../src/runs/shared/external-job-bridge.ts";
 import { externalJobFollowUpRequestDigest, externalJobFollowUpRunId, externalJobPromptDigest } from "../../src/runs/shared/external-job-runner.ts";
+import { createWorktreeCleanupPlan } from "../../src/runs/shared/worktree-cleanup-plan.ts";
+import { applyReviewedCleanupPlan } from "../../src/runs/shared/worktree-cleanup-apply.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { acquireSessionLease, sessionLeaseDir } from "../../src/runs/shared/session-lease.ts";
@@ -535,6 +537,16 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		});
 		const expectedRunId = externalJobFollowUpRunId(requestDigest);
 		const continuationAsyncDir = path.join(ASYNC_DIR, expectedRunId);
+		const sourceRepo = path.join(tempDir, "retained-follow-up-repo");
+		const baseDir = path.join(tempDir, "retained-follow-up-trees");
+		const retainedTree = path.join(baseDir, path.basename(sourceRepo), "retained");
+		fs.mkdirSync(sourceRepo);
+		for (const args of [["init"], ["config", "user.name", "Fixture"], ["config", "user.email", "fixture@example.com"]]) execFileSync("git", args, { cwd: sourceRepo, stdio: "ignore" });
+		fs.writeFileSync(path.join(sourceRepo, "base.txt"), "base");
+		execFileSync("git", ["add", "base.txt"], { cwd: sourceRepo }); execFileSync("git", ["commit", "-m", "base"], { cwd: sourceRepo, stdio: "ignore" });
+		execFileSync("git", ["worktree", "add", "-b", "fixture-retained", retainedTree], { cwd: sourceRepo, stdio: "ignore" });
+		const recordedBaseDir = fs.realpathSync.native(path.dirname(retainedTree));
+		const baseCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: sourceRepo, encoding: "utf-8" }).trim();
 		let followUps = 0;
 		registerExternalJobProvider({
 			name: "surf-oracle",
@@ -568,11 +580,24 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					externalJob: { provider: "surf-oracle", providerJobId: "job-parent", promptDigest: externalJobPromptDigest("original prompt"), options: { tier: "pro" }, state: "completed" },
 				}],
 			}, null, 2), "utf-8");
+			const handoffPath = path.join(sourceAsyncDir, "handoff.json");
+			fs.writeFileSync(handoffPath, JSON.stringify({ version: 1, runId: sourceRunId, source: "async", mode: "single", cwd: sourceRepo, createdAt: 1, updatedAt: 1, groups: [{ stepIndex: 0, repoRoot: sourceRepo, baseCommit,
+				children: [{ index: 0, taskIndex: 0, agent: "gpt-pro", status: "completed", summary: "done", patch: { path: path.join(sourceAsyncDir, "work.patch"), branch: "fixture-retained", changed: false } }],
+				cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: retainedTree, branch: "fixture-retained", recordedBaseDir, preserved: true, worktreeRemoved: false, branchRemoved: false }] },
+			}] }));
+			const reviewed = createWorktreeCleanupPlan({ repo: sourceRepo, handoffPath, worktreeBaseDir: baseDir });
+			assert.equal(reviewed.plan.entries[0]?.decision, "remove");
+
 			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
 
 			const first = await executor.execute("resume-external-job-first", { action: "resume", id: sourceRunId, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(first.isError, undefined, first.content[0]?.text ?? "follow-up failed");
 			assert.equal(first.details?.asyncId, expectedRunId);
+			const protectedManifest = JSON.parse(fs.readFileSync(handoffPath, "utf-8"));
+			assert.match(protectedManifest.groups[0].cleanup.tasks[0].reason, /retained child resume/);
+			const cleanup = await applyReviewedCleanupPlan({ repo: sourceRepo, planId: reviewed.plan.planId, authorized: true });
+			assert.equal(cleanup.receipt.entries[0]?.state, "kept");
+			assert.ok(fs.existsSync(retainedTree));
 
 			const duplicate = await executor.execute("resume-external-job-duplicate", { action: "resume", id: sourceRunId, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(duplicate.isError, undefined, duplicate.content[0]?.text ?? "duplicate failed");
@@ -597,6 +622,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(status.steps?.[0]?.externalJob?.requestDigest, requestDigest);
 			assert.equal(status.steps?.[0]?.externalJob?.providerJobId, "job-child");
 		} finally {
+			try { execFileSync("git", ["-C", sourceRepo, "worktree", "remove", "--force", retainedTree], { stdio: "ignore" }); } catch {}
 			fs.rmSync(sourceAsyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 			fs.rmSync(continuationAsyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 			fs.rmSync(path.join(RESULTS_DIR, `${expectedRunId}.json`), { force: true });

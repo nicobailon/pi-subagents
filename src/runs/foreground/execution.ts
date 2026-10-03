@@ -52,6 +52,7 @@ import {
 	boundStreamedToolCalls,
 } from "../../shared/utils.ts";
 import { resolveSkillsWithFallback } from "../../agents/skills.ts";
+import { createPartialOutputTracker, formatPartialOutput, type PartialOutputCause } from "../shared/partial-output.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, resolveToolTimeoutMs, toolTimeoutCallKey, toolTimeoutFromEnv } from "../shared/tool-timeout.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
@@ -566,6 +567,8 @@ async function runSingleAttempt(
 		}
 	}
 	const childSessions = options.childSessionFactory ?? childSessionFactory();
+	const partialOutput = createPartialOutputTracker();
+	let childPromptFailed = false;
 	const exitCode = await new Promise<number>((resolve) => {
 		const jsonlWriter = createJsonlWriter(shared.jsonlPath, { pause() {}, resume() {} });
 		let session: ChildSession | undefined;
@@ -974,6 +977,7 @@ async function runSingleAttempt(
 
 		const processEvent = (evt: ChildSessionEvent & { message?: Message; toolName?: string; toolCallId?: string; args?: unknown; willRetry?: unknown }) => {
 			if (lifecycleFinished) return;
+			partialOutput.observe(evt);
 			jsonlWriter.writeLine(JSON.stringify(projectChildSessionEventForJson(evt)));
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
@@ -1305,6 +1309,7 @@ async function runSingleAttempt(
 			if (session?.machineEvidence) result.nativeMachine = { provider: "herdr", machineId: session.machineEvidence.machineId, ...(session.machineEvidence.initial ? { initialGit: session.machineEvidence.initial } : {}), ...(session.machineEvidence.final ? { finalGit: session.machineEvidence.final } : {}) };
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
 			const promptErrorMessage = promptError === undefined ? undefined : promptError instanceof Error ? promptError.message : String(promptError);
+			if (promptError !== undefined) childPromptFailed = true;
 			if (!closeError && promptErrorMessage !== undefined) {
 				closeError = promptErrorMessage;
 			}
@@ -1528,6 +1533,18 @@ async function runSingleAttempt(
 	const acceptanceOutput = getFinalOutput(result.messages ?? []);
 	let fullOutput = stripAcceptanceReport(acceptanceOutput);
 	if (!fullOutput.trim() && result.structuredOutput !== undefined) fullOutput = JSON.stringify(result.structuredOutput, null, 2);
+	// Text still streaming when the child timed out or its session threw never reached
+	// a completed message. Keep it, labeled; the run still fails and the text never
+	// stands in for acceptance or a requested output file.
+	const partialCause: PartialOutputCause | undefined = result.timedOut
+		? "timeout"
+		: childPromptFailed && !abortedBySignal && !result.interrupted && !result.stopped ? "child error" : undefined;
+	const streamedPartial = partialCause ? partialOutput.text() : undefined;
+	if (partialCause && streamedPartial) {
+		const text = stripAcceptanceReport(streamedPartial);
+		fullOutput = partialCause === "timeout" ? text : formatPartialOutput(text, partialCause);
+		result.outputPartial = true;
+	}
 	result.outputState = fullOutput.trim() || result.structuredOutput !== undefined ? "present" : "absent";
 	if (result.timedOut) {
 		const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);

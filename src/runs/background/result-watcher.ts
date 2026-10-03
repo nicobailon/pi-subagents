@@ -72,6 +72,7 @@ type ResultFileChild = {
 	structuredOutput?: unknown;
 	structuredOutputPath?: string;
 	outputState?: SubagentOutputState;
+	outputPartial?: boolean;
 	error?: string;
 	success?: boolean;
 	state?: string;
@@ -505,6 +506,7 @@ export function createResultWatcher(
 					outputState: result.outputState === "present" || result.outputState === "absent" || result.outputState === "unknown"
 						? result.outputState
 						: "unknown",
+					...(result.outputPartial === true ? { outputPartial: true } : {}),
 					summary,
 					index,
 					artifactPath: result.artifactPaths?.outputPath,

@@ -8,13 +8,14 @@
 
 ### Changed
 
-- The calendar time library loads synchronously on the first calendar calculation, so loading the extension without a calendar schedule avoids its startup cost. Thanks to [@quifox](https://github.com/quifox) for [#2656](https://github.com/nicobailon/pi-subagents/pull/2656).
+- `worktree.cleanup` can apply a saved, reviewed plan after discard authorization. It rechecks Git and ownership facts, validates handoff metadata before deleting anything, keeps trees whose path now resolves outside the directory they were created in, protects ignored files and locked or resumed trees, retains local branches, and records a single-use cleanup receipt. Worktrees created before this version are always kept. Thanks to [@quifox](https://github.com/quifox) for [#1622](https://github.com/nicobailon/pi-subagents/issues/1622).
 
 ### Fixed
 
 - When several async jobs crowd the widget and some of them leave the list, the widget now shrinks to the remaining jobs instead of keeping blank rows at its earlier height. Status updates while the same jobs are listed still keep the height fixed. Thanks to [@tara-marchand](https://github.com/tara-marchand) for [#2651](https://github.com/nicobailon/pi-subagents/issues/2651).
 - `workflow: true` failed with "found 0" when the model fenced its script as plain ```` ```js ```` instead of ```` ```js workflow ````. A reply with exactly one plain `js` block and no tagged block now runs that block. When no block is found, the error now shows the exact opening line and suggests passing a script file path instead. Thanks to [@thetechpadawan](https://github.com/thetechpadawan) for [#2659](https://github.com/nicobailon/pi-subagents/issues/2659).
 - An async workflow could hold its `maxActiveAsyncRunsPerSession` slot forever after it ended when one of its async children failed without process-terminal proof, for example after a reload. `capacity.abandonedSlotReleaseAfterMs` now releases that slot when the workflow ended longer ago than the threshold and every child without proof is a failed run with a dead runner and old activity. `false` still keeps the slot. Thanks to [@jihunkim0](https://github.com/jihunkim0) for [#2658](https://github.com/nicobailon/pi-subagents/issues/2658).
+- A child that timed out or whose session threw mid-reply lost the text it was still streaming. The parent now gets that text, labeled `Partial output before timeout:` or `Partial output before child error:`, with `outputPartial: true` on the result. The run still fails, and the text never counts as a requested output file or as acceptance evidence. Stop, interrupt, abort, and ordinary non-zero exits are unchanged. (#2549) Thanks to [@yanqianglu](https://github.com/yanqianglu) for [#2653](https://github.com/nicobailon/pi-subagents/pull/2653).
 
 ## [0.75.0] - 2026-10-02
 

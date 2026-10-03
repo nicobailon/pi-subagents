@@ -276,7 +276,7 @@ function formatSubagentResultIntercomMessage(input: {
 	for (let index = 0; index < input.children.length; index++) {
 		const child = input.children[index]!;
 		lines.push("");
-		lines.push(`${index + 1}. ${child.agent} — process ${child.status} · output ${child.outputState ?? "unknown"}`);
+		lines.push(`${index + 1}. ${child.agent} — process ${child.status} · output ${child.outputState ?? "unknown"}${child.outputPartial ? " (partial)" : ""}`);
 		if (child.intercomTarget) lines.push(`${input.source === "async" ? "Previous intercom target" : "Run intercom target"}: ${child.intercomTarget}`);
 		if (child.artifactPath) lines.push(`Output artifact: ${child.artifactPath}`);
 		if (child.sessionPath) lines.push(`Session: ${child.sessionPath}`);
@@ -292,6 +292,7 @@ export function buildSubagentResultIntercomPayload(input: GroupedResultIntercomM
 	const children = input.children.map((child) => ({
 		...child,
 		outputState: child.outputState ?? "unknown",
+		...(child.outputPartial ? { outputPartial: true } : {}),
 		summary: child.summary.trim() || "(no output)",
 		children: compactNestedResultChildren(child.children),
 	}));

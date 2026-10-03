@@ -57,6 +57,8 @@ export interface WorktreeSetup {
 }
 
 export interface WorktreeInfo {
+	/** Canonical parent captured at allocation; never re-resolve this evidence later. */
+	recordedBaseDir?: string;
 	path: string;
 	agentCwd: string;
 	branch: string;
@@ -80,6 +82,7 @@ export interface WorktreeDiff {
 }
 
 export interface WorktreeCleanupTask {
+	recordedBaseDir?: string;
 	index: number;
 	path: string;
 	branch: string;
@@ -945,9 +948,11 @@ async function createNativeWorktree(
 	if (branch.status !== 1 || pathExists) throw new Error(`worktree path or branch already exists: ${worktreePath}, ${naming.requestedBranch}`);
 	tx.attempt(index, naming.requestedBranch, worktreePath);
 	ensureProjectWorktreeDir(dedicatedRoot, toplevel);
+	const recordedBaseDir = normalizeComparableCwd(path.dirname(worktreePath));
 	await tx.git(toplevel, ["worktree", "add", worktreePath, "-b", naming.requestedBranch, baseCommit]);
 	const worktree: WorktreeInfo = {
 		path: worktreePath,
+		recordedBaseDir,
 		agentCwd: worktreePath,
 		branch: naming.requestedBranch,
 		index,
@@ -1026,6 +1031,7 @@ async function createWorktrunkWorktree(
 		if (returnedHead !== baseCommit) throw new Error("Worktrunk provisioning returned a worktree at a different base commit");
 		const worktree: WorktreeInfo = {
 			path: worktreePath,
+			recordedBaseDir: normalizeComparableCwd(path.dirname(worktreePath)),
 			agentCwd: cwdRelative ? path.join(worktreePath, cwdRelative) : worktreePath,
 			branch: naming.requestedBranch,
 			index,
@@ -1189,6 +1195,7 @@ function cleanupSingleWorktree(
 			branch: worktree.branch,
 			...(worktree.provider ? { provider: worktree.provider } : {}),
 			...(worktree.naming ? { naming: worktree.naming } : {}),
+			...(worktree.recordedBaseDir ? { recordedBaseDir: worktree.recordedBaseDir } : {}),
 			worktreeRemoved: false,
 			branchRemoved: false,
 			preserved: true,
@@ -1213,6 +1220,7 @@ function cleanupSingleWorktree(
 				branch: worktree.branch,
 				...(worktree.provider ? { provider: worktree.provider } : {}),
 				...(worktree.naming ? { naming: worktree.naming } : {}),
+				...(worktree.recordedBaseDir ? { recordedBaseDir: worktree.recordedBaseDir } : {}),
 				worktreeRemoved: false,
 				branchRemoved: false,
 				preserved: true,
@@ -1248,6 +1256,7 @@ function cleanupSingleWorktree(
 					branch: worktree.branch,
 					...(worktree.provider ? { provider: worktree.provider } : {}),
 					...(worktree.naming ? { naming: worktree.naming } : {}),
+					...(worktree.recordedBaseDir ? { recordedBaseDir: worktree.recordedBaseDir } : {}),
 					worktreeRemoved: false,
 					branchRemoved: false,
 					preserved: true,
@@ -1269,6 +1278,7 @@ function cleanupSingleWorktree(
 					branch: worktree.branch,
 					...(worktree.provider ? { provider: worktree.provider } : {}),
 					...(worktree.naming ? { naming: worktree.naming } : {}),
+					...(worktree.recordedBaseDir ? { recordedBaseDir: worktree.recordedBaseDir } : {}),
 					worktreeRemoved: false,
 					branchRemoved: false,
 					preserved: true,
@@ -1298,6 +1308,7 @@ function cleanupSingleWorktree(
 		branch: worktree.branch,
 		...(worktree.provider ? { provider: worktree.provider } : {}),
 		...(worktree.naming ? { naming: worktree.naming } : {}),
+		...(worktree.recordedBaseDir ? { recordedBaseDir: worktree.recordedBaseDir } : {}),
 		worktreeRemoved,
 		branchRemoved,
 		...(errors.length ? { errors } : {}),
@@ -1337,7 +1348,7 @@ async function compensateSetup(tx: SetupTransaction): Promise<WorktreeCleanupRep
 		}
 		const known = setup.worktrees.find((worktree) => worktree.index === attempt.index);
 		const task: WorktreeCleanupTask = { index: attempt.index, path: attempt.path, branch: attempt.branch,
-			provider: known?.provider ?? "native", naming: known?.naming, worktreeRemoved: false, branchRemoved: false };
+			provider: known?.provider ?? "native", naming: known?.naming, recordedBaseDir: known?.recordedBaseDir, worktreeRemoved: false, branchRemoved: false };
 		report.tasks.push(task);
 		try {
 			if (normalizeComparableCwd(attempt.path) === normalizeComparableCwd(setup.cwd)) throw new Error("Refusing source-checkout removal");

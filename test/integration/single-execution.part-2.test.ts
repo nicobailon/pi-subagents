@@ -1360,7 +1360,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 					summary: "done",
 					patch: { path: path.join(repo, ".pi", "subagents", "artifacts", "worktree.patch"), branch: worktree.branch, changed: false, diffStat: "", filesChanged: 0, insertions: 0, deletions: 0 },
 				}],
-				cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: worktree.path, branch: worktree.branch, worktreeRemoved: false, branchRemoved: false, preserved: true }] },
+				cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: worktree.path, branch: worktree.branch, recordedBaseDir: worktree.recordedBaseDir, worktreeRemoved: false, branchRemoved: false, preserved: true }] },
 			}],
 		}, null, 2), "utf-8");
 		fs.writeFileSync(path.join(repo, ".pi", "subagents", "artifacts", "status.json"), JSON.stringify({ runId: "cleanup-action-run", state: "complete" }), "utf-8");
@@ -1380,9 +1380,16 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			assert.match(childSafeResult.content[0]?.text ?? "", /child-safe subagent fanout mode/i);
 			const apply = await executor.executePublic("cleanup-apply", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "apply", planId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(apply.isError, true);
-			assert.match(apply.content[0]?.text ?? "", /plan.*only|apply\/removal is not available/i);
+			assert.match(apply.content[0]?.text ?? "", /requires interactive confirmation/i);
 			assert.ok(fs.existsSync(worktree.path));
 			assert.notEqual(execFileSync("git", ["-C", repo, "branch", "--list", worktree.branch], { encoding: "utf-8" }).trim(), "");
+			const authorized = makeExecutor([makeAgent("echo")], { worktreeBaseDir: baseDir, authorityPolicy: { discardWorktree: "auto" } });
+			const removed = await authorized.executePublic("cleanup-authorized", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "apply", planId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(removed.isError, undefined, removed.content[0]?.text);
+			assert.match(removed.content[0]?.text ?? "", /complete/);
+			assert.equal(fs.existsSync(worktree.path), false);
+			assert.notEqual(execFileSync("git", ["-C", repo, "branch", "--list", worktree.branch], { encoding: "utf-8" }).trim(), "");
+
 		} finally {
 			try { execFileSync("git", ["-C", repo, "worktree", "remove", "--force", worktree.path], { stdio: "ignore" }); } catch {}
 			try { execFileSync("git", ["-C", repo, "branch", "-D", worktree.branch], { stdio: "ignore" }); } catch {}
