@@ -13,11 +13,18 @@ describe("reply workflow block", () => {
 		assert.deepEqual(readReplyWorkflowScript(branch({ type: "text", text }, call("call-1")), "call-1"), { script });
 	});
 
+	it("runs a lone plain js block, and prefers the tagged block when the reply also has plain js examples", () => {
+		assert.deepEqual(readReplyWorkflowScript(branch({ type: "text", text: "```js\nreturn 1;\n```" }, call("call-1")), "call-1"), { script: "return 1;" });
+		const text = "```js\nexample();\n```\n```js workflow\nreturn 2;\n```";
+		assert.deepEqual(readReplyWorkflowScript(branch({ type: "text", text }, call("call-1")), "call-1"), { script: "return 2;" });
+	});
+
 	it("fails instead of guessing when the block or its owning call is ambiguous or missing", () => {
 		const block = "```js workflow\nreturn 1;\n```";
 		for (const [manager, pattern] of [
-			[branch({ type: "text", text: "no block" }, call("call-1")), /exactly one .*found 0/],
-			[branch({ type: "text", text: `${block}\n${block}` }, call("call-1")), /exactly one .*found 2/],
+			[branch({ type: "text", text: "no block" }, call("call-1")), /exact line "```js workflow".*found 0\. Or write the script to a file/],
+			[branch({ type: "text", text: "```js\na();\n```\n```js\nb();\n```" }, call("call-1")), /found 0\. This reply has 2 untagged js blocks/],
+			[branch({ type: "text", text: `${block}\n${block}` }, call("call-1")), /found 2/],
 			[branch({ type: "text", text: "```js workflow\nreturn 1;" }, call("call-1")), /not closed/],
 			[branch({ type: "text", text: block }, call("call-1"), call("call-2")), /2 subagent calls with workflow: true/],
 			[branch({ type: "text", text: block }, call("other-call")), /only works from a model subagent tool call/],
