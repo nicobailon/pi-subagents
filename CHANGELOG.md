@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- A child that timed out or whose session threw mid-reply lost the text it was still streaming. The parent now gets that text, labeled `Partial output before timeout:` or `Partial output before child error:`, with `outputPartial: true` on the result. The run still fails, and the text never counts as a requested output file or as acceptance evidence. Stop, interrupt, abort, and ordinary non-zero exits are unchanged. (#2549)
+- A child that timed out or whose session threw mid-reply lost the text it was still streaming. The parent now gets that text, labeled `Partial output before timeout:` or `Partial output before child error:`, with `outputPartial: true` on the result. The run still fails, and the text never counts as a requested output file or as acceptance evidence. Stop, interrupt, abort, and ordinary non-zero exits are unchanged. (#2549) Thanks to [@yanqianglu](https://github.com/yanqianglu) for [#2653](https://github.com/nicobailon/pi-subagents/pull/2653).
 
 ## [0.75.0] - 2026-10-02
 
