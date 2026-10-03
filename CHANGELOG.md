@@ -8,6 +8,10 @@
 
 - `worktree.cleanup` can apply a saved, reviewed plan after discard authorization. It rechecks Git and ownership facts, protects ignored files and locked or resumed trees, retains local branches, and records a single-use cleanup receipt. Thanks to [@quifox](https://github.com/quifox) for [#1622](https://github.com/nicobailon/pi-subagents/issues/1622).
 
+### Fixed
+
+- Automatic count retention now defers removal when a discovered or explicitly listed handoff cannot be read or validated, including during the locked recount. The incomplete count and underlying error remain visible. Thanks to [@quifox](https://github.com/quifox) for [#2657](https://github.com/nicobailon/pi-subagents/pull/2657).
+
 ## [0.75.0] - 2026-10-02
 
 ### Highlights

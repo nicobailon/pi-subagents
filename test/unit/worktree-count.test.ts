@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import * as fs from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -77,6 +78,59 @@ describe("count retention policy", () => {
 		for (let i = 0; i < 256; i++) fs.writeFileSync(path.join(path.dirname(input.manifests[0]!), `empty-${i}.json`), JSON.stringify({ version: 1, groups: [] }));
 		const result = await enforceWorktreeRetainCount({ ...input, limit: 1, authorized: true });
 		assert.equal(result.state, "deferred"); assert.equal(result.countExact, false); assert.equal(result.removed, 0);
+	}));
+	for (const source of ["discovered", "listed"] as const) it(`defers all removal for an unreadable ${source} handoff`, () => fixture(4, async (input) => {
+		let unreadable = input.manifests[3]!;
+		if (source === "listed") {
+			const observed = path.join(input.worktreeBaseDir, "observed-handoff.json");
+			fs.renameSync(unreadable, observed);
+			input.manifests[3] = unreadable = observed;
+		}
+		const originalRead = fs.readFileSync;
+		fs.readFileSync = ((file, ...args) => {
+			if (String(file) === unreadable) throw Object.assign(new Error("fixture: handoff read denied"), { code: "EACCES" });
+			return originalRead(file, ...args);
+		}) as typeof fs.readFileSync;
+		syncBuiltinESMExports();
+		try {
+			const result = await enforceWorktreeRetainCount({ ...input, ...(source === "listed" ? { handoffPaths: input.manifests } : {}), limit: 2, authorized: true, foregroundRunOwnership: () => "terminal" });
+			assert.equal(result.state, "deferred"); assert.equal(result.countExact, false); assert.equal(result.removed, 0);
+			assert.ok(result.warnings.some((warning) => warning.includes(unreadable) && warning.includes("fixture: handoff read denied")));
+			assert.ok(input.paths.every((tree) => fs.existsSync(tree)));
+			assert.equal(fs.existsSync(path.join(input.repo, ".pi", "subagents", "cleanup-plans")), false);
+		} finally { fs.readFileSync = originalRead; syncBuiltinESMExports(); }
+	}));
+	it("defers all removal for invalid discovered handoff JSON", () => fixture(4, async (input) => {
+		fs.writeFileSync(input.manifests[3]!, "{");
+		const result = await enforceWorktreeRetainCount({ ...input, limit: 2, authorized: true, foregroundRunOwnership: () => "terminal" });
+		assert.equal(result.state, "deferred"); assert.equal(result.countExact, false); assert.equal(result.removed, 0);
+		assert.ok(result.warnings.some((warning) => warning.includes(input.manifests[3]!) && warning.includes("failed to read")));
+		assert.ok(input.paths.every((tree) => fs.existsSync(tree)));
+	}));
+	it("defers all removal for a missing listed handoff", () => fixture(4, async (input) => {
+		fs.rmSync(input.manifests[3]!);
+		const result = await enforceWorktreeRetainCount({ ...input, handoffPaths: input.manifests, limit: 2, authorized: true, foregroundRunOwnership: () => "terminal" });
+		assert.equal(result.state, "deferred"); assert.equal(result.countExact, false); assert.equal(result.removed, 0);
+		assert.ok(result.warnings.some((warning) => warning.includes(input.manifests[3]!) && warning.includes("not found")));
+		assert.ok(input.paths.every((tree) => fs.existsSync(tree)));
+	}));
+	for (const drift of ["invalid", "missing"] as const) it(`defers a planned batch when another handoff becomes ${drift} before the locked recount`, () => fixture(4, async (input) => {
+		let cleanup: Promise<WorktreeCountReport> | undefined;
+		await withRepositoryWorktreeLock(input.repo, () => {
+			cleanup = enforceWorktreeRetainCount({ ...input, limit: 2, authorized: true, foregroundRunOwnership: () => "terminal" });
+			// The oldest candidates have valid metadata; only the later owner changes.
+			if (drift === "missing") fs.rmSync(input.manifests[3]!);
+			else fs.writeFileSync(input.manifests[3]!, "{");
+		});
+		const result = await cleanup!;
+		assert.equal(result.before, 4);
+		assert.equal(result.state, "deferred"); assert.equal(result.countExact, false); assert.equal(result.removed, 0);
+		assert.ok(result.warnings.some((warning) => warning.includes(input.manifests[3]!) && warning.includes(drift === "missing" ? "not found" : "failed to read")));
+		assert.ok(input.paths.every((tree) => fs.existsSync(tree)));
+		assert.ok(result.receiptPath);
+		const receipt = JSON.parse(fs.readFileSync(result.receiptPath, "utf-8"));
+		assert.equal(receipt.entries.length, 2);
+		assert.ok(receipt.entries.every((entry: { state: string }) => entry.state === "kept"));
 	}));
 	it("requires explicit automatic discard authority before inventory", async () => {
 		await assert.rejects(enforceWorktreeRetainCount({ repo: "missing", limit: 15, authorized: false }), /authorization/);

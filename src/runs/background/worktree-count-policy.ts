@@ -29,9 +29,11 @@ export async function enforceWorktreeRetainCount(input: BuildWorktreeCleanupPlan
 	if (candidates.length === 0) { report.state = "protected"; return report; }
 	input.signal?.throwIfAborted();
 	const created = createWorktreeCleanupPlan({ ...input, handoffPaths: inventory.owned.map((item) => item.handoffPath), candidatePaths: candidates });
+	// Keep observed ownership paths so a vanished handoff makes recounts incomplete.
+	const recountInput = { ...input, handoffPaths: [...(input.handoffPaths ?? []), ...inventory.owned.map((tree) => tree.handoffPath)] };
 	const applied = await applyReviewedCleanupPlan({ repo: inventory.repoRoot, planId: created.plan.planId, authorized: true, signal: input.signal, foregroundRunOwnership: input.foregroundRunOwnership,
 		select: (plan) => {
-			const current = listOwnedWorktreeInventory(input);
+			const current = listOwnedWorktreeInventory(recountInput);
 			if (current.warnings.length) return new Set<string>();
 			const currentExcess = Math.max(0, current.owned.length - input.limit);
 			const stillOwned = new Set(current.owned.map((item) => item.path));
@@ -44,7 +46,7 @@ export async function enforceWorktreeRetainCount(input: BuildWorktreeCleanupPlan
 	});
 	report.receiptPath = applied.receiptPath;
 	report.removed = applied.receipt.entries.filter((entry) => entry.state === "removed").length;
-	const remaining = listOwnedWorktreeInventory(input);
+	const remaining = listOwnedWorktreeInventory(recountInput);
 	report.retained = remaining.owned.length;
 	report.countExact = remaining.warnings.length === 0;
 	report.warnings.push(...remaining.warnings);

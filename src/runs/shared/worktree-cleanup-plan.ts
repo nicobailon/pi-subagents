@@ -431,11 +431,10 @@ function loadMetadata(input: BuildWorktreeCleanupPlanInput, repoRoot: string): {
 	const discovered = discoverHandoffPaths(repoRoot, input);
 	const records: ManifestMetadataRecord[] = [];
 	const warnings = [...discovered.warnings];
-	const explicitPath = input.handoffPath ? path.isAbsolute(input.handoffPath) ? path.resolve(input.handoffPath) : path.resolve(repoRoot, input.handoffPath) : undefined;
 	for (const manifestPath of discovered.paths) {
 		const result = readManifest(manifestPath);
 		if (!result.manifest) {
-			if (explicitPath && comparablePath(manifestPath) === comparablePath(explicitPath)) warnings.push(result.error!);
+			warnings.push(result.error!);
 			continue;
 		}
 		const manifestRoot = resolveExistingPath(manifestPath);
