@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { readParallelHandoffManifest } from "./parallel-handoff.ts";
-import { buildWorktreeCleanupPlan, isRegisteredCleanupWorktree, resolveCleanupRepoRoot, worktreeCleanupContentPayload, worktreeCleanupPlanPath, WORKTREE_CLEANUP_PLAN_TTL_MS, type BuildWorktreeCleanupPlanInput, type WorktreeCleanupPlan, type WorktreeCleanupPlanEntry } from "./worktree-cleanup-plan.ts";
+import { buildWorktreeCleanupPlan, isRegisteredCleanupWorktree, resolveCleanupRepoRoot, samePath, worktreeCleanupContentPayload, worktreeCleanupPlanPath, WORKTREE_CLEANUP_PLAN_TTL_MS, type BuildWorktreeCleanupPlanInput, type WorktreeCleanupPlan, type WorktreeCleanupPlanEntry } from "./worktree-cleanup-plan.ts";
 import { withHandoffWriteLock, withRepositoryWorktreeLock } from "./worktree-lock.ts";
 import { withWorktreeTransaction } from "./worktree.ts";
 
@@ -49,7 +49,7 @@ export function loadReviewedCleanupPlan(repo: string, planId: string, now = Date
 function recordRemoval(entry: WorktreeCleanupPlanEntry): void {
 	const manifest = readParallelHandoffManifest(entry.handoffPath!);
 	if (!manifest || manifest.runId !== entry.runId) throw new Error("Handoff ownership changed before recording removal.");
-	const tasks = manifest.groups.flatMap((group) => group.cleanup.tasks).filter((task) => task.index === entry.taskIndex && path.resolve(task.path) === entry.path && task.branch === entry.branch);
+	const tasks = manifest.groups.flatMap((group) => group.cleanup.tasks).filter((task) => task.index === entry.taskIndex && samePath(path.resolve(path.dirname(entry.handoffPath!), task.path), entry.path) && task.branch === entry.branch);
 	if (tasks.length !== 1) throw new Error("Handoff task no longer identifies exactly one removed worktree.");
 	if (tasks[0]!.worktreeRemoved) return;
 	tasks[0]!.worktreeRemoved = true;

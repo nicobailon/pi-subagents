@@ -46,6 +46,17 @@ describe("reviewed cleanup apply", () => {
 		assert.equal((await applyReviewedCleanupPlan(args)).reused, true);
 	}));
 
+	it("records removal for a relative handoff worktree path", () => cleanupFixture(async ({ repo, baseDir, setup, manifestPath }) => {
+		const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+		manifest.groups[0].cleanup.tasks[0].path = path.relative(path.dirname(manifestPath), setup.worktrees[0]!.path);
+		fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+		const { plan } = createWorktreeCleanupPlan({ repo, worktreeBaseDir: baseDir, foregroundRunOwnership: () => "terminal" });
+		const result = await applyReviewedCleanupPlan({ repo, planId: plan.planId, authorized: true, foregroundRunOwnership: () => "terminal" });
+		assert.equal(result.receipt.state, "complete");
+		assert.equal(fs.existsSync(setup.worktrees[0]!.path), false);
+		assert.equal(JSON.parse(fs.readFileSync(manifestPath, "utf-8")).groups[0].cleanup.tasks[0].worktreeRemoved, true);
+	}));
+
 	for (const drift of ["dirty", "ignored", "locked", "branch", "missing-artifact", "active"] as const) it(`keeps a reviewed tree after ${drift} drift`, () => cleanupFixture(async ({ repo, setup, manifestPath, planId }) => {
 		const tree = setup.worktrees[0]!;
 		if (drift === "dirty") fs.writeFileSync(path.join(tree.path, "new.txt"), "valuable");
@@ -141,9 +152,9 @@ describe("reviewed cleanup apply", () => {
 
 	it("keeps a single-use applying receipt after an interrupted owner", () => cleanupFixture(async ({ repo, setup, planId }) => {
 		const plan = loadReviewedCleanupPlan(repo, planId);
-		const claim = path.join(repo, ".pi", "subagents", "cleanup-plans", `${planId}.claim`);
+		const claim = path.join(plan.repoRoot, ".pi", "subagents", "cleanup-plans", `${planId}.claim`);
 		fs.mkdirSync(claim);
-		fs.writeFileSync(path.join(claim, "receipt.json"), JSON.stringify({ version: 1, planId, repoRoot: repo, contentHash: plan.contentHash, state: "applying", startedAt: Date.now(), entries: [] }));
+		fs.writeFileSync(path.join(claim, "receipt.json"), JSON.stringify({ version: 1, planId, repoRoot: plan.repoRoot, contentHash: plan.contentHash, state: "applying", startedAt: Date.now(), entries: [] }));
 		const result = await applyReviewedCleanupPlan({ repo, planId, authorized: true, foregroundRunOwnership: () => "terminal" });
 		assert.equal(result.reused, true);
 		assert.equal(result.receipt.state, "applying");
