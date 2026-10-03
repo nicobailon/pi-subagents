@@ -888,6 +888,7 @@ export class ScheduledRunManager {
 	private async launch(store: ScheduleStore, schedule: ScheduleRecord, planned: number, dueReason: ScheduleRunRecord["dueReason"], advance: boolean, quiet?: boolean): Promise<ScheduleRunRecord> {
 		const now = this.now();
 		const nextRunAtBeforeClaim = schedule.trigger.nextRunAt;
+		const nextLocalDateBeforeClaim = schedule.trigger.kind === "calendar" ? schedule.trigger.nextLocalDate : undefined;
 		const run: ScheduleRunRecord = { schemaVersion: 1, id: this.randomId(), scheduleId: schedule.id, plannedAt: timestamp(planned), dueReason, state: "running", startedAt: timestamp(now) };
 		if (schedule.activeRunId) {
 			run.state = "skipped";
@@ -943,7 +944,16 @@ export class ScheduledRunManager {
 			run.error = error instanceof Error ? error.message : String(error);
 			const latest = store.get(schedule.id);
 			latest.activeRunId = undefined;
-			if (!advance && latest.trigger.kind !== "calendar" && nextRunAtBeforeClaim) latest.trigger.nextRunAt = nextRunAtBeforeClaim;
+			if (!advance && nextRunAtBeforeClaim) {
+				if (latest.trigger.kind === "calendar") {
+					// An overlapping timer may have advanced both cursor fields while
+					// this manual attachment was pending. Failure satisfies neither.
+					if (nextLocalDateBeforeClaim !== undefined) {
+						latest.trigger.nextLocalDate = nextLocalDateBeforeClaim;
+						latest.trigger.nextRunAt = nextRunAtBeforeClaim;
+					}
+				} else latest.trigger.nextRunAt = nextRunAtBeforeClaim;
+			}
 			latest.updatedAt = timestamp(this.now());
 			store.write(latest);
 			store.writeRun(latest, run, "schedule.run.failed");

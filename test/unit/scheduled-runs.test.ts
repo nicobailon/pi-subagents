@@ -180,6 +180,33 @@ describe("calendar schedule execution", () => {
 		assert.equal((await manual).isError, true);
 		assert.deepEqual(await trigger(h), before);
 	});
+	for (const paused of [false, true]) it(`restores an overlapped calendar fire after failed manual attachment, paused: ${paused}`, async () => {
+		const h = harness();
+		await daily(h);
+		const before = await trigger(h);
+		const manual = h.manager.handleToolCall({ action: "schedule.run", id: "calendar" }, h.ctx);
+		await flush();
+		h.clock.now = Date.parse("2030-01-01T01:00:00Z");
+		h.timers.fireAll();
+		await flush();
+		assert.equal((await trigger(h)).nextLocalDate, "2030-01-02");
+		if (paused) await h.manager.handleToolCall({ action: "schedule.pause", id: "calendar" }, h.ctx);
+		h.launches[0]!.resolve({ content: [{ type: "text", text: "launch rejected" }], details: {}, isError: true });
+		assert.equal((await manual).isError, true);
+		assert.deepEqual(await trigger(h), before);
+		assert.equal(detailRecords(await h.manager.handleToolCall({ action: "schedule.show", id: "calendar" }, h.ctx))[0]!.paused, paused);
+		assert.equal(h.launches.length, 1);
+		if (paused) assert.equal(h.timers.values.size, 0);
+		else {
+			h.timers.fireAll();
+			await flush();
+			assert.equal(h.launches.length, 2);
+			h.launches[1]!.resolve({ content: [], details: { asyncId: "natural-retry" } });
+			await flush();
+			assert.equal((await trigger(h)).nextLocalDate, "2030-01-02");
+			assert.equal((await trigger(h)).nextRunAt, "2030-01-02T01:00:00.000Z");
+		}
+	});
 	it("does not consume an extra date when a natural fire overlaps manual attachment", async () => {
 		const h = harness();
 		await daily(h);

@@ -146,6 +146,7 @@ Behavior:
 - Definitions, bounded history, append-only events, and per-run receipts are stored with mode `0600`.
 - `overlap` is currently fixed to `skip`; `catchUp` supports `latest` (default) and `none`.
 - A successful `schedule.run` satisfies the next natural fire; a failed manual launch does not skip it. For calendars, a manual launch before today's pending fire consumes today; if today has already fired, it consumes the next pending date. When overdue, it consumes the latest pending occurrence. The next fire is after both that occurrence and the current time.
+- If a natural calendar fire overlaps a manual launch that later fails, the pending fire remains due. Pausing the schedule while that launch is pending still prevents automatic execution after the failure.
 - `quiet` persists only on recurring (`every`) schedules. Successful automatic fires stay visible without a parent turn; failed, stopped, or paused outcomes still wake the session. One-shot `at` schedules and `schedule.run` stay noisy unless that launch passes `quiet: true`.
 - `schedule.run-due` lets an external launcher start due project work without making `pi-subagents` a daemon.
 - Month/year recurrence, cron, queue/replace overlap, and the schedule TUI inspector are intentionally deferred to the next slice.
