@@ -69,6 +69,18 @@ jobs:
           path: ${{ runner.temp }}/1906-terminal-evidence/shared-cwd-terminal.json
           if-no-files-found: ignore
 
+  calendar-timezones:
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - name: Calendar local-time and scheduler regressions
+        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/calendar-schedule.test.ts test/unit/scheduled-runs.test.ts
+
   native-nested-wait:
     strategy:
       matrix:
