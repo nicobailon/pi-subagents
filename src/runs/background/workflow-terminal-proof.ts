@@ -14,38 +14,55 @@ export type WorkflowChildProcessEvidence =
 	| { state: "observed"; children: ProcessTerminal[] }
 	| { state: "pending" | "unknown"; reason: string };
 
+/** `unresolvedProof` is set only when a terminal child's status matches its roster run id and runner identity, and just its process proof is missing. */
+export type WorkflowChildEvidence =
+	| { state: "resolved"; proof: ProcessTerminal }
+	| { state: "pending" | "unknown"; reason: string; unresolvedProof?: { status: AsyncStatus; proofState: string } };
+
 /**
  * Process evidence for a workflow's async children. Status proofs and capacity
  * release both use this so they cannot disagree about the same workflow.
- * Synchronous children run inside the workflow host and have no process of their own.
  */
 export function readWorkflowChildProcessEvidence(workflowAsyncDir: string, steps: AsyncStatus["steps"]): WorkflowChildProcessEvidence {
 	if (!steps) return { state: "unknown", reason: "workflow child roster is missing" };
 	const children: ProcessTerminal[] = [];
 	for (const step of steps) {
-		const label = step.workflowKey ?? step.agent;
-		if (typeof step.async !== "boolean") return { state: "unknown", reason: `workflow child ${label} is missing async classification` };
-		if (!step.async) continue;
-		if (!step.runId || path.basename(step.runId) !== step.runId) return { state: "unknown", reason: `async workflow child ${label} is missing run id` };
-		const childDir = path.join(path.dirname(workflowAsyncDir), step.runId);
-		if (!fs.existsSync(childDir)) return { state: "unknown", reason: `async workflow child ${label} directory is missing` };
-		const childStatus = readStatus(childDir);
-		if (!childStatus) return { state: "unknown", reason: `async workflow child ${label} status is missing or unreadable` };
-		if (!isTerminalAsyncState(childStatus.state)) return { state: "pending", reason: `async workflow child ${label} is still ${childStatus.state}` };
-		const recorded = childStatus.processTerminal;
-		if (!recorded?.runnerProcessInstanceId) return { state: "unknown", reason: `async workflow child ${label} has no runner process identity` };
-		// A runner startup failure records `not-started` in status and never writes a process-terminal sidecar.
-		if (recorded.state === "not-started" && recorded.runId === step.runId && typeof childStatus.error === "string" && childStatus.error) {
-			children.push(recorded);
-			continue;
-		}
-		const proof = readProcessTerminal(childDir, { runId: step.runId, runnerProcessInstanceId: recorded.runnerProcessInstanceId });
-		if (proof?.state !== "observed" || proof.runId !== step.runId) {
-			return { state: !proof || proof.state === "pending" ? "pending" : "unknown", reason: `async workflow child ${label} process-terminal proof is ${proof?.state ?? "missing"}` };
-		}
-		children.push(proof);
+		const child = readWorkflowChildEvidence(workflowAsyncDir, step);
+		if (!child) continue;
+		if (child.state !== "resolved") return { state: child.state, reason: child.reason };
+		children.push(child.proof);
 	}
 	return { state: "observed", children };
+}
+
+/** Evidence for one roster entry; undefined for synchronous children, which run inside the workflow host and have no process of their own. */
+export function readWorkflowChildEvidence(workflowAsyncDir: string, step: NonNullable<AsyncStatus["steps"]>[number]): WorkflowChildEvidence | undefined {
+	const label = step.workflowKey ?? step.agent;
+	if (typeof step.async !== "boolean") return { state: "unknown", reason: `workflow child ${label} is missing async classification` };
+	if (!step.async) return undefined;
+	if (!step.runId || path.basename(step.runId) !== step.runId) return { state: "unknown", reason: `async workflow child ${label} is missing run id` };
+	const childDir = path.join(path.dirname(workflowAsyncDir), step.runId);
+	if (!fs.existsSync(childDir)) return { state: "unknown", reason: `async workflow child ${label} directory is missing` };
+	const childStatus = readStatus(childDir);
+	if (!childStatus) return { state: "unknown", reason: `async workflow child ${label} status is missing or unreadable` };
+	if (!isTerminalAsyncState(childStatus.state)) return { state: "pending", reason: `async workflow child ${label} is still ${childStatus.state}` };
+	const recorded = childStatus.processTerminal;
+	if (!recorded?.runnerProcessInstanceId) return { state: "unknown", reason: `async workflow child ${label} has no runner process identity` };
+	// A runner startup failure records `not-started` in status and never writes a process-terminal sidecar.
+	if (recorded.state === "not-started" && recorded.runId === step.runId && typeof childStatus.error === "string" && childStatus.error) {
+		return { state: "resolved", proof: recorded };
+	}
+	const proof = readProcessTerminal(childDir, { runId: step.runId, runnerProcessInstanceId: recorded.runnerProcessInstanceId });
+	if (proof?.state !== "observed" || proof.runId !== step.runId) {
+		const proofState = proof?.state ?? "missing";
+		const bound = childStatus.runId === step.runId && typeof recorded.runnerProcessInstanceId === "string";
+		return {
+			state: !proof || proof.state === "pending" ? "pending" : "unknown",
+			reason: `async workflow child ${label} process-terminal proof is ${proofState}`,
+			...(bound ? { unresolvedProof: { status: childStatus, proofState } } : {}),
+		};
+	}
+	return { state: "resolved", proof };
 }
 
 function unresolved(runId: string, state: "pending" | "unknown", dispatchClosed: boolean, reason: string): WorkflowTerminalProof {
