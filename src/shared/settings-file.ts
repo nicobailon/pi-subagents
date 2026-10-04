@@ -91,4 +91,3 @@ function resolveSettingsWriteTarget(filePath: string): string {
 		targetPath = path.isAbsolute(linkText) ? linkText : `${parentPath}${path.sep}${linkText}`;
 	}
 }
-
