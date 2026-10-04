@@ -63,7 +63,12 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	lines.push("---");
 	lines.push(`name: ${frontmatterNameForConfig(config)}`);
 	if (config.packageName) lines.push(`package: ${config.packageName}`);
-	lines.push(`description: ${config.description}`);
+	if (config.description.includes("\n")) {
+		lines.push("description: |-");
+		for (const line of config.description.split("\n")) lines.push(`  ${line}`);
+	} else {
+		lines.push(`description: ${config.description}`);
+	}
 	if (config.advertise === true || preserve("advertise")) lines.push(`advertise: ${config.advertise === true ? "true" : "false"}`);
 	const aliasesValue = joinComma(config.aliases);
 	if (aliasesValue || preserve("alias", "aliases")) lines.push(`aliases: ${aliasesValue ?? ""}`);
