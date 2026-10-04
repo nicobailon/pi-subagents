@@ -103,7 +103,7 @@ jobs:
           node-version: 24
       - run: npm ci --ignore-scripts
       - name: Focused regressions
-        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/schedule-history-transactions.test.ts test/unit/schedule-attachment-persistence.test.ts
+        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/schedule-history-transactions.test.ts test/unit/schedule-attachment-persistence.test.ts test/unit/file-write-lock.test.ts
 
   native-nested-wait:
     strategy:

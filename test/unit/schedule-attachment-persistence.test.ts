@@ -161,4 +161,31 @@ it("retains completion proof when saving an overdue overlap receipt fails", asyn
 	assert.equal(run.state, "completed"); assert.equal(run.asyncId, "attached");
 	assert.equal(fs.existsSync(path.join(h.dir, "active.lock")), false);
 	assert.equal(JSON.parse(fs.readFileSync(path.join(h.dir, "schedule.json"), "utf-8")).trigger.nextRunAt, new Date(h.now + 7_200_000).toISOString());
+	const history = JSON.parse(fs.readFileSync(path.join(h.dir, "history.json"), "utf-8")).runs;
+	assert.equal(history.filter((run: any) => run.state === "skipped" && run.plannedAt === new Date(h.now + 3_600_000).toISOString()).length, 1);
+}));
+
+
+it("retries a skipped receipt independently after completion releases the schedule", async () => fixture("receipt", async h => {
+	h.recover();
+	assert.equal((await h.manager.handleToolCall({ action: "schedule.show", id: "check" }, h.ctx)).isError, undefined);
+	h.clock.now = h.now + 3_600_000;
+	const original = fs.renameSync;
+	fs.renameSync = function (source, destination) {
+		if (destination === path.join(h.dir, "history.json") && JSON.parse(fs.readFileSync(source, "utf-8")).runs[0].state === "skipped") throw Object.assign(new Error("skipped history EIO"), { code: "EIO" });
+		return original.call(fs, source, destination);
+	}; syncBuiltinESMExports();
+	h.manager.handleAsyncCompletion({ id: "attached", success: true });
+	assert.equal((await h.manager.handleToolCall({ action: "schedule.show", id: "check" }, h.ctx)).isError, true);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(h.dir, "runs", "run-1.json"), "utf-8")).state, "completed");
+	assert.equal(fs.existsSync(path.join(h.dir, "active.lock")), false);
+	h.recover();
+	const replacement = h.observer(async () => ({ content: [], details: { asyncId: "replacement" } }));
+	assert.equal((await replacement.handleToolCall({ action: "schedule.run", id: "check" }, h.ctx)).isError, undefined);
+	const scheduleBefore = fs.readFileSync(path.join(h.dir, "schedule.json"), "utf-8");
+	assert.equal((await h.manager.handleToolCall({ action: "schedule.show", id: "check" }, h.ctx)).isError, undefined);
+	assert.equal(fs.readFileSync(path.join(h.dir, "schedule.json"), "utf-8"), scheduleBefore);
+	assert.equal(fs.readFileSync(path.join(h.dir, "active.lock"), "utf-8"), JSON.parse(scheduleBefore).activeRunId);
+	const history = JSON.parse(fs.readFileSync(path.join(h.dir, "history.json"), "utf-8")).runs;
+	assert.equal(history.filter((run: any) => run.state === "skipped" && run.plannedAt === new Date(h.now + 3_600_000).toISOString()).length, 1);
 }));

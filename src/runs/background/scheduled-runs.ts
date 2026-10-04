@@ -819,37 +819,38 @@ export class ScheduledRunManager {
 				store.write(schedule);
 			}
 		}
-		const key = this.timerKey(store, schedule.id);
-		let pending = this.pendingRunUpdates.get(key);
-		if (pending?.state === "running") {
-			const saved = store.getRun(schedule.id, pending.id);
-			// Another session may already have persisted terminal proof.
-			if (saved && saved.state !== "running") pending = saved;
-		}
-		if (pending) {
-			if (pending.state === "running" && schedule.activeRunId && schedule.activeRunId !== pending.id) {
-				// An older running claim cannot change a replacement owner.
-				// Terminal proof still needs its own receipt persisted below.
-				this.pendingRunUpdates.delete(key);
-			} else {
-				store.writeRun(schedule, pending, pending.state === "running" ? "schedule.run.attached_async" : pending.state === "completed" ? "schedule.run.completed" : "schedule.run.failed");
-				if (pending.state !== "running") {
-					if (schedule.activeRunId === pending.id) {
-						// Completion may have failed while saving an overdue overlap.
-						// Satisfy only firings due by that completion, not later ones.
-						if (pending.state === "completed" || pending.state === "failed_run") {
-							const completedAt = Date.parse(pending.completedAt!);
-							const next = nextRunAt(schedule);
-							if (next !== undefined && next <= completedAt) schedule.trigger = nextAfter(schedule.trigger, duePlannedAt(schedule, completedAt)!, completedAt);
+		for (let [key, pending] of this.pendingRunUpdates) {
+			if (pending.scheduleId !== schedule.id || key !== this.runUpdateKey(store, pending)) continue;
+			if (pending?.state === "running") {
+				const saved = store.getRun(schedule.id, pending.id);
+				// Another session may already have persisted terminal proof.
+				if (saved && saved.state !== "running") pending = saved;
+			}
+			if (pending) {
+				if (pending.state === "running" && schedule.activeRunId && schedule.activeRunId !== pending.id) {
+					// An older running claim cannot change a replacement owner.
+					// Terminal proof still needs its own receipt persisted below.
+					this.pendingRunUpdates.delete(key);
+				} else {
+					store.writeRun(schedule, pending, pending.state === "running" ? "schedule.run.attached_async" : pending.state === "completed" ? "schedule.run.completed" : pending.state === "skipped" ? "schedule.skipped_overlap" : "schedule.run.failed");
+					if (pending.state !== "running") {
+						if (schedule.activeRunId === pending.id) {
+							// Completion may have failed while saving an overdue overlap.
+							// Satisfy only firings due by that completion, not later ones.
+							if (pending.state === "completed" || pending.state === "failed_run") {
+								const completedAt = Date.parse(pending.completedAt!);
+								const next = nextRunAt(schedule);
+								if (next !== undefined && next <= completedAt) schedule.trigger = nextAfter(schedule.trigger, duePlannedAt(schedule, completedAt)!, completedAt);
+							}
+							schedule.activeRunId = undefined;
+							schedule.updatedAt = timestamp(this.now());
+							store.write(schedule);
 						}
-						schedule.activeRunId = undefined;
-						schedule.updatedAt = timestamp(this.now());
-						store.write(schedule);
+						this.releaseOwnLock(store, pending);
+						if (pending.asyncId) this.observedAsyncIds.delete(pending.asyncId);
 					}
-					this.releaseOwnLock(store, pending);
-					if (pending.asyncId) this.observedAsyncIds.delete(pending.asyncId);
+					this.pendingRunUpdates.delete(key);
 				}
-				this.pendingRunUpdates.delete(key);
 			}
 		}
 		if (schedule.activeRunId) {
@@ -986,7 +987,7 @@ export class ScheduledRunManager {
 			run.state = "failed_launch";
 			run.completedAt = timestamp(this.now());
 			run.error = error instanceof Error ? error.message : String(error);
-			this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
+			this.pendingRunUpdates.set(this.runUpdateKey(store, run), run);
 			const cleanupErrors: unknown[] = [];
 			let latest: ScheduleRecord | undefined;
 			try {
@@ -1005,7 +1006,7 @@ export class ScheduledRunManager {
 				latest ??= store.find(schedule.id);
 				if (latest) store.writeRun(latest, run, "schedule.run.failed");
 			} catch (cleanupError) { cleanupErrors.push(cleanupError); }
-			if (cleanupErrors.length === 0) this.pendingRunUpdates.delete(this.timerKey(store, schedule.id));
+			if (cleanupErrors.length === 0) this.pendingRunUpdates.delete(this.runUpdateKey(store, run));
 			else console.warn(`[pi-subagents] Failed to clean up launch claim '${run.id}': ${cleanupErrors.map((error) => error instanceof Error ? error.message : String(error)).join("; ")}`);
 			throw error;
 		}
@@ -1016,9 +1017,9 @@ export class ScheduledRunManager {
 			run.asyncId = asyncId;
 			run.asyncDir = result.details?.asyncDir;
 			this.observedAsyncIds.add(asyncId);
-			this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
+			this.pendingRunUpdates.set(this.runUpdateKey(store, run), run);
 			store.writeRun(schedule, run, "schedule.run.attached_async");
-			this.pendingRunUpdates.delete(this.timerKey(store, schedule.id));
+			this.pendingRunUpdates.delete(this.runUpdateKey(store, run));
 			this.arm(schedule, store);
 			return run;
 		} catch (error) {
@@ -1059,7 +1060,7 @@ export class ScheduledRunManager {
 	private finishRun(store: ScheduleStore, schedule: ScheduleRecord, run: ScheduleRunRecord, success: boolean, error?: string): void {
 		const now = this.now();
 		const next = nextRunAt(schedule);
-		this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
+		this.pendingRunUpdates.set(this.runUpdateKey(store, run), run);
 		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
 		run.state = success ? "completed" : "failed_run";
 		run.completedAt = timestamp(now);
@@ -1076,14 +1077,16 @@ export class ScheduledRunManager {
 				completedAt: timestamp(now),
 			};
 			schedule.trigger = nextAfter(schedule.trigger, planned, now);
+			this.pendingRunUpdates.set(this.runUpdateKey(store, skipped), skipped);
 			store.writeRun(schedule, skipped, "schedule.skipped_overlap");
+			this.pendingRunUpdates.delete(this.runUpdateKey(store, skipped));
 		}
 		schedule.activeRunId = undefined;
 		schedule.updatedAt = timestamp(now);
 		store.write(schedule);
 		fs.rmSync(path.join(store.directory(schedule.id), "active.lock"), { force: true });
 		store.writeRun(schedule, run, success ? "schedule.run.completed" : "schedule.run.failed");
-		this.pendingRunUpdates.delete(this.timerKey(store, schedule.id));
+		this.pendingRunUpdates.delete(this.runUpdateKey(store, run));
 		this.arm(schedule, store);
 	}
 
@@ -1124,7 +1127,7 @@ export class ScheduledRunManager {
 		}
 		this.store = store;
 		for (const [key, run] of this.pendingRunUpdates) {
-			if (key !== this.timerKey(store, run.scheduleId)) continue;
+			if (key !== this.runUpdateKey(store, run)) continue;
 			const schedule = store.find(run.scheduleId);
 			if (schedule) this.restoreOne(store, schedule);
 			else this.pendingRunUpdates.delete(key);
@@ -1150,7 +1153,7 @@ export class ScheduledRunManager {
 
 	private activeRun(store: ScheduleStore, schedule: ScheduleRecord): ScheduleRunRecord | undefined {
 		if (!schedule.activeRunId) return undefined;
-		const pending = this.pendingRunUpdates.get(this.timerKey(store, schedule.id));
+		const pending = this.pendingRunUpdates.get(this.runUpdateKey(store, { scheduleId: schedule.id, id: schedule.activeRunId }));
 		const saved = store.getRun(schedule.id, schedule.activeRunId);
 		return pending?.id === schedule.activeRunId && (!saved || saved.state === "running") ? pending
 			: saved ?? store.history(schedule.id).find((run) => run.id === schedule.activeRunId);
@@ -1160,6 +1163,10 @@ export class ScheduledRunManager {
 		const file = path.join(store.directory(run.scheduleId), "active.lock");
 		try { if (fs.readFileSync(file, "utf-8") === run.id) fs.rmSync(file); }
 		catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+	}
+
+	private runUpdateKey(store: ScheduleStore, run: Pick<ScheduleRunRecord, "scheduleId" | "id">): string {
+		return `${this.timerKey(store, run.scheduleId)}\0${run.id}`;
 	}
 
 	private timerKey(store: ScheduleStore, id: string): string {
