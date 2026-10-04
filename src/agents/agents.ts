@@ -9,6 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAtomicJsonWriter } from "../shared/atomic-json.ts";
+import { resolveSettingsWriteTarget, withSettingsFileLease } from "../shared/settings-file-lease.ts";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, JsonSchemaObject, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { isClaudeCodeAdapterId } from "../runs/shared/claude-code-adapter.ts";
@@ -974,32 +975,6 @@ function writeSettingsFile(filePath: string, settings: Record<string, unknown>):
 	writeAtomicSettings(targetPath, settings);
 }
 
-function resolveSettingsWriteTarget(filePath: string): string {
-	let targetPath = filePath;
-	for (;;) {
-		try {
-			return fs.realpathSync.native(targetPath);
-		} catch (error) {
-			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-			// A trailing separator requires a directory; it cannot name a new settings file.
-			if (targetPath.endsWith("/") || targetPath.endsWith(path.sep)) throw error;
-		}
-
-		// A missing target is allowed only when its physical parent already exists.
-		const parentPath = fs.realpathSync.native(path.dirname(targetPath));
-		const unresolvedPath = path.join(parentPath, path.basename(targetPath));
-		let linkText: string;
-		try {
-			linkText = fs.readlinkSync(unresolvedPath);
-		} catch (error) {
-			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-			return unresolvedPath;
-		}
-		// Keep link text intact so the filesystem follows directory links before "..".
-		targetPath = path.isAbsolute(linkText) ? linkText : `${parentPath}${path.sep}${linkText}`;
-	}
-}
-
 function parseOverrideStringArrayOrFalse(
 	value: unknown,
 	meta: { filePath: string; name: string; field: string },
@@ -1739,19 +1714,21 @@ export function saveBuiltinAgentOverride(
 	const filePath = scope === "project" ? getProjectAgentSettingsPath(cwd) : getUserAgentSettingsPath();
 	if (!filePath) throw new Error("Project override is not available here. No project config root was found.");
 
-	const settings = readSettingsFileStrict(filePath);
-	const subagents = settings.subagents && typeof settings.subagents === "object" && !Array.isArray(settings.subagents)
-		? { ...(settings.subagents as Record<string, unknown>) }
-		: {};
-	const agentOverrides = subagents.agentOverrides && typeof subagents.agentOverrides === "object" && !Array.isArray(subagents.agentOverrides)
-		? { ...(subagents.agentOverrides as Record<string, unknown>) }
-		: {};
+	return withSettingsFileLease(filePath, () => {
+		const settings = readSettingsFileStrict(filePath);
+		const subagents = settings.subagents && typeof settings.subagents === "object" && !Array.isArray(settings.subagents)
+			? { ...(settings.subagents as Record<string, unknown>) }
+			: {};
+		const agentOverrides = subagents.agentOverrides && typeof subagents.agentOverrides === "object" && !Array.isArray(subagents.agentOverrides)
+			? { ...(subagents.agentOverrides as Record<string, unknown>) }
+			: {};
 
-	agentOverrides[name] = cloneOverrideValue(override);
-	subagents.agentOverrides = agentOverrides;
-	settings.subagents = subagents;
-	writeSettingsFile(filePath, settings);
-	return filePath;
+		agentOverrides[name] = cloneOverrideValue(override);
+		subagents.agentOverrides = agentOverrides;
+		settings.subagents = subagents;
+		writeSettingsFile(filePath, settings);
+		return filePath;
+	});
 }
 
 export function removeBuiltinAgentOverride(cwd: string, name: string, scope: "user" | "project", options?: { preserveMachine?: boolean }): { path: string; removed: boolean; machinePreserved: boolean } {
@@ -1759,28 +1736,30 @@ export function removeBuiltinAgentOverride(cwd: string, name: string, scope: "us
 	if (!filePath) throw new Error("Project override is not available here. No project config root was found.");
 	if (!fs.existsSync(filePath)) return { path: filePath, removed: false, machinePreserved: false };
 
-	const settings = readSettingsFileStrict(filePath);
-	const subagents = settings.subagents;
-	if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) return { path: filePath, removed: false, machinePreserved: false };
-	const nextSubagents = { ...(subagents as Record<string, unknown>) };
-	const agentOverrides = nextSubagents.agentOverrides;
-	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) return { path: filePath, removed: false, machinePreserved: false };
+	return withSettingsFileLease(filePath, () => {
+		const settings = readSettingsFileStrict(filePath);
+		const subagents = settings.subagents;
+		if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) return { path: filePath, removed: false, machinePreserved: false };
+		const nextSubagents = { ...(subagents as Record<string, unknown>) };
+		const agentOverrides = nextSubagents.agentOverrides;
+		if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) return { path: filePath, removed: false, machinePreserved: false };
 
-	const nextOverrides = { ...(agentOverrides as Record<string, unknown>) };
-	const current = nextOverrides[name];
-	if (!Object.prototype.hasOwnProperty.call(nextOverrides, name)) return { path: filePath, removed: false, machinePreserved: false };
-	const configuredMachine = current && typeof current === "object" && !Array.isArray(current) ? (current as Record<string, unknown>).machine : undefined;
-	const machine = configuredMachine === false || (typeof configuredMachine === "string" && configuredMachine.trim()) ? configuredMachine : undefined;
-	if (options?.preserveMachine && machine !== undefined) nextOverrides[name] = { machine };
-	else delete nextOverrides[name];
-	if (Object.keys(nextOverrides).length > 0) nextSubagents.agentOverrides = nextOverrides;
-	else delete nextSubagents.agentOverrides;
+		const nextOverrides = { ...(agentOverrides as Record<string, unknown>) };
+		const current = nextOverrides[name];
+		if (!Object.prototype.hasOwnProperty.call(nextOverrides, name)) return { path: filePath, removed: false, machinePreserved: false };
+		const configuredMachine = current && typeof current === "object" && !Array.isArray(current) ? (current as Record<string, unknown>).machine : undefined;
+		const machine = configuredMachine === false || (typeof configuredMachine === "string" && configuredMachine.trim()) ? configuredMachine : undefined;
+		if (options?.preserveMachine && machine !== undefined) nextOverrides[name] = { machine };
+		else delete nextOverrides[name];
+		if (Object.keys(nextOverrides).length > 0) nextSubagents.agentOverrides = nextOverrides;
+		else delete nextSubagents.agentOverrides;
 
-	if (Object.keys(nextSubagents).length > 0) settings.subagents = nextSubagents;
-	else delete settings.subagents;
+		if (Object.keys(nextSubagents).length > 0) settings.subagents = nextSubagents;
+		else delete settings.subagents;
 
-	writeSettingsFile(filePath, settings);
-	return { path: filePath, removed: true, machinePreserved: options?.preserveMachine === true && machine !== undefined };
+		writeSettingsFile(filePath, settings);
+		return { path: filePath, removed: true, machinePreserved: options?.preserveMachine === true && machine !== undefined };
+	});
 }
 
 export function mergeBuiltinAgentOverride(
@@ -1792,23 +1771,25 @@ export function mergeBuiltinAgentOverride(
 	const filePath = scope === "project" ? getProjectAgentSettingsPath(cwd) : getUserAgentSettingsPath();
 	if (!filePath) throw new Error("Project override is not available here. No project config root was found.");
 
-	const settings = readSettingsFileStrict(filePath);
-	const subagents = settings.subagents && typeof settings.subagents === "object" && !Array.isArray(settings.subagents)
-		? { ...(settings.subagents as Record<string, unknown>) }
-		: {};
-	const agentOverrides = subagents.agentOverrides && typeof subagents.agentOverrides === "object" && !Array.isArray(subagents.agentOverrides)
-		? { ...(subagents.agentOverrides as Record<string, unknown>) }
-		: {};
+	return withSettingsFileLease(filePath, () => {
+		const settings = readSettingsFileStrict(filePath);
+		const subagents = settings.subagents && typeof settings.subagents === "object" && !Array.isArray(settings.subagents)
+			? { ...(settings.subagents as Record<string, unknown>) }
+			: {};
+		const agentOverrides = subagents.agentOverrides && typeof subagents.agentOverrides === "object" && !Array.isArray(subagents.agentOverrides)
+			? { ...(subagents.agentOverrides as Record<string, unknown>) }
+			: {};
 
-	const existing = agentOverrides[name];
-	const base = existing && typeof existing === "object" && !Array.isArray(existing)
-		? existing as Record<string, unknown>
-		: {};
-	agentOverrides[name] = { ...base, ...cloneOverrideValue(fields) };
-	subagents.agentOverrides = agentOverrides;
-	settings.subagents = subagents;
-	writeSettingsFile(filePath, settings);
-	return filePath;
+		const existing = agentOverrides[name];
+		const base = existing && typeof existing === "object" && !Array.isArray(existing)
+			? existing as Record<string, unknown>
+			: {};
+		agentOverrides[name] = { ...base, ...cloneOverrideValue(fields) };
+		subagents.agentOverrides = agentOverrides;
+		settings.subagents = subagents;
+		writeSettingsFile(filePath, settings);
+		return filePath;
+	});
 }
 
 export function removeBuiltinAgentOverrideFields(
@@ -1821,38 +1802,40 @@ export function removeBuiltinAgentOverrideFields(
 	if (!filePath) throw new Error("Project override is not available here. No project config root was found.");
 	if (!fs.existsSync(filePath)) return { path: filePath, removed: false };
 
-	const settings = readSettingsFileStrict(filePath);
-	const subagents = settings.subagents;
-	if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) return { path: filePath, removed: false };
-	const agentOverrides = (subagents as Record<string, unknown>).agentOverrides;
-	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) return { path: filePath, removed: false };
+	return withSettingsFileLease(filePath, () => {
+		const settings = readSettingsFileStrict(filePath);
+		const subagents = settings.subagents;
+		if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) return { path: filePath, removed: false };
+		const agentOverrides = (subagents as Record<string, unknown>).agentOverrides;
+		if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) return { path: filePath, removed: false };
 
-	const entry = (agentOverrides as Record<string, unknown>)[name];
-	if (!entry || typeof entry !== "object" || Array.isArray(entry)) return { path: filePath, removed: false };
+		const entry = (agentOverrides as Record<string, unknown>)[name];
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) return { path: filePath, removed: false };
 
-	const nextEntry: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
-	let removed = false;
-	for (const field of fields) {
-		if (Object.prototype.hasOwnProperty.call(nextEntry, field)) {
-			delete nextEntry[field];
-			removed = true;
+		const nextEntry: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
+		let removed = false;
+		for (const field of fields) {
+			if (Object.prototype.hasOwnProperty.call(nextEntry, field)) {
+				delete nextEntry[field];
+				removed = true;
+			}
 		}
-	}
-	if (!removed) return { path: filePath, removed: false };
+		if (!removed) return { path: filePath, removed: false };
 
-	const nextSubagents = { ...(subagents as Record<string, unknown>) };
-	if (Object.keys(nextEntry).length > 0) {
-		(nextSubagents.agentOverrides as Record<string, unknown>)[name] = nextEntry;
-	} else {
-		const nextOverrides = { ...(agentOverrides as Record<string, unknown>) };
-		delete nextOverrides[name];
-		if (Object.keys(nextOverrides).length > 0) nextSubagents.agentOverrides = nextOverrides;
-		else delete nextSubagents.agentOverrides;
-	}
-	if (Object.keys(nextSubagents).length > 0) settings.subagents = nextSubagents;
-	else delete settings.subagents;
-	writeSettingsFile(filePath, settings);
-	return { path: filePath, removed: true };
+		const nextSubagents = { ...(subagents as Record<string, unknown>) };
+		if (Object.keys(nextEntry).length > 0) {
+			(nextSubagents.agentOverrides as Record<string, unknown>)[name] = nextEntry;
+		} else {
+			const nextOverrides = { ...(agentOverrides as Record<string, unknown>) };
+			delete nextOverrides[name];
+			if (Object.keys(nextOverrides).length > 0) nextSubagents.agentOverrides = nextOverrides;
+			else delete nextSubagents.agentOverrides;
+		}
+		if (Object.keys(nextSubagents).length > 0) settings.subagents = nextSubagents;
+		else delete settings.subagents;
+		writeSettingsFile(filePath, settings);
+		return { path: filePath, removed: true };
+	});
 }
 
 const DISCOVERY_PRUNED_DIR_NAMES = new Set([".git", "node_modules", ".pi", "sync-backups"]);

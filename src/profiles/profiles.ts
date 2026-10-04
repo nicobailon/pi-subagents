@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { BUILTIN_AGENT_NAMES, validateOptionalMachine } from "../agents/agents.ts";
 import { getPiSpawnCommand } from "../runs/shared/pi-spawn.ts";
 import { findModelInfo, getSupportedThinkingLevels, splitKnownThinkingSuffix, toModelInfo } from "../shared/model-info.ts";
+import { withSettingsFileLease } from "../shared/settings-file-lease.ts";
 import { getAgentDir } from "../shared/utils.ts";
 
 export const DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS = 7;
@@ -483,27 +484,29 @@ export function readSubagentProfile(name: string): { filePath: string; profile: 
 export function applySubagentProfile(name: string): { filePath: string; settingsPath: string } {
 	const { filePath, profile } = readSubagentProfile(name);
 	const settingsPath = getUserSettingsPath();
-	const settings = readSettingsFile(settingsPath);
-	const existing = settings.subagents && typeof settings.subagents === "object" && !Array.isArray(settings.subagents)
-		? settings.subagents as Record<string, unknown>
-		: {};
-	// A profile owns the complete agent mapping, but unrelated subagent settings
-	// (notably disableBuiltins, modelScope, watchdog, etc.) survive profile switches.
-	// Machine placement is not a model choice, so an existing pin survives a profile switch too.
-	const agentOverrides: Record<string, ProfileAgentOverride> = { ...profile.subagents.agentOverrides };
-	const existingOverrides = existing.agentOverrides && typeof existing.agentOverrides === "object" && !Array.isArray(existing.agentOverrides)
-		? existing.agentOverrides as Record<string, unknown>
-		: {};
-	for (const [name, value] of Object.entries(existingOverrides)) {
-		const machine = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>).machine : undefined;
-		if (typeof machine === "string" && agentOverrides[name]?.machine === undefined) agentOverrides[name] = { ...agentOverrides[name], machine };
-	}
-	settings.subagents = {
-		...existing,
-		...profile.subagents,
-		agentOverrides,
-	};
-	writeJsonFile(settingsPath, settings);
+	withSettingsFileLease(settingsPath, () => {
+		const settings = readSettingsFile(settingsPath);
+		const existing = settings.subagents && typeof settings.subagents === "object" && !Array.isArray(settings.subagents)
+			? settings.subagents as Record<string, unknown>
+			: {};
+		// A profile owns the complete agent mapping, but unrelated subagent settings
+		// (notably disableBuiltins, modelScope, watchdog, etc.) survive profile switches.
+		// Machine placement is not a model choice, so an existing pin survives a profile switch too.
+		const agentOverrides: Record<string, ProfileAgentOverride> = { ...profile.subagents.agentOverrides };
+		const existingOverrides = existing.agentOverrides && typeof existing.agentOverrides === "object" && !Array.isArray(existing.agentOverrides)
+			? existing.agentOverrides as Record<string, unknown>
+			: {};
+		for (const [name, value] of Object.entries(existingOverrides)) {
+			const machine = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>).machine : undefined;
+			if (typeof machine === "string" && agentOverrides[name]?.machine === undefined) agentOverrides[name] = { ...agentOverrides[name], machine };
+		}
+		settings.subagents = {
+			...existing,
+			...profile.subagents,
+			agentOverrides,
+		};
+		writeJsonFile(settingsPath, settings);
+	});
 	return { filePath, settingsPath };
 }
 
