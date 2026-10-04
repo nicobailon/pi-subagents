@@ -770,7 +770,7 @@ export default function() {
 
 	it("background single runs support outputSchema", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const expectedStructuredOutput = { ok: true, note: "async" };
-		mockPi.onCall({ output: "", structuredOutput: expectedStructuredOutput });
+		mockPi.onCall({ output: "Enough; writing up.", structuredOutput: expectedStructuredOutput });
 		const id = `async-single-schema-${Date.now().toString(36)}`;
 		const outputPath = path.join(tempDir, `${id}.json`);
 

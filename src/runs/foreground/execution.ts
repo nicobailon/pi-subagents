@@ -1531,8 +1531,9 @@ async function runSingleAttempt(
 	const mutationEvidence = result.nativeMachine ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : collectTrackedMutationEvidence(mutationSnapshot, options.cwd ?? runtimeCwd);
 
 	const acceptanceOutput = getFinalOutput(result.messages ?? []);
+	const structuredText = result.structuredOutput === undefined ? undefined : JSON.stringify(result.structuredOutput, null, 2);
 	let fullOutput = stripAcceptanceReport(acceptanceOutput);
-	if (!fullOutput.trim() && result.structuredOutput !== undefined) fullOutput = JSON.stringify(result.structuredOutput, null, 2);
+	if (!fullOutput.trim() && structuredText !== undefined) fullOutput = structuredText;
 	// Text still streaming when the child timed out or its session threw never reached
 	// a completed message. Keep it, labeled; the run still fails and the text never
 	// stands in for acceptance or a requested output file.
@@ -1571,7 +1572,8 @@ async function runSingleAttempt(
 			: `${timeoutMessage}\n\n${result.timeoutRecovery.message}`;
 	}
 		if (options.outputPath && result.exitCode === 0) {
-			const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot, options.outputClaimPath);
+			// The schema is the caller's contract: a bound output file holds the structured result, not closing prose.
+			const resolvedOutput = resolveSingleOutput(options.outputPath, structuredText ?? fullOutput, shared.outputSnapshot, options.outputClaimPath);
 			fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
 			result.savedOutputPath = resolvedOutput.savedPath;
 			result.outputSaveError = resolvedOutput.saveError;

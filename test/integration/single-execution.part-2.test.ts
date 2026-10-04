@@ -1626,6 +1626,24 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		if (child?.artifactPaths?.outputPath) assert.match(fs.readFileSync(child.artifactPaths.outputPath, "utf-8"), /"note": "captured"/);
 	});
 
+	it("saves the structured result, not closing prose, to a bound output file", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const structuredOutput = { ok: true, note: "captured" };
+		mockPi.onCall({ output: "Enough; writing up.", structuredOutput });
+		const outputPath = path.join(tempDir, "structured.json");
+
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"single-schema-output",
+			{ agent: "echo", task: "Return structured data", output: outputPath, outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" }, note: { type: "string" } } }, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details?.results?.[0]?.savedOutputPath, outputPath);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), JSON.stringify(structuredOutput, null, 2));
+	});
+
 	it("routes retained workflow follow-ups to distinct outputs without overwriting the writer report", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		for (const relative of [false, true]) {
 			const writerPath = path.join(tempDir, `writer-${relative}.md`);

@@ -1631,13 +1631,13 @@ syncBuiltinESMExports();
 			path.join(outputDir, "dynamic-1", "0-reviewer", "context.md"),
 			path.join(outputDir, "dynamic-1", "1-reviewer", "context.md"),
 		];
-		assert.equal(fs.readFileSync(dynamicOutputPaths[0]!, "utf-8"), "review-a");
-		assert.equal(fs.readFileSync(dynamicOutputPaths[1]!, "utf-8"), "review-b");
+		assert.equal(fs.readFileSync(dynamicOutputPaths[0]!, "utf-8"), JSON.stringify({ ok: "a" }, null, 2));
+		assert.equal(fs.readFileSync(dynamicOutputPaths[1]!, "utf-8"), JSON.stringify({ ok: "b" }, null, 2));
 		const reviewerArtifacts = payload.results.slice(1, 3).map((result) => result.artifactPaths?.outputPath);
 		assert.ok(reviewerArtifacts[0] && reviewerArtifacts[1]);
 		assert.notEqual(reviewerArtifacts[0], reviewerArtifacts[1]);
-		assert.equal(fs.readFileSync(reviewerArtifacts[0], "utf-8"), "review-a");
-		assert.equal(fs.readFileSync(reviewerArtifacts[1], "utf-8"), "review-b");
+		assert.equal(fs.readFileSync(reviewerArtifacts[0], "utf-8"), JSON.stringify({ ok: "a" }, null, 2));
+		assert.equal(fs.readFileSync(reviewerArtifacts[1], "utf-8"), JSON.stringify({ ok: "b" }, null, 2));
 		assert.match(readMockPiArgs(mockPi, 1).at(-1) ?? "", new RegExp(dynamicOutputPaths[0]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 		assert.match(readMockPiArgs(mockPi, 2).at(-1) ?? "", new RegExp(dynamicOutputPaths[1]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 		assert.equal(status.steps?.length, 4);

@@ -1378,12 +1378,13 @@ export async function runSingleStepInner(
 	}
 
 	const rawOutput = finalResult?.finalOutput ?? "";
-	let outputForPersistence = stripAcceptanceReport(rawOutput);
-	if (!outputForPersistence.trim() && finalResult?.structuredOutput !== undefined)
-		outputForPersistence = JSON.stringify(finalResult.structuredOutput, null, 2);
+	const structuredText = finalResult?.structuredOutput === undefined ? undefined : JSON.stringify(finalResult.structuredOutput, null, 2);
+	let replyOutput = stripAcceptanceReport(rawOutput);
+	if (!replyOutput.trim() && structuredText !== undefined) replyOutput = structuredText;
+	// The schema is the caller's contract: a bound output file holds the structured result, not closing prose.
 	const resolvedOutput = step.outputPath && finalResult?.exitCode === 0
-		? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot, step.outputClaimPath)
-		: { fullOutput: outputForPersistence };
+		? resolveSingleOutput(step.outputPath, structuredText ?? replyOutput, finalOutputSnapshot, step.outputClaimPath)
+		: { fullOutput: replyOutput };
 	if (resolvedOutput.fatalError) {
 		if (finalResult) {
 			finalResult.exitCode = 1;
