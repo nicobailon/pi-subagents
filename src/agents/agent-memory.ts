@@ -88,9 +88,9 @@ function samePath(left: string, right: string): boolean {
 	if (process.platform !== "win32") return false;
 	// Git for Windows and Node can spell the same temp path through different
 	// drive or 8.3 aliases, so use filesystem identity as the fail-closed fallback.
-	const leftStat = fs.statSync(left);
-	const rightStat = fs.statSync(right);
-	return leftStat.dev !== 0 && leftStat.ino !== 0 && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+	const leftStat = fs.statSync(left, { bigint: true });
+	const rightStat = fs.statSync(right, { bigint: true });
+	return leftStat.dev !== 0n && leftStat.ino !== 0n && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
 }
 
 function readBoundedRegularFile(file: string): string | undefined {
