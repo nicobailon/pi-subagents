@@ -275,6 +275,8 @@ describe("session liveness through result delivery", () => {
 		]);
 		let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
 		let reloaded = false;
+		// Hook errors after reload never reach onError, so record observations and assert after the prompt.
+		let observed: Record<string, unknown> | undefined;
 		const settingsManager = SettingsManager.inMemory({});
 		const errors: unknown[] = [];
 		const resourceLoader = new DefaultResourceLoader({
@@ -289,13 +291,16 @@ describe("session liveness through result delivery", () => {
 						id: "reload-wake", sessionId, completionOwnerId: currentCompletionOwnerId(),
 						success: false, summary: "Review requires the parent.",
 					});
-					assert.equal(provider?.isActive(), true);
+					const activeBeforeReload = provider?.isActive();
 					await session!.reload();
-					assert.equal(registrations, 2, "reload must actually bind the replacement producer");
-					assert.equal(session!.isIdle, true);
-					assert.equal(session!.pendingMessageCount, 0, "Pi's deferred settled action is not counted as a pending message");
-					assert.equal(session!.messages.some((message) => message.role === "custom" && message.customType === "subagent-notify"), false);
-					assert.equal(provider?.isActive(), true, "accepted wake still owns liveness before its deferred message_start");
+					observed = {
+						activeBeforeReload,
+						registrations,
+						isIdle: session!.isIdle,
+						pendingMessageCount: session!.pendingMessageCount,
+						wakeStarted: session!.messages.some((message) => message.role === "custom" && message.customType === "subagent-notify"),
+						activeAfterReload: provider?.isActive(),
+					};
 				});
 			}],
 		});
@@ -303,12 +308,20 @@ describe("session liveness through result delivery", () => {
 			await resourceLoader.reload();
 			const modelRuntime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: path.join(agentDir, "models.json"), allowModelNetwork: false });
 			({ session } = await createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader, modelRuntime, model: faux.getModel("local"), sessionManager, noTools: "builtin" }));
-			// With no bindings, SDK reload skips session_start. Keep an error listener
-			// both to exercise the real lifecycle and to propagate hook assertions.
+			// With no bindings, SDK reload skips session_start. Bind an error listener
+			// to exercise the real reload lifecycle.
 			await session.bindExtensions({ onError: (error) => { errors.push(error); } });
 			await session.prompt("Yield with a completion pending.");
 			assert.equal(reloaded, true);
 			assert.deepEqual(errors, []);
+			assert.deepEqual(observed, {
+				activeBeforeReload: true,
+				registrations: 2, // reload actually bound the replacement producer
+				isIdle: true,
+				pendingMessageCount: 0, // Pi's deferred settled action is not counted as a pending message
+				wakeStarted: false,
+				activeAfterReload: true, // accepted wake still owns liveness before its deferred message_start
+			});
 			assert.equal(provider?.isActive(), false, "message_start releases the transferred wake");
 			assert.equal(session.getLastAssistantText(), "Processed completion after reload.");
 		} finally {

@@ -9,7 +9,7 @@
 import { statSync } from "node:fs";
 import { debuglog } from "node:util";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
 import {
 	type CompletionBatchConfig,
@@ -154,6 +154,10 @@ export interface CompletionNotifier {
 	hasPendingDelivery(): boolean;
 	/** Releases a completion wake once Pi starts it (native message_start). */
 	messageStarted(message: AgentMessage): void;
+	/** Adopts wakes a reloaded notifier left queued for the same session manager and session UUID. */
+	bindSession(sessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId">): void;
+	/** Drops queued wakes unless the session is only reloading extensions. */
+	sessionShutdown(reason: string | undefined): void;
 	/** Send every batched completion now instead of waiting for its batch timer. */
 	flush(): void;
 	dispose(): void;
@@ -788,18 +792,8 @@ export default function registerSubagentNotify(
 	const batchConfig = resolveCompletionBatchConfig(options.batchConfig);
 	const batchers = new Map<string, CompletionBatcher<PendingCompletion>>();
 	let unstartedWakes: string[] = [];
+	let bound = false;
 	let disposed = false;
-	pi.on?.("session_start", (_event, ctx) => {
-		if (disposed) return;
-		const owner = ctx.sessionManager;
-		const sessionId = owner.getSessionId(); // UUID, not state.currentSessionId's possible file path.
-		const retained = queuedWakes.get(owner);
-		unstartedWakes = retained?.sessionId === sessionId ? retained.wakes : [];
-		queuedWakes.set(owner, { sessionId, wakes: unstartedWakes });
-	});
-	pi.on?.("session_shutdown", (event) => {
-		if (event?.reason !== "reload") unstartedWakes.length = 0;
-	});
 	const ownsResult = options.ownership?.owns
 		?? ((sessionId: string, completionOwnerId: unknown) => sessionId === state.currentSessionId
 			&& typeof completionOwnerId === "string"
@@ -927,6 +921,20 @@ export default function registerSubagentNotify(
 			if (message.role !== "custom" || message.customType !== "subagent-notify") return;
 			const index = unstartedWakes.indexOf(message.content as string);
 			if (index !== -1) unstartedWakes.splice(index, 1);
+		},
+		bindSession(sessionManager) {
+			if (disposed) return;
+			const sessionId = sessionManager.getSessionId(); // UUID, not state.currentSessionId's possible file path.
+			const retained = queuedWakes.get(sessionManager);
+			const wakes = retained?.sessionId === sessionId ? retained.wakes : [];
+			// Before the first bind, local wakes belong to this session; after it, to the previous one.
+			if (!bound) wakes.push(...unstartedWakes);
+			bound = true;
+			unstartedWakes = wakes;
+			queuedWakes.set(sessionManager, { sessionId, wakes });
+		},
+		sessionShutdown(reason) {
+			if (reason !== "reload") unstartedWakes.length = 0;
 		},
 		flush() {
 			for (const batcher of batchers.values()) batcher.flush();

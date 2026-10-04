@@ -1136,6 +1136,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", (event, ctx) => {
+		completionNotifier.bindSession(ctx.sessionManager);
 		installRuntime(ctx);
 		startSessionMaintenance();
 		scheduleModulePreload();
@@ -1165,7 +1166,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		supervisorChannel.activateTransport();
 	});
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event) => {
+		completionNotifier.sessionShutdown(event?.reason);
 		runtimeEntry.cleanup();
 		try {
 			await disposeChildSessions();
