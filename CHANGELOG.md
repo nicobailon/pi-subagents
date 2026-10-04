@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- A session that loses a scheduled-run lock no longer writes its stale schedule over the running owner. It keeps the active-run and deletion protections, and defers only its own recurring timer while the owner is claiming the run. Thanks to [@quifox](https://github.com/quifox).
+- A session that loses a scheduled-run lock no longer writes its stale schedule over the running owner. It keeps the active-run and deletion protections, and defers only its own recurring timer while the owner is claiming the run. Thanks to [@quifox](https://github.com/quifox) for [#2675](https://github.com/nicobailon/pi-subagents/pull/2675).
 
 - A child with `outputSchema` and a bound `output` path saved its final prose to that file whenever the prose was not empty, so a short closing line such as "Enough; writing up." replaced the structured result. The file now holds the structured result as indented JSON whenever the child returns one and did not write the file itself. The child's returned output and output artifact show the same JSON, since they mirror the bound file. Thanks to [@tara-marchand](https://github.com/tara-marchand) for [#2672](https://github.com/nicobailon/pi-subagents/issues/2672).
 - An agent that selected a built-in MCP server by the `-`→`_` form of its name, such as `mcp:codebase_memory` for the server `codebase-memory`, got none of its tools: the launch passed planning, then failed 10 seconds later saying the tools did not register and the server may have failed to connect. The child now grants the server's tools for either form, the same way Pi's MCP namespace treats `-` and `_` as one server. Thanks to [@trellis-zz](https://github.com/trellis-zz) for [#2668](https://github.com/nicobailon/pi-subagents/issues/2668).
