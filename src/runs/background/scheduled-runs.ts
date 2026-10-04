@@ -6,6 +6,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
+import { withFileLease } from "../../shared/file-lease.ts";
 import { shortenPath } from "../../shared/formatters.ts";
 import type { AsyncStatus, Details, ExtensionConfig } from "../../shared/types.ts";
 import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
@@ -386,13 +387,28 @@ class ScheduleStore {
 		return value.runs as ScheduleRunRecord[];
 	}
 
+	/** The run's own receipt; it is written before history.json and is never trimmed. */
+	getRun(id: string, runId: string): ScheduleRunRecord | undefined {
+		if (!SCHEDULE_ID.test(runId)) throw new Error(`Invalid schedule run id '${runId}'.`);
+		const file = path.join(scheduleDir(this.root, id, false, this.projectCwd), "runs", `${runId}.json`);
+		if (!fs.existsSync(file)) return undefined;
+		const run = readJson(file, "schedule run") as ScheduleRunRecord;
+		if (run?.id !== runId || run.scheduleId !== id) throw new Error(`Schedule run '${file}' has invalid fields.`);
+		return run;
+	}
+
 	writeRun(schedule: ScheduleRecord, run: ScheduleRunRecord, event: string): void {
 		const dir = scheduleDir(this.root, schedule.id, true, this.projectCwd);
 		writePrivateAtomicJson(path.join(dir, "runs", `${run.id}.json`), run);
-		const runs = [run, ...this.history(schedule.id).filter((item) => item.id !== run.id)].slice(0, MAX_HISTORY);
-		writePrivateAtomicJson(path.join(dir, "history.json"), { schemaVersion: 1, runs });
-		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-		fs.appendFileSync(path.join(dir, "events.jsonl"), `${JSON.stringify({ schemaVersion: 1, timestamp: new Date().toISOString(), event, scheduleId: schedule.id, runId: run.id, state: run.state })}\n`, { encoding: "utf-8", mode: 0o600 });
+		// Sessions sharing this project update history.json from their own snapshots.
+		withFileLease(path.join(dir, "history.json"), () => {
+			// An earlier update may have timed out; a run's own receipt is newer than a "running" entry.
+			const earlier = this.history(schedule.id).filter((item) => item.id !== run.id)
+				.map((item) => item.state === "running" ? this.getRun(schedule.id, item.id) ?? item : item);
+			const runs = [run, ...earlier].slice(0, MAX_HISTORY);
+			writePrivateAtomicJson(path.join(dir, "history.json"), { schemaVersion: 1, runs });
+			fs.appendFileSync(path.join(dir, "events.jsonl"), `${JSON.stringify({ schemaVersion: 1, timestamp: new Date().toISOString(), event, scheduleId: schedule.id, runId: run.id, state: run.state })}\n`, { encoding: "utf-8", mode: 0o600 });
+		});
 	}
 
 	appendEvent(schedule: ScheduleRecord, event: string): void {
@@ -624,8 +640,10 @@ export class ScheduledRunManager {
 			for (const id of ids) {
 				try {
 					const schedule = store.get(id);
-					const run = store.history(id).find((item) => item.asyncId === asyncId && item.state === "running");
-					if (!run) continue;
+					const listed: ScheduleRunRecord | undefined = store.history(id).find((item) => item.asyncId === asyncId) ?? this.activeRun(store, schedule);
+					// history.json can lag the run's receipt when its update timed out.
+					const run: ScheduleRunRecord | undefined = listed && (store.getRun(id, listed.id) ?? listed);
+					if (run?.asyncId !== asyncId || run.state !== "running") continue;
 					this.finishRun(store, schedule, run, data.success === true, typeof data.summary === "string" ? data.summary : undefined);
 					return;
 				} catch (error) {
@@ -772,7 +790,7 @@ export class ScheduledRunManager {
 		const schedule = this.resolve(params);
 		const store = this.requireStore();
 		if (schedule.activeRunId) {
-			const run = store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			const run = this.activeRun(store, schedule);
 			let terminal = false;
 			if (run?.scheduleId === schedule.id && run.state === "running" && run.asyncId && run.asyncDir) {
 				const status = readJson(path.join(run.asyncDir, "status.json"), "async status") as Partial<AsyncStatus>;
@@ -801,7 +819,7 @@ export class ScheduledRunManager {
 			}
 		}
 		if (schedule.activeRunId) {
-			const run = store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			const run = this.activeRun(store, schedule);
 			if (run?.state === "running" && run.asyncId) this.observedAsyncIds.add(run.asyncId);
 			const startedAt = run?.startedAt ? Date.parse(run.startedAt) : Number.NaN;
 			if (run?.state === "running" && run.asyncDir) {
@@ -948,8 +966,25 @@ export class ScheduledRunManager {
 		schedule.lastRunId = run.id;
 		if (advance) schedule.trigger = nextAfter(schedule.trigger, planned, now);
 		schedule.updatedAt = timestamp(now);
-		store.write(schedule);
-		store.writeRun(schedule, run, "schedule.run.started");
+		try {
+			store.write(schedule);
+			store.writeRun(schedule, run, "schedule.run.started");
+		} catch (error) {
+			// No child has launched: release this run's claim, then report the original error.
+			// Another session may already have recovered the claim and launched its own run.
+			try {
+				const latest = store.find(schedule.id);
+				if (latest?.activeRunId === run.id) {
+					latest.activeRunId = undefined;
+					latest.updatedAt = timestamp(this.now());
+					store.write(latest);
+				}
+				if (fs.readFileSync(lockPath, "utf-8") === run.id) fs.rmSync(lockPath);
+			} catch (cleanupError) {
+				console.warn(`[pi-subagents] Could not release schedule claim '${run.id}': ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+			}
+			throw error;
+		}
 		try {
 			const result = await this.deps.launch(executionParams(schedule, dueReason === "manual" ? quiet === true : schedule.quiet === true), this.requireContext(store), new AbortController().signal);
 			const asyncId = result.details?.asyncId ?? result.details?.runId;
@@ -961,6 +996,8 @@ export class ScheduledRunManager {
 			this.arm(schedule, store);
 			return run;
 		} catch (error) {
+			// The child is running, so its claim stays until completion.
+			if (run.asyncId) throw new Error(`Scheduled run '${run.id}' attached to async run '${run.asyncId}', but recording it failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 			run.state = "failed_launch";
 			run.completedAt = timestamp(this.now());
 			run.error = error instanceof Error ? error.message : String(error);
@@ -978,9 +1015,12 @@ export class ScheduledRunManager {
 			}
 			latest.updatedAt = timestamp(this.now());
 			store.write(latest);
-			store.writeRun(latest, run, "schedule.run.failed");
 			fs.rmSync(lockPath, { force: true });
-			this.arm(latest, store);
+			try {
+				store.writeRun(latest, run, "schedule.run.failed");
+			} finally {
+				this.arm(latest, store);
+			}
 			return run;
 		}
 	}
@@ -988,9 +1028,10 @@ export class ScheduledRunManager {
 	private finishRun(store: ScheduleStore, schedule: ScheduleRecord, run: ScheduleRunRecord, success: boolean, error?: string): void {
 		const now = this.now();
 		const next = nextRunAt(schedule);
+		let skipped: ScheduleRunRecord | undefined;
 		if (next !== undefined && next <= now) {
 			const planned = duePlannedAt(schedule, now)!;
-			const skipped: ScheduleRunRecord = {
+			skipped = {
 				schemaVersion: 1,
 				id: this.randomId(),
 				scheduleId: schedule.id,
@@ -1000,7 +1041,6 @@ export class ScheduledRunManager {
 				completedAt: timestamp(now),
 			};
 			schedule.trigger = nextAfter(schedule.trigger, planned, now);
-			store.writeRun(schedule, skipped, "schedule.skipped_overlap");
 		}
 		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
 		run.state = success ? "completed" : "failed_run";
@@ -1010,8 +1050,13 @@ export class ScheduledRunManager {
 		schedule.updatedAt = timestamp(now);
 		store.write(schedule);
 		fs.rmSync(path.join(store.directory(schedule.id), "active.lock"), { force: true });
-		store.writeRun(schedule, run, success ? "schedule.run.completed" : "schedule.run.failed");
-		this.arm(schedule, store);
+		// The schedule is already released; a history.json timeout must not leave it unarmed.
+		try {
+			store.writeRun(schedule, run, success ? "schedule.run.completed" : "schedule.run.failed");
+			if (skipped) store.writeRun(schedule, skipped, "schedule.skipped_overlap");
+		} finally {
+			this.arm(schedule, store);
+		}
 	}
 
 	private recordMissed(store: ScheduleStore, schedule: ScheduleRecord, planned: number, dueReason: ScheduleRunRecord["dueReason"]): ScheduleRunRecord {
@@ -1067,6 +1112,11 @@ export class ScheduledRunManager {
 		const ctx = this.contexts.get(store.root);
 		if (!ctx) throw new Error("Schedule runtime context is unavailable.");
 		return ctx;
+	}
+
+	private activeRun(store: ScheduleStore, schedule: ScheduleRecord): ScheduleRunRecord | undefined {
+		if (!schedule.activeRunId) return undefined;
+		return store.getRun(schedule.id, schedule.activeRunId) ?? store.history(schedule.id).find((run) => run.id === schedule.activeRunId);
 	}
 
 	private timerKey(store: ScheduleStore, id: string): string {
