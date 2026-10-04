@@ -44,7 +44,8 @@ try {
 	if (mode === "permissions") fs.chmodSync(agentDir, 0o555);
 	try {
 		const child = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", source], {
-			env: { ...process.env, PI_CODING_AGENT_DIR: agentDir }, encoding: "utf-8", timeout: 10_000,
+			// This checks the save contract, so do not spend the Windows rename retry budget.
+			env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS: "0" }, encoding: "utf-8", timeout: 10_000,
 		});
 		assert.equal(child.status, 0, child.stderr);
 		const result = JSON.parse(child.stdout);
