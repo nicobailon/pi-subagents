@@ -904,12 +904,23 @@ export class ScheduledRunManager {
 		}
 		const lockPath = path.join(store.directory(schedule.id, true), "active.lock");
 		fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
-		let lock: number;
+		let lock: number | undefined;
 		try {
 			lock = fs.openSync(lockPath, "wx", 0o600);
 			fs.writeFileSync(lock, run.id, "utf-8");
 			fs.closeSync(lock);
 		} catch (error) {
+			if (lock !== undefined) {
+				// An empty or partial claim would make every later launch skip. Keep the
+				// descriptor open until the inode check so a replacement owner's lock survives.
+				try {
+					const owned = fs.fstatSync(lock);
+					const current = fs.lstatSync(lockPath);
+					if (owned.ino !== 0 && owned.dev === current.dev && owned.ino === current.ino) fs.rmSync(lockPath);
+				} catch { /* Preserve the original error. */ }
+				try { fs.closeSync(lock); } catch { /* Preserve the original error. */ }
+				throw error;
+			}
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 			run.state = "skipped";
 			run.completedAt = timestamp(now);

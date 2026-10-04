@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- If writing the run id into a new schedule claim failed, for example on a full disk, the empty claim file stayed behind and every later run of that schedule was skipped. The failed claim is now removed, unless another owner has already replaced it, and the original error is reported. Thanks to [@quifox](https://github.com/quifox) for [#2678](https://github.com/nicobailon/pi-subagents/pull/2678).
 - A session that loses a scheduled-run lock no longer writes its stale schedule over the running owner. It keeps the active-run and deletion protections, and defers only its own recurring timer while the owner is claiming the run. Thanks to [@quifox](https://github.com/quifox) for [#2675](https://github.com/nicobailon/pi-subagents/pull/2675).
 
 - A child with `outputSchema` and a bound `output` path saved its final prose to that file whenever the prose was not empty, so a short closing line such as "Enough; writing up." replaced the structured result. The file now holds the structured result as indented JSON whenever the child returns one and did not write the file itself. The child's returned output and output artifact show the same JSON, since they mirror the bound file. Thanks to [@tara-marchand](https://github.com/tara-marchand) for [#2672](https://github.com/nicobailon/pi-subagents/issues/2672).
