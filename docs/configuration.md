@@ -689,3 +689,9 @@ PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS=1000
 ```
 
 Unset by default, so behaviour is unchanged unless you opt in. Opting in trades lock-wait tolerance for responsiveness: entries clamped to `0` return immediately, so contention that would previously have been waited out surfaces as an error sooner. Values that are not a non-negative integer fail instead of being coerced.
+
+## Concurrent extension settings writes
+
+Agent override changes, Profile application and Watchdog updates coordinate their read-modify-write on the resolved physical settings file. They use a short lock in the existing operator temporary root (`PI_SUBAGENTS_TEMP_ROOT`, when configured); sessions updating the same settings must share that root. File and directory aliases use the same lock identity. Contention respects the host retry budget and reports an error instead of overwriting another update.
+
+Saving uses atomic replacement when the physical parent is writable. Profile and Watchdog retain their earlier ability to update an existing writable file in a read-only directory: that permission layout uses an in-place save under the same lock. Such saves retain the prior interruption risk of direct writes. Agent overrides continue to require atomic saving and a writable physical parent. Parse errors and other I/O failures do not switch save modes.

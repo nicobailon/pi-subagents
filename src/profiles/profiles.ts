@@ -500,7 +500,7 @@ export function applySubagentProfile(name: string): { filePath: string; settings
 			agentOverrides,
 		};
 		save();
-	});
+	}, { allowInPlace: true });
 	return { filePath, settingsPath };
 }
 

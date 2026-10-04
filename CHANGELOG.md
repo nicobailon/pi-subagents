@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Profile and Watchdog keep saving existing writable settings in read-only directories while sharing the physical-file transaction. Atomic saves remain required for Agent overrides; other storage errors remain visible. Thanks to [@quifox](https://github.com/quifox) for [#2676](https://github.com/nicobailon/pi-subagents/pull/2676).
 - Concurrent Agent override, Profile and Watchdog updates now share a bounded transaction on the physical settings file. Changes to unrelated fields survive, including through file or directory aliases, while saves retain atomic replacement and existing permissions. Thanks to [@quifox](https://github.com/quifox) for [#2676](https://github.com/nicobailon/pi-subagents/pull/2676).
 
 - A child with `outputSchema` and a bound `output` path saved its final prose to that file whenever the prose was not empty, so a short closing line such as "Enough; writing up." replaced the structured result. The file now holds the structured result as indented JSON whenever the child returns one and did not write the file itself. The child's returned output and output artifact show the same JSON, since they mirror the bound file. Thanks to [@tara-marchand](https://github.com/tara-marchand) for [#2672](https://github.com/nicobailon/pi-subagents/issues/2672).

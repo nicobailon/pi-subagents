@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { fork, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { it } from "node:test";
+import { settingsFileLockPath } from "../../src/shared/settings-file.ts";
 import { saveBuiltinAgentOverride } from "../../src/agents/agents.ts";
 
 const fixture = fileURLToPath(new URL("../fixtures/settings-transaction-writer.mjs", import.meta.url));
@@ -41,7 +42,7 @@ function writer(project: string, target: string, root: string, role: string, ope
 	}) };
 }
 
-async function race(options: { initial?: object; alias?: boolean; fileAlias?: boolean; scope?: string; first?: string; second?: string }, check: (settings: any) => void) {
+async function race(options: { initial?: object; readOnlyParent?: boolean; alias?: boolean; fileAlias?: boolean; scope?: string; first?: string; second?: string }, check: (settings: any) => void) {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "settings-transactions-"));
 	const project = path.join(root, "project");
 	const config = path.join(project, ".pi");
@@ -59,6 +60,7 @@ async function race(options: { initial?: object; alias?: boolean; fileAlias?: bo
 	const profiles = path.join(config, "profiles", "pi-subagents");
 	fs.mkdirSync(profiles, { recursive: true });
 	fs.writeFileSync(path.join(profiles, "race.json"), JSON.stringify({ subagents: { agentOverrides: { reviewer: { model: "example/profile" } } } }));
+	if (options.readOnlyParent) fs.chmodSync(config, 0o555);
 	const scope = options.scope ?? "project";
 	const a = writer(project, target, root, "first", options.first ?? "save", scope, config);
 	const b = writer(secondProject, target, root, "second", options.second ?? "save", scope, config);
@@ -74,9 +76,10 @@ async function race(options: { initial?: object; alias?: boolean; fileAlias?: bo
 		fs.writeFileSync(path.join(root, "release"), "");
 		await Promise.all([a.done, b.done]);
 		check(JSON.parse(fs.readFileSync(target, "utf-8")));
-		assert.equal(fs.existsSync(`${target}.lock`), false);
+		assert.equal(fs.existsSync(settingsFileLockPath(path.join(fs.realpathSync.native(path.dirname(target)), path.basename(target)))), false);
 	} finally {
 		clearTimeout(timeout); a.child.kill("SIGKILL"); b.child.kill("SIGKILL");
+		if (options.readOnlyParent) fs.chmodSync(config, 0o755);
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 }
@@ -118,7 +121,9 @@ it("reports contention without overwriting settings", () => {
 	try {
 		fs.mkdirSync(path.join(root, ".pi"));
 		const file = path.join(root, ".pi", "settings.json");
-		fs.writeFileSync(file, "{}"); fs.mkdirSync(`${file}.lock`);
+		fs.writeFileSync(file, "{}");
+		const lock = settingsFileLockPath(fs.realpathSync.native(file));
+		fs.mkdirSync(lock, { recursive: true });
 		const started = Date.now();
 		assert.throws(() => saveBuiltinAgentOverride(root, "reviewer", "project", { disabled: true }), (error: any) => error.code === "ELOCKED");
 		assert.ok(Date.now() - started < 1000);
@@ -145,3 +150,8 @@ assert.equal(waits, 0);
 		assert.equal(child.status, 0, child.stderr);
 	} finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+it("coordinates profile and watchdog writes through a read-only settings directory", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => race({ readOnlyParent: true, initial: {}, scope: "user", first: "watchdog", second: "profile" }, (saved) => {
+	assert.equal(saved.subagents.watchdog.enabled, true);
+	assert.equal(saved.subagents.agentOverrides.reviewer.model, "example/profile");
+}));

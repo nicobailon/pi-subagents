@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 let lockSync: typeof import("proper-lockfile").lockSync | undefined;
 
 /** Coordinate a short synchronous mutation; the caller resolves file symlinks. */
-export function withFileWriteLock<T>(filePath: string, action: () => T): T {
+export function withFileWriteLock<T>(filePath: string, action: () => T, options: { lockfilePath?: string } = {}): T {
 	// Read-only configuration and schedule imports never load the lock library.
 	const acquire = lockSync ??= require("proper-lockfile").lockSync as typeof import("proper-lockfile").lockSync;
 	const target = path.join(fs.realpathSync.native(path.dirname(filePath)), path.basename(filePath));
@@ -17,7 +17,7 @@ export function withFileWriteLock<T>(filePath: string, action: () => T): T {
 	let release: () => void;
 	for (;;) {
 		try {
-			release = acquire(target, { realpath: false, stale: 60_000 });
+			release = acquire(target, { realpath: false, stale: 60_000, ...options });
 			break;
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ELOCKED" || performance.now() >= deadline) throw error;

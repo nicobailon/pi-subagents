@@ -11,6 +11,8 @@ const wait = (file) => {
 		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
 	}
 };
+const { settingsFileLockPath } = await import("../../src/shared/settings-file.ts");
+const lockPath = settingsFileLockPath(target);
 const originalWrite = fs.writeFileSync;
 const originalMkdir = fs.mkdirSync;
 let paused = false;
@@ -25,7 +27,7 @@ fs.writeFileSync = function (file, ...args) {
 	return originalWrite.call(fs, file, ...args);
 };
 fs.mkdirSync = function (file, ...args) {
-	if (role === "second" && !attempted && file === `${target}.lock`) {
+	if (role === "second" && !attempted && file === lockPath) {
 		attempted = true;
 		process.send?.({ type: "lock-attempt" });
 	}

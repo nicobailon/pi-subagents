@@ -1,16 +1,25 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
+import { TEMP_ROOT_DIR } from "./types.ts";
 import { createAtomicJsonWriter } from "./atomic-json.ts";
 import { withFileWriteLock } from "./file-write-lock.ts";
 
-/** Keep the read, mutation and optional atomic save under one physical-file lock. */
-export function updateSettingsFile<T>(filePath: string, action: (settings: Record<string, unknown>, save: () => void) => T): T {
+/** The caller supplies the resolved physical file, so aliases share this lock. */
+export function settingsFileLockPath(target: string): string {
+	return path.join(TEMP_ROOT_DIR, "settings-locks", `${createHash("sha256").update(target).digest("hex")}.lock`);
+}
+
+/** Keep the read, mutation and optional save under one physical-file lock. */
+export function updateSettingsFile<T>(filePath: string, action: (settings: Record<string, unknown>, save: () => void) => T, options: { allowInPlace?: boolean } = {}): T {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	const target = resolveSettingsWriteTarget(filePath);
+	const lockfilePath = settingsFileLockPath(target);
+	fs.mkdirSync(path.dirname(lockfilePath), { recursive: true, mode: 0o700 });
 	return withFileWriteLock(target, () => {
 		const settings = readSettingsFileStrict(target);
-		return action(settings, () => writeSettingsFile(target, settings));
-	});
+		return action(settings, () => writeSettingsFile(target, settings, options.allowInPlace === true));
+	}, { lockfilePath });
 }
 
 export function readSettingsFileStrict(filePath: string): Record<string, unknown> {
@@ -36,7 +45,7 @@ export function readSettingsFileStrict(filePath: string): Record<string, unknown
 	return parsed as Record<string, unknown>;
 }
 
-function writeSettingsFile(filePath: string, settings: Record<string, unknown>): void {
+function writeSettingsFile(filePath: string, settings: Record<string, unknown>, allowInPlace: boolean): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	const targetPath = resolveSettingsWriteTarget(filePath);
 	let existingMode: number | undefined;
@@ -46,6 +55,17 @@ function writeSettingsFile(filePath: string, settings: Record<string, unknown>):
 		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 	}
 	if (existingMode !== undefined) fs.accessSync(targetPath, fs.constants.W_OK);
+	if (allowInPlace && existingMode !== undefined) {
+		try { fs.accessSync(path.dirname(targetPath), fs.constants.W_OK); }
+		catch (error) {
+			if (!["EACCES", "EPERM", "EROFS"].includes(String((error as NodeJS.ErrnoException).code))) throw error;
+			// Profile and Watchdog historically wrote existing files in place.
+			// Keep that permission layout under the same transaction; other I/O
+			// errors never trigger a fallback, and overrides still require atomic saving.
+			fs.writeFileSync(targetPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
+			return;
+		}
+	}
 
 	const tempMode = existingMode === undefined ? undefined : existingMode | 0o200;
 	// Reuse the atomic temp/rename path while retaining settings' newline and existing mode.

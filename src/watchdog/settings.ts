@@ -439,7 +439,7 @@ export function writeUserWatchdogEnabled(enabled: boolean): string {
 		targetSettingsObject(watchdog, { kind: "main" }, meta).enabled = enabled;
 		save();
 		return settingsPath;
-	});
+	}, { allowInPlace: true });
 }
 
 export function writeWatchdogModelSettings(input: WatchdogModelSettingsWrite): string {
@@ -454,7 +454,7 @@ export function writeWatchdogModelSettings(input: WatchdogModelSettingsWrite): s
 		else if (input.thinking !== undefined) target.thinking = input.thinking;
 		save();
 		return settingsPath;
-	});
+	}, { allowInPlace: true });
 }
 
 export function resolveWatchdogConfig(cwd: string, options: { session?: Record<string, unknown> } = {}): WatchdogSettingsResult {
