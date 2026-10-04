@@ -1052,6 +1052,11 @@ export class ScheduledRunManager {
 	private finishRun(store: ScheduleStore, schedule: ScheduleRecord, run: ScheduleRunRecord, success: boolean, error?: string): void {
 		const now = this.now();
 		const next = nextRunAt(schedule);
+		this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
+		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
+		run.state = success ? "completed" : "failed_run";
+		run.completedAt = timestamp(now);
+		if (!success && error) run.error = error;
 		if (next !== undefined && next <= now) {
 			const planned = duePlannedAt(schedule, now)!;
 			const skipped: ScheduleRunRecord = {
@@ -1066,11 +1071,6 @@ export class ScheduledRunManager {
 			schedule.trigger = nextAfter(schedule.trigger, planned, now);
 			store.writeRun(schedule, skipped, "schedule.skipped_overlap");
 		}
-		this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
-		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
-		run.state = success ? "completed" : "failed_run";
-		run.completedAt = timestamp(now);
-		if (!success && error) run.error = error;
 		schedule.activeRunId = undefined;
 		schedule.updatedAt = timestamp(now);
 		store.write(schedule);
