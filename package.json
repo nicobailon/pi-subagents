@@ -111,7 +111,6 @@
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.87.0",
     "@earendil-works/pi-ai": "0.87.0",
-    "@earendil-works/pi-coding-agent": "0.87.0",
     "@earendil-works/pi-tui": "0.87.0",
     "@oxlint/plugins": "1.80.0",
     "@types/node": "24.13.3",
