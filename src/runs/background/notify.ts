@@ -601,10 +601,11 @@ const processCompletionSendRegistry = processGlobal[completionSendRegistrySymbol
 	?? (processGlobal[completionSendRegistrySymbol] = createCompletionSendRegistry());
 
 // Reload replaces extension instances, not Pi's session manager or queued wakes.
-// Weak ownership keeps separate sessions isolated without retaining closed sessions.
-const queuedWakesSymbol = Symbol.for("pi-subagents.queued-completion-wakes.v1");
-const wakeGlobal = globalThis as typeof globalThis & { [queuedWakesSymbol]?: WeakMap<object, string[]> };
-const queuedWakes = wakeGlobal[queuedWakesSymbol] ?? (wakeGlobal[queuedWakesSymbol] = new WeakMap<object, string[]>());
+// A manager can change sessions; retain wakes only while its UUID is unchanged.
+type QueuedWakes = { sessionId: string; wakes: string[] };
+const queuedWakesSymbol = Symbol.for("pi-subagents.queued-completion-wakes.v2");
+const wakeGlobal = globalThis as typeof globalThis & { [queuedWakesSymbol]?: WeakMap<object, QueuedWakes> };
+const queuedWakes = wakeGlobal[queuedWakesSymbol] ?? (wakeGlobal[queuedWakesSymbol] = new WeakMap<object, QueuedWakes>());
 
 function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCompletion[], unstartedWakes: string[]): boolean {
 	if (items.length === 0) return true;
@@ -791,8 +792,10 @@ export default function registerSubagentNotify(
 	pi.on?.("session_start", (_event, ctx) => {
 		if (disposed) return;
 		const owner = ctx.sessionManager;
-		unstartedWakes = queuedWakes.get(owner) ?? [];
-		queuedWakes.set(owner, unstartedWakes);
+		const sessionId = owner.getSessionId(); // UUID, not state.currentSessionId's possible file path.
+		const retained = queuedWakes.get(owner);
+		unstartedWakes = retained?.sessionId === sessionId ? retained.wakes : [];
+		queuedWakes.set(owner, { sessionId, wakes: unstartedWakes });
 	});
 	pi.on?.("session_shutdown", (event) => {
 		if (event?.reason !== "reload") unstartedWakes.length = 0;

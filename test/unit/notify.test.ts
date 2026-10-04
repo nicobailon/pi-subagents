@@ -6,6 +6,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import registerSubagentNotify, {
 	buildCompletionDetails,
 	createCompletionSendRegistry,
@@ -23,9 +24,9 @@ import { createResultDeliveryOwnership } from "../../src/runs/background/result-
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
 it("keeps reload wakes scoped to one session manager and clears them on quit", async () => {
-	const owner = {};
-	const otherOwner = {};
-	const sessionId = "queued-wake-scope";
+	const owner = SessionManager.inMemory();
+	const sessionId = owner.getSessionId();
+	const otherOwner = { getSessionId: () => sessionId };
 	const create = (sessionManager: object) => {
 		const hooks = new Map<string, (event: any, ctx?: any) => void>();
 		const messages: any[] = [];
@@ -56,6 +57,12 @@ it("keeps reload wakes scoped to one session manager and clears them on quit", a
 	replacement.notifier.dispose();
 	const reopened = create(owner);
 	assert.equal(reopened.notifier.hasPendingDelivery(), false, "quit clears wakes even if a manager is reused");
+	await reopened.notifier.deliver({ id: "queued-wake-switch-result", sessionId, completionOwnerId: COMPLETION_OWNER_ID, success: false, summary: "Old session wake" });
+	assert.equal(reopened.notifier.hasPendingDelivery(), true);
+	owner.newSession();
+	assert.notEqual(owner.getSessionId(), sessionId);
+	reopened.hooks.get("session_start")!({ reason: "new" }, { sessionManager: owner });
+	assert.equal(reopened.notifier.hasPendingDelivery(), false, "changing session UUID on the same manager must discard old wakes");
 	reopened.notifier.dispose();
 	other.notifier.dispose();
 });
