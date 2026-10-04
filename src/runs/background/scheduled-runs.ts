@@ -558,6 +558,8 @@ export class ScheduledRunManager {
 	private readonly contexts = new Map<string, ExtensionContext>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly observedAsyncIds = new Set<string>();
+	// Only writes awaiting recovery live here; successful persistence removes them.
+	private readonly pendingRunUpdates = new Map<string, ScheduleRunRecord>();
 	private readonly now: () => number;
 	private readonly randomId: () => string;
 	private readonly timersApi: ScheduledRunTimers;
@@ -581,6 +583,7 @@ export class ScheduledRunManager {
 		this.stores.clear();
 		this.contexts.clear();
 		this.observedAsyncIds.clear();
+		this.pendingRunUpdates.clear();
 	}
 
 	async handleToolCall(params: SubagentParamsLike, ctx: ExtensionContext): Promise<AgentToolResult<Details>> {
@@ -636,7 +639,7 @@ export class ScheduledRunManager {
 			for (const id of ids) {
 				try {
 					const schedule = store.get(id);
-					const active = schedule.activeRunId ? store.getRun(id, schedule.activeRunId) : undefined;
+					const active = this.activeRun(store, schedule);
 					const run: ScheduleRunRecord | undefined = active ?? store.history(id).find((item) => item.asyncId === asyncId && item.state === "running");
 					if (!run || run.asyncId !== asyncId || run.state !== "running" || (schedule.activeRunId && run.id !== schedule.activeRunId)) continue;
 					this.finishRun(store, schedule, run, data.success === true, typeof data.summary === "string" ? data.summary : undefined);
@@ -787,7 +790,7 @@ export class ScheduledRunManager {
 		const schedule = this.resolve(params);
 		const store = this.requireStore();
 		if (schedule.activeRunId) {
-			const run = store.getRun(schedule.id, schedule.activeRunId) ?? store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			const run = this.activeRun(store, schedule);
 			let terminal = false;
 			if (run?.scheduleId === schedule.id && run.state === "running" && run.asyncId && run.asyncDir) {
 				const status = readJson(path.join(run.asyncDir, "status.json"), "async status") as Partial<AsyncStatus>;
@@ -815,8 +818,33 @@ export class ScheduledRunManager {
 				store.write(schedule);
 			}
 		}
+		const key = this.timerKey(store, schedule.id);
+		let pending = this.pendingRunUpdates.get(key);
+		if (pending?.state === "running") {
+			const saved = store.getRun(schedule.id, pending.id);
+			// Another session may already have persisted terminal proof.
+			if (saved && saved.state !== "running") pending = saved;
+		}
+		if (pending) {
+			if (schedule.activeRunId && schedule.activeRunId !== pending.id) {
+				// Local evidence for an older run cannot change a replacement owner.
+				this.pendingRunUpdates.delete(key);
+			} else {
+				store.writeRun(schedule, pending, pending.state === "running" ? "schedule.run.attached_async" : pending.state === "completed" ? "schedule.run.completed" : "schedule.run.failed");
+				if (pending.state !== "running") {
+					if (schedule.activeRunId === pending.id) {
+						schedule.activeRunId = undefined;
+						schedule.updatedAt = timestamp(this.now());
+						store.write(schedule);
+					}
+					this.releaseOwnLock(store, pending);
+					if (pending.asyncId) this.observedAsyncIds.delete(pending.asyncId);
+				}
+				this.pendingRunUpdates.delete(key);
+			}
+		}
 		if (schedule.activeRunId) {
-			const run = store.getRun(schedule.id, schedule.activeRunId) ?? store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			const run = this.activeRun(store, schedule);
 			if (run?.state === "running" && run.asyncId) this.observedAsyncIds.add(run.asyncId);
 			if (run?.state === "running" && run.asyncDir) {
 				try {
@@ -951,29 +979,31 @@ export class ScheduledRunManager {
 			store.write(schedule);
 			store.writeRun(schedule, run, "schedule.run.started");
 		} catch (error) {
-			// No child was launched. Reconcile only this claim and retain the
-			// storage error even if best-effort cleanup also fails.
+			// No child has been launched, so this is proof that the claim can end.
+			run.state = "failed_launch";
+			run.completedAt = timestamp(this.now());
+			run.error = error instanceof Error ? error.message : String(error);
+			this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
+			const cleanupErrors: unknown[] = [];
+			let latest: ScheduleRecord | undefined;
 			try {
-				const latest = store.find(schedule.id);
+				latest = store.find(schedule.id);
 				if (latest?.activeRunId === run.id) {
 					latest.activeRunId = undefined;
 					latest.updatedAt = timestamp(this.now());
 					store.write(latest);
 				}
-				try {
-					if (fs.readFileSync(lockPath, "utf-8") === run.id) fs.rmSync(lockPath);
-				} catch (cleanupError) {
-					if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") throw cleanupError;
-				}
-				if (latest) {
-					run.state = "failed_launch";
-					run.completedAt = timestamp(this.now());
-					run.error = error instanceof Error ? error.message : String(error);
-					store.writeRun(latest, run, "schedule.run.failed");
-				}
-			} catch (cleanupError) {
-				console.warn(`[pi-subagents] Failed to clean up launch claim '${run.id}': ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
-			}
+			} catch (cleanupError) { cleanupErrors.push(cleanupError); }
+			// These attempts are independent: one failed write cannot skip the
+			// owned lock release or the durable failed-launch receipt.
+			try { this.releaseOwnLock(store, run); }
+			catch (cleanupError) { cleanupErrors.push(cleanupError); }
+			try {
+				latest ??= store.find(schedule.id);
+				if (latest) store.writeRun(latest, run, "schedule.run.failed");
+			} catch (cleanupError) { cleanupErrors.push(cleanupError); }
+			if (cleanupErrors.length === 0) this.pendingRunUpdates.delete(this.timerKey(store, schedule.id));
+			else console.warn(`[pi-subagents] Failed to clean up launch claim '${run.id}': ${cleanupErrors.map((error) => error instanceof Error ? error.message : String(error)).join("; ")}`);
 			throw error;
 		}
 		try {
@@ -983,7 +1013,9 @@ export class ScheduledRunManager {
 			run.asyncId = asyncId;
 			run.asyncDir = result.details?.asyncDir;
 			this.observedAsyncIds.add(asyncId);
+			this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
 			store.writeRun(schedule, run, "schedule.run.attached_async");
+			this.pendingRunUpdates.delete(this.timerKey(store, schedule.id));
 			this.arm(schedule, store);
 			return run;
 		} catch (error) {
@@ -1038,6 +1070,7 @@ export class ScheduledRunManager {
 			schedule.trigger = nextAfter(schedule.trigger, planned, now);
 			store.writeRun(schedule, skipped, "schedule.skipped_overlap");
 		}
+		this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
 		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
 		run.state = success ? "completed" : "failed_run";
 		run.completedAt = timestamp(now);
@@ -1047,6 +1080,7 @@ export class ScheduledRunManager {
 		store.write(schedule);
 		fs.rmSync(path.join(store.directory(schedule.id), "active.lock"), { force: true });
 		store.writeRun(schedule, run, success ? "schedule.run.completed" : "schedule.run.failed");
+		this.pendingRunUpdates.delete(this.timerKey(store, schedule.id));
 		this.arm(schedule, store);
 	}
 
@@ -1086,6 +1120,12 @@ export class ScheduledRunManager {
 			this.restore(store);
 		}
 		this.store = store;
+		for (const [key, run] of this.pendingRunUpdates) {
+			if (key !== this.timerKey(store, run.scheduleId)) continue;
+			const schedule = store.find(run.scheduleId);
+			if (schedule) this.restoreOne(store, schedule);
+			else this.pendingRunUpdates.delete(key);
+		}
 	}
 
 	private resolve(params: SubagentParamsLike): ScheduleRecord {
@@ -1103,6 +1143,20 @@ export class ScheduledRunManager {
 		const ctx = this.contexts.get(store.root);
 		if (!ctx) throw new Error("Schedule runtime context is unavailable.");
 		return ctx;
+	}
+
+	private activeRun(store: ScheduleStore, schedule: ScheduleRecord): ScheduleRunRecord | undefined {
+		if (!schedule.activeRunId) return undefined;
+		const pending = this.pendingRunUpdates.get(this.timerKey(store, schedule.id));
+		const saved = store.getRun(schedule.id, schedule.activeRunId);
+		return pending?.id === schedule.activeRunId && (!saved || saved.state === "running") ? pending
+			: saved ?? store.history(schedule.id).find((run) => run.id === schedule.activeRunId);
+	}
+
+	private releaseOwnLock(store: ScheduleStore, run: ScheduleRunRecord): void {
+		const file = path.join(store.directory(run.scheduleId), "active.lock");
+		try { if (fs.readFileSync(file, "utf-8") === run.id) fs.rmSync(file); }
+		catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 	}
 
 	private timerKey(store: ScheduleStore, id: string): string {

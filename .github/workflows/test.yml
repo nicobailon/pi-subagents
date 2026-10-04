@@ -93,7 +93,7 @@ jobs:
       - name: Worktree cleanup and lock recovery regressions
         run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/worktree-cleanup-plan.test.ts test/unit/worktree-lock.test.ts test/unit/parallel-handoff.test.ts
 
-  schedule-launch-claims:
+  schedule-history-transactions:
     runs-on: macos-latest
     timeout-minutes: 5
     steps:
@@ -103,7 +103,19 @@ jobs:
           node-version: 24
       - run: npm ci --ignore-scripts
       - name: Focused regressions
-        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/schedule-history-transactions.test.ts test/unit/schedule-launch-claim.test.ts
+        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/schedule-history-transactions.test.ts test/unit/schedule-attachment-persistence.test.ts
+
+  schedule-launch-claims:
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - name: Focused launch regressions
+        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/schedule-launch-claim.test.ts
 
   native-nested-wait:
     strategy:
