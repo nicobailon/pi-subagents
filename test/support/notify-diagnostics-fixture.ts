@@ -6,10 +6,10 @@ let timerId = 0;
 let now = 0;
 let failSend = false;
 const state = { currentSessionId: "session-a", completionOwnerId: "owner-a" };
-const sent: unknown[] = [];
+const sent: Array<{ message: Record<string, unknown>; options: unknown }> = [];
 const pi = {
 	events: { on: () => () => {} },
-	sendMessage(message: unknown, options: unknown) {
+	sendMessage(message: Record<string, unknown>, options: unknown) {
 		if (failSend) throw new Error("PRIVATE_ERROR_CREDENTIAL");
 		sent.push({ message, options });
 	},
@@ -67,7 +67,9 @@ assert.equal(await held, true);
 const abandoned = notifier.deliver(result("abandoned"));
 notifier.dispose();
 assert.equal(await abandoned, false);
-assert.equal(notifier.hasPendingDelivery(), false);
+assert.equal(notifier.hasPendingDelivery(), true); // Accepted wakes survive notifier disposal for reload.
+for (const { message } of sent) notifier.messageStarted({ role: "custom", ...message });
+assert.equal(notifier.hasPendingDelivery(), false); // Pi has now started every accepted wake.
 assert.equal(callbacks.size, 0);
 assert.equal(await notifier.deliver(result("after-dispose")), false);
 // Malformed/large identity cannot create multiline or unbounded trace records.
