@@ -600,6 +600,12 @@ const processGlobal = globalThis as typeof globalThis & { [completionSendRegistr
 const processCompletionSendRegistry = processGlobal[completionSendRegistrySymbol]
 	?? (processGlobal[completionSendRegistrySymbol] = createCompletionSendRegistry());
 
+// Reload replaces extension instances, not Pi's session manager or queued wakes.
+// Weak ownership keeps separate sessions isolated without retaining closed sessions.
+const queuedWakesSymbol = Symbol.for("pi-subagents.queued-completion-wakes.v1");
+const wakeGlobal = globalThis as typeof globalThis & { [queuedWakesSymbol]?: WeakMap<object, string[]> };
+const queuedWakes = wakeGlobal[queuedWakesSymbol] ?? (wakeGlobal[queuedWakesSymbol] = new WeakMap<object, string[]>());
+
 function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCompletion[], unstartedWakes: string[]): boolean {
 	if (items.length === 0) return true;
 	const details = items.map((item) => item.details);
@@ -780,8 +786,17 @@ export default function registerSubagentNotify(
 	const sendRegistry = options.sendRegistry ?? processCompletionSendRegistry;
 	const batchConfig = resolveCompletionBatchConfig(options.batchConfig);
 	const batchers = new Map<string, CompletionBatcher<PendingCompletion>>();
-	const unstartedWakes: string[] = [];
+	let unstartedWakes: string[] = [];
 	let disposed = false;
+	pi.on?.("session_start", (_event, ctx) => {
+		if (disposed) return;
+		const owner = ctx.sessionManager;
+		unstartedWakes = queuedWakes.get(owner) ?? [];
+		queuedWakes.set(owner, unstartedWakes);
+	});
+	pi.on?.("session_shutdown", (event) => {
+		if (event?.reason !== "reload") unstartedWakes.length = 0;
+	});
 	const ownsResult = options.ownership?.owns
 		?? ((sessionId: string, completionOwnerId: unknown) => sessionId === state.currentSessionId
 			&& typeof completionOwnerId === "string"
@@ -918,7 +933,6 @@ export default function registerSubagentNotify(
 			disposed = true;
 			for (const batcher of batchers.values()) settle(batcher.dispose(), false, "dispose_pending");
 			batchers.clear();
-			unstartedWakes.length = 0;
 			for (const unsubscribe of [unsubscribeAsync, unsubscribeForeground]) {
 				try {
 					unsubscribe?.();

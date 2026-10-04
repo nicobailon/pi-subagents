@@ -246,4 +246,79 @@ describe("session liveness through result delivery", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
+
+	it("preserves an accepted queued wake across actual SDK reload until message_start", { timeout: 30_000 }, async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-session-liveness-reload-"));
+		const agentDir = path.join(root, "agent");
+		fs.mkdirSync(agentDir);
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const registryKey = Symbol.for(PI_WEB_SESSION_LIVENESS_REGISTRY_KEY);
+		const globals = globalThis as Record<PropertyKey, unknown>;
+		const previousRegistry = globals[registryKey];
+		let provider: { isActive(): boolean } | undefined;
+		let registrations = 0;
+		globals[registryKey] = {
+			version: 1,
+			register(value: { isActive(): boolean }) {
+				registrations++;
+				provider = value;
+				return () => { if (provider === value) provider = undefined; };
+			},
+		};
+		const sessionManager = SessionManager.inMemory(root);
+		const sessionId = sessionManager.getSessionId();
+		const faux = fauxProvider({ provider: "liveness-reload", models: [{ id: "local" }], tokensPerSecond: 100_000 });
+		faux.setResponses([
+			() => fauxAssistantMessage("Yielded original turn."),
+			() => fauxAssistantMessage("Processed completion after reload."),
+		]);
+		let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+		let reloaded = false;
+		const settingsManager = SettingsManager.inMemory({});
+		const errors: unknown[] = [];
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: root, agentDir, settingsManager,
+			noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+			extensionFactories: [registerSubagentExtension, (api) => {
+				api.registerProvider(faux.provider);
+				api.on("agent_settled", async () => {
+					if (reloaded) return;
+					reloaded = true;
+					api.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+						id: "reload-wake", sessionId, completionOwnerId: currentCompletionOwnerId(),
+						success: false, summary: "Review requires the parent.",
+					});
+					assert.equal(provider?.isActive(), true);
+					await session!.reload();
+					assert.equal(registrations, 2, "reload must actually bind the replacement producer");
+					assert.equal(session!.isIdle, true);
+					assert.equal(session!.pendingMessageCount, 0, "Pi's deferred settled action is not counted as a pending message");
+					assert.equal(session!.messages.some((message) => message.role === "custom" && message.customType === "subagent-notify"), false);
+					assert.equal(provider?.isActive(), true, "accepted wake still owns liveness before its deferred message_start");
+				});
+			}],
+		});
+		try {
+			await resourceLoader.reload();
+			const modelRuntime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: path.join(agentDir, "models.json"), allowModelNetwork: false });
+			({ session } = await createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader, modelRuntime, model: faux.getModel("local"), sessionManager, noTools: "builtin" }));
+			// With no bindings, SDK reload skips session_start. Keep an error listener
+			// both to exercise the real lifecycle and to propagate hook assertions.
+			await session.bindExtensions({ onError: (error) => { errors.push(error); } });
+			await session.prompt("Yield with a completion pending.");
+			assert.equal(reloaded, true);
+			assert.deepEqual(errors, []);
+			assert.equal(provider?.isActive(), false, "message_start releases the transferred wake");
+			assert.equal(session.getLastAssistantText(), "Processed completion after reload.");
+		} finally {
+			if (session) await (session.extensionRunner as unknown as { emit(event: unknown): Promise<unknown> }).emit({ type: "session_shutdown", reason: "quit" });
+			session?.dispose();
+			if (previousRegistry === undefined) delete globals[registryKey];
+			else globals[registryKey] = previousRegistry;
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
 });

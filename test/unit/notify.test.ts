@@ -22,6 +22,44 @@ import { createResultDeliveryOwnership } from "../../src/runs/background/result-
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
+it("keeps reload wakes scoped to one session manager and clears them on quit", async () => {
+	const owner = {};
+	const otherOwner = {};
+	const sessionId = "queued-wake-scope";
+	const create = (sessionManager: object) => {
+		const hooks = new Map<string, (event: any, ctx?: any) => void>();
+		const messages: any[] = [];
+		const pi = {
+			events: createEventBus(),
+			on(name: string, handler: (event: any, ctx?: any) => void) { hooks.set(name, handler); },
+			sendMessage(message: unknown) { messages.push(message); },
+		} as unknown as Parameters<typeof registerSubagentNotify>[0];
+		const notifier = registerSubagentNotify(pi, { currentSessionId: sessionId, completionOwnerId: COMPLETION_OWNER_ID }, { batchConfig: { enabled: false } });
+		hooks.get("session_start")!({ reason: "startup" }, { sessionManager });
+		return { notifier, hooks, messages };
+	};
+	const first = create(owner);
+	await first.notifier.deliver({ id: "queued-wake-scope-result", sessionId, completionOwnerId: COMPLETION_OWNER_ID, success: false, summary: "Needs attention" });
+	assert.equal(first.notifier.hasPendingDelivery(), true);
+	first.hooks.get("session_shutdown")!({ reason: "reload" });
+	first.notifier.dispose();
+	const other = create(otherOwner);
+	const replacement = create(owner);
+	assert.equal(other.notifier.hasPendingDelivery(), false, "even the same session ID on a different manager must not inherit another queue");
+	assert.equal(replacement.notifier.hasPendingDelivery(), true);
+	other.notifier.messageStarted({ role: "custom", ...first.messages[0] });
+	assert.equal(replacement.notifier.hasPendingDelivery(), true, "foreign consumption cannot clear the owner's wake");
+	replacement.notifier.messageStarted({ role: "custom", ...first.messages[0] });
+	assert.equal(replacement.notifier.hasPendingDelivery(), false);
+	await replacement.notifier.deliver({ id: "queued-wake-quit-result", sessionId, completionOwnerId: COMPLETION_OWNER_ID, success: false, summary: "Another wake" });
+	replacement.hooks.get("session_shutdown")!({ reason: "quit" });
+	replacement.notifier.dispose();
+	const reopened = create(owner);
+	assert.equal(reopened.notifier.hasPendingDelivery(), false, "quit clears wakes even if a manager is reused");
+	reopened.notifier.dispose();
+	other.notifier.dispose();
+});
+
 it("does not deliver awaited workflow child lifecycle completions", async () => {
 	const { events, sent, dispose } = createPi();
 	try {
