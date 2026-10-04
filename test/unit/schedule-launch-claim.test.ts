@@ -147,3 +147,41 @@ it("retains an attached child's claim when its receipt cannot be saved", async (
 	assert.match(result.content[0].text, /live-async/);
 	assert.equal(JSON.parse(fs.readFileSync(path.join(h.dir, "schedule.json"), "utf-8")).trigger.nextRunAt, new Date(h.clock.now + 3_600_000).toISOString());
 }));
+
+it("attempts lock and receipt cleanup even when clearing the schedule claim fails", async () => setup(async h => {
+	let started = false;
+	fs.renameSync = function (source, target) {
+		if (target === path.join(h.dir, "history.json") && !started) {
+			started = true; throw Object.assign(new Error("initial history EIO"), { code: "EIO" });
+		}
+		if (started && target === path.join(h.dir, "schedule.json")) throw Object.assign(new Error("cleanup schedule EIO"), { code: "EIO" });
+		return h.originalRename.call(fs, source, target);
+	}; syncBuiltinESMExports();
+	const failed = await h.owner.handleToolCall({ action: "schedule.run", id: "check" }, h.context("owner"));
+	fs.renameSync = h.originalRename; syncBuiltinESMExports();
+	assert.equal(failed.isError, true); assert.match(failed.content[0].text, /initial history EIO/);
+	assert.equal(h.launches(), 0);
+	assert.equal(fs.existsSync(path.join(h.dir, "active.lock")), false);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(h.dir, "runs", "owner-1.json"), "utf-8")).state, "failed_launch");
+	const retry = h.make("retry");
+	assert.equal((await retry.handleToolCall({ action: "schedule.run", id: "check" }, h.context("retry"))).isError, undefined);
+	assert.equal(h.launches(), 1);
+}));
+
+it("recovers its proven pre-launch failure after all persistence writes recover", async () => setup(async h => {
+	let claimed = false;
+	fs.renameSync = function (source, target) {
+		if (target === path.join(h.dir, "schedule.json") && !claimed) {
+			claimed = true; return h.originalRename.call(fs, source, target);
+		}
+		if (claimed) throw Object.assign(new Error("persistent storage EIO"), { code: "EIO" });
+		return h.originalRename.call(fs, source, target);
+	}; syncBuiltinESMExports();
+	const failed = await h.owner.handleToolCall({ action: "schedule.run", id: "check" }, h.context("owner"));
+	fs.renameSync = h.originalRename; syncBuiltinESMExports();
+	assert.equal(failed.isError, true); assert.match(failed.content[0].text, /persistent storage EIO/);
+	assert.equal(h.launches(), 0);
+	assert.equal(fs.existsSync(path.join(h.dir, "active.lock")), false);
+	const retry = await h.owner.handleToolCall({ action: "schedule.run", id: "check" }, h.context("owner"));
+	assert.equal(retry.isError, undefined); assert.equal(h.launches(), 1);
+}));

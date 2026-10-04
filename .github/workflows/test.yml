@@ -93,7 +93,7 @@ jobs:
       - name: Worktree cleanup and lock recovery regressions
         run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/worktree-cleanup-plan.test.ts test/unit/worktree-lock.test.ts test/unit/parallel-handoff.test.ts
 
-  concurrent-file-writes:
+  schedule-launch-claims:
     runs-on: macos-latest
     timeout-minutes: 5
     steps:
@@ -102,18 +102,8 @@ jobs:
         with:
           node-version: 24
       - run: npm ci --ignore-scripts
-      - name: Schedule claim contention
-        if: hashFiles('test/unit/schedule-claim-preservation.test.ts') != ''
-        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/schedule-claim-preservation.test.ts
-      - name: Settings transactions
-        if: hashFiles('test/unit/settings-transactions.test.ts') != ''
-        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/settings-transactions.test.ts
-      - name: Schedule history transactions
-        if: hashFiles('test/unit/schedule-history-transactions.test.ts') != ''
-        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/schedule-history-transactions.test.ts
-      - name: Schedule launch claims
-        if: hashFiles('test/unit/schedule-launch-claim.test.ts') != ''
-        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/schedule-launch-claim.test.ts
+      - name: Focused regressions
+        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/schedule-history-transactions.test.ts test/unit/schedule-launch-claim.test.ts
 
   native-nested-wait:
     strategy:
