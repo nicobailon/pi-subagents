@@ -834,6 +834,13 @@ export class ScheduledRunManager {
 				store.writeRun(schedule, pending, pending.state === "running" ? "schedule.run.attached_async" : pending.state === "completed" ? "schedule.run.completed" : "schedule.run.failed");
 				if (pending.state !== "running") {
 					if (schedule.activeRunId === pending.id) {
+						// Completion may have failed while saving an overdue overlap.
+						// Satisfy only firings due by that completion, not later ones.
+						if (pending.state === "completed" || pending.state === "failed_run") {
+							const completedAt = Date.parse(pending.completedAt!);
+							const next = nextRunAt(schedule);
+							if (next !== undefined && next <= completedAt) schedule.trigger = nextAfter(schedule.trigger, duePlannedAt(schedule, completedAt)!, completedAt);
+						}
 						schedule.activeRunId = undefined;
 						schedule.updatedAt = timestamp(this.now());
 						store.write(schedule);
@@ -1057,6 +1064,11 @@ export class ScheduledRunManager {
 	private finishRun(store: ScheduleStore, schedule: ScheduleRecord, run: ScheduleRunRecord, success: boolean, error?: string): void {
 		const now = this.now();
 		const next = nextRunAt(schedule);
+		this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
+		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
+		run.state = success ? "completed" : "failed_run";
+		run.completedAt = timestamp(now);
+		if (!success && error) run.error = error;
 		if (next !== undefined && next <= now) {
 			const planned = duePlannedAt(schedule, now)!;
 			const skipped: ScheduleRunRecord = {
@@ -1071,11 +1083,6 @@ export class ScheduledRunManager {
 			schedule.trigger = nextAfter(schedule.trigger, planned, now);
 			store.writeRun(schedule, skipped, "schedule.skipped_overlap");
 		}
-		this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
-		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
-		run.state = success ? "completed" : "failed_run";
-		run.completedAt = timestamp(now);
-		if (!success && error) run.error = error;
 		schedule.activeRunId = undefined;
 		schedule.updatedAt = timestamp(now);
 		store.write(schedule);

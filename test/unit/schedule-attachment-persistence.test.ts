@@ -12,11 +12,12 @@ async function fixture(failure: "index" | "receipt", action: (h: any) => Promise
 	const storeRoot = path.join(root, "stores");
 	const dir = path.join(scheduledRunStorePath(project, undefined, storeRoot), "check");
 	const now = Date.parse("2030-01-01T00:00:00Z");
+	const clock = { now };
 	const ctx = { cwd: project, sessionManager: { getSessionId: () => "owner", getSessionFile: () => path.join(project, "owner.jsonl") } } as any;
 	const originalRename = fs.renameSync;
 	let id = 0;
 	const timers = { setTimeout: () => 1 as any, clearTimeout: () => {} };
-	const manager = createScheduledRunManager({ config: {}, storeRoot, now: () => now, randomId: () => `run-${++id}`, timers,
+	const manager = createScheduledRunManager({ config: {}, storeRoot, now: () => clock.now, randomId: () => `run-${++id}`, timers,
 		launch: async () => {
 			if (failure === "index") fs.mkdirSync(path.join(dir, "history.json.lock"));
 			else {
@@ -29,7 +30,7 @@ async function fixture(failure: "index" | "receipt", action: (h: any) => Promise
 		} });
 	const observers: ReturnType<typeof createScheduledRunManager>[] = [];
 	const observer = (launch?: () => Promise<any>) => {
-		const other = createScheduledRunManager({ config: {}, storeRoot, now: () => now, timers, launch: launch ?? (async () => { throw new Error("Unexpected second launch"); }) });
+		const other = createScheduledRunManager({ config: {}, storeRoot, now: () => clock.now, timers, launch: launch ?? (async () => { throw new Error("Unexpected second launch"); }) });
 		observers.push(other); other.bindSession(ctx); return other;
 	};
 	const recover = () => { fs.renameSync = originalRename; syncBuiltinESMExports(); fs.rmSync(path.join(dir, "history.json.lock"), { recursive: true, force: true }); };
@@ -37,7 +38,7 @@ async function fixture(failure: "index" | "receipt", action: (h: any) => Promise
 		manager.bindSession(ctx);
 		await manager.handleToolCall({ action: "schedule.create", id: "check", every: "1h", workflowScript: "return 1" }, ctx);
 		const result = await manager.handleToolCall({ action: "schedule.run", id: "check" }, ctx);
-		await action({ manager, observer, result, dir, now, ctx, recover });
+		await action({ manager, observer, result, dir, now, clock, ctx, recover });
 	} finally { recover(); manager.stop(); for (const other of observers) other.stop(); fs.rmSync(root, { recursive: true, force: true }); }
 }
 
@@ -141,4 +142,23 @@ it("retries an old completion receipt without clearing a replacement run's claim
 	const history = JSON.parse(fs.readFileSync(path.join(h.dir, "history.json"), "utf-8")).runs;
 	assert.equal(history.find((run: any) => run.id === "run-1").state, "completed");
 	assert.equal(history.find((run: any) => run.id === replacementId).state, "running");
+}));
+
+
+it("retains completion proof when saving an overdue overlap receipt fails", async () => fixture("receipt", async h => {
+	h.recover();
+	assert.equal((await h.manager.handleToolCall({ action: "schedule.show", id: "check" }, h.ctx)).isError, undefined);
+	h.clock.now = h.now + 3_600_000;
+	const original = fs.renameSync;
+	fs.renameSync = function (source, destination) {
+		if (destination === path.join(h.dir, "history.json")) throw Object.assign(new Error("overlap history EIO"), { code: "EIO" });
+		return original.call(fs, source, destination);
+	}; syncBuiltinESMExports();
+	h.manager.handleAsyncCompletion({ id: "attached", success: true });
+	h.recover();
+	assert.equal((await h.manager.handleToolCall({ action: "schedule.show", id: "check" }, h.ctx)).isError, undefined);
+	const run = JSON.parse(fs.readFileSync(path.join(h.dir, "runs", "run-1.json"), "utf-8"));
+	assert.equal(run.state, "completed"); assert.equal(run.asyncId, "attached");
+	assert.equal(fs.existsSync(path.join(h.dir, "active.lock")), false);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(h.dir, "schedule.json"), "utf-8")).trigger.nextRunAt, new Date(h.now + 7_200_000).toISOString());
 }));
