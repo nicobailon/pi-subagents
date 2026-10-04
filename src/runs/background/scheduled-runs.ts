@@ -835,6 +835,13 @@ export class ScheduledRunManager {
 				store.writeRun(schedule, pending, pending.state === "running" ? "schedule.run.attached_async" : pending.state === "completed" ? "schedule.run.completed" : "schedule.run.failed");
 				if (pending.state !== "running") {
 					if (schedule.activeRunId === pending.id) {
+						// Completion may have failed while saving an overdue overlap.
+						// Satisfy only firings due by that completion, not later ones.
+						if (pending.state === "completed" || pending.state === "failed_run") {
+							const completedAt = Date.parse(pending.completedAt!);
+							const next = nextRunAt(schedule);
+							if (next !== undefined && next <= completedAt) schedule.trigger = nextAfter(schedule.trigger, duePlannedAt(schedule, completedAt)!, completedAt);
+						}
 						schedule.activeRunId = undefined;
 						schedule.updatedAt = timestamp(this.now());
 						store.write(schedule);

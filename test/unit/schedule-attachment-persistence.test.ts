@@ -160,4 +160,5 @@ it("retains completion proof when saving an overdue overlap receipt fails", asyn
 	const run = JSON.parse(fs.readFileSync(path.join(h.dir, "runs", "run-1.json"), "utf-8"));
 	assert.equal(run.state, "completed"); assert.equal(run.asyncId, "attached");
 	assert.equal(fs.existsSync(path.join(h.dir, "active.lock")), false);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(h.dir, "schedule.json"), "utf-8")).trigger.nextRunAt, new Date(h.now + 7_200_000).toISOString());
 }));
