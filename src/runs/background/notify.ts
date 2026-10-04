@@ -8,6 +8,7 @@
 
 import { statSync } from "node:fs";
 import { debuglog } from "node:util";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
 import {
@@ -149,7 +150,10 @@ export interface RegisterSubagentNotifyOptions {
 
 export interface CompletionNotifier {
 	deliver(result: CompletionNotification): Promise<boolean>;
+	/** True while a completion is batched, being sent, or accepted as a wake that Pi has not started yet. */
 	hasPendingDelivery(): boolean;
+	/** Releases a completion wake once Pi starts it (native message_start). */
+	messageStarted(message: AgentMessage): void;
 	/** Send every batched completion now instead of waiting for its batch timer. */
 	flush(): void;
 	dispose(): void;
@@ -596,11 +600,15 @@ const processGlobal = globalThis as typeof globalThis & { [completionSendRegistr
 const processCompletionSendRegistry = processGlobal[completionSendRegistrySymbol]
 	?? (processGlobal[completionSendRegistrySymbol] = createCompletionSendRegistry());
 
-function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCompletion[]): boolean {
+function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCompletion[], unstartedWakes: string[]): boolean {
 	if (items.length === 0) return true;
 	const details = items.map((item) => item.details);
 	const content = details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details);
 	const display = details.some((detail) => detail.source === "foreground" || detail.status !== "completed" || detail.scheduleOrigin !== undefined);
+	const triggerTurn = items.some((item) => item.triggerTurn);
+	// Pi can queue an accepted wake behind the current turn or past agent_settled.
+	// Recorded before sending in case Pi starts the message synchronously.
+	if (triggerTurn) unstartedWakes.push(content);
 	try {
 		pi.sendMessage(
 			{
@@ -608,10 +616,11 @@ function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCom
 				content,
 				display,
 			},
-			{ triggerTurn: items.some((item) => item.triggerTurn) },
+			{ triggerTurn },
 		);
 		return true;
 	} catch {
+		if (triggerTurn) unstartedWakes.splice(unstartedWakes.lastIndexOf(content), 1);
 		return false;
 	}
 }
@@ -771,6 +780,7 @@ export default function registerSubagentNotify(
 	const sendRegistry = options.sendRegistry ?? processCompletionSendRegistry;
 	const batchConfig = resolveCompletionBatchConfig(options.batchConfig);
 	const batchers = new Map<string, CompletionBatcher<PendingCompletion>>();
+	const unstartedWakes: string[] = [];
 	let disposed = false;
 	const ownsResult = options.ownership?.owns
 		?? ((sessionId: string, completionOwnerId: unknown) => sessionId === state.currentSessionId
@@ -807,7 +817,7 @@ export default function registerSubagentNotify(
 			void claim.outcome.then((outcome) => settle([item], outcome, outcome ? undefined : "send_failed"));
 		}
 		const claimedItems = claimed.map(({ item }) => item);
-		const sent = sendCompletion(pi, claimedItems);
+		const sent = sendCompletion(pi, claimedItems, unstartedWakes);
 		for (const { claim } of claimed) claim.settle?.(sent);
 		settle(claimedItems, sent, sent ? "send_accepted" : "send_failed");
 	};
@@ -894,7 +904,12 @@ export default function registerSubagentNotify(
 
 	return {
 		deliver,
-		hasPendingDelivery: () => pending.size > 0,
+		hasPendingDelivery: () => pending.size > 0 || unstartedWakes.length > 0,
+		messageStarted(message) {
+			if (message.role !== "custom" || message.customType !== "subagent-notify") return;
+			const index = unstartedWakes.indexOf(message.content as string);
+			if (index !== -1) unstartedWakes.splice(index, 1);
+		},
 		flush() {
 			for (const batcher of batchers.values()) batcher.flush();
 		},
@@ -903,6 +918,7 @@ export default function registerSubagentNotify(
 			disposed = true;
 			for (const batcher of batchers.values()) settle(batcher.dispose(), false, "dispose_pending");
 			batchers.clear();
+			unstartedWakes.length = 0;
 			for (const unsubscribe of [unsubscribeAsync, unsubscribeForeground]) {
 				try {
 					unsubscribe?.();

@@ -63,6 +63,8 @@ type ResultWatcherDeps = {
 	platform?: NodeJS.Platform;
 	/** Shared current/predecessor session ownership used by the notifier. */
 	ownership?: Pick<ResultDeliveryOwnership, "owns" | "claimedSessionIds">;
+	/** Called once the parent has this run's result: the notifier accepted it, or an earlier delivery already did. */
+	onResultDelivered?: (runId: string) => void;
 };
 
 type ResultFileChild = {
@@ -466,6 +468,7 @@ export function createResultWatcher(
 				}
 				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 				if (markReplacedPayload()) return;
+				deps.onResultDelivered?.(runId);
 				if (!completionPersisted) {
 					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
@@ -528,6 +531,7 @@ export function createResultWatcher(
 				}
 				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
 				if (markReplacedPayload()) return;
+				deps.onResultDelivered?.(runId);
 				if (!completionPersisted) {
 					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
@@ -583,7 +587,9 @@ export function createResultWatcher(
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
+			// A newer payload replaced this one; keep the hold until that one is delivered.
 			if (markReplacedPayload()) return;
+			deps.onResultDelivered?.(runId);
 			try {
 				data = markDeliveredNotification(publicResultPath(file), data, runId, Date.now());
 				identityCache.delete(file);

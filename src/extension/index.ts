@@ -40,7 +40,7 @@ import { resolveDisabledFeatureSurface } from "../shared/disabled-features.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
-import { cleanupResultIndexes, missionObserverResultCandidateFiles } from "../runs/background/result-files.ts";
+import { cleanupResultIndexes, missionObserverResultCandidateFiles, resultFilePath } from "../runs/background/result-files.ts";
 import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/background/async-retention.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { createResultDeliveryOwnership } from "../runs/background/result-delivery-ownership.ts";
@@ -87,6 +87,7 @@ import { listRetainedChildren } from "../runs/background/retained-children.ts";
 import {
 	type Details,
 	type MainWindowRendererConfig,
+	type AsyncJobState,
 	type SubagentState,
 	DIRS,
 	DEFAULT_ARTIFACT_CONFIG,
@@ -387,6 +388,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const mainWatchdog = registerMainWatchdog(pi);
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
 	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
+	// Ended async runs whose result has not reached the notifier yet.
+	const owedResultRunIds = new Set<string>();
+	// Tracked runs whose result was already delivered, so a later terminal
+	// transition (the tracker can see the end after the result) holds nothing.
+	const deliveredRunIds = new Set<string>();
+	const holdOwedResult = (job: AsyncJobState) => {
+		if (!job.parentWorkflowRunId && !deliveredRunIds.has(job.asyncId) && job.sessionId
+			&& resultDeliveryOwnership.owns(job.sessionId, job.completionOwnerId)) owedResultRunIds.add(job.asyncId);
+	};
 	let retainedNestedRouteTracker: ReturnType<typeof createRetainedNestedRouteTracker> | undefined;
 	const fleetStatus = fleetViewEnabled
 		? new SubagentFleetStatus(state, async (itemKey) => {
@@ -458,6 +468,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		});
 	};
 	const hasResultDeliveryDemand = () => {
+		if (owedResultRunIds.size > 0) return true;
 		if ([...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running")) return true;
 		if (state.foregroundControls.size > 0) return true;
 		if (scheduledRunManager.observedCompletionRunIds().size > 0) return true;
@@ -484,7 +495,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose: disposeAsyncJobTracker } = createAsyncJobTracker(pi, state, DIRS.async, {
 		widgetEnabled: asyncWidgetEnabled,
 		widgetCollapsed: asyncWidgetCollapsed,
-		onJobTerminal: () => refreshResultDelivery(),
+		onJobTerminal: (job) => {
+			holdOwedResult(job);
+			refreshResultDelivery();
+		},
+		onJobCleanup: (asyncId) => deliveredRunIds.delete(asyncId),
 		supervisorRequestState: supervisorChannel.getSupervisorRequestState,
 	});
 	const resultWatcher = createResultWatcher(
@@ -495,6 +510,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		{
 			notifier: completionNotifier,
 			ownership: resultDeliveryOwnership,
+			onResultDelivered: (runId) => {
+				owedResultRunIds.delete(runId);
+				if (state.asyncJobs.has(runId)) deliveredRunIds.add(runId);
+			},
 			observeCompletion: (result) => scheduledRunManager.handleAsyncCompletion(result),
 			observedCompletionRunIds: () => scheduledRunManager.observedCompletionRunIds(),
 			hasDeliveryDemand: hasResultDeliveryDemand,
@@ -842,6 +861,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const asyncCompleteHandler = (payload: unknown) => {
 		handleComplete(payload);
+		// Detached-workflow reconciliation publishes the result, then ends the job
+		// with this event; the next status refresh sees it already terminal.
+		const job = state.asyncJobs.get((payload as { id?: string } | null)?.id ?? "");
+		if (job && job.status !== "queued" && job.status !== "running"
+			&& fs.existsSync(resultFilePath(DIRS.results, job.asyncId))) holdOwedResult(job);
 		refreshResultDelivery();
 		refreshActiveAsyncCapacity();
 		scheduledRunManager.handleAsyncCompletion(payload);
@@ -922,6 +946,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		state.supervisorOwnerSessionId = ctx.sessionManager.getSessionId() || null;
 		transitionResultDelivery();
+		owedResultRunIds.clear();
+		deliveredRunIds.clear();
 		state.parentSessionFile = ctx.sessionManager.getSessionFile();
 		state.trustedSessionFileRoot = state.parentSessionFile ? path.join(getAgentDir(), "sessions") : undefined;
 		state.trustedSessionRoots = [...new Set([
@@ -1085,6 +1111,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		herdrStatusBridge.agentStarted();
 	});
 
+	pi.on("message_start", (event) => completionNotifier.messageStarted(event.message));
+
 	pi.on("agent_settled", () => {
 		resumeWidgetsAfterCompaction();
 	});
@@ -1120,7 +1148,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			? registerPiWebSessionLiveness({
 				sessionId,
 				...(sessionFile ? { sessionFile } : {}),
-				isActive: () => hasLiveSubagentWork(state) || completionNotifier.hasPendingDelivery(),
+				isActive: () => owedResultRunIds.size > 0 || hasLiveSubagentWork(state) || completionNotifier.hasPendingDelivery(),
 			})
 			: { registered: false, release: () => {} };
 		releaseHostSessionLiveness = liveness.release;

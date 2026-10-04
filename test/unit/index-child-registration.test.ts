@@ -804,8 +804,9 @@ describe("subagent extension child mode", () => {
 				events,
 				on(channel, handler) { handlers.set(channel, [...(handlers.get(channel) ?? []), handler]); },
 				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
-				sendMessage() {}, getSessionName() { return undefined; },
+				sendMessage(message) { if (message.customType === "subagent-notify") sent.push(message); }, getSessionName() { return undefined; },
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			const sent = [];
 			const sessionId = "liveness-" + crypto.randomUUID();
 			const sessionFile = "/tmp/" + sessionId + ".jsonl";
 			let provider;
@@ -836,6 +837,9 @@ describe("subagent extension child mode", () => {
 			events.emit("subagent:async-complete", { id: "run-1", sessionId: sessionFile, completionOwnerId, success: true, summary: "done" });
 			if (!provider.isActive()) throw new Error("pending completion delivery was not reported live");
 			const deliveryDeadline = Date.now() + 2000;
+			while (sent.length === 0 && Date.now() < deliveryDeadline) await new Promise((resolve) => setTimeout(resolve, 10));
+			if (!provider.isActive()) throw new Error("an accepted completion wake was reported idle before Pi started it");
+			for (const handler of handlers.get("message_start")) handler({ message: { role: "custom", ...sent[0] } });
 			while (provider.isActive() && Date.now() < deliveryDeadline) await new Promise((resolve) => setTimeout(resolve, 10));
 			if (provider.isActive()) throw new Error("retained terminal work was reported live after delivery");
 			for (const handler of handlers.get("session_shutdown")) await handler({ reason: "quit" });
