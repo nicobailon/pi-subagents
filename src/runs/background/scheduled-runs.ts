@@ -826,8 +826,9 @@ export class ScheduledRunManager {
 			if (saved && saved.state !== "running") pending = saved;
 		}
 		if (pending) {
-			if (schedule.activeRunId && schedule.activeRunId !== pending.id) {
-				// Local evidence for an older run cannot change a replacement owner.
+			if (pending.state === "running" && schedule.activeRunId && schedule.activeRunId !== pending.id) {
+				// An older running claim cannot change a replacement owner.
+				// Terminal proof still needs its own receipt persisted below.
 				this.pendingRunUpdates.delete(key);
 			} else {
 				store.writeRun(schedule, pending, pending.state === "running" ? "schedule.run.attached_async" : pending.state === "completed" ? "schedule.run.completed" : "schedule.run.failed");

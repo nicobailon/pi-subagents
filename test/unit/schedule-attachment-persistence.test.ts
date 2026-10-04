@@ -28,8 +28,8 @@ async function fixture(failure: "index" | "receipt", action: (h: any) => Promise
 			return { content: [], details: { asyncId: "attached" } } as any;
 		} });
 	const observers: ReturnType<typeof createScheduledRunManager>[] = [];
-	const observer = () => {
-		const other = createScheduledRunManager({ config: {}, storeRoot, now: () => now, timers, launch: async () => { throw new Error("Unexpected second launch"); } });
+	const observer = (launch?: () => Promise<any>) => {
+		const other = createScheduledRunManager({ config: {}, storeRoot, now: () => now, timers, launch: launch ?? (async () => { throw new Error("Unexpected second launch"); }) });
 		observers.push(other); other.bindSession(ctx); return other;
 	};
 	const recover = () => { fs.renameSync = originalRename; syncBuiltinESMExports(); fs.rmSync(path.join(dir, "history.json.lock"), { recursive: true, force: true }); };
@@ -114,3 +114,31 @@ it("releases its claim when history contention fails before the child is launche
 		assert.equal(launches, 1);
 	} finally { manager.stop(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+
+it("retries an old completion receipt without clearing a replacement run's claim", async () => fixture("receipt", async h => {
+	h.recover();
+	const original = fs.renameSync;
+	fs.renameSync = function (source, destination) {
+		if (destination === path.join(h.dir, "runs", "run-1.json")) throw Object.assign(new Error("completion receipt EIO"), { code: "EIO" });
+		return original.call(fs, source, destination);
+	}; syncBuiltinESMExports();
+	h.manager.handleAsyncCompletion({ id: "attached", success: true });
+	h.recover();
+	assert.equal(fs.existsSync(path.join(h.dir, "active.lock")), false);
+	const replacement = h.observer(async () => ({ content: [], details: { asyncId: "replacement" } }));
+	assert.equal((await replacement.handleToolCall({ action: "schedule.run", id: "check" }, h.ctx)).isError, undefined);
+	const scheduleBefore = fs.readFileSync(path.join(h.dir, "schedule.json"), "utf-8");
+	const replacementId = JSON.parse(scheduleBefore).activeRunId;
+	assert.notEqual(replacementId, "run-1");
+	assert.equal((await h.manager.handleToolCall({ action: "schedule.show", id: "check" }, h.ctx)).isError, undefined);
+	const oldRun = JSON.parse(fs.readFileSync(path.join(h.dir, "runs", "run-1.json"), "utf-8"));
+	assert.equal(oldRun.state, "completed"); assert.equal(oldRun.asyncId, "attached");
+	assert.equal(fs.readFileSync(path.join(h.dir, "schedule.json"), "utf-8"), scheduleBefore);
+	assert.equal(fs.readFileSync(path.join(h.dir, "active.lock"), "utf-8"), replacementId);
+	const newRun = JSON.parse(fs.readFileSync(path.join(h.dir, "runs", `${replacementId}.json`), "utf-8"));
+	assert.equal(newRun.state, "running"); assert.equal(newRun.asyncId, "replacement");
+	const history = JSON.parse(fs.readFileSync(path.join(h.dir, "history.json"), "utf-8")).runs;
+	assert.equal(history.find((run: any) => run.id === "run-1").state, "completed");
+	assert.equal(history.find((run: any) => run.id === replacementId).state, "running");
+}));
