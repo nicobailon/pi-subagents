@@ -913,13 +913,24 @@ export class ScheduledRunManager {
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 			run.state = "skipped";
 			run.completedAt = timestamp(now);
-			if (advance) {
-				schedule.trigger = nextAfter(schedule.trigger, planned, now);
-				schedule.updatedAt = timestamp(now);
-				store.write(schedule);
+			// Losing the claim gives this snapshot no authority to change the owner.
+			const latest = store.find(schedule.id);
+			if (!latest) {
+				this.clearTimer(store, schedule.id);
+				return run;
 			}
-			store.writeRun(schedule, run, "schedule.skipped_overlap");
-			this.arm(schedule, store);
+			store.writeRun(latest, run, "schedule.skipped_overlap");
+			if (latest.trigger.kind === "once") {
+				this.clearTimer(store, latest.id);
+			} else {
+				// The owner may hold the lock before persisting its cursor. Back off
+				// locally without consuming that pending occurrence on disk.
+				const next = nextRunAt(latest);
+				const notBefore = next !== undefined && next <= now
+					? Date.parse(nextAfter(latest.trigger, duePlannedAt(latest, now) ?? planned, now).nextRunAt!)
+					: undefined;
+				this.arm(latest, store, notBefore);
+			}
 			return run;
 		}
 		schedule.activeRunId = run.id;
