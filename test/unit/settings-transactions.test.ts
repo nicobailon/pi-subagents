@@ -10,8 +10,8 @@ import { saveBuiltinAgentOverride } from "../../src/agents/agents.ts";
 
 const fixture = fileURLToPath(new URL("../fixtures/settings-transaction-writer.mjs", import.meta.url));
 
-function writer(project: string, target: string, root: string, role: string, operation: string, scope: string, agentDir: string) {
-	const child = fork(fixture, [project, target, root, role, operation, scope], {
+function writer(project: string, target: string, root: string, role: string, operation: string, scope: string, agentDir: string, readOnlyParent = false) {
+	const child = fork(fixture, [project, target, root, role, operation, scope, String(readOnlyParent)], {
 		execArgv: ["--experimental-strip-types"],
 		env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
 		stdio: ["ignore", "ignore", "pipe", "ipc"],
@@ -60,10 +60,9 @@ async function race(options: { initial?: object; readOnlyParent?: boolean; alias
 	const profiles = path.join(config, "profiles", "pi-subagents");
 	fs.mkdirSync(profiles, { recursive: true });
 	fs.writeFileSync(path.join(profiles, "race.json"), JSON.stringify({ subagents: { agentOverrides: { reviewer: { model: "example/profile" } } } }));
-	if (options.readOnlyParent) fs.chmodSync(config, 0o555);
-	const scope = options.scope ?? "project";
-	const a = writer(project, target, root, "first", options.first ?? "save", scope, config);
-	const b = writer(secondProject, target, root, "second", options.second ?? "save", scope, config);
+		const scope = options.scope ?? "project";
+	const a = writer(project, target, root, "first", options.first ?? "save", scope, config, options.readOnlyParent);
+	const b = writer(secondProject, target, root, "second", options.second ?? "save", scope, config, options.readOnlyParent);
 	const timeout = setTimeout(() => { a.child.kill("SIGKILL"); b.child.kill("SIGKILL"); }, 12_000);
 	try {
 		await Promise.all([a.wait("ready"), b.wait("ready")]);
@@ -79,7 +78,6 @@ async function race(options: { initial?: object; readOnlyParent?: boolean; alias
 		assert.equal(fs.existsSync(settingsFileLockPath(path.join(fs.realpathSync.native(path.dirname(target)), path.basename(target)))), false);
 	} finally {
 		clearTimeout(timeout); a.child.kill("SIGKILL"); b.child.kill("SIGKILL");
-		if (options.readOnlyParent) fs.chmodSync(config, 0o755);
 		fs.rmSync(root, { recursive: true, force: true });
 	}
 }
@@ -151,7 +149,7 @@ assert.equal(waits, 0);
 	} finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-it("coordinates profile and watchdog writes through a read-only settings directory", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => race({ readOnlyParent: true, initial: {}, scope: "user", first: "watchdog", second: "profile" }, (saved) => {
+it("coordinates profile and watchdog writes through a read-only settings directory", async () => race({ readOnlyParent: true, initial: {}, scope: "user", first: "watchdog", second: "profile" }, (saved) => {
 	assert.equal(saved.subagents.watchdog.enabled, true);
 	assert.equal(saved.subagents.agentOverrides.reviewer.model, "example/profile");
 }));

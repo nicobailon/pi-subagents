@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
-const [project, requestedTarget, barriers, role, operation, scope = "project"] = process.argv.slice(2);
+const [project, requestedTarget, barriers, role, operation, scope = "project", readOnlyParent = "false"] = process.argv.slice(2);
 const target = path.join(fs.realpathSync.native(path.dirname(requestedTarget)), path.basename(requestedTarget));
 const wait = (file) => {
 	const deadline = Date.now() + 10_000;
@@ -15,6 +15,11 @@ const { settingsFileLockPath } = await import("../../src/shared/settings-file.ts
 const lockPath = settingsFileLockPath(target);
 const originalWrite = fs.writeFileSync;
 const originalMkdir = fs.mkdirSync;
+const originalAccess = fs.accessSync;
+if (readOnlyParent === "true") fs.accessSync = function (file, accessMode) {
+	if (file === path.dirname(target) && accessMode === fs.constants.W_OK) throw Object.assign(new Error("read-only settings directory"), { code: "EACCES" });
+	return originalAccess.call(fs, file, accessMode);
+};
 let paused = false;
 let attempted = false;
 fs.writeFileSync = function (file, ...args) {
