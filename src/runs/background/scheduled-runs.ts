@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
+import { withFileWriteLock } from "../../shared/file-write-lock.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { shortenPath } from "../../shared/formatters.ts";
 import type { AsyncStatus, Details, ExtensionConfig } from "../../shared/types.ts";
@@ -377,6 +378,15 @@ class ScheduleStore {
 		fs.rmSync(scheduleDir(this.root, id, false, this.projectCwd), { recursive: true, force: true });
 	}
 
+	getRun(id: string, runId: string): ScheduleRunRecord | undefined {
+		if (!SCHEDULE_ID.test(runId)) throw new Error(`Invalid schedule run id '${runId}'.`);
+		const file = path.join(scheduleDir(this.root, id, false, this.projectCwd), "runs", `${runId}.json`);
+		if (!fs.existsSync(file)) return undefined;
+		const run = readJson(file, "schedule run") as ScheduleRunRecord;
+		if (run?.schemaVersion !== 1 || run.id !== runId || run.scheduleId !== id) throw new Error(`Schedule run '${file}' has invalid fields.`);
+		return run;
+	}
+
 	history(id: string): ScheduleRunRecord[] {
 		const file = path.join(scheduleDir(this.root, id, false, this.projectCwd), "history.json");
 		if (!fs.existsSync(file)) return [];
@@ -387,11 +397,14 @@ class ScheduleStore {
 
 	writeRun(schedule: ScheduleRecord, run: ScheduleRunRecord, event: string): void {
 		const dir = scheduleDir(this.root, schedule.id, true, this.projectCwd);
+		// The individual receipt remains durable even when index coordination fails.
 		writePrivateAtomicJson(path.join(dir, "runs", `${run.id}.json`), run);
-		const runs = [run, ...this.history(schedule.id).filter((item) => item.id !== run.id)].slice(0, MAX_HISTORY);
-		writePrivateAtomicJson(path.join(dir, "history.json"), { schemaVersion: 1, runs });
-		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-		fs.appendFileSync(path.join(dir, "events.jsonl"), `${JSON.stringify({ schemaVersion: 1, timestamp: new Date().toISOString(), event, scheduleId: schedule.id, runId: run.id, state: run.state })}\n`, { encoding: "utf-8", mode: 0o600 });
+		withFileWriteLock(path.join(dir, "history.json"), () => {
+			const runs = [run, ...this.history(schedule.id).filter((item) => item.id !== run.id)].slice(0, MAX_HISTORY);
+			writePrivateAtomicJson(path.join(dir, "history.json"), { schemaVersion: 1, runs });
+			fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+			fs.appendFileSync(path.join(dir, "events.jsonl"), `${JSON.stringify({ schemaVersion: 1, timestamp: new Date().toISOString(), event, scheduleId: schedule.id, runId: run.id, state: run.state })}\n`, { encoding: "utf-8", mode: 0o600 });
+		});
 	}
 
 	appendEvent(schedule: ScheduleRecord, event: string): void {
@@ -623,8 +636,9 @@ export class ScheduledRunManager {
 			for (const id of ids) {
 				try {
 					const schedule = store.get(id);
-					const run = store.history(id).find((item) => item.asyncId === asyncId && item.state === "running");
-					if (!run) continue;
+					const active = schedule.activeRunId ? store.getRun(id, schedule.activeRunId) : undefined;
+					const run: ScheduleRunRecord | undefined = active ?? store.history(id).find((item) => item.asyncId === asyncId && item.state === "running");
+					if (!run || run.asyncId !== asyncId || run.state !== "running" || (schedule.activeRunId && run.id !== schedule.activeRunId)) continue;
 					this.finishRun(store, schedule, run, data.success === true, typeof data.summary === "string" ? data.summary : undefined);
 					return;
 				} catch (error) {
@@ -773,7 +787,7 @@ export class ScheduledRunManager {
 		const schedule = this.resolve(params);
 		const store = this.requireStore();
 		if (schedule.activeRunId) {
-			const run = store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			const run = store.getRun(schedule.id, schedule.activeRunId) ?? store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
 			let terminal = false;
 			if (run?.scheduleId === schedule.id && run.state === "running" && run.asyncId && run.asyncDir) {
 				const status = readJson(path.join(run.asyncDir, "status.json"), "async status") as Partial<AsyncStatus>;
@@ -802,7 +816,7 @@ export class ScheduledRunManager {
 			}
 		}
 		if (schedule.activeRunId) {
-			const run = store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			const run = store.getRun(schedule.id, schedule.activeRunId) ?? store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
 			if (run?.state === "running" && run.asyncId) this.observedAsyncIds.add(run.asyncId);
 			if (run?.state === "running" && run.asyncDir) {
 				try {
