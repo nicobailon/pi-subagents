@@ -932,9 +932,10 @@ export class ScheduledRunManager {
 				// An empty or partial claim would make every later launch skip. Keep the
 				// descriptor open until the inode check so a replacement owner's lock survives.
 				try {
-					const owned = fs.fstatSync(lock);
-					const current = fs.lstatSync(lockPath);
-					if (owned.ino !== 0 && owned.dev === current.dev && owned.ino === current.ino) fs.rmSync(lockPath);
+					// Bigint stats: Windows file ids exceed 2^53, so number inodes of nearby files can compare equal.
+					const owned = fs.fstatSync(lock, { bigint: true });
+					const current = fs.lstatSync(lockPath, { bigint: true });
+					if (owned.ino !== 0n && owned.dev === current.dev && owned.ino === current.ino) fs.rmSync(lockPath);
 				} catch { /* Preserve the original error. */ }
 				try { fs.closeSync(lock); } catch { /* Preserve the original error. */ }
 				throw error;
