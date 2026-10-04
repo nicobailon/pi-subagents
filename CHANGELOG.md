@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Schedule receipt failures distinguish a child that has attached from a launch that never began. The launcher retains unsaved execution or completion proof until storage recovers, and independently attempts pre-launch cleanup without clearing a replacement owner. Thanks to [@quifox](https://github.com/quifox) for [#2677](https://github.com/nicobailon/pi-subagents/pull/2677).
 - Concurrent schedule receipts now coordinate the short history update, preserving the running task in `history.json` so its completion can still be matched. The bounded history write lock is separate from the execution lock; completion and recovery can use the durable run receipt when an index update is missing. Thanks to [@quifox](https://github.com/quifox) for [#2677](https://github.com/nicobailon/pi-subagents/pull/2677).
 
 - A child with `outputSchema` and a bound `output` path saved its final prose to that file whenever the prose was not empty, so a short closing line such as "Enough; writing up." replaced the structured result. The file now holds the structured result as indented JSON whenever the child returns one and did not write the file itself. The child's returned output and output artifact show the same JSON, since they mirror the bound file. Thanks to [@tara-marchand](https://github.com/tara-marchand) for [#2672](https://github.com/nicobailon/pi-subagents/issues/2672).

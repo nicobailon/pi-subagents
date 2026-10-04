@@ -559,6 +559,8 @@ export class ScheduledRunManager {
 	private readonly contexts = new Map<string, ExtensionContext>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 	private readonly observedAsyncIds = new Set<string>();
+	// Only writes awaiting recovery live here; successful persistence removes them.
+	private readonly pendingRunUpdates = new Map<string, ScheduleRunRecord>();
 	private readonly now: () => number;
 	private readonly randomId: () => string;
 	private readonly timersApi: ScheduledRunTimers;
@@ -582,6 +584,7 @@ export class ScheduledRunManager {
 		this.stores.clear();
 		this.contexts.clear();
 		this.observedAsyncIds.clear();
+		this.pendingRunUpdates.clear();
 	}
 
 	async handleToolCall(params: SubagentParamsLike, ctx: ExtensionContext): Promise<AgentToolResult<Details>> {
@@ -637,7 +640,7 @@ export class ScheduledRunManager {
 			for (const id of ids) {
 				try {
 					const schedule = store.get(id);
-					const active = schedule.activeRunId ? store.getRun(id, schedule.activeRunId) : undefined;
+					const active = this.activeRun(store, schedule);
 					const run: ScheduleRunRecord | undefined = active ?? store.history(id).find((item) => item.asyncId === asyncId && item.state === "running");
 					if (!run || run.asyncId !== asyncId || run.state !== "running" || (schedule.activeRunId && run.id !== schedule.activeRunId)) continue;
 					this.finishRun(store, schedule, run, data.success === true, typeof data.summary === "string" ? data.summary : undefined);
@@ -751,22 +754,24 @@ export class ScheduledRunManager {
 		if (params.quiet !== undefined && typeof params.quiet !== "boolean") return textResult("quiet must be a boolean.", undefined, undefined, true);
 		const manualTrigger = schedule.trigger;
 		const run = await this.launch(store, schedule, this.now(), "manual", false, params.quiet === true);
-		const updated = store.get(schedule.id);
-		if (run.state === "running") {
-			const now = this.now();
-			if (updated.trigger.kind === "calendar") {
-				if (manualTrigger.kind !== "calendar") throw new Error("Schedule trigger changed during manual launch.");
-				const consumed = latestCalendarOccurrence(manualTrigger, now, manualTrigger.nextLocalDate)?.nextRunAt ?? manualTrigger.nextRunAt;
-				const advanced = nextAfter(manualTrigger, Date.parse(consumed), now) as CalendarTrigger;
-				if (advanced.nextLocalDate > updated.trigger.nextLocalDate) updated.trigger = advanced;
-			} else if (updated.trigger.kind === "interval") updated.trigger.nextRunAt = timestamp(now + updated.trigger.everyMs);
-			else updated.trigger.nextRunAt = undefined;
-			updated.updatedAt = timestamp(now);
-			store.write(updated);
-			store.appendEvent(updated, "schedule.manual_satisfied");
-			this.arm(updated, store);
-		}
+		if (run.state === "running") this.satisfyManualRun(store, schedule.id, manualTrigger);
 		return textResult(`Manual schedule run ${run.id}: ${run.state}${run.asyncId ? ` (async ${run.asyncId})` : ""}.`, [store.get(schedule.id)], [run], run.state === "failed_launch");
+	}
+
+	private satisfyManualRun(store: ScheduleStore, id: string, manualTrigger: ScheduleTrigger): void {
+		const updated = store.get(id);
+		const now = this.now();
+		if (updated.trigger.kind === "calendar") {
+			if (manualTrigger.kind !== "calendar") throw new Error("Schedule trigger changed during manual launch.");
+			const consumed = latestCalendarOccurrence(manualTrigger, now, manualTrigger.nextLocalDate)?.nextRunAt ?? manualTrigger.nextRunAt;
+			const advanced = nextAfter(manualTrigger, Date.parse(consumed), now) as CalendarTrigger;
+			if (advanced.nextLocalDate > updated.trigger.nextLocalDate) updated.trigger = advanced;
+		} else if (updated.trigger.kind === "interval") updated.trigger.nextRunAt = timestamp(now + updated.trigger.everyMs);
+		else updated.trigger.nextRunAt = undefined;
+		updated.updatedAt = timestamp(now);
+		store.write(updated);
+		store.appendEvent(updated, "schedule.manual_satisfied");
+		this.arm(updated, store);
 	}
 
 	private async runDue(): Promise<AgentToolResult<Details>> {
@@ -786,7 +791,7 @@ export class ScheduledRunManager {
 		const schedule = this.resolve(params);
 		const store = this.requireStore();
 		if (schedule.activeRunId) {
-			const run = store.getRun(schedule.id, schedule.activeRunId) ?? store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			const run = this.activeRun(store, schedule);
 			let terminal = false;
 			if (run?.scheduleId === schedule.id && run.state === "running" && run.asyncId && run.asyncDir) {
 				const status = readJson(path.join(run.asyncDir, "status.json"), "async status") as Partial<AsyncStatus>;
@@ -814,8 +819,33 @@ export class ScheduledRunManager {
 				store.write(schedule);
 			}
 		}
+		const key = this.timerKey(store, schedule.id);
+		let pending = this.pendingRunUpdates.get(key);
+		if (pending?.state === "running") {
+			const saved = store.getRun(schedule.id, pending.id);
+			// Another session may already have persisted terminal proof.
+			if (saved && saved.state !== "running") pending = saved;
+		}
+		if (pending) {
+			if (schedule.activeRunId && schedule.activeRunId !== pending.id) {
+				// Local evidence for an older run cannot change a replacement owner.
+				this.pendingRunUpdates.delete(key);
+			} else {
+				store.writeRun(schedule, pending, pending.state === "running" ? "schedule.run.attached_async" : pending.state === "completed" ? "schedule.run.completed" : "schedule.run.failed");
+				if (pending.state !== "running") {
+					if (schedule.activeRunId === pending.id) {
+						schedule.activeRunId = undefined;
+						schedule.updatedAt = timestamp(this.now());
+						store.write(schedule);
+					}
+					this.releaseOwnLock(store, pending);
+					if (pending.asyncId) this.observedAsyncIds.delete(pending.asyncId);
+				}
+				this.pendingRunUpdates.delete(key);
+			}
+		}
 		if (schedule.activeRunId) {
-			const run = store.getRun(schedule.id, schedule.activeRunId) ?? store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			const run = this.activeRun(store, schedule);
 			if (run?.state === "running" && run.asyncId) this.observedAsyncIds.add(run.asyncId);
 			const startedAt = run?.startedAt ? Date.parse(run.startedAt) : Number.NaN;
 			if (run?.state === "running" && run.asyncDir) {
@@ -936,12 +966,41 @@ export class ScheduledRunManager {
 			this.arm(schedule, store);
 			return run;
 		}
-		schedule.activeRunId = run.id;
-		schedule.lastRunId = run.id;
-		if (advance) schedule.trigger = nextAfter(schedule.trigger, planned, now);
-		schedule.updatedAt = timestamp(now);
-		store.write(schedule);
-		store.writeRun(schedule, run, "schedule.run.started");
+		try {
+			schedule.activeRunId = run.id;
+			schedule.lastRunId = run.id;
+			if (advance) schedule.trigger = nextAfter(schedule.trigger, planned, now);
+			schedule.updatedAt = timestamp(now);
+			store.write(schedule);
+			store.writeRun(schedule, run, "schedule.run.started");
+		} catch (error) {
+			// No child has been launched, so this is proof that the claim can end.
+			run.state = "failed_launch";
+			run.completedAt = timestamp(this.now());
+			run.error = error instanceof Error ? error.message : String(error);
+			this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
+			const cleanupErrors: unknown[] = [];
+			let latest: ScheduleRecord | undefined;
+			try {
+				latest = store.find(schedule.id);
+				if (latest?.activeRunId === run.id) {
+					latest.activeRunId = undefined;
+					latest.updatedAt = timestamp(this.now());
+					store.write(latest);
+				}
+			} catch (cleanupError) { cleanupErrors.push(cleanupError); }
+			// These attempts are independent: one failed write cannot skip the
+			// owned lock release or the durable failed-launch receipt.
+			try { this.releaseOwnLock(store, run); }
+			catch (cleanupError) { cleanupErrors.push(cleanupError); }
+			try {
+				latest ??= store.find(schedule.id);
+				if (latest) store.writeRun(latest, run, "schedule.run.failed");
+			} catch (cleanupError) { cleanupErrors.push(cleanupError); }
+			if (cleanupErrors.length === 0) this.pendingRunUpdates.delete(this.timerKey(store, schedule.id));
+			else console.warn(`[pi-subagents] Failed to clean up launch claim '${run.id}': ${cleanupErrors.map((error) => error instanceof Error ? error.message : String(error)).join("; ")}`);
+			throw error;
+		}
 		try {
 			const result = await this.deps.launch(executionParams(schedule, dueReason === "manual" ? quiet === true : schedule.quiet === true), this.requireContext(store), new AbortController().signal);
 			const asyncId = result.details?.asyncId ?? result.details?.runId;
@@ -949,10 +1008,22 @@ export class ScheduledRunManager {
 			run.asyncId = asyncId;
 			run.asyncDir = result.details?.asyncDir;
 			this.observedAsyncIds.add(asyncId);
+			this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
 			store.writeRun(schedule, run, "schedule.run.attached_async");
+			this.pendingRunUpdates.delete(this.timerKey(store, schedule.id));
 			this.arm(schedule, store);
 			return run;
 		} catch (error) {
+			if (run.asyncId) {
+				// Attachment is launch proof. A receipt or timer error cannot
+				// authorize releasing a child that is already running.
+				if (!advance) {
+					try { this.satisfyManualRun(store, schedule.id, schedule.trigger); }
+					catch (updateError) { console.warn(`[pi-subagents] Could not satisfy manual schedule '${schedule.id}': ${updateError instanceof Error ? updateError.message : String(updateError)}`); }
+				}
+				if (error instanceof Error) error.message = `Scheduled run '${run.id}' attached to async '${run.asyncId}', but a post-launch update failed: ${error.message}`;
+				throw error;
+			}
 			run.state = "failed_launch";
 			run.completedAt = timestamp(this.now());
 			run.error = error instanceof Error ? error.message : String(error);
@@ -994,6 +1065,7 @@ export class ScheduledRunManager {
 			schedule.trigger = nextAfter(schedule.trigger, planned, now);
 			store.writeRun(schedule, skipped, "schedule.skipped_overlap");
 		}
+		this.pendingRunUpdates.set(this.timerKey(store, schedule.id), run);
 		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
 		run.state = success ? "completed" : "failed_run";
 		run.completedAt = timestamp(now);
@@ -1003,6 +1075,7 @@ export class ScheduledRunManager {
 		store.write(schedule);
 		fs.rmSync(path.join(store.directory(schedule.id), "active.lock"), { force: true });
 		store.writeRun(schedule, run, success ? "schedule.run.completed" : "schedule.run.failed");
+		this.pendingRunUpdates.delete(this.timerKey(store, schedule.id));
 		this.arm(schedule, store);
 	}
 
@@ -1042,6 +1115,12 @@ export class ScheduledRunManager {
 			this.restore(store);
 		}
 		this.store = store;
+		for (const [key, run] of this.pendingRunUpdates) {
+			if (key !== this.timerKey(store, run.scheduleId)) continue;
+			const schedule = store.find(run.scheduleId);
+			if (schedule) this.restoreOne(store, schedule);
+			else this.pendingRunUpdates.delete(key);
+		}
 	}
 
 	private resolve(params: SubagentParamsLike): ScheduleRecord {
@@ -1059,6 +1138,20 @@ export class ScheduledRunManager {
 		const ctx = this.contexts.get(store.root);
 		if (!ctx) throw new Error("Schedule runtime context is unavailable.");
 		return ctx;
+	}
+
+	private activeRun(store: ScheduleStore, schedule: ScheduleRecord): ScheduleRunRecord | undefined {
+		if (!schedule.activeRunId) return undefined;
+		const pending = this.pendingRunUpdates.get(this.timerKey(store, schedule.id));
+		const saved = store.getRun(schedule.id, schedule.activeRunId);
+		return pending?.id === schedule.activeRunId && (!saved || saved.state === "running") ? pending
+			: saved ?? store.history(schedule.id).find((run) => run.id === schedule.activeRunId);
+	}
+
+	private releaseOwnLock(store: ScheduleStore, run: ScheduleRunRecord): void {
+		const file = path.join(store.directory(run.scheduleId), "active.lock");
+		try { if (fs.readFileSync(file, "utf-8") === run.id) fs.rmSync(file); }
+		catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 	}
 
 	private timerKey(store: ScheduleStore, id: string): string {

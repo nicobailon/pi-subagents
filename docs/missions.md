@@ -125,6 +125,10 @@ subagent({ action: "schedule.create", id: "nightly-sweep", every: "24h", quiet: 
 
 Manage schedules with `schedule.list`, `schedule.show`, `schedule.history`, `schedule.pause`, `schedule.resume`, `schedule.run`, `schedule.run-due`, and `schedule.delete`.
 
+A storage error after a child returns its async ID does not mean the launch failed: the active claim stays held, and the error identifies the attached task. If its run receipt could not be saved, the launcher retains that proof in memory, can match completion, and retries the receipt on its next schedule operation or recovery. Other sessions can match the task once the individual receipt is saved, even if the history index is missing the update. A persisted terminal receipt takes precedence over an older pending running update.
+
+If persistence fails before launch, cleanup independently attempts the owned lock release, schedule update and failed receipt. The original error stays visible; the surviving launcher can retry known failure evidence after storage recovers. This is in-process recovery, not a protocol for recovering unknown claims after a hard crash.
+
 Attach an existing mission to give each scheduled workflow access to the same durable `state.get/set`:
 
 ```ts
