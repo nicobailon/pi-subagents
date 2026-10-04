@@ -1,3 +1,4 @@
+import { readSettingsFileStrict, updateSettingsFile } from "../shared/settings-file.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { THINKING_LEVELS, type ThinkingLevel } from "../shared/model-info.ts";
@@ -335,29 +336,6 @@ function parseSettingsObject(settings: Record<string, unknown>, meta: ParseMeta)
 	return parseWatchdogPatch(subagents.watchdog, "subagents.watchdog", meta);
 }
 
-function readSettingsFileStrict(filePath: string): Record<string, unknown> {
-	if (!fs.existsSync(filePath)) return {};
-	let raw: string;
-	try {
-		raw = fs.readFileSync(filePath, "utf-8");
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to read settings file '${filePath}': ${message}`, { cause: error });
-	}
-
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to parse settings file '${filePath}': ${message}`, { cause: error });
-	}
-	if (!isPlainObject(parsed)) {
-		throw new Error(`Settings file '${filePath}' must contain a JSON object.`);
-	}
-	return parsed;
-}
-
 function isDirectory(dir: string): boolean {
 	try {
 		return fs.statSync(dir).isDirectory();
@@ -452,33 +430,31 @@ function targetSettingsObject(watchdog: Record<string, unknown>, target: Watchdo
 	return ensureObjectField(overrides, target.agent.trim(), `subagents.watchdog.children.overrides.${target.agent.trim()}`, meta);
 }
 
-function writeSettingsFile(settingsPath: string, settings: Record<string, unknown>): string {
-	fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-	fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
-	return settingsPath;
-}
-
 export function writeUserWatchdogEnabled(enabled: boolean): string {
 	const settingsPath = getUserSettingsPath();
 	const meta: ParseMeta = { scope: "user", path: settingsPath };
-	const settings = readSettingsFileStrict(settingsPath);
-	const watchdog = ensureWatchdogSettings(settings, meta);
-	watchdog.enabled = enabled;
-	targetSettingsObject(watchdog, { kind: "main" }, meta).enabled = enabled;
-	return writeSettingsFile(settingsPath, settings);
+	return updateSettingsFile(settingsPath, (settings, save) => {
+		const watchdog = ensureWatchdogSettings(settings, meta);
+		watchdog.enabled = enabled;
+		targetSettingsObject(watchdog, { kind: "main" }, meta).enabled = enabled;
+		save();
+		return settingsPath;
+	});
 }
 
 export function writeWatchdogModelSettings(input: WatchdogModelSettingsWrite): string {
 	const settingsPath = settingsPathForWrite(input.scope, input.cwd);
 	const meta: ParseMeta = { scope: input.scope, path: settingsPath };
-	const settings = readSettingsFileStrict(settingsPath);
-	const watchdog = ensureWatchdogSettings(settings, meta);
-	const target = targetSettingsObject(watchdog, input.target, meta);
-	if (input.model === null) delete target.model;
-	else if (input.model !== undefined) target.model = input.model;
-	if (input.thinking === null) delete target.thinking;
-	else if (input.thinking !== undefined) target.thinking = input.thinking;
-	return writeSettingsFile(settingsPath, settings);
+	return updateSettingsFile(settingsPath, (settings, save) => {
+		const watchdog = ensureWatchdogSettings(settings, meta);
+		const target = targetSettingsObject(watchdog, input.target, meta);
+		if (input.model === null) delete target.model;
+		else if (input.model !== undefined) target.model = input.model;
+		if (input.thinking === null) delete target.thinking;
+		else if (input.thinking !== undefined) target.thinking = input.thinking;
+		save();
+		return settingsPath;
+	});
 }
 
 export function resolveWatchdogConfig(cwd: string, options: { session?: Record<string, unknown> } = {}): WatchdogSettingsResult {
