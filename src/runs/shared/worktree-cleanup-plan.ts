@@ -204,9 +204,9 @@ export function samePath(left: string, right: string): boolean {
 	// drive/short-name aliases. The directory identity is the final bounded
 	// fallback; never accept aliases when the filesystem cannot prove identity.
 	try {
-		const leftStat = fs.statSync(left);
-		const rightStat = fs.statSync(right);
-		return leftStat.dev !== 0 && leftStat.ino !== 0 && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+		const leftStat = fs.statSync(left, { bigint: true });
+		const rightStat = fs.statSync(right, { bigint: true });
+		return leftStat.dev !== 0n && leftStat.ino !== 0n && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
 	} catch {
 		return false;
 	}

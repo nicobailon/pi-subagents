@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- On Windows, the agent-memory and worktree-cleanup path checks could treat two different directories as the same path when their file ids differed only in bits lost by JavaScript numbers. They now compare exact bigint file ids. ([#2685](https://github.com/nicobailon/pi-subagents/issues/2685))
 - On Windows, a schedule claim whose lock file could not be written could delete another owner's replacement lock. The cleanup compared file ids as JavaScript numbers, and Windows file ids above 2^53 lose precision, so two nearby files could look identical. It now compares exact bigint file ids. ([#2679](https://github.com/nicobailon/pi-subagents/pull/2679))
 - The pi-web liveness provider reported a session idle while a child's result had not reached the parent: after the child ended but before its result was published, while a rejected send waited to retry, and while Pi held the accepted wake message in its queue. A host could replace the session then and lose the result. The provider now stays live until Pi starts that message. Thanks to [@brettinternet](https://github.com/brettinternet) for [#2674](https://github.com/nicobailon/pi-subagents/pull/2674).
 - Creating an agent with a multiline description, or updating only the prompt of an agent whose description spans several lines, saved only the first line of the description. The description is now written as a YAML literal block, so every line survives rediscovery. Thanks to [@March-7](https://github.com/March-7) for [#2681](https://github.com/nicobailon/pi-subagents/pull/2681).
