@@ -59,12 +59,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 const original = fs.renameSync;
+let injected = false;
 fs.renameSync = (source, destination) => {
-	if (destination === ${JSON.stringify(file)}) throw Object.assign(new Error("profile save EIO"), { code: "EIO" });
+	if (destination === ${JSON.stringify(fs.realpathSync.native(file))}) {
+		injected = true; throw Object.assign(new Error("profile save EIO"), { code: "EIO" });
+	}
 	return original(source, destination);
 }; syncBuiltinESMExports();
 const { applySubagentProfile } = await import(${JSON.stringify(new URL("../../src/profiles/profiles.ts", import.meta.url).href)});
 assert.throws(() => applySubagentProfile("sample"), error => error.code === "EIO");
+assert.equal(injected, true);
 `;
 	try {
 		const child = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", source], {
