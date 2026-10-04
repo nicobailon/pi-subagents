@@ -35,7 +35,6 @@ export const SCHEDULED_RUN_ACTIONS = [
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const DEFAULT_MAX_PENDING = 20;
 const MAX_HISTORY = 100;
-const STALE_LAUNCH_CLAIM_MS = 5 * 60_000;
 const SCHEDULE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 type ScheduledRunTimers = Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
@@ -737,22 +736,24 @@ export class ScheduledRunManager {
 		if (params.quiet !== undefined && typeof params.quiet !== "boolean") return textResult("quiet must be a boolean.", undefined, undefined, true);
 		const manualTrigger = schedule.trigger;
 		const run = await this.launch(store, schedule, this.now(), "manual", false, params.quiet === true);
-		const updated = store.get(schedule.id);
-		if (run.state === "running") {
-			const now = this.now();
-			if (updated.trigger.kind === "calendar") {
-				if (manualTrigger.kind !== "calendar") throw new Error("Schedule trigger changed during manual launch.");
-				const consumed = latestCalendarOccurrence(manualTrigger, now, manualTrigger.nextLocalDate)?.nextRunAt ?? manualTrigger.nextRunAt;
-				const advanced = nextAfter(manualTrigger, Date.parse(consumed), now) as CalendarTrigger;
-				if (advanced.nextLocalDate > updated.trigger.nextLocalDate) updated.trigger = advanced;
-			} else if (updated.trigger.kind === "interval") updated.trigger.nextRunAt = timestamp(now + updated.trigger.everyMs);
-			else updated.trigger.nextRunAt = undefined;
-			updated.updatedAt = timestamp(now);
-			store.write(updated);
-			store.appendEvent(updated, "schedule.manual_satisfied");
-			this.arm(updated, store);
-		}
+		if (run.state === "running") this.satisfyManualRun(store, schedule.id, manualTrigger);
 		return textResult(`Manual schedule run ${run.id}: ${run.state}${run.asyncId ? ` (async ${run.asyncId})` : ""}.`, [store.get(schedule.id)], [run], run.state === "failed_launch");
+	}
+
+	private satisfyManualRun(store: ScheduleStore, id: string, manualTrigger: ScheduleTrigger): void {
+		const updated = store.get(id);
+		const now = this.now();
+		if (updated.trigger.kind === "calendar") {
+			if (manualTrigger.kind !== "calendar") throw new Error("Schedule trigger changed during manual launch.");
+			const consumed = latestCalendarOccurrence(manualTrigger, now, manualTrigger.nextLocalDate)?.nextRunAt ?? manualTrigger.nextRunAt;
+			const advanced = nextAfter(manualTrigger, Date.parse(consumed), now) as CalendarTrigger;
+			if (advanced.nextLocalDate > updated.trigger.nextLocalDate) updated.trigger = advanced;
+		} else if (updated.trigger.kind === "interval") updated.trigger.nextRunAt = timestamp(now + updated.trigger.everyMs);
+		else updated.trigger.nextRunAt = undefined;
+		updated.updatedAt = timestamp(now);
+		store.write(updated);
+		store.appendEvent(updated, "schedule.manual_satisfied");
+		this.arm(updated, store);
 	}
 
 	private async runDue(): Promise<AgentToolResult<Details>> {
@@ -803,7 +804,6 @@ export class ScheduledRunManager {
 		if (schedule.activeRunId) {
 			const run = store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
 			if (run?.state === "running" && run.asyncId) this.observedAsyncIds.add(run.asyncId);
-			const startedAt = run?.startedAt ? Date.parse(run.startedAt) : Number.NaN;
 			if (run?.state === "running" && run.asyncDir) {
 				try {
 					const status = readJson(path.join(run.asyncDir, "status.json"), "async status") as Partial<AsyncStatus>;
@@ -812,13 +812,8 @@ export class ScheduledRunManager {
 					if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof Error && /ENOENT/.test(error.message))) throw error;
 				}
 			}
-			if (schedule.activeRunId && (!run || run.state !== "running" || (!run.asyncId && Number.isFinite(startedAt) && startedAt + STALE_LAUNCH_CLAIM_MS <= this.now()))) {
-				if (run?.state === "running") {
-					run.state = "failed_launch";
-					run.completedAt = timestamp(this.now());
-					run.error = "Recovered a stale launch claim before an async run was attached.";
-					store.writeRun(schedule, run, "schedule.run.failed");
-				}
+			// Missing history or a slow attachment is not proof that the launcher ended.
+			if (schedule.activeRunId && run && run.state !== "running") {
 				schedule.activeRunId = undefined;
 				schedule.updatedAt = timestamp(this.now());
 				store.write(schedule);
@@ -904,12 +899,24 @@ export class ScheduledRunManager {
 		}
 		const lockPath = path.join(store.directory(schedule.id, true), "active.lock");
 		fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
-		let lock: number;
+		let lock: number | undefined;
 		try {
 			lock = fs.openSync(lockPath, "wx", 0o600);
 			fs.writeFileSync(lock, run.id, "utf-8");
 			fs.closeSync(lock);
+			lock = undefined;
 		} catch (error) {
+			if (lock !== undefined) {
+				// Keep the descriptor open until the identity check, so an unlinked
+				// claim cannot have its inode reused by a replacement owner.
+				try {
+					const owned = fs.fstatSync(lock);
+					const current = fs.lstatSync(lockPath);
+					if (owned.ino !== 0 && owned.dev === current.dev && owned.ino === current.ino) fs.rmSync(lockPath);
+				} catch { /* Preserve the initialization failure. */ }
+				finally { try { fs.closeSync(lock); } catch { /* Preserve the original error. */ } }
+				throw error;
+			}
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 			run.state = "skipped";
 			run.completedAt = timestamp(now);
@@ -922,12 +929,39 @@ export class ScheduledRunManager {
 			this.arm(schedule, store);
 			return run;
 		}
-		schedule.activeRunId = run.id;
-		schedule.lastRunId = run.id;
-		if (advance) schedule.trigger = nextAfter(schedule.trigger, planned, now);
-		schedule.updatedAt = timestamp(now);
-		store.write(schedule);
-		store.writeRun(schedule, run, "schedule.run.started");
+		try {
+			schedule.activeRunId = run.id;
+			schedule.lastRunId = run.id;
+			if (advance) schedule.trigger = nextAfter(schedule.trigger, planned, now);
+			schedule.updatedAt = timestamp(now);
+			store.write(schedule);
+			store.writeRun(schedule, run, "schedule.run.started");
+		} catch (error) {
+			// No child was launched. Reconcile only this claim and retain the
+			// storage error even if best-effort cleanup also fails.
+			try {
+				const latest = store.find(schedule.id);
+				if (latest?.activeRunId === run.id) {
+					latest.activeRunId = undefined;
+					latest.updatedAt = timestamp(this.now());
+					store.write(latest);
+				}
+				try {
+					if (fs.readFileSync(lockPath, "utf-8") === run.id) fs.rmSync(lockPath);
+				} catch (cleanupError) {
+					if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") throw cleanupError;
+				}
+				if (latest) {
+					run.state = "failed_launch";
+					run.completedAt = timestamp(this.now());
+					run.error = error instanceof Error ? error.message : String(error);
+					store.writeRun(latest, run, "schedule.run.failed");
+				}
+			} catch (cleanupError) {
+				console.warn(`[pi-subagents] Failed to clean up launch claim '${run.id}': ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+			}
+			throw error;
+		}
 		try {
 			const result = await this.deps.launch(executionParams(schedule, dueReason === "manual" ? quiet === true : schedule.quiet === true), this.requireContext(store), new AbortController().signal);
 			const asyncId = result.details?.asyncId ?? result.details?.runId;
@@ -939,6 +973,16 @@ export class ScheduledRunManager {
 			this.arm(schedule, store);
 			return run;
 		} catch (error) {
+			if (run.asyncId) {
+				// Attachment is launch proof. A receipt or timer error cannot
+				// authorize releasing a child that is already running.
+				if (!advance) {
+					try { this.satisfyManualRun(store, schedule.id, schedule.trigger); }
+					catch (updateError) { console.warn(`[pi-subagents] Could not satisfy manual schedule '${schedule.id}': ${updateError instanceof Error ? updateError.message : String(updateError)}`); }
+				}
+				if (error instanceof Error) error.message = `Scheduled run '${run.id}' attached to async '${run.asyncId}', but a post-launch update failed: ${error.message}`;
+				throw error;
+			}
 			run.state = "failed_launch";
 			run.completedAt = timestamp(this.now());
 			run.error = error instanceof Error ? error.message : String(error);
