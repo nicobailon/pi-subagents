@@ -32,6 +32,9 @@ export function withFileWriteLock<T>(filePath: string, action: () => T): T {
 		throw error;
 	} finally {
 		try { release(); }
-		catch (error) { if (!failed) throw error; }
+		catch (error) {
+			if (!failed) throw error;
+			console.warn(`[pi-subagents] Failed to release file write lock: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 }
