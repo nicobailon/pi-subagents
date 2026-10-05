@@ -211,6 +211,56 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 
 		assert.equal(result.timedOut, true);
 		assert.match(result.error ?? "", /Tool 'bash' exceeded its timeout of 1000ms\./);
+		assert.match(result.finalOutput ?? "", /^Tool 'bash' exceeded its timeout of 1000ms\.\n\nRecovery summary:/);
+		assert.doesNotMatch(result.finalOutput ?? "", /Subagent timed out after/);
+	});
+
+	it("reports a foreground tool timeout without a run timeout as the tool timeout", { skip: process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("bash")] },
+				{ delay: 30_000 },
+			],
+		});
+		const agents = makeAgentConfigs(["slow"]);
+
+		const result = await runSync(tempDir, agents, "slow", "Wait", { toolTimeoutMs: 1_000 });
+
+		assert.equal(result.timedOut, true);
+		assert.equal(result.error, "Tool 'bash' exceeded its timeout of 1000ms.");
+		assert.match(result.finalOutput ?? "", /^Tool 'bash' exceeded its timeout of 1000ms\.\n\nRecovery summary:/);
+		assert.doesNotMatch(result.finalOutput ?? "", /timed out after 0ms/);
+	});
+
+	it("keeps the tool timeout as the cause when a child ignores abort past the run deadline", { timeout: 15_000 }, async () => {
+		let abortCalls = 0;
+		const factory = {
+			async create() {
+				let listener: (event: { type: string; [key: string]: unknown }) => void = () => {};
+				return {
+					subscribe(handler: typeof listener) { listener = handler; return () => {}; },
+					async prompt() {
+						listener({ type: "tool_execution_start", toolCallId: "call-1", toolName: "bash", args: { command: "sleep 100" } });
+						await new Promise(() => {});
+					},
+					async steer() {}, async followUp() {}, async dispose() {},
+					async abort() { abortCalls++; },
+					messages: [], sessionFile: undefined, sessionId: "ignores-abort", modelId: "mock/model",
+				};
+			},
+			async dispose() {},
+		};
+
+		const result = await runSync(tempDir, makeAgentConfigs(["slow"]), "slow", "Wait", {
+			toolTimeoutMs: 300,
+			timeoutMs: 800,
+			childSessionFactory: factory,
+		});
+
+		assert.equal(result.timedOut, true);
+		assert.equal(result.error, "Tool 'bash' exceeded its timeout of 300ms.");
+		assert.match(result.finalOutput ?? "", /^Tool 'bash' exceeded its timeout of 300ms\.\n\nRecovery summary:/);
+		assert.equal(abortCalls, 1);
 	});
 
 	it("emits foreground open-tool attention for an earlier overlapping tool", async () => {
