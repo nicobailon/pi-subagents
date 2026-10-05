@@ -177,11 +177,9 @@ describe("Herdr status bridge", () => {
 	it("keeps child IDs live for attention and completion after a workflow refresh", async () => {
 		const events = new FakeEvents();
 		const commands: string[][] = [];
-		const blocked: unknown[] = [];
 		const coordinator = { id: "workflow-1", coordinator: true as const, agents: [] };
 		const child = { id: "child-1", agents: ["reviewer"] };
 		let authoritativeRuns: HerdrStatusRun[] = [coordinator];
-		events.on("herdr:blocked", (event) => blocked.push(event));
 		const bridge = registerHerdrStatusBridge({
 			events,
 			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
@@ -198,13 +196,11 @@ describe("Herdr status bridge", () => {
 			source: "async", noticeText: "reviewer needs attention",
 			event: { type: "needs_attention", runId: "child-1" },
 		});
-		assert.deepEqual(blocked, [{ active: true, label: "reviewer needs attention" }]);
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (reviewer) ⚠"));
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "child-1" });
 		authoritativeRuns = [coordinator];
 		await bridge.flush();
-		assert.deepEqual(blocked, [
-			{ active: true, label: "reviewer needs attention" }, { active: false },
-		]);
 		assert.ok(commands.at(-1)?.includes("summary=⏳ 0 subagents"));
 		bridge.dispose();
 	});
@@ -350,27 +346,47 @@ describe("Herdr status bridge", () => {
 		bridge.dispose();
 	});
 
-	it("marks an async run blocked until the parent agent wakes", () => {
+	it("never raises Herdr's human-blocked state for child attention", async () => {
 		const events = new FakeEvents();
+		const commands: string[][] = [];
 		const blockedEvents: unknown[] = [];
 		events.on("herdr:blocked", (payload) => blockedEvents.push(payload));
 		const bridge = registerHerdrStatusBridge({
 			events,
 			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
-			runHerdr: () => {},
+			runHerdr: (args) => commands.push([...args]),
+			refreshMs: 0,
+		});
+		bridge.sessionStarted({ hasUI: true, runs: [{ id: "run-restored", agent: "reviewer", needsAttention: true }] });
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (reviewer) ⚠"));
+
+		bridge.agentStarted();
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
+		events.emit(SUBAGENT_CONTROL_EVENT, {
+			source: "async",
+			noticeText: "Worker is waiting for a supervisor reply",
+			event: { type: "needs_attention", runId: "run-1", reason: "supervisor_request" },
+		});
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 2 subagents (reviewer, worker) ⚠"));
+		assert.deepEqual(blockedEvents, []);
+
+		bridge.dispose();
+	});
+
+	it("marks attention in the label until the parent agent wakes", async () => {
+		const events = new FakeEvents();
+		const commands: string[][] = [];
+		const bridge = registerHerdrStatusBridge({
+			events,
+			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
+			runHerdr: (args) => commands.push([...args]),
 			refreshMs: 0,
 		});
 		bridge.sessionStarted({ hasUI: true, runs: [] });
 
 		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
-		events.emit(SUBAGENT_CONTROL_EVENT, {
-			source: "async",
-			noticeText: "worker needs attention",
-			event: {
-				type: "needs_attention",
-				runId: "run-1",
-			},
-		});
 		events.emit(SUBAGENT_CONTROL_EVENT, {
 			source: "async",
 			event: { type: "active_long_running", runId: "run-1" },
@@ -379,34 +395,37 @@ describe("Herdr status bridge", () => {
 			source: "foreground",
 			event: { type: "needs_attention", runId: "run-1" },
 		});
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (worker)"));
+		events.emit(SUBAGENT_CONTROL_EVENT, {
+			source: "async",
+			event: { type: "needs_attention", runId: "run-1" },
+		});
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (worker) ⚠"));
 		bridge.agentStarted();
-
-		assert.deepEqual(blockedEvents, [
-			{ active: true, label: "worker needs attention" },
-			{ active: false },
-		]);
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (worker)"));
 
 		bridge.dispose();
 	});
 
 	it("does not resurrect acknowledged attention during TTL reconciliation", async () => {
 		const events = new FakeEvents();
-		const blockedEvents: unknown[] = [];
+		const commands: string[][] = [];
 		const intervals = new FakeIntervals();
 		let authoritativeRuns = [{ id: "run-1", agent: "worker", needsAttention: false }];
-		events.on("herdr:blocked", (payload) => blockedEvents.push(payload));
 		const bridge = registerHerdrStatusBridge({
 			events,
 			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
 			getRuns: () => authoritativeRuns,
-			runHerdr: () => {},
+			runHerdr: (args) => commands.push([...args]),
 			refreshMs: 45_000,
 			timers: intervals.timers,
 		});
 		bridge.sessionStarted({ hasUI: true, runs: authoritativeRuns });
 		events.emit(SUBAGENT_CONTROL_EVENT, {
 			source: "async",
-			noticeText: "worker needs attention",
 			event: { type: "needs_attention", runId: "run-1" },
 		});
 		authoritativeRuns = [{ id: "run-1", agent: "worker", needsAttention: true }];
@@ -414,88 +433,42 @@ describe("Herdr status bridge", () => {
 
 		intervals.fireAll();
 		await bridge.flush();
-		assert.deepEqual(blockedEvents, [
-			{ active: true, label: "worker needs attention" },
-			{ active: false },
-		]);
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (worker)"));
 
-		// A new explicit control event is a new attention transition and may
-		// raise the overlay again even if the tracker flag never dropped.
+		// A new explicit control event is a new attention transition even if
+		// the tracker flag never dropped.
 		events.emit(SUBAGENT_CONTROL_EVENT, {
 			source: "async",
-			noticeText: "worker still needs attention",
 			event: { type: "needs_attention", runId: "run-1" },
 		});
-		assert.deepEqual(blockedEvents.at(-1), {
-			active: true,
-			label: "worker still needs attention",
-		});
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (worker) ⚠"));
 
 		bridge.dispose();
 	});
 
-	it("releases blocked state when the affected run completes", () => {
+	it("keeps the attention mark while any run still needs attention", async () => {
 		const events = new FakeEvents();
-		const blockedEvents: unknown[] = [];
-		events.on("herdr:blocked", (payload) => blockedEvents.push(payload));
+		const commands: string[][] = [];
 		const bridge = registerHerdrStatusBridge({
 			events,
 			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
-			runHerdr: () => {},
-			refreshMs: 0,
-		});
-		bridge.sessionStarted({ hasUI: true, runs: [] });
-
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
-		events.emit(SUBAGENT_CONTROL_EVENT, {
-			source: "async",
-			event: { type: "needs_attention", runId: "run-1", message: "stuck" },
-		});
-		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-1" });
-
-		assert.deepEqual(blockedEvents, [
-			{ active: true, label: "stuck" },
-			{ active: false },
-		]);
-
-		bridge.dispose();
-	});
-
-	it("keeps one accurate blocked overlay while multiple runs need attention", () => {
-		const events = new FakeEvents();
-		const blockedEvents: unknown[] = [];
-		events.on("herdr:blocked", (payload) => blockedEvents.push(payload));
-		const bridge = registerHerdrStatusBridge({
-			events,
-			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
-			runHerdr: () => {},
+			runHerdr: (args) => commands.push([...args]),
 			refreshMs: 0,
 		});
 		bridge.sessionStarted({ hasUI: true, runs: [] });
 		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
 		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agent: "reviewer" });
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-3", agent: "scout" });
 
-		events.emit(SUBAGENT_CONTROL_EVENT, {
-			source: "async",
-			noticeText: "worker needs attention",
-			event: { type: "needs_attention", runId: "run-1" },
-		});
-		events.emit(SUBAGENT_CONTROL_EVENT, {
-			source: "async",
-			noticeText: "reviewer needs attention",
-			event: { type: "needs_attention", runId: "run-2" },
-		});
+		events.emit(SUBAGENT_CONTROL_EVENT, { source: "async", event: { type: "needs_attention", runId: "run-1" } });
+		events.emit(SUBAGENT_CONTROL_EVENT, { source: "async", event: { type: "needs_attention", runId: "run-2" } });
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-2" });
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 2 subagents (worker, scout) ⚠"));
 		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-1" });
-
-		assert.deepEqual(blockedEvents, [
-			{ active: true, label: "worker needs attention" },
-			{ active: false },
-			{ active: true, label: "reviewer needs attention" },
-			{ active: false },
-			{ active: true, label: "worker needs attention" },
-			{ active: false },
-		]);
+		await bridge.flush();
+		assert.ok(commands.at(-1)?.includes("summary=⏳ 1 subagent (scout)"));
 
 		bridge.dispose();
 	});
@@ -504,9 +477,7 @@ describe("Herdr status bridge", () => {
 		const events = new FakeEvents();
 		const commands: string[][] = [];
 		const busyEvents: unknown[] = [];
-		const blockedEvents: unknown[] = [];
 		events.on("herdr:busy", (payload) => busyEvents.push(payload));
-		events.on("herdr:blocked", (payload) => blockedEvents.push(payload));
 		const bridge = registerHerdrStatusBridge({
 			events,
 			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
@@ -520,7 +491,6 @@ describe("Herdr status bridge", () => {
 				id: "run-restored",
 				agents: ["worker", "reviewer"],
 				needsAttention: true,
-				attentionLabel: "reviewer needs attention",
 			}],
 		});
 		await bridge.flush();
@@ -529,17 +499,12 @@ describe("Herdr status bridge", () => {
 			active: true,
 			label: "⏳ 2 subagents (worker, reviewer)",
 		}]);
-		assert.deepEqual(blockedEvents, [{
-			active: true,
-			label: "reviewer needs attention",
-		}]);
 		assert.ok(commands[0]?.includes("summary=⏳ 2 subagents (worker, reviewer) ⚠"));
 
 		bridge.dispose();
 		await bridge.flush();
 
 		assert.deepEqual(busyEvents.at(-1), { active: false });
-		assert.deepEqual(blockedEvents.at(-1), { active: false });
 		assert.ok(commands.at(-1)?.includes("--clear-state-labels"));
 	});
 
