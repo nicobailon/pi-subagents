@@ -29,7 +29,7 @@ it("loads the executor and Fleet within seconds of a session starting, not at se
 		},
 	}, { get: (target, property) => property in target ? target[property as keyof typeof target] : () => undefined });
 	const ctx = {
-		cwd: process.cwd(), hasUI: false, model: undefined,
+		cwd: process.cwd(), isIdle() { return false; }, hasUI: false, model: undefined,
 		ui: { setWidget() {}, theme: { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text } },
 		sessionManager: { getSessionId: () => "preload-session", getSessionFile: () => null, getEntries: () => [] },
 		modelRegistry: { getAvailable: () => [] },

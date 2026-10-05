@@ -46,10 +46,10 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
 	};
 }
 
-function makeCtx(sessionId: string, sessionFile: string | null = null): { cwd: string; hasUI: boolean; sessionManager: { getSessionId: () => string; getSessionFile: () => string | null; getEntries: () => [] } } {
+function makeCtx(sessionId: string, sessionFile: string | null = null): { cwd: string; isIdle: () => boolean; hasUI: boolean; sessionManager: { getSessionId: () => string; getSessionFile: () => string | null; getEntries: () => [] } } {
 	return {
 		cwd: process.cwd(),
-		hasUI: false,
+		isIdle() { return false; }, hasUI: false,
 		sessionManager: {
 			getSessionId: () => sessionId,
 			getSessionFile: () => sessionFile,
@@ -755,7 +755,7 @@ describe("supervisor ask registration", () => {
 				let stale = false;
 				const ctx = {
 					cwd: root,
-					get hasUI() { if (stale) throw new Error("This extension ctx is stale after session replacement or reload."); return false; },
+					isIdle() { return false; }, get hasUI() { if (stale) throw new Error("This extension ctx is stale after session replacement or reload."); return false; },
 					ui: { setWidget() {}, requestRender() {}, onTerminalInput() { return () => {}; }, notify() {}, theme: { fg(_name, text) { return text; }, bold(text) { return text; } } },
 					sessionManager: {
 						getSessionId() { if (stale) throw new Error("stale session manager"); return owner; },

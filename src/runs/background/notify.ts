@@ -19,6 +19,7 @@ import {
 } from "./completion-batcher.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ChildWatchdogProgress, type ChildWatchdogWarningSummary, type ParallelHandoffReference, type ScheduleOrigin, type SubagentState } from "../../shared/types.ts";
 import { safeTerminalText } from "../../shared/display-text.ts";
+import type { ParentWake } from "../../shared/parent-wake.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
@@ -611,7 +612,7 @@ const queuedWakesSymbol = Symbol.for("pi-subagents.queued-completion-wakes.v2");
 const wakeGlobal = globalThis as typeof globalThis & { [queuedWakesSymbol]?: WeakMap<object, QueuedWakes> };
 const queuedWakes = wakeGlobal[queuedWakesSymbol] ?? (wakeGlobal[queuedWakesSymbol] = new WeakMap<object, QueuedWakes>());
 
-function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCompletion[], unstartedWakes: string[]): boolean {
+function sendCompletion(pi: Pick<ParentWake, "sendMessage">, items: PendingCompletion[], unstartedWakes: string[]): boolean {
 	if (items.length === 0) return true;
 	const details = items.map((item) => item.details);
 	const content = details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details);
@@ -621,7 +622,7 @@ function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCom
 	// Recorded before sending in case Pi starts the message synchronously.
 	if (triggerTurn) unstartedWakes.push(content);
 	try {
-		pi.sendMessage(
+		const appended = pi.sendMessage(
 			{
 				customType: "subagent-notify",
 				content,
@@ -629,6 +630,8 @@ function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCom
 			},
 			{ triggerTurn },
 		);
+		// An idle parent's appended notice gets no message_start; its wake prompt holds liveness instead.
+		if (appended) unstartedWakes.splice(unstartedWakes.lastIndexOf(content), 1);
 		return true;
 	} catch {
 		if (triggerTurn) unstartedWakes.splice(unstartedWakes.lastIndexOf(content), 1);
@@ -780,7 +783,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 }
 
 export default function registerSubagentNotify(
-	pi: ExtensionAPI,
+	pi: Pick<ExtensionAPI, "events"> & Pick<ParentWake, "sendMessage">,
 	state: Pick<SubagentState, "currentSessionId" | "completionOwnerId">,
 	options: RegisterSubagentNotifyOptions = {},
 ): CompletionNotifier {

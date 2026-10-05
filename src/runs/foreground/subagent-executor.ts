@@ -460,6 +460,7 @@ function rememberParentModel(state: { currentSessionId?: string | null; lastPare
 
 interface ExecutorDeps {
 	pi: ExtensionAPI;
+	parentWake?: Pick<ExtensionAPI, "sendMessage">;
 	state: SubagentState;
 	config: ExtensionConfig;
 	asyncByDefault: boolean;
@@ -5612,7 +5613,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					if (resultWriteFailureWakeDelivered) return false;
 					if (deps.state.currentSessionId !== currentSessionId || deps.state.completionOwnerId !== completionOwnerId) return false;
 					try {
-						deps.pi.sendMessage(
+						(deps.parentWake ?? deps.pi).sendMessage(
 							{
 								customType: "subagent-workflow-result-write-failed",
 								content: message,
@@ -6113,7 +6114,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									workflowRunning: notification.workflowRunning,
 								});
 								try {
-									deps.pi.sendMessage(
+									(deps.parentWake ?? deps.pi).sendMessage(
 										{
 											customType: "subagent-incremental-child-notify",
 											content: formatIncrementalChildCompletion(notification),

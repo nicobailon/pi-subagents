@@ -73,7 +73,7 @@ const terminalBeforePublicationScript = String.raw`
 		register(value) { provider = value; return () => {}; },
 	};
 	const ctx = {
-		cwd: process.cwd(), hasUI: false, model: undefined,
+		cwd: process.cwd(), hasUI: false, model: undefined, isIdle() { return false; },
 		ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
 		sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; } },
 		modelRegistry: { getAvailable() { return []; } },
@@ -247,7 +247,7 @@ describe("session liveness through result delivery", () => {
 		}
 	});
 
-	it("preserves an accepted queued wake across actual SDK reload until message_start", { timeout: 30_000 }, async () => {
+	it("preserves an idle parent's completion wake across actual SDK reload until the woken run starts", { timeout: 30_000 }, async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-session-liveness-reload-"));
 		const agentDir = path.join(root, "agent");
 		fs.mkdirSync(agentDir);
@@ -298,7 +298,7 @@ describe("session liveness through result delivery", () => {
 						registrations,
 						isIdle: session!.isIdle,
 						pendingMessageCount: session!.pendingMessageCount,
-						wakeStarted: session!.messages.some((message) => message.role === "custom" && message.customType === "subagent-notify"),
+						noticeAppended: session!.messages.some((message) => message.role === "custom" && message.customType === "subagent-notify"),
 						activeAfterReload: provider?.isActive(),
 					};
 				});
@@ -319,10 +319,10 @@ describe("session liveness through result delivery", () => {
 				registrations: 2, // reload actually bound the replacement producer
 				isIdle: true,
 				pendingMessageCount: 0, // Pi's deferred settled action is not counted as a pending message
-				wakeStarted: false,
-				activeAfterReload: true, // accepted wake still owns liveness before its deferred message_start
+				noticeAppended: true, // the idle parent gets the notice now and a prompt that wakes it
+				activeAfterReload: true, // the retained wake prompt owns liveness until its deferred run starts
 			});
-			assert.equal(provider?.isActive(), false, "message_start releases the transferred wake");
+			assert.equal(provider?.isActive(), false, "the woken run releases the retained wake");
 			assert.equal(session.getLastAssistantText(), "Processed completion after reload.");
 		} finally {
 			if (session) await (session.extensionRunner as unknown as { emit(event: unknown): Promise<unknown> }).emit({ type: "session_shutdown", reason: "quit" });

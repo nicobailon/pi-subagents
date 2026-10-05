@@ -39,7 +39,7 @@ it("emits bounded file-only snapshots, refreshes through management, and perform
 			}, { get(target, key) { return key in target ? target[key] : () => undefined; } });
 			register(pi);
 			const ctx = {
-				cwd, hasUI: false, model: { provider: "test", id: "test" },
+				cwd, isIdle() { return false; }, hasUI: false, model: { provider: "test", id: "test" },
 				modelRegistry: { getAvailable() { return []; }, getAll() { return []; } },
 				sessionManager: { getSessionId() { return "advertised-test"; }, getSessionFile() { return undefined; }, getBranch() { return []; } },
 			};
@@ -193,7 +193,7 @@ it("delivers the catalog as a structured prompt section instead of replacing the
 			}, { get(target, key) { return key in target ? target[key] : () => undefined; } });
 			register(pi);
 			const ctx = {
-				cwd, hasUI: false, model: { provider: "test", id: "test" },
+				cwd, isIdle() { return false; }, hasUI: false, model: { provider: "test", id: "test" },
 				modelRegistry: { getAvailable() { return []; }, getAll() { return []; } },
 				sessionManager: { getSessionId() { return "section-test"; }, getSessionFile() { return undefined; }, getBranch() { return []; } },
 			};

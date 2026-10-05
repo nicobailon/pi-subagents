@@ -69,6 +69,7 @@ import { registerSubagentToolActivation } from "./tool-activation.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
 import { drainOutstandingWork } from "../runs/background/auto-drain.ts";
 import registerSubagentNotify, { parseSubagentNotifyContent, type SubagentNotifyDetails } from "../runs/background/notify.ts";
+import { createParentWake } from "../shared/parent-wake.ts";
 import { formatSteeringNotice, handleSubagentSteeringNotice, SUBAGENT_STEERING_MESSAGE_TYPE, type SubagentSteeringMessageDetails } from "./steering-notices.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/child-runtime-config.ts";
 import { disposeChildSessions } from "../runs/shared/child-session.ts";
@@ -380,14 +381,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}, run);
 	};
 
+	// Every notice that wakes the parent goes through parentWake; the watchdog wakes only inside a run.
+	const parentWake = createParentWake(pi);
+	const wakingPi = { events: pi.events, sendMessage: parentWake.sendMessage };
 	const supervisorChannel = createNativeSupervisorChannel(pi, state, {
 		// Owner states are created only by scheduled execution, which loads the executor first.
 		getCurrentOwnerStates: () => executor?.getCurrentSupervisorOwnerStates() ?? [],
+		parentWake,
 	});
-	const waitSubscriptionManager = createWaitSubscriptionManager(pi, state);
+	const waitSubscriptionManager = createWaitSubscriptionManager(wakingPi, state);
 	const mainWatchdog = registerMainWatchdog(pi);
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
-	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
+	const completionNotifier = registerSubagentNotify(wakingPi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
 	// Ended async runs whose result has not reached the notifier yet.
 	const owedResultRunIds = new Set<string>();
 	// Tracked runs whose result was already delivered, so a later terminal
@@ -560,6 +565,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const executorDeps: SubagentExecutorDeps = {
 		pi,
+		parentWake,
 		state,
 		config,
 		asyncByDefault,
@@ -813,7 +819,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 					const retainedChildren = listRetainedChildren(DIRS.async, ownerSessionId);
 					for (const notice of collectGoalContinuationNotices({ location, ownerSessionId, retainedChildren, turnId: goalTurnId })) {
 						handleSubagentControlNotice({
-							pi,
+							pi: parentWake,
 							state,
 							visibleControlNotices: new Set(),
 							details: { source: "goal", event: notice.event, noticeText: notice.message },
@@ -844,14 +850,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 	const controlEventHandler = (payload: unknown) => {
 		handleSubagentControlNotice({
-			pi,
+			pi: parentWake,
 			state,
 			visibleControlNotices,
 			details: payload as SubagentControlMessageDetails,
 		});
 	};
 	const steeringNoticeHandler = (payload: unknown) => {
-		handleSubagentSteeringNotice({ pi, state, details: payload as SubagentSteeringMessageDetails });
+		handleSubagentSteeringNotice({ pi: parentWake, state, details: payload as SubagentSteeringMessageDetails });
 	};
 	const asyncStartedHandler = (payload: unknown) => {
 		handleStarted(payload);
@@ -1107,6 +1113,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	pi.on("agent_start", () => {
+		parentWake.agentStarted();
 		resumeWidgetsAfterCompaction();
 		herdrStatusBridge.agentStarted();
 	});
@@ -1125,7 +1132,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (event.reason !== "manual") return;
 		const hasActiveAsyncWork = [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
 		if (!hasActiveAsyncWork || !withLastUiContext(() => true)) return;
-		pi.sendMessage(
+		parentWake.sendMessage(
 			{
 				customType: "subagent-compaction-resume",
 				content: "Compaction is complete. Resume the parent task now; background subagent results will arrive separately when ready.",
@@ -1136,6 +1143,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", (event, ctx) => {
+		parentWake.bindSession(ctx);
 		completionNotifier.bindSession(ctx.sessionManager);
 		installRuntime(ctx);
 		startSessionMaintenance();
@@ -1149,7 +1157,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			? registerPiWebSessionLiveness({
 				sessionId,
 				...(sessionFile ? { sessionFile } : {}),
-				isActive: () => owedResultRunIds.size > 0 || hasLiveSubagentWork(state) || completionNotifier.hasPendingDelivery(),
+				isActive: () => owedResultRunIds.size > 0 || hasLiveSubagentWork(state) || completionNotifier.hasPendingDelivery() || parentWake.isPending(),
 			})
 			: { registered: false, release: () => {} };
 		releaseHostSessionLiveness = liveness.release;
@@ -1168,6 +1176,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", async (event) => {
 		completionNotifier.sessionShutdown(event?.reason);
+		parentWake.sessionShutdown(event?.reason);
 		runtimeEntry.cleanup();
 		try {
 			await disposeChildSessions();

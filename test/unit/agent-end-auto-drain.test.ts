@@ -27,7 +27,7 @@ const script = String.raw`
 		sendMessage(message, options) { sent.push({ message, options }); },
 	}, { get(target, property) { return property in target ? target[property] : () => undefined; } });
 	const ctx = {
-		cwd: projectRoot, hasUI: false, model: undefined,
+		cwd: projectRoot, hasUI: false, model: undefined, isIdle() { return false; },
 		ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
 		sessionManager: {
 			getSessionId() { return "agent-end-drain-session"; },

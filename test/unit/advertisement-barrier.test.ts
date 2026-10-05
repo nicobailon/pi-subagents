@@ -64,7 +64,7 @@ setTimeout(() => { if (phase === "old") fs.writeFileSync(${JSON.stringify(oldDon
 			}, { get(target, key) { return key in target ? target[key] : () => undefined; } });
 			register(pi);
 			const ctx = {
-				cwd: process.env.TEST_PROJECT, hasUI: false, model: { provider: "test", id: "test" },
+				cwd: process.env.TEST_PROJECT, isIdle() { return false; }, hasUI: false, model: { provider: "test", id: "test" },
 				modelRegistry: { getAvailable() { return []; }, getAll() { return []; } },
 				sessionManager: { getSessionId() { return "barrier-test"; }, getSessionFile() { return undefined; }, getBranch() { return []; }, buildSessionContext() { return { messages: [] }; } },
 			};

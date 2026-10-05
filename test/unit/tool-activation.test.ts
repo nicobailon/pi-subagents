@@ -47,7 +47,7 @@ function createRuntime(messages: any[] = [], excluded: string[] = [], missingApi
 		return property in target ? target[property as keyof typeof target] : () => undefined;
 	} });
 	const context = {
-		cwd: process.cwd(), hasUI: false, model: options.model as any,
+		cwd: process.cwd(), isIdle() { return false; }, hasUI: false, model: options.model as any,
 		ui: { setWidget() {}, theme: { fg(_name: string, text: string) { return text; }, bg(_name: string, text: string) { return text; }, bold(text: string) { return text; } } },
 		sessionManager: {
 			getSessionId() { return "activation-session"; }, getSessionFile() { return null; }, getEntries() { return []; },

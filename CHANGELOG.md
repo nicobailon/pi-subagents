@@ -5,6 +5,7 @@
 ### Fixed
 
 - Reloading extensions no longer makes a session look idle while a child's result is still waiting in Pi's queue. A host such as pi-web could replace the session then and lose the result. The session now stays busy until Pi starts that message, and a different session in the same process is not held busy by it. Thanks to [@brettinternet](https://github.com/brettinternet) for [#2687](https://github.com/nicobailon/pi-subagents/pull/2687).
+- A subagent result, supervisor ask, or other notice that woke an idle parent started a run without `before_agent_start`, so from its second request that run lost the subagent catalog, the MCP server list, and other extensions' prompt sections, and each loss and restore could rewrite the provider's prompt cache. An idle parent now gets the notice followed by a short `Subagent updates above.` user message, which starts the run through Pi's normal prompt path. Thanks to [@ashlineldridge](https://github.com/ashlineldridge) for [#2688](https://github.com/nicobailon/pi-subagents/issues/2688).
 
 ## [0.76.0] - 2026-10-04
 

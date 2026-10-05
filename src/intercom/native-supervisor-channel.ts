@@ -88,6 +88,7 @@ interface NativeSupervisorChannelDeps {
 	getChannelDirs?: () => { dirs: string[]; retire?: () => void };
 	/** Retained scheduled states for the current runtime owner, never foreign owners. */
 	getCurrentOwnerStates?: () => Iterable<SubagentState>;
+	parentWake?: Pick<ExtensionAPI, "sendMessage">;
 	platform?: NodeJS.Platform;
 	watch?: SupervisorWatch;
 	timers?: Pick<typeof globalThis, "setInterval" | "clearInterval" | "setImmediate" | "clearImmediate">;
@@ -755,7 +756,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			// The ask is already queued above. A sendMessage failure (no UI, stale context) must not
 			// lose it, and must not abort the loop before the remaining asks register.
 			try {
-				pi.sendMessage({
+				(deps.parentWake ?? pi).sendMessage({
 					customType: SUPERVISOR_REQUEST_MESSAGE_TYPE,
 					content: requestVisibleText(request),
 					display: true,

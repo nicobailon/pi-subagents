@@ -21,6 +21,7 @@ import registerSubagentNotify, {
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
+import { createParentWake } from "../../src/shared/parent-wake.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
@@ -85,6 +86,23 @@ it("keeps wakes accepted before the first session bind", async () => {
 	replacement.messageStarted({ role: "custom", ...messages[0] });
 	assert.equal(replacement.hasPendingDelivery(), false);
 	replacement.dispose();
+});
+
+it("does not wait for message_start on a completion appended to an idle parent", async () => {
+	const owner = SessionManager.inMemory();
+	const sessionId = owner.getSessionId();
+	const calls: unknown[][] = [];
+	const parentWake = createParentWake({
+		sendMessage: (...args: unknown[]) => { calls.push(args); },
+		sendUserMessage: (...args: unknown[]) => { calls.push(args); },
+	} as never);
+	parentWake.bindSession({ isIdle: () => true, sessionManager: owner } as never);
+	const notifier = registerSubagentNotify({ events: createEventBus(), sendMessage: parentWake.sendMessage }, { currentSessionId: sessionId, completionOwnerId: COMPLETION_OWNER_ID }, { batchConfig: { enabled: false } });
+	notifier.bindSession(owner);
+	await notifier.deliver({ id: "idle-wake-result", sessionId, completionOwnerId: COMPLETION_OWNER_ID, success: false, summary: "Needs attention" });
+	assert.deepEqual(calls.map((call) => call[1]), [{ triggerTurn: false }, { deliverAs: "steer" }]);
+	assert.equal(notifier.hasPendingDelivery(), false, "Pi emits no message_start for an appended notice; the wake prompt holds liveness");
+	notifier.dispose();
 });
 
 it("does not deliver awaited workflow child lifecycle completions", async () => {

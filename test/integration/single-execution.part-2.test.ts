@@ -876,6 +876,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		});
 		const ctx = {
 			...makeMinimalCtx(tempDir),
+			isIdle: () => false,
 			modelRegistry: {
 				getAvailable: () => [{ provider: "mock", id: "test-model", reasoning: true }],
 			},

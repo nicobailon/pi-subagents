@@ -29,7 +29,7 @@ const script = String.raw`
 		registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
 	}, { get(target, property) { return property in target ? target[property] : () => undefined; } });
 	const ctx = {
-		cwd: process.cwd(), hasUI: false, model: undefined,
+		cwd: process.cwd(), isIdle() { return false; }, hasUI: false, model: undefined,
 		ui: { setWidget() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
 		sessionManager: { getSessionId() { return "lifecycle-session"; }, getSessionFile() { return null; }, getEntries() { return []; } },
 		modelRegistry: { getAvailable() { return []; } },
