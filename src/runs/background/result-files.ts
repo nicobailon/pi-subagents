@@ -307,6 +307,11 @@ export function fallbackResultPayloadPathForSessionRun(resultsDir: string, sessi
 	return pendingPath;
 }
 
+/** Any pending or public result file for the run, without validating its contents. */
+export function resultPayloadFileForSessionRun(resultsDir: string, sessionId: string, runId: string): string | undefined {
+	return firstExistingResultFile([...resultPendingPaths(resultsDir, sessionId, runId), resultFilePath(resultsDir, runId)]);
+}
+
 function resultPayloadLocationFromIndex(resultsDir: string, entry: ResultIndexEntry): ResultPayloadLocation | undefined {
 	if (entry.file !== path.basename(entry.file) || !entry.file.endsWith(".json")) return undefined;
 	const pendingState = promotePendingResultFile(resultsDir, entry.sessionId, entry.runId, entry.file);
