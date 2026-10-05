@@ -688,13 +688,23 @@ describe("subagent prompt runtime", () => {
 			inheritSkills: true,
 		});
 
-		assert.ok(rewritten.startsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+		assert.ok(rewritten.endsWith(`\n\n${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}`));
 		assert.ok(rewritten.includes("Do not propose or run subagents."));
 		assert.ok(rewritten.includes("If you need to edit files, use the available editing tools."));
 		assert.ok(!rewritten.includes("call the actual edit/write tools"));
 		assert.ok(rewritten.includes("Do not print tool-call syntax, patches, or pseudo-tool calls as text."));
-		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: true }).indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
-		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: true }).lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
+		assert.equal(rewriteSubagentPrompt(rewritten, { inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: true }), rewritten);
+	});
+
+	it("keeps Pi's base prompt first and appends the boundary and structured-output instructions once", () => {
+		const piPrompt = "You are an expert coding assistant operating inside pi, a coding agent harness.\n\nAvailable tools:\n- read\n\nCurrent working directory: /repo";
+		const options = { inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: true, structuredOutput: true };
+		const rewritten = rewriteSubagentPrompt(piPrompt, options);
+
+		assert.ok(rewritten.startsWith("You are an expert coding assistant operating inside pi"));
+		assert.ok(rewritten.indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS) > rewritten.indexOf("Current working directory: /repo"));
+		assert.ok(rewritten.endsWith("if you do not call `structured_output`, the parent will fail this step."));
+		assert.equal(rewriteSubagentPrompt(rewritten, options), rewritten);
 	});
 
 	it("replaces inherited child boundaries with the fanout boundary when authorized", () => {
@@ -706,12 +716,13 @@ describe("subagent prompt runtime", () => {
 			fanoutChild: true,
 		});
 
-		assert.ok(rewritten.startsWith(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS));
+		assert.ok(rewritten.startsWith("You are a subagent."));
+		assert.ok(rewritten.endsWith(`\n\n${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}`));
 		assert.ok(rewritten.includes("You may use the `subagent` tool only for the fanout work explicitly requested in this task."));
 		assert.ok(rewritten.includes("If you need to edit files, use the available editing tools."));
 		assert.ok(!rewritten.includes("call the actual edit/write tools"));
 		assert.ok(!rewritten.includes("Do not propose or run subagents."));
-		assert.equal(rewritten.lastIndexOf(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS), 0);
+		assert.equal(rewritten.indexOf(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS), rewritten.lastIndexOf(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS));
 	});
 
 	it("replaces inherited fanout boundaries with the strict boundary when fanout is not authorized", () => {
@@ -722,9 +733,10 @@ describe("subagent prompt runtime", () => {
 			inheritSkills: true,
 		});
 
-		assert.ok(rewritten.startsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+		assert.ok(rewritten.startsWith("You are a subagent."));
+		assert.ok(rewritten.endsWith(`\n\n${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}`));
 		assert.ok(!rewritten.includes("explicit fanout responsibility"));
-		assert.equal(rewritten.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 0);
+		assert.equal(rewritten.indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), rewritten.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 	});
 
 	it("keeps explicitly injected skill content when inherited skills are stripped", () => {
@@ -1102,7 +1114,8 @@ describe("subagent prompt runtime", () => {
 
 		const rewritten = await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
 		assert.ok(rewritten);
-		assert.ok(rewritten.systemPrompt.startsWith(CHILD_FANOUT_BOUNDARY_INSTRUCTIONS));
+		assert.ok(rewritten.systemPrompt.startsWith("You are a subagent."));
+		assert.ok(rewritten.systemPrompt.endsWith(`\n\n${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}`));
 	});
 
 	it("filters parent-only artifacts from polluted fork context while preserving ordinary history", () => {

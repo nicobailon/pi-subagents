@@ -198,8 +198,8 @@ export function stripSubagentOrchestrationSkill(prompt: string): string {
 
 function stripChildBoundaryInstructions(prompt: string): string {
 	let rewritten = prompt;
-	for (const boundary of [CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, CHILD_FANOUT_BOUNDARY_INSTRUCTIONS]) {
-		rewritten = rewritten.split(boundary).join("");
+	for (const instructions of [CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, CHILD_FANOUT_BOUNDARY_INSTRUCTIONS, STRUCTURED_OUTPUT_INSTRUCTIONS]) {
+		rewritten = rewritten.split(`\n\n${instructions}`).join("").split(instructions).join("");
 	}
 	return rewritten.replace(/^(?:[ \t]*\r?\n)+/, "");
 }
@@ -222,7 +222,8 @@ export function rewriteSubagentPrompt(
 	rewritten = stripChildBoundaryInstructions(rewritten);
 	const boundary = options.fanoutChild ? CHILD_FANOUT_BOUNDARY_INSTRUCTIONS : CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS;
 	const structured = options.structuredOutput ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}` : "";
-	return `${boundary}${structured}\n\n${rewritten}`;
+	// Pi's base prompt stays first so providers that recognize it by its opening still do.
+	return `${rewritten}\n\n${boundary}${structured}`;
 }
 
 function isParentOnlySubagentMessage(message: unknown): boolean {
