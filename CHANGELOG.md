@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The npm package now has the `extension` keyword, so the Pi extension catalog lists pi-subagents under Extensions instead of Unlabelled.
+
 ### Fixed
 
 - Reloading extensions no longer makes a session look idle while a child's result is still waiting in Pi's queue. A host such as pi-web could replace the session then and lose the result. The session now stays busy until Pi starts that message, and a different session in the same process is not held busy by it. Thanks to [@brettinternet](https://github.com/brettinternet) for [#2687](https://github.com/nicobailon/pi-subagents/pull/2687).
