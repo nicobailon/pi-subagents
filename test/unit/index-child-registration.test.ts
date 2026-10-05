@@ -1408,6 +1408,29 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("tells the user to restart Pi when the installed version changed after load", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-stale-load-"));
+		for (const file of ["index.ts", "package.json", "src/runs/shared/herdr-pi-protocol.ts", "src/shared/package-version.ts"]) {
+			fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+			fs.copyFileSync(path.join(projectRoot, file), path.join(root, file));
+		}
+		const script = String.raw`
+			import * as fs from "node:fs";
+			import registerSubagentExtension from "./index.ts";
+			registerSubagentExtension({});
+			const manifest = JSON.parse(fs.readFileSync("package.json", "utf-8"));
+			fs.writeFileSync("package.json", JSON.stringify({ ...manifest, version: "999.0.0" }));
+			try { registerSubagentExtension({}); } catch (error) { console.log(error.message); }
+		`;
+		const output = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
+			cwd: root,
+			env: { ...parentToolEnv(), [SUBAGENT_CHILD_ENV]: "1" },
+			encoding: "utf-8",
+		});
+		const loaded = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8")).version;
+		assert.equal(output.trim(), `pi-subagents 999.0.0 is installed, but this Pi process still has ${loaded} loaded. Restart Pi to load the update; /reload cannot replace extension modules that Node has already loaded.`);
+	});
+
 	it("does not double-register the child-safe subagent tool when index and fanout-child both load", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
