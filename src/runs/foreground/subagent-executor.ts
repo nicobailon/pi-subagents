@@ -6937,10 +6937,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (action === "doctor") {
 				let currentSessionFile: string | null = null;
 				let currentSessionId = deps.state.currentSessionId;
+				let budgetSessionId = deps.state.currentSessionId;
 				let sessionError: string | undefined;
 				try {
 					currentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
 					currentSessionId = ctx.sessionManager.getSessionId();
+					// Launch admission's key (resolveCurrentSessionId) without its throw for an unbound session.
+					budgetSessionId = currentSessionFile ?? currentSessionId;
 				} catch (error) {
 					sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 				}
@@ -6950,9 +6953,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				} catch (error) {
 					if (!sessionError) sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 				}
-				const spawnBudget = getSpawnBudgetSnapshot(deps.state, deps.config, currentSessionId);
-				const activeAsyncCapacity = currentSessionId
-					? getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })
+				const spawnBudget = getSpawnBudgetSnapshot(deps.state, deps.config, budgetSessionId);
+				const activeAsyncCapacity = budgetSessionId
+					? getActiveAsyncCapacitySnapshot(budgetSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers?.keys() ?? []), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })
 					: { used: 0, limit: resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession) ?? 0 };
 				deps.state.activeAsyncCapacity = activeAsyncCapacity;
 				return {
@@ -6966,6 +6969,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							requestedSessionDir: paramsWithResolvedCwd.sessionDir,
 							currentSessionFile,
 							currentSessionId,
+							spawnBudget,
+							activeAsyncCapacity,
 							orchestratorTarget,
 							sessionError,
 							expandTilde: deps.expandTilde,

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { acquireActiveAsyncCapacity } from "../../src/runs/background/active-async-capacity.ts";
 import { createEventBus, createTempDir, makeMinimalCtx, removeTempDir, tryImport } from "../support/helpers.ts";
 
 const originalHome = process.env.HOME;
@@ -90,6 +91,33 @@ describe("doctor action executor routing", { skip: !createSubagentExecutor ? "ex
 		assert.match(text, /^Subagents doctor report/);
 		assert.match(text, /- configured session dir: .*configured-sessions/);
 		assert.match(text, /- supervisor channel: available \(native:pi-subagents-supervisor-channel\)/);
+	});
+
+	it("counts async capacity in the pool launch admission uses", async () => {
+		const sessionFile = path.join(tempDir, "sessions", "resumed.jsonl");
+		const capacity = acquireActiveAsyncCapacity({ sessionId: sessionFile, limit: 3, runId: "doctor-held-run", kind: "runner", asyncDir: path.join(tempDir, "doctor-held-run") });
+		try {
+			const executor = createSubagentExecutor({
+				pi: { events: createEventBus(), getSessionName: () => undefined },
+				state: makeState(tempDir),
+				config: { maxActiveAsyncRunsPerSession: 3 },
+				asyncByDefault: false,
+				tempArtifactsDir: tempDir,
+				getSubagentSessionRoot: () => tempDir,
+				expandTilde: (value: string) => value,
+				discoverAgents: () => ({ agents: [] }),
+			});
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionFile = () => sessionFile;
+			ctx.sessionManager.getSessionId = () => "short-session-id";
+
+			const result = await executor.execute("doctor-id", { action: "doctor" }, new AbortController().signal, undefined, ctx);
+
+			assert.match(result.content[0]?.text ?? "", /Active async capacity\n- usage: 1\/3 used/);
+			assert.deepEqual(result.details.activeAsyncCapacity, { used: 1, limit: 3 });
+		} finally {
+			capacity?.rollback();
+		}
 	});
 
 	it("reports session manager failures without failing the doctor action", async () => {

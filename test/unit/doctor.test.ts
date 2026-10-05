@@ -47,18 +47,16 @@ function makeChain(name: string, source: ChainConfig["source"]): ChainConfig {
 	};
 }
 
+const NO_USAGE = {
+	spawnBudget: { used: 0, configuredLimit: null, granted: 0, limit: null, remaining: null, grantRemaining: null, grantHistory: [] },
+	activeAsyncCapacity: { used: 0, limit: 0 },
+};
+
 describe("buildDoctorReport", () => {
 	it("formats a bounded successful environment summary", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-success-"));
 		try {
 			const state = makeState(root);
-			state.subagentSpawns = {
-				sessionId: "session-abc123",
-				count: 3,
-				configuredLimit: 4,
-				granted: 1,
-				grantHistory: [{ sessionId: "session-abc123", amount: 1, grantedAt: 0, previousLimit: 4, limit: 5 }],
-			};
 			const paths = {
 				tempRootDir: path.join(root, "temp-root"),
 				asyncDir: path.join(root, "async"),
@@ -73,6 +71,8 @@ describe("buildDoctorReport", () => {
 				state,
 				currentSessionFile: path.join(root, "sessions", "parent.jsonl"),
 				currentSessionId: "session-abc123",
+				spawnBudget: { used: 3, configuredLimit: 4, granted: 1, limit: 5, remaining: 2, grantRemaining: 3, grantHistory: [{ sessionId: "session-abc123", amount: 1, grantedAt: 0, previousLimit: 4, limit: 5 }] },
+				activeAsyncCapacity: { used: 0, limit: 2 },
 				orchestratorTarget: "subagent-chat-abc123",
 				expandTilde: (value) => value.replace(/^~\//, `${root}/home/`),
 				paths,
@@ -141,6 +141,7 @@ describe("buildDoctorReport", () => {
 				cwd: root,
 				config: { maxSubagentSpawnsPerRun: 12 },
 				state: makeState(root),
+				...NO_USAGE,
 				deps: {
 					isAsyncAvailable: () => true,
 					discoverAgentsAll: () => ({ builtin: [], user: [], project: [], chains: [], userDir: root, projectDir: root, userChainDir: root, projectChainDir: root, userSettingsPath: path.join(root, "user.json"), projectSettingsPath: path.join(root, "project.json") }),
@@ -161,7 +162,7 @@ describe("buildDoctorReport", () => {
 		const previousChild = process.env.PI_SUBAGENT_CHILD;
 		const previousParent = process.env.PI_SUBAGENT_PARENT_SESSION;
 		const report = () => buildDoctorReport({
-			cwd: root, config: {}, state: makeState(root),
+			cwd: root, config: {}, state: makeState(root), ...NO_USAGE,
 			deps: {
 				isAsyncAvailable: () => true,
 				discoverAgentsAll: () => ({ builtin: [], user: [], project: [], chains: [], userDir: root, projectDir: root, userChainDir: root, projectChainDir: root, userSettingsPath: path.join(root, "user.json"), projectSettingsPath: path.join(root, "project.json") }),
@@ -202,6 +203,7 @@ describe("buildDoctorReport", () => {
 				cwd: root,
 				config: {},
 				state: makeState(root),
+				...NO_USAGE,
 				paths: {
 					tempRootDir: root,
 					asyncDir: asyncPath,
