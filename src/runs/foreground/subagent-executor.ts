@@ -3815,7 +3815,7 @@ function resolveWorkflowChildOutputPath(input: {
 	state?: SubagentState;
 	key: string;
 	params: Record<string, unknown>;
-}): { path?: string; inherited: boolean } {
+}): { path?: string; inherited: boolean; resumedOutput?: string } {
 	const rawOutput = input.params.output;
 	const hasExplicitOutput = typeof rawOutput === "string" || typeof rawOutput === "boolean";
 	if (typeof input.params.resume === "string" && (!hasExplicitOutput || rawOutput === true || rawOutput === "true")) {
@@ -3825,7 +3825,11 @@ function resolveWorkflowChildOutputPath(input: {
 			id: input.params.resume.trim(),
 			...(typeof index === "number" && Number.isInteger(index) ? { index } : {}),
 		}, input.state);
-		return { path: "recoveryDescriptor" in target ? target.recoveryDescriptor?.outputPath : undefined, inherited: false };
+		const recoveryOutput = "recoveryDescriptor" in target ? target.recoveryDescriptor?.outputPath : undefined;
+		if (hasExplicitOutput) return { path: recoveryOutput, inherited: false };
+		// An output-less foreground resume reuses its recorded output; only an absolute path is known before the new run id exists.
+		const foregroundOutput = target.source === "foreground" ? target.resumeContract?.output : undefined;
+		return { path: recoveryOutput, inherited: false, resumedOutput: recoveryOutput ?? (typeof foregroundOutput === "string" && path.isAbsolute(foregroundOutput) ? foregroundOutput : undefined) };
 	}
 	const childCwd = resolveWorkflowChildLocalCwd(input);
 	let agentOutput: string | undefined;
@@ -3878,7 +3882,9 @@ function workflowChildOutputClaims(input: {
 	}
 	const overrides = new Map<string, string>();
 	for (const entry of resolvedEntries) {
-		if (entry.inherited && entry.path && (paths.get(resolveWorkflowHostOutputClaimPath(entry.path)) ?? 0) > 1) {
+		// An output-less resume keeps its retained path unless an earlier child of this workflow already owns it.
+		const resumeCollides = entry.resumedOutput !== undefined && input.claimedOutputPaths.has(resolveWorkflowHostOutputClaimPath(entry.resumedOutput));
+		if (resumeCollides || (entry.inherited && entry.path && (paths.get(resolveWorkflowHostOutputClaimPath(entry.path)) ?? 0) > 1)) {
 			const output = workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.workflowRunId, entry.key);
 			overrides.set(entry.key, output);
 			entry.path = output;
@@ -3921,7 +3927,7 @@ function prepareWorkflowChildLaunchParams(input: {
 }): SubagentParamsLike {
 	let childParams = input.childParams;
 	const usesDefaultOutput = input.childParams.output === undefined && input.childParams.resume === undefined;
-	if (usesDefaultOutput && input.outputOverride !== undefined) {
+	if (input.childParams.output === undefined && input.outputOverride !== undefined) {
 		childParams = { ...input.childParams, output: input.outputOverride };
 	} else if (usesDefaultOutput && input.aggregateOutputPath !== undefined) {
 		childParams = { ...input.childParams, output: workflowChildDefaultOutput(input.aggregateOutputPath, input.artifactsDir, input.parentWorkflowRunId, input.workflowKey) };
