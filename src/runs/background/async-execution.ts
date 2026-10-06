@@ -1496,6 +1496,10 @@ export function executeAsyncChain(
 			(step, parallel) => Array.isArray(step.parallel) ? { parallel } : { acceptance: "acceptance" in step ? step.acceptance : undefined, parallel }),
 	});
 	if (acceptanceErrors.length > 0) return formatAsyncStartError(resultMode, acceptanceErrors.join(" "));
+	// Refuse an undefined launcher before the run directory exists and before step building can write progress files.
+	const undefinedLauncher = chain.flatMap(getStepAgents).map((name) => agents.find((agent) => agent.name === name)?.launcher)
+		.find((name) => name !== undefined && !lookupRunnerLauncher(ctx.runnerLaunchers, name));
+	if (undefinedLauncher !== undefined) return formatAsyncStartError(resultMode, `Launcher '${undefinedLauncher}' used by this ${resultMode} is not defined in runnerLaunchers in the user subagent config.`);
 	const capabilityCeiling = params.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(ctx.currentSessionId);
 	const inheritedNestedRoute = inheritedNestedRouteOf(ctx.childRuntime);
 	const nestedAddress = inheritedNestedRoute ? inheritedNestedParentAddressOf(ctx.childRuntime) : undefined;
@@ -1562,14 +1566,7 @@ export function executeAsyncChain(
 		return formatAsyncStartError(resultMode, built.error);
 	}
 	const { steps, runnerCwd, workflowGraph, eventChain } = built;
-	let launcher: RunnerLauncher | undefined;
-	if (built.launcher !== undefined) {
-		launcher = lookupRunnerLauncher(ctx.runnerLaunchers, built.launcher);
-		if (!launcher) {
-			fs.rmSync(asyncDir, { recursive: true, force: true });
-			return formatAsyncStartError(resultMode, `Launcher '${built.launcher}' used by this ${resultMode} is not defined in runnerLaunchers in the user subagent config.`);
-		}
-	}
+	const launcher = built.launcher === undefined ? undefined : lookupRunnerLauncher(ctx.runnerLaunchers, built.launcher)!;
 	const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
 	const initialUsageBudget = usageBudgetState(params.usageBudget, undefined);
 	let childTargetIndex = 0;

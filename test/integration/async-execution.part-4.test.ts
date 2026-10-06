@@ -2110,6 +2110,11 @@ runner.on("exit", (code, signal) => process.exit(signal ? 128 + require("node:os
 		const unknown = await runChain(`launcher-chain-unknown-${Date.now().toString(36)}`, [{ agent: "netA", task: "A" }], agents, {});
 		assert.equal(unknown.isError, true);
 		assert.match(unknown.content[0]?.text ?? "", /Launcher 'a' used by this chain is not defined in runnerLaunchers/);
+		// The refusal comes before step building, which would overwrite progress.md for a progress-enabled parallel step.
+		fs.writeFileSync(path.join(tempDir, "progress.md"), "existing progress\n");
+		const unknownParallel = await runChain(`launcher-chain-unknown-par-${Date.now().toString(36)}`, [{ parallel: [{ agent: "netA", task: "A", progress: true }] }], agents, {});
+		assert.match(unknownParallel.content[0]?.text ?? "", /Launcher 'a' used by this chain is not defined in runnerLaunchers/);
+		assert.equal(fs.readFileSync(path.join(tempDir, "progress.md"), "utf-8"), "existing progress\n");
 		assert.equal(mockPi.callCount(), 0);
 	});
 });
