@@ -511,7 +511,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 
 	it("does not emit provider-rejected schema shapes", () => {
 		const rejectedPaths: string[] = [];
-		const rejectedKeywords = ["allOf", "const", "if", "then", "not"];
+		// Strict tool-schema validators reject `deprecated` with HTTP 400 (#2713).
+		const rejectedKeywords = ["allOf", "const", "if", "then", "not", "deprecated"];
 
 		for (const [name, schema] of Object.entries(schemas)) {
 			const stack: Array<{ path: string; value: unknown }> = [{ path: name, value: schema }];
@@ -583,7 +584,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.deepEqual(acceptanceLevelBranch?.enum, ["auto", "attested", "checked"], "verified requires object form with runtime commands");
 		const reviewedRecoveryBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("reviewed"));
 		assert.deepEqual(reviewedRecoveryBranch?.enum, ["reviewed"]);
-		assert.equal(reviewedRecoveryBranch?.deprecated, true);
 		const acceptanceObjectStringBranch = acceptanceStringBranches.find((branch) => branch.enum === undefined);
 		assert.equal(acceptanceObjectStringBranch?.pattern, "^\\s*\\{[\\s\\S]*$", "acceptance should tolerate only object-shaped JSON strings");
 		assert.match(String(acceptanceSchema.description ?? ""), /omit for read-only\/review/i);
