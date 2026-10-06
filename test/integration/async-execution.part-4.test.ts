@@ -16,17 +16,21 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
-import { createEventBus, createTempDir, events, makeAgent, removeTempDir } from "../support/helpers.ts";
+import { createEventBus, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir } from "../support/helpers.ts";
 import { deliverInterruptRequest, deliverStopRequest, requestAsyncSteer } from "../../src/runs/background/control-channel.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
+import { activeRunMarkerAgeMs } from "../../src/runs/background/active-run-index.ts";
+import { getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
+import { createRunFanoutBudget, getRunFanoutBudgetSnapshot } from "../../src/runs/shared/run-fanout-budget.ts";
+import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import type { AsyncResultPayload, AsyncStatusPayload } from "../support/async-execution-fixture.ts";
 import {
 	installAsyncExecutionHooks, writeWatchdogSettings, withIsolatedWatchdogSettings,
 	childWatchdogStatus, available, isAsyncAvailable, executeAsyncSingle,
 	executeAsyncChain, ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, escapeRegExp,
 	createRepo, waitForAsyncResultFile, waitForAsyncState, tempDir, mockPi,
-	readAsyncPayload, waitForMockPiCall,
+	readAsyncPayload, waitForMockPiCall, makeAsyncExecutor, createSubagentExecutor,
 } from "../support/async-execution-fixture.ts";
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
@@ -1755,5 +1759,356 @@ setTimeout(() => process.exit(90), 15000).unref();
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 		assert.deepEqual(status.steps[0].recentTools.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })), [{ tool: "bash", args: "ls" }]);
 		assert.deepEqual(status.steps[0].recentOutput, ["file-a", "file-b", "Done streaming"]);
+	});
+
+	const launcherExecutor = () => {
+		const wrapper = path.join(tempDir, "wrap.sh");
+		const argvLog = path.join(tempDir, "wrap-argv.log");
+		fs.writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(argvLog)}\nshift\nexec "$@"\n`, { mode: 0o755 });
+		const runnerLaunchers = { wrap: [wrapper, "tag arg"] };
+		return { argvLog, runnerLaunchers, executor: makeAsyncExecutor([makeAgent("sandboxed", { launcher: "wrap" })], { runnerLaunchers }) };
+	};
+
+	it("runs a launcher agent in the background through its exec wrapper with steer, supervisor and result intact", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+		const { argvLog, runnerLaunchers, executor } = launcherExecutor();
+		const replyRelease = path.join(tempDir, "reply-release");
+		const finalRelease = path.join(tempDir, "final-release");
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+			{ waitForPath: replyRelease, jsonl: [events.toolEnd("contact_supervisor"), events.toolResult("contact_supervisor", "**Reply from supervisor:**\nProceed")] },
+			{ waitForPath: finalRelease, jsonl: [events.assistantMessage("wrapped result")] },
+		] });
+		try {
+			// async is omitted and the executor's asyncByDefault is false: the launcher forces background.
+			const launch = await executor.executePublic("launcher-run", { agent: "sandboxed", task: "Work in the sandbox" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(launch.isError, undefined, launch.content[0]?.text);
+			const id = launch.details?.asyncId;
+			assert.ok(id);
+			const asyncDir = path.join(ASYNC_DIR, id);
+			const asking = await waitForAsyncState(id, (status) => status.currentTool === "contact_supervisor");
+			assert.deepEqual((asking as AsyncStatusPayload & { launcher?: unknown }).launcher, { name: "wrap", argv: runnerLaunchers.wrap });
+			const wrapperArgv = fs.readFileSync(argvLog, "utf-8").trimEnd().split("\n");
+			assert.equal(wrapperArgv[0], "tag arg");
+			assert.ok(path.isAbsolute(wrapperArgv[1]!), "the wrapper received the resolved runner executable");
+			assert.ok(wrapperArgv.some((arg) => /subagent-runner-bootstrap\.(?:ts|js)$/.test(arg)));
+			requestAsyncSteer(asyncDir, { message: "Focus on the tests.", id: "launcher-steer", ts: Date.now() });
+			await waitForAsyncState(id, (status) => Boolean((status as { steering?: { recent: Array<{ id: string; targets: Array<{ state: string }> }> } }).steering?.recent.some((request) => request.id === "launcher-steer" && request.targets[0]?.state === "queued")));
+			assert.match(fs.readFileSync(path.join(mockPi.dir, "steers.jsonl"), "utf-8"), /Focus on the tests\./);
+			fs.writeFileSync(replyRelease, "go");
+			await waitForAsyncState(id, (status) => status.state === "running" && !status.currentTool);
+			fs.writeFileSync(finalRelease, "go");
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, true, payload.error);
+			assert.equal(payload.results[0]?.output, "wrapped result");
+			const done = await waitForAsyncState(id, (status) => status.state === "complete");
+			assert.deepEqual((done as AsyncStatusPayload & { launcher?: unknown }).launcher, { name: "wrap", argv: runnerLaunchers.wrap });
+		} finally {
+			fs.writeFileSync(replyRelease, "go");
+			fs.writeFileSync(finalRelease, "go");
+		}
+	});
+
+	it("wraps a workflow-script child that selects a launcher agent", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+		const { argvLog, executor } = launcherExecutor();
+		mockPi.onCall({ output: "workflow child result" });
+		const result = await executor.executePublic("launcher-workflow", { async: false, workflowScript: `return await runs.run("sandboxed", { agent: "sandboxed", task: "Work" });` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined, result.content[0]?.text);
+		const child = result.details?.workflow?.value as { ok?: boolean; output?: string };
+		assert.equal(child.ok, true);
+		assert.equal(child.output, "workflow child result");
+		assert.equal(fs.readFileSync(argvLog, "utf-8").split("\n")[0], "tag arg");
+	});
+
+	it("runs a launcher agent whose file defaults to foreground in the background when the call omits async", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+		const { argvLog, runnerLaunchers } = launcherExecutor();
+		const executor = makeAsyncExecutor([makeAgent("sandboxed", { launcher: "wrap", defaultAsync: false })], { runnerLaunchers });
+		mockPi.onCall({ output: "defaulted result" });
+		const launch = await executor.executePublic("launcher-default-foreground", { agent: "sandboxed", task: "Work" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(launch.isError, undefined, launch.content[0]?.text);
+		assert.ok(launch.details?.asyncId, "the launch ran in the background");
+		assert.equal((await readAsyncPayload(launch.details.asyncId)).success, true);
+		assert.equal(fs.readFileSync(argvLog, "utf-8").split("\n")[0], "tag arg");
+	});
+
+	it("stops a launcher-wrapped background run through the file control channel", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+		const { executor } = launcherExecutor();
+		const neverReleased = path.join(tempDir, "never-released");
+		mockPi.onCall({ steps: [{ waitForPath: neverReleased, jsonl: [events.assistantMessage("should not finish")] }] });
+		const launch = await executor.executePublic("launcher-stop", { agent: "sandboxed", task: "Wait" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(launch.isError, undefined, launch.content[0]?.text);
+		const id = launch.details!.asyncId!;
+		await waitForMockPiCall(mockPi, 0, 10_000);
+		deliverStopRequest({ asyncDir: path.join(ASYNC_DIR, id), source: "test" });
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.state, "stopped");
+		assert.equal((await waitForAsyncState(id, (status) => status.state === "stopped")).state, "stopped");
+	});
+
+	it("refuses an unknown launcher before spending fan-out or creating a session directory", { timeout: 30_000, skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const sessionDir = path.join(tempDir, "sessions-root");
+		const budget = createRunFanoutBudget(`launcher-budget-${Date.now().toString(36)}`, 1);
+		const executor = makeAsyncExecutor([makeAgent("sandboxed", { launcher: "missing" }), makeAgent("plain")], { defaultSessionDir: sessionDir });
+		try {
+			const refused = await executor.execute("launcher-unknown-budget", { agent: "sandboxed", task: "Work", runFanoutBudget: budget }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(refused.isError, true);
+			assert.match(refused.content[0]?.text ?? "", /uses launcher 'missing', which is not defined in runnerLaunchers/);
+			assert.deepEqual(getRunFanoutBudgetSnapshot(budget), { used: 0, limit: 1, remaining: 1 });
+			assert.deepEqual(fs.existsSync(sessionDir) ? fs.readdirSync(sessionDir) : [], []);
+			mockPi.onCall({ output: "plain result" });
+			const retried = await executor.execute("launcher-budget-retry", { agent: "plain", task: "Work", async: true, runFanoutBudget: budget }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(retried.isError, undefined, retried.content[0]?.text);
+			assert.equal((await readAsyncPayload(retried.details!.asyncId!)).success, true);
+		} finally {
+			fs.rmSync(budget.directory, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps refusing foreground launcher requests when forceTopLevelAsync is set", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const marker = path.join(tempDir, "wrapper-ran");
+		const executor = makeAsyncExecutor([makeAgent("sandboxed", { launcher: "wrap" })], { forceTopLevelAsync: true, runnerLaunchers: { wrap: [process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`] } });
+		// The public tool rejects clarify on its own, so clarify goes through the internal entry point.
+		for (const [request, run] of [[{ async: false }, executor.executePublic], [{ clarify: true }, executor.execute]] as const) {
+			const result = await run("launcher-forced", { agent: "sandboxed", task: "Work", ...request }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Foreground children run inside the parent process, so a launcher cannot wrap them/);
+		}
+		assert.equal(fs.existsSync(marker), false);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("refuses launcher launches it cannot wrap before starting any child", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const run = (params: Record<string, unknown>, agent = makeAgent("sandboxed", { launcher: "wrap" })) => makeAsyncExecutor([agent, makeAgent("worker")], { runnerLaunchers: { wrap: ["true"] } })
+			.executePublic("launcher-refused", params, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const foreground = await run({ agent: "sandboxed", task: "Work", async: false });
+		assert.equal(foreground.isError, true);
+		assert.match(foreground.content[0]?.text ?? "", /Foreground children run inside the parent process, so a launcher cannot wrap them/);
+		// A settings override can add machine to an agent whose file sets launcher; the launch must refuse it.
+		const placed = await run({ agent: "sandboxed", task: "Work" }, makeAgent("sandboxed", { launcher: "wrap", machine: "workmac" }));
+		assert.equal(placed.isError, true);
+		assert.match(placed.content[0]?.text ?? "", /uses launcher 'wrap'.*cannot run on machine 'workmac'/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	// A broker-style launcher: starts the runner in its own process group, stays attached,
+	// does not forward signals, and reports a runner signal death as exit 128+n.
+	const brokerExecutor = () => {
+		const broker = path.join(tempDir, "broker.cjs");
+		const pidsPath = path.join(tempDir, "broker-pids.json");
+		fs.writeFileSync(broker, `const { spawn } = require("node:child_process");
+const [pidsPath, command, ...args] = process.argv.slice(2);
+const runner = spawn(command, args, { detached: true, stdio: "inherit" });
+require("node:fs").writeFileSync(pidsPath, JSON.stringify({ wrapperPid: process.pid, runnerPid: runner.pid }));
+runner.on("exit", (code, signal) => process.exit(signal ? 128 + require("node:os").constants.signals[signal] : code ?? 1));
+`);
+		const executor = makeAsyncExecutor([makeAgent("sandboxed", { launcher: "broker" })], { runnerLaunchers: { broker: [process.execPath, broker, pidsPath] } });
+		const pids = () => JSON.parse(fs.readFileSync(pidsPath, "utf-8")) as { wrapperPid: number; runnerPid: number };
+		const reap = () => {
+			if (!fs.existsSync(pidsPath)) return;
+			for (const pid of Object.values(pids())) try { process.kill(pid, "SIGKILL"); } catch {}
+		};
+		const launch = async (id: string) => {
+			const result = await executor.executePublic(id, { agent: "sandboxed", task: "Work" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			return result.details!.asyncId!;
+		};
+		return { pids, reap, launch, executor };
+	};
+	const readJson = (filePath: string) => JSON.parse(fs.readFileSync(filePath, "utf-8"));
+	const waitForFile = async (filePath: string) => {
+		for (const deadline = Date.now() + 10_000; !fs.existsSync(filePath); await new Promise((resolve) => setTimeout(resolve, 50))) {
+			if (Date.now() > deadline) throw new Error(`Timed out waiting for ${filePath}`);
+		}
+	};
+
+	it("keeps a broker-launched run alive and controllable when only the wrapper dies", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and POSIX signals" : undefined }, async () => {
+		const { pids, reap, launch } = brokerExecutor();
+		mockPi.onCall({ steps: [{ waitForPath: path.join(tempDir, "never-released"), jsonl: [events.assistantMessage("should not finish")] }] });
+		try {
+			const id = await launch("broker-wrapper-death");
+			const asyncDir = path.join(ASYNC_DIR, id);
+			await waitForMockPiCall(mockPi, 0, 10_000);
+			const { wrapperPid, runnerPid } = pids();
+			assert.notEqual(wrapperPid, runnerPid);
+			assert.equal(readJson(path.join(asyncDir, "status.json")).pid, runnerPid);
+			process.kill(wrapperPid, "SIGKILL");
+			await waitForFile(path.join(asyncDir, "launcher-close.json"));
+			assert.equal(readJson(path.join(asyncDir, "launcher-close.json")).signal, "SIGKILL");
+			assert.equal(readJson(path.join(asyncDir, "process-terminal.json")).state, "pending");
+			assert.equal(reconcileAsyncRun(asyncDir).status?.state, "running");
+			assert.notEqual(activeRunMarkerAgeMs(asyncDir), undefined, "the active-run index still holds the live runner");
+			requestAsyncSteer(asyncDir, { message: "Still there?", id: "broker-steer", ts: Date.now() });
+			await waitForAsyncState(id, (status) => Boolean((status as { steering?: { recent: Array<{ id: string; targets: Array<{ state: string }> }> } }).steering?.recent.some((request) => request.id === "broker-steer" && request.targets[0]?.state === "queued")));
+			deliverStopRequest({ asyncDir, source: "test" });
+			assert.equal((await readAsyncPayload(id)).state, "stopped");
+			assert.equal((await waitForAsyncState(id, (status) => status.state === "stopped")).state, "stopped");
+		} finally {
+			reap();
+		}
+	});
+
+	it("fails a broker-launched run whose runner is killed and records the wrapper's exit verbatim", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and POSIX signals" : undefined }, async () => {
+		const { pids, reap, launch } = brokerExecutor();
+		mockPi.onCall({ steps: [{ waitForPath: path.join(tempDir, "never-released"), jsonl: [events.assistantMessage("should not finish")] }] });
+		try {
+			const id = await launch("broker-runner-death");
+			const asyncDir = path.join(ASYNC_DIR, id);
+			await waitForMockPiCall(mockPi, 0, 10_000);
+			process.kill(pids().runnerPid, "SIGKILL");
+			await waitForFile(path.join(asyncDir, "launcher-close.json"));
+			assert.deepEqual({ ...readJson(path.join(asyncDir, "launcher-close.json")), closeObservedAt: 0 }, { version: 1, runId: id, runnerProcessInstanceId: readJson(path.join(asyncDir, "process-terminal.json")).runnerProcessInstanceId, closeObservedAt: 0, exitCode: 137, signal: null, runnerPid: pids().runnerPid });
+			assert.notEqual(readJson(path.join(asyncDir, "process-terminal.json")).state, "pending");
+			assert.equal(reconcileAsyncRun(asyncDir).status?.state, "failed");
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, false);
+			assert.equal(payload.state, "failed");
+		} finally {
+			reap();
+		}
+	});
+
+	it("refuses a launcher run whose wrapper exits before the runner reports its identity", { timeout: 30_000, skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const executor = makeAsyncExecutor([makeAgent("sandboxed", { launcher: "gone" })], { runnerLaunchers: { gone: [process.execPath, "-e", "process.exit(3)"] } });
+		mockPi.onCall({ output: "should not run" });
+		const before = new Set(fs.existsSync(ASYNC_DIR) ? fs.readdirSync(ASYNC_DIR) : []);
+		const result = await executor.executePublic("broker-preproceed", { agent: "sandboxed", task: "Work" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /exited before startup state 'identified'/);
+		// The refused launch returns no run id; its run is the directory this launch created.
+		const asyncDir = fs.readdirSync(ASYNC_DIR).filter((entry) => !before.has(entry)).map((entry) => path.join(ASYNC_DIR, entry)).find((dir) => fs.existsSync(path.join(dir, "launcher-close.json")));
+		assert.ok(asyncDir);
+		assert.equal(readJson(path.join(asyncDir, "launcher-close.json")).exitCode, 3);
+		assert.equal(readJson(path.join(asyncDir, "process-terminal.json")).state, "pending", "a wrapper exit is not runner-terminal proof");
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	// Resume revives a retained session, so the source run is a fork with a pre-created session file.
+	const forkCtx = (name: string) => {
+		const parentSessionFile = path.join(tempDir, `${name}-parent.jsonl`);
+		const sessionFile = path.join(tempDir, `${name}-child.jsonl`);
+		const header = JSON.stringify({ type: "session", version: 1, id: name, cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${header}\n`);
+		fs.writeFileSync(sessionFile, `${header}\n`);
+		return { ...makeMinimalCtx(tempDir), sessionManager: { getSessionId: () => `${name}-session`, getSessionFile: () => parentSessionFile, getLeafId: () => "leaf", openSession: () => ({ createBranchedSession: () => sessionFile }) } };
+	};
+	const launchAndFinish = async (executor: ReturnType<typeof makeAsyncExecutor>, ctx: ReturnType<typeof forkCtx>, agent: string) => {
+		const launch = await executor.execute(`${agent}-launch`, { agent, task: "Do work", async: true, context: "fork", acceptance: false }, new AbortController().signal, undefined, ctx) as { isError?: boolean; content: Array<{ text?: string }>; details: { asyncId?: string } };
+		assert.equal(launch.isError, undefined, launch.content[0]?.text);
+		assert.equal((await readAsyncPayload(launch.details.asyncId!)).success, true);
+		return launch.details.asyncId!;
+	};
+	const resume = (executor: ReturnType<typeof makeAsyncExecutor>, ctx: ReturnType<typeof forkCtx>, id: string) => executor.execute(`resume-${id}`, { action: "resume", id, message: "Continue", acceptance: false }, new AbortController().signal, undefined, ctx) as Promise<{ isError?: boolean; content: Array<{ text?: string }>; details: { asyncId?: string } }>;
+
+	it("resumes a launcher run under its recorded launcher with the current argv, refusing while the name is undefined", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+		const { argvLog, runnerLaunchers, executor } = launcherExecutor();
+		const ctx = forkCtx("launcher-resume");
+		mockPi.onCall({ output: "first run" });
+		const sourceId = await launchAndFinish(executor, ctx, "sandboxed");
+		assert.equal(readJson(path.join(ASYNC_DIR, sourceId, "recovery-descriptor.json")).launcher, "wrap");
+		fs.rmSync(argvLog);
+		// The agent file no longer names a launcher; the recorded one still applies.
+		const unwrappedAgent = [makeAgent("sandboxed")];
+		const capacityBefore = getActiveAsyncCapacitySnapshot("launcher-resume-session", 4).used;
+		const runsBefore = fs.readdirSync(ASYNC_DIR).length;
+		const refused = await resume(makeAsyncExecutor(unwrappedAgent, {}), ctx, sourceId);
+		assert.equal(refused.isError, true);
+		assert.match(refused.content[0]?.text ?? "", /launched with launcher 'wrap', which is no longer defined in runnerLaunchers/);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(getActiveAsyncCapacitySnapshot("launcher-resume-session", 4).used, capacityBefore);
+		assert.equal(fs.readdirSync(ASYNC_DIR).length, runsBefore, "the refused resume created no run");
+		assert.equal(fs.existsSync(argvLog), false);
+		const editedArgv = [runnerLaunchers.wrap[0]!, "tag v2"];
+		mockPi.onCall({ output: "resumed run" });
+		const resumed = await resume(makeAsyncExecutor(unwrappedAgent, { runnerLaunchers: { wrap: editedArgv } }), ctx, sourceId);
+		assert.equal(resumed.isError, undefined, resumed.content[0]?.text);
+		const payload = await readAsyncPayload(resumed.details.asyncId!);
+		assert.equal(payload.success, true, payload.error);
+		assert.equal(fs.readFileSync(argvLog, "utf-8").split("\n")[0], "tag v2");
+		assert.deepEqual((await waitForAsyncState(resumed.details.asyncId!, (status) => status.state === "complete") as AsyncStatusPayload & { launcher?: unknown }).launcher, { name: "wrap", argv: editedArgv });
+	});
+
+	it("keeps resuming an unwrapped run unwrapped after its agent file adds a launcher", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+		const { argvLog, runnerLaunchers } = launcherExecutor();
+		const ctx = forkCtx("unwrapped-resume");
+		mockPi.onCall({ output: "first run" });
+		const sourceId = await launchAndFinish(makeAsyncExecutor([makeAgent("plain")]), ctx, "plain");
+		mockPi.onCall({ output: "resumed run" });
+		const resumed = await resume(makeAsyncExecutor([makeAgent("plain", { launcher: "wrap" })], { runnerLaunchers }), ctx, sourceId);
+		assert.equal(resumed.isError, undefined, resumed.content[0]?.text);
+		assert.equal((await readAsyncPayload(resumed.details.asyncId!)).success, true);
+		assert.equal(fs.existsSync(argvLog), false);
+		assert.equal((readJson(path.join(ASYNC_DIR, resumed.details.asyncId!, "status.json")) as { launcher?: unknown }).launcher, undefined);
+	});
+
+	it("revives a broker-launched run under its launcher and records the new runner pid", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and POSIX signals" : undefined }, async () => {
+		const { pids, reap, executor } = brokerExecutor();
+		const ctx = forkCtx("broker-revival");
+		const release = path.join(tempDir, "revival-release");
+		try {
+			mockPi.onCall({ output: "first run" });
+			const sourceId = await launchAndFinish(executor, ctx, "sandboxed");
+			mockPi.onCall({ steps: [{ waitForPath: release, jsonl: [events.assistantMessage("revived result")] }] });
+			const resumed = await resume(executor, ctx, sourceId);
+			assert.equal(resumed.isError, undefined, resumed.content[0]?.text);
+			await waitForMockPiCall(mockPi, 1, 10_000);
+			const { wrapperPid, runnerPid } = pids();
+			const status = readJson(path.join(ASYNC_DIR, resumed.details.asyncId!, "status.json"));
+			assert.equal(status.pid, runnerPid);
+			assert.notEqual(status.pid, wrapperPid);
+			assert.equal(status.launcher.name, "broker");
+			fs.writeFileSync(release, "go");
+			assert.equal((await readAsyncPayload(resumed.details.asyncId!)).success, true);
+		} finally {
+			fs.writeFileSync(release, "go");
+			reap();
+		}
+	});
+
+	const runChain = (id: string, chain: unknown[], agents: ReturnType<typeof makeAgent>[], runnerLaunchers: Record<string, string[]>) => executeAsyncChain(id, {
+		chain, agents,
+		ctx: { pi: { events: createEventBus() }, cwd: tempDir, currentSessionId: "session-1", runnerLaunchers },
+		artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+		shareEnabled: false, maxSubagentDepth: 2,
+	});
+
+	it("runs a chain whose agents share a launcher inside one wrapped runner", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+		const { argvLog, runnerLaunchers } = launcherExecutor();
+		mockPi.onCall({ output: "first" });
+		mockPi.onCall({ output: "second" });
+		const id = `launcher-chain-${Date.now().toString(36)}`;
+		const result = await runChain(id, [{ agent: "sandboxed", task: "A" }, { agent: "helper", task: "B" }], [makeAgent("sandboxed", { launcher: "wrap" }), makeAgent("helper", { launcher: "wrap" })], runnerLaunchers);
+		assert.equal(result.isError, undefined, result.content[0]?.text);
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true, payload.error);
+		assert.deepEqual(payload.results.map((child) => child.output), ["first", "second"]);
+		assert.equal(fs.readFileSync(argvLog, "utf-8").split("\n").filter((arg) => arg === "tag arg").length, 1, "one runner launch for the whole chain");
+		assert.deepEqual((await waitForAsyncState(id, (status) => status.state === "complete") as AsyncStatusPayload & { launcher?: unknown }).launcher, { name: "wrap", argv: runnerLaunchers.wrap });
+	});
+
+	it("refuses a chain that would mix launchers in one runner, naming each agent", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const agents = [makeAgent("plain"), makeAgent("netA", { launcher: "a" }), makeAgent("netB", { launcher: "b" })];
+		const runnerLaunchers = { a: ["true"], b: ["true"] };
+		const dynamic = { expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 }, parallel: { agent: "netA", task: "Review {target.path}" }, collect: { as: "reviews" } };
+		const cases: Array<[unknown[], RegExp]> = [
+			[[{ agent: "plain", task: "A" }, { agent: "netA", task: "B" }], /plain \(none\), netA \(a\)/],
+			[[{ parallel: [{ agent: "netA", task: "A" }, { agent: "netB", task: "B" }] }], /netA \(a\), netB \(b\)/],
+			[[{ agent: "plain", task: "Produce", as: "targets", outputSchema: { type: "object" } }, dynamic], /plain \(none\), netA \(a\)/],
+		];
+		for (const [index, [chain, names]] of cases.entries()) {
+			const id = `launcher-mixed-${index}-${Date.now().toString(36)}`;
+			const result = await runChain(id, chain, agents, runnerLaunchers);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /must use the same launcher or none/);
+			assert.match(result.content[0]?.text ?? "", names);
+			assert.equal(fs.existsSync(path.join(ASYNC_DIR, id)), false);
+		}
+		for (const runner of [{ type: "external-cli", command: process.execPath }, { type: "external-job", provider: "jobs" }] as const) {
+			const external = await runChain(`launcher-chain-${runner.type}-${Date.now().toString(36)}`, [{ agent: "ext", task: "A" }], [makeAgent("ext", { launcher: "a", runner })], runnerLaunchers);
+			assert.equal(external.isError, true);
+			assert.match(external.content[0]?.text ?? "", new RegExp(`Agent 'ext' uses launcher 'a', which wraps the local Pi background runner, so it cannot run with runner\\.type='${runner.type}'`));
+		}
+		const unknown = await runChain(`launcher-chain-unknown-${Date.now().toString(36)}`, [{ agent: "netA", task: "A" }], agents, {});
+		assert.equal(unknown.isError, true);
+		assert.match(unknown.content[0]?.text ?? "", /Launcher 'a' used by this chain is not defined in runnerLaunchers/);
+		assert.equal(mockPi.callCount(), 0);
 	});
 });

@@ -317,6 +317,19 @@ Package skill content.
 		assert.throws(() => loadConfig(), /config\.disabledFeatures entry "watchdogs" is not one of:/);
 	});
 
+	it("loads runnerLaunchers and fails closed on malformed launchers or other invalid values", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		const runnerLaunchers = { net: ["nono", "run", "--profile", " net ", "--"], "subagent-net": ["subagent-net"], "net.v2_x-1": ["wrap"] };
+		writeFile(configPath, JSON.stringify({ runnerLaunchers }));
+		assert.deepEqual(loadConfig().runnerLaunchers, runnerLaunchers);
+		for (const invalid of [[], "nono", { net: [] }, { net: "nono run" }, { net: [""] }, { net: [" "] }, { net: ["nono", 1] }, { net: ["no\u0000no"] }, { "": ["nono"] }, { "'net'": ["nono"] }, { "a b": ["nono"] }, { "-x": ["nono"] }, { ["n".repeat(129)]: ["nono"] }]) {
+			writeFile(configPath, JSON.stringify({ runnerLaunchers: invalid }));
+			assert.throws(() => loadConfig(), /config\.runnerLaunchers.*(?:letters, digits|argv array|JSON object)/);
+		}
+		writeFile(configPath, JSON.stringify({ resultScanLogging: "bogus", runnerLaunchers }));
+		assert.throws(() => loadConfig(), /config\.resultScanLogging must be/);
+	});
+
 	it("fails config load for invalid scheduledRuns because it controls the tool schema", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		writeFile(configPath, JSON.stringify({ scheduledRuns: { enabled: "false" } }));

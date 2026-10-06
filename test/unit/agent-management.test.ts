@@ -1062,6 +1062,28 @@ Advise only.
 		assert.ok(!content.includes(tempDir));
 	});
 
+	it("keeps launcher file-only: management cannot set it, conflicting runners are refused, and unrelated updates keep it", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const created = handleCreate({ config: { name: "netty", description: "Net agent", scope: "project", launcher: "net" } }, ctx);
+		assert.equal(created.isError, true);
+		assert.match(readText(created), /config\.launcher is not supported/);
+		assert.equal(fs.existsSync(path.join(tempDir, ".pi", "agents", "netty.md")), false);
+
+		const agentPath = path.join(tempDir, ".pi", "agents", "sandboxed.md");
+		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+		fs.writeFileSync(agentPath, "---\nname: sandboxed\ndescription: Sandboxed agent\nlauncher: net\n---\nOriginal prompt.\n");
+		const setLauncher = handleUpdate({ agent: "sandboxed", config: { launcher: "other" } }, ctx);
+		assert.equal(setLauncher.isError, true);
+		const external = handleUpdate({ agent: "sandboxed", config: { runner: { type: "external-cli", command: "node" } } }, ctx);
+		assert.equal(external.isError, true);
+		assert.match(readText(external), /cannot be combined with this agent's 'launcher'/);
+
+		const updated = handleUpdate({ agent: "sandboxed", config: { description: "Updated agent" } }, ctx);
+		assert.equal(updated.isError, false);
+		assert.match(fs.readFileSync(agentPath, "utf-8"), /^launcher: net$/m);
+		assert.equal(discoverAgents(tempDir, "project").agents.find((agent) => agent.name === "sandboxed")?.launcher, "net");
+	});
+
 	it("fails when extension frontmatter cannot be reread", () => {
 		const filePath = path.join(tempDir, ".pi", "agents", "removed.md");
 		assert.throws(

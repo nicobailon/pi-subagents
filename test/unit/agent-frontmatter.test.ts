@@ -1592,6 +1592,29 @@ Do work
 	});
 });
 
+describe("agent launcher frontmatter", () => {
+	it("reads a launcher name and rejects invalid names, external runners and machine placement", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-launcher-"));
+		tempDirs.push(dir);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		writeAgent(path.join(agentsDir, "sandboxed.md"), "---\nname: sandboxed\ndescription: Sandboxed\nlauncher: net\n---\nWork.\n");
+		writeAgent(path.join(agentsDir, "placed.md"), "---\nname: placed\ndescription: Placed\nlauncher: net\nmachine: workmac\n---\nWork.\n");
+		writeAgent(path.join(agentsDir, "quoted.md"), "---\nname: quoted\ndescription: Quoted\nlauncher: \"'net'\"\n---\nWork.\n");
+		writeAgent(path.join(agentsDir, "spaced.md"), "---\nname: spaced\ndescription: Spaced\nlauncher: a b\n---\nWork.\n");
+		writeAgent(path.join(agentsDir, "external.md"), "---\nname: external\ndescription: External\nlauncher: net\nrunner:\n  type: external-cli\n  command: node\n---\nWork.\n");
+
+		const result = discoverAgents(dir, "project");
+		const sandboxed = result.agents.find((agent) => agent.name === "sandboxed");
+		assert.equal(sandboxed?.launcher, "net");
+		assert.equal(sandboxed?.extraFields, undefined);
+		const errorFor = (name: string) => result.agentDiagnostics?.find((diagnostic) => diagnostic.name === name)?.error ?? "";
+		assert.match(errorFor("placed"), /'launcher'.*cannot be combined with 'machine'/);
+		assert.match(errorFor("quoted"), /frontmatter 'launcher' "'net'" is invalid; launcher names must start with a letter or digit/);
+		assert.match(errorFor("spaced"), /frontmatter 'launcher' "a b" is invalid/);
+		assert.match(errorFor("external"), /'launcher'.*cannot be combined with runner\.type='external-cli'/);
+	});
+});
+
 describe("agent frontmatter systemPromptMode", () => {
 	it("serializes systemPromptMode into agent frontmatter", () => {
 		const agent: AgentConfig = {

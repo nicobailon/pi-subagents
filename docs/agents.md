@@ -230,6 +230,8 @@ You can override selected agent fields without copying the whole agent. Override
 
 Supported override fields: `description`, `advertise`, `machine`, `output`, `outputMode`, `defaultReads`, `model`, `defaultProvider`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritGlobalContext`, `inheritSkills`, `defaultContext`, `acceptanceRole`, `disabled`, `skills`, `tools`, and `systemPrompt`.
 
+`launcher` is not a supported override field, and an override that sets it is rejected. To run a builtin under a launcher, copy it into a user agent file (for example with `eject`) and set `launcher` there.
+
 - `description` replaces the discovered description for builtin and custom agents, which lets list output show deployment-specific routing or model metadata.
 - Use `output: false`, `defaultReads: false`, `defaultContext: false`, `acceptanceRole: false`, or `machine: false` to clear an inherited value.
 - Use `tools: "inherit"` when that one role should omit its bundled or frontmatter tool allowlist and receive Pi's normal builtins (plus ambient extensions when it runs as a background child).
@@ -270,6 +272,57 @@ Native Pi and the six code-owned Claude Code, Codex, and Cursor profiles can run
 Placed external profiles are one-shot and stop-only: they cannot steer, resume, or claim a Pi supervisor. Their result is always `partial` and begins `[best-effort/unverified]`, because only bounded sanitized terminal snapshots are exposed; no vendor-private transcript, database, JSONL, or blob is used as authoritative settlement evidence. Reconnect observes the same pane and process without redispatching the prompt.
 
 pi-subagents never clones, pulls, or checks out on the machine. Generic `external-cli` commands and managed worktrees are rejected before launch; saved-machine placement accepts native Pi and only the six code-owned external profiles.
+
+## Sandboxing background children with a launcher
+
+A launcher wraps an agent's background runner in a command you choose, so that agent can run in a different sandbox from the parent session. Define the command in the user config key [`runnerLaunchers`](configuration.md#runnerlaunchers), then name it in the agent file:
+
+```yaml
+---
+name: researcher
+description: Web research with network access
+launcher: net
+---
+```
+
+The background runner for this agent then starts as `<launcher argv> <resolved runner command>`, where the runner command is the Node or compiled Pi command pi-subagents would otherwise run directly. The child keeps native steering, supervisor questions, stop, resume, usage, and results.
+
+How it behaves:
+
+- **Who defines the command.** Only the user config defines what a launcher runs. An agent file, including a project agent from a cloned repository, can only name a launcher you already defined. A project agent with the same name as one of your agents can still shadow it, so your own agent files and their names are the trust boundary.
+- **Background only.** A launcher agent runs in the background when the call omits `async`, even with `asyncByDefault: false`, and a workflow-script child that selects it runs in the background too. `async: false`, `clarify`, and `foregroundOnly` are refused, even when `forceTopLevelAsync` is set, because foreground children run inside the parent process and keep the parent's sandbox.
+- **Not combined with other placement.** `launcher` cannot be combined with `machine` (from frontmatter, a settings override, or the call) or with an `external-cli` or `external-job` runner.
+- **Unknown names fail.** If the name is not in `runnerLaunchers`, the launch fails before anything starts, without using a fan-out slot or creating a session directory. It never falls back to running without the launcher.
+- **Status.** The run's `status.json` records `launcher: { name, argv }`. Environment values are never recorded.
+- **Resume and revival.** A resumed run uses the launcher recorded when the run was first launched, not the agent file's current value, and re-reads that launcher's argv from the current config. A run launched without a launcher stays unwrapped even if its agent file gains `launcher` later. If the recorded name is no longer in `runnerLaunchers`, the resume fails before anything starts, and the run can be resumed once the name is defined again.
+- **Several agents in one runner.** A new chain attached to a running subagent, or steps appended to a running chain, run in one background runner. All agents in it must name the same launcher, or none; a mix is refused before anything starts, and the error names each agent and its launcher. Appended steps must also match the launcher of the runner they join. Steps in one wrapped chain share its sandbox; to give branches different sandboxes, run them as workflow-script children, which each get their own runner.
+- **Agent management.** `subagent({ action: "create" })` and `update` cannot set `launcher`; edit the agent file instead. Other updates keep an existing `launcher` line.
+
+### Wrapper requirements
+
+A launcher command must:
+
+- run the runner command it receives, either by replacing itself with it (`exec`) or by staying attached until it exits;
+- give the runner read and write access, at the same absolute paths, to the subagent temp root (`async-subagent-runs/`, `async-subagent-results/`, and `supervisor-channels/`; the root is `PI_SUBAGENTS_TEMP_ROOT` when set), the child session and artifact directories, the agent directory (`~/.pi/agent`, which holds auth), and the working directory, plus read access to the Pi install;
+- allow network access to your model provider;
+- if it filters the environment, pass through at least `HOME`, `PATH`, `TMPDIR`, every `PI_*` variable, `JITI_ALIAS`, and the API keys your provider needs.
+
+Steering, stop, and supervisor requests and replies travel through files in those directories, not through signals, so they work as long as the paths are shared.
+
+### Broker wrappers
+
+Some sandboxes, such as nono's broker mode, start the runner in a separate process instead of as a child of the launcher command. pi-subagents does not rely on the launcher's process being the runner:
+
+- Before it starts any work, the runner reports its own process id. The launch waits up to 10 seconds for it and fails if it does not arrive. `status.json` and run events use the runner's process id, not the launcher's.
+- When the launcher process exits, its exit code and signal are kept in `launcher-close.json` in the run directory. That exit is treated as the runner's exit only when the runner's process is confirmed dead. A runner killed by a signal may be reported by the launcher as exit code `128 + n` (for example `143` for `SIGTERM`).
+- If only the launcher process is killed while the runner keeps working, the run keeps running and still accepts steer and stop. No process-exit proof is recorded when the runner later exits, so if `maxActiveAsyncRunsPerSession` is set, the run's capacity slot stays held; the abandoned-slot policy releases it only if the run ends failed.
+- If the sandbox does not let the parent check the runner's process id, a runner that dies without its launcher noticing stays `running` until the stale-run check marks it failed after 24 hours without a status update.
+- A broker may end the runner when the broker's own session ends, so background runs under such a launcher may not outlive the Pi session.
+
+### Limits
+
+- A launcher controls where the child runs, not where its output goes. Results, transcripts, and files the child writes in shared directories are visible to the parent as usual.
+- A launcher that submits the work elsewhere and returns immediately is not supported, because the runner must keep running and share files with the parent. For runs on another machine, use `machine:` with Herdr.
 
 ## Parent prompt discovery
 
@@ -372,6 +425,7 @@ Field notes:
 | `defaultReads` | Files to read before running the agent. |
 | `defaultProgress` | Maintain `progress.md`. |
 | `async` | Default a single-agent launch to background (`true`) or foreground (`false`) when the call omits `async`. Explicit call values and `forceTopLevelAsync` win. |
+| `launcher` | Name of a [`runnerLaunchers`](configuration.md#runnerlaunchers) entry that wraps this agent's background runner, such as a sandbox command. Names only; the command itself is defined in user config. See [Sandboxing background children with a launcher](#sandboxing-background-children-with-a-launcher). |
 | `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. Foreground launches use 30 minutes when neither the call nor agent provides a timeout; explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win. |
 | `toolTimeoutMs` | Optional positive integer hard per-tool-call deadline in milliseconds. An explicit call value wins, then this agent default, global `toolTimeoutMs`, and `PI_SUBAGENT_TOOL_TIMEOUT_MS`. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It does not extend the run-level deadline; `contact_supervisor`, `intercom`, and `bg_wait` are exempt. |
 | `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |

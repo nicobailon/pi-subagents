@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Key } from "@earendil-works/pi-tui";
-import { FLEET_KEYBINDING_ACTIONS, type ArtifactDirPreference, type ExtensionConfig } from "../shared/types.ts";
+import { FLEET_KEYBINDING_ACTIONS, RUNNER_LAUNCHER_NAME_PATTERN, RUNNER_LAUNCHER_NAME_RULE, type ArtifactDirPreference, type ExtensionConfig } from "../shared/types.ts";
 import { validateMissionStoreConfig } from "../missions/store.ts";
 import { validateAuthorityPolicy } from "../policy/authority.ts";
 import { getAgentDir } from "../shared/utils.ts";
@@ -14,7 +14,7 @@ import { validateDisabledFeatures } from "../shared/disabled-features.ts";
 
 // Explicit route identity, worktree, checkpoint, and tool-surface policies must not be silently
 // discarded and replaced by the built-in defaults after validation fails.
-const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget"];
+const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers"];
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -100,6 +100,18 @@ function validateCapacityConfig(value: unknown): void {
 			|| abandonedSlotReleaseAfterMs < MIN_ABANDONED_SLOT_RELEASE_AFTER_MS
 			|| abandonedSlotReleaseAfterMs > MAX_ABANDONED_SLOT_RELEASE_AFTER_MS)) {
 		throw new Error(`config.capacity.abandonedSlotReleaseAfterMs must be false or an integer from ${MIN_ABANDONED_SLOT_RELEASE_AFTER_MS} to ${MAX_ABANDONED_SLOT_RELEASE_AFTER_MS}`);
+	}
+}
+
+function validateRunnerLaunchersConfig(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.runnerLaunchers must be a JSON object mapping launcher names to argv arrays");
+	for (const [name, argv] of Object.entries(value)) {
+		const label = `config.runnerLaunchers[${JSON.stringify(name)}]`;
+		if (!RUNNER_LAUNCHER_NAME_PATTERN.test(name)) throw new Error(`${label} has an invalid name; launcher names ${RUNNER_LAUNCHER_NAME_RULE}`);
+		if (!Array.isArray(argv) || argv.length === 0 || argv.some((arg) => typeof arg !== "string" || !arg.trim() || arg.includes("\u0000"))) {
+			throw new Error(`${label} must be a non-empty argv array of non-blank strings without NUL characters`);
+		}
 	}
 }
 
@@ -190,6 +202,7 @@ function validateConfig(config: Record<string, unknown>): void {
 	validateModelResponseAliases(config.modelResponseAliases);
 	validateMainWindowRendererConfig(config.mainWindowRenderer);
 	validateOrcaProgressTabsConfig(config.orcaProgressTabs);
+	validateRunnerLaunchersConfig(config.runnerLaunchers);
 }
 
 export function getConfigPath(): string {

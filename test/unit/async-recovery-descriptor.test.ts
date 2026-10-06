@@ -130,6 +130,24 @@ describe("async recovery descriptor", () => {
 		}
 	});
 
+	it("reads a recorded launcher name and rejects an invalid one", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-launcher-"));
+		const write = (launcher: unknown) => fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
+			version: 1, launcher, runFanoutBudget: runFanoutBudget("run-launcher"), sourceRunId: "run-launcher", agent: "worker", cwd: root,
+			systemPromptMode: "replace", inheritGlobalContext: false, inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+		}), "utf-8");
+		try {
+			write("net.v2");
+			assert.equal(readAsyncRecoveryDescriptor(root)?.launcher, "net.v2");
+			for (const launcher of ["'net'", "a b", "", 7]) {
+				write(launcher);
+				assert.throws(() => readAsyncRecoveryDescriptor(root), /launcher must be a launcher name/);
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects unsafe baseRef values in persisted recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-bad-base-ref-"));
 		try {

@@ -5,6 +5,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { acquireSessionLease } from "../shared/session-lease.ts";
 import { readProcessTerminalCandidate, writeProcessTerminalCandidate, markProcessTerminalCandidateLeaseRelease } from "./process-terminal-candidate.ts";
 import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
+import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import type { DefaultChildSessionFactoryOptions } from "../shared/child-session.ts";
 import type { SubagentRunConfig } from "./subagent-runner.ts";
 
@@ -129,6 +130,8 @@ export async function runConfiguredSubagent(rawConfig: unknown, options: RunnerB
 	process.once("exit", releaseOnExit);
 	try {
 		if (config.launchBarrierToken) {
+			// Behind a launcher the parent only knows the wrapper's pid; report this runner's own identity first.
+			if (config.launcher) writeAtomicJson(startupPath, { state: "identified", token: config.launchBarrierToken, pid: process.pid, pidNamespaceScope: currentPidNamespaceScope() });
 			await waitForStartupControl(startupProceedPath, config.launchBarrierToken, "proceed");
 			startupCommitted = true;
 			try {
@@ -139,7 +142,7 @@ export async function runConfiguredSubagent(rawConfig: unknown, options: RunnerB
 		} else if (config.revivalLease) {
 			lease = acquireSessionLease(config.revivalLease);
 			config.revivalLeaseToken = lease.owner.token;
-			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner });
+			writeAtomicJson(startupPath, { state: "ready", token: lease.owner.token, pid: process.pid, owner: lease.owner, ...(config.launcher ? { pidNamespaceScope: currentPidNamespaceScope() } : {}) });
 			await waitForStartupControl(startupAckPath, lease.owner.token, "ack");
 			writeAtomicJson(startupPath, { state: "acknowledged", token: lease.owner.token, pid: process.pid });
 			await waitForStartupControl(startupConfirmPath, lease.owner.token, "confirm");

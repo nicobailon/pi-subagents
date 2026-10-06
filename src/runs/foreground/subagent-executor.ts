@@ -114,6 +114,7 @@ import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest, externalJobStableJson } from "../shared/external-job-runner.ts";
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { formatHerdrMachineRunnerUnsupported, resolveHerdrMachinePlacement } from "../shared/herdr-machine.ts";
+import { lookupRunnerLauncher, resolveAgentRunnerLauncher } from "../shared/runner-launcher.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
@@ -1403,6 +1404,17 @@ function appendStepToAsyncChain(input: {
 		permissions: input.deps.config.permissions,
 		childRuntime: input.deps.childRuntime,
 	});
+	// Appended steps run inside the already-running runner, so they must use its launcher (or none).
+	// Checked before building, which can write progress files. A mix is refused by the builder.
+	const appendedLaunchers = new Set(chain.flatMap(getStepAgents).map((name) => agents.find((agent) => agent.name === name)?.launcher));
+	const appendedLauncher = [...appendedLaunchers][0];
+	if (appendedLaunchers.size === 1 && appendedLauncher !== status.launcher?.name) {
+		return {
+			content: [{ type: "text", text: `Cannot append step to run '${resolved.id}': its runner uses ${status.launcher ? `launcher '${status.launcher.name}'` : "no launcher"}, but the appended agents use ${appendedLauncher ? `launcher '${appendedLauncher}'` : "no launcher"}.` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
 	const built = buildAsyncRunnerSteps(resolved.id, compactOptional<Parameters<typeof buildAsyncRunnerSteps>[1]>({
 		chain: wrapChainTasksForFork(chain, contextPolicy),
 		task: input.params.task,
@@ -2090,7 +2102,7 @@ async function resumeAsyncRun(input: {
 		const chain = wrapChainTasksForFork(attachChain, contextPolicy);
 		const normalized = normalizeSkillInput(input.params.skill);
 		const parentModel = input.parentModel;
-		const result = executeAsyncChain(runId, compactOptional<Parameters<typeof executeAsyncChain>[1]>({
+		const result = await executeAsyncChain(runId, compactOptional<Parameters<typeof executeAsyncChain>[1]>({
 			chain,
 			task: workflowTask,
 			goal,
@@ -2114,6 +2126,7 @@ async function resumeAsyncRun(input: {
 				scopedModelIds: scopedModelIdsFromContext(input.ctx),
 				modelScope,
 				modelResponseAliases: input.deps.config.modelResponseAliases,
+				runnerLaunchers: input.deps.config.runnerLaunchers,
 				interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
 		childRuntime: input.deps.childRuntime,
@@ -2178,7 +2191,8 @@ async function resumeAsyncRun(input: {
 	if (target.source === "nested" && !target.recoveryDescriptor) {
 		return { content: [{ type: "text", text: `Nested child '${target.runId}' is missing its required recovery identity. Start a new run instead.` }], isError: true, details: { mode: "management", results: [] } };
 	}
-	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : baseAgentConfig;
+	// Runs without a recovery descriptor were never wrapped; a launcher added to the agent file later does not apply.
+	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : { ...baseAgentConfig, launcher: undefined };
 	const agentConfig = intercomBridge.active ? applyIntercomBridgeToAgent(recoveryAgentConfig, intercomBridge) : recoveryAgentConfig;
 	const foregroundContract = target.source === "foreground" ? target.resumeContract : undefined;
 	const outputSchema = Object.hasOwn(input.params, "outputSchema")
@@ -2194,6 +2208,10 @@ async function resumeAsyncRun(input: {
 	const acceptanceErrors = validateExecutionAcceptance({ ...input.params, acceptance, outputSchema });
 	if (acceptanceErrors.length > 0) {
 		return { content: [{ type: "text", text: `Cannot resume: ${acceptanceErrors.join(" ")}` }], isError: true, details: { mode: "management", results: [] } };
+	}
+	// Refuse before capacity moves so the retained run stays resumable once the config is fixed.
+	if (agentConfig.launcher !== undefined && !lookupRunnerLauncher(input.deps.config.runnerLaunchers, agentConfig.launcher)) {
+		return { content: [{ type: "text", text: `Cannot resume: run '${target.runId}' was launched with launcher '${agentConfig.launcher}', which is no longer defined in runnerLaunchers in the user subagent config.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;
@@ -2241,6 +2259,7 @@ async function resumeAsyncRun(input: {
 			modelScope,
 			// Absence in the retained contract is meaningful; never acquire current aliases.
 			modelResponseAliases: recoveryDescriptor ? recoveryDescriptor.modelResponseAliases : foregroundContract?.modelResponseAliases,
+			runnerLaunchers: input.deps.config.runnerLaunchers,
 			interactive: input.ctx.hasUI,
 		permissions: input.deps.config.permissions,
 		childRuntime: input.deps.childRuntime,
@@ -3521,6 +3540,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		scopedModelIds: data.scopedModelIds,
 		modelScope: data.modelScope,
 		modelResponseAliases: deps.config.modelResponseAliases,
+		runnerLaunchers: deps.config.runnerLaunchers,
 		interactive: ctx.hasUI,
 		permissions: deps.config.permissions,
 		childRuntime: deps.childRuntime,
@@ -3949,7 +3969,7 @@ function prepareWorkflowChildLaunchParams(input: {
 	const agent = typeof childParams.agent === "string"
 		? resolveAgentName(childParams.agent, discoveredAgents).agent ?? resolveAgentName(childParams.agent, input.agents).agent
 		: undefined;
-	const externalAsyncRequired = agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job";
+	const externalAsyncRequired = agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job" || agent?.launcher !== undefined;
 	return prepareWorkflowLaunchParams(input.workflowDefaults, childParams, input.parentWorkflowRunId, input.workflowKey, { ...input.options, externalAsyncRequired, outputClaimPath: input.outputClaimPath });
 }
 
@@ -7493,15 +7513,26 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			: hasTasks
 				? (effectiveParams.tasks ?? []).map((task) => task.agent)
 				: (effectiveParams.chain ?? []).flatMap((step) => getStepAgents(step as ChainStep));
-		const externalAgent = selectedAgentNames
-			.map((name) => agents.find((agent) => agent.name === name))
-			.find((agent) => agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job");
-		const externalAsyncRequired = Boolean(externalAgent) && effectiveParams.async === undefined && effectiveParams.clarify !== true && effectiveParams.foregroundOnly !== true;
+		const selectedAgents = selectedAgentNames.map((name) => agents.find((agent) => agent.name === name));
+		const externalAgent = selectedAgents.find((agent) => agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job");
+		const launcherAgent = selectedAgents.find((agent) => agent?.launcher !== undefined);
+		// A launcher agent goes to the background whenever the caller omitted async, even if the agent file defaults to foreground.
+		const externalAsyncRequired = effectiveParams.foregroundOnly !== true && ((Boolean(externalAgent) && effectiveParams.async === undefined && effectiveParams.clarify !== true)
+			|| (Boolean(launcherAgent) && normalizedParams.async === undefined && normalizedParams.clarify !== true));
 		const requestedAsync = externalAsyncRequired ? true : effectiveParams.async ?? deps.asyncByDefault;
 		const backgroundRequestedWhileClarifying = (hasChain || hasTasks) && requestedAsync && effectiveParams.clarify === true;
 		const effectiveAsync = requestedAsync && effectiveParams.clarify !== true;
 		if (externalAgent && (!effectiveAsync || effectiveParams.foregroundOnly === true)) {
 			return buildRequestedModeError(effectiveParams, `Agent '${externalAgent.name}' uses runner.type='${externalAgent.runner?.type}', which currently supports async/background execution only. Omit async or pass async:true; clarify and foregroundOnly are unsupported.`);
+		}
+		// forceTopLevelAsync rewrites async:false and clarify, so check what the caller asked for.
+		if (launcherAgent && (!effectiveAsync || normalizedParams.async === false || normalizedParams.clarify === true || effectiveParams.foregroundOnly === true)) {
+			return buildRequestedModeError(effectiveParams, `Agent '${launcherAgent.name}' uses launcher '${launcherAgent.launcher}', which wraps the background runner only. Foreground children run inside the parent process, so a launcher cannot wrap them. Omit async or pass async:true; clarify and foregroundOnly are unsupported.`);
+		}
+		// Refuse a launcher launch that cannot start before fan-out admission or a session directory exists.
+		for (const agent of selectedAgents) {
+			const launcherError = agent ? resolveAgentRunnerLauncher(agent, deps.config.runnerLaunchers, effectiveParams.machine ?? agent.machine).error : undefined;
+			if (launcherError) return buildRequestedModeError(effectiveParams, launcherError);
 		}
 		if (effectiveAsync && hasSingle && effectiveParams.resume === undefined && effectiveParams.worktree === true) {
 			try {

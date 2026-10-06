@@ -10,7 +10,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAtomicJsonWriter } from "../shared/atomic-json.ts";
 import { resolveSettingsWriteTarget, withSettingsFileLease } from "../shared/settings-file-lease.ts";
-import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, JsonSchemaObject, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
+import { RUNNER_LAUNCHER_NAME_PATTERN, RUNNER_LAUNCHER_NAME_RULE, type AcceptanceInput, type AcceptanceRole, type AgentRunnerConfig, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { isClaudeCodeAdapterId } from "../runs/shared/claude-code-adapter.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
@@ -183,6 +183,8 @@ export interface AgentConfig {
 	permissions?: PermissionRules;
 	memory?: AgentMemoryConfig;
 	machine?: string;
+	/** Name of a user-configured `runnerLaunchers` entry that wraps this agent's background runner. */
+	launcher?: string;
 	disabled?: boolean;
 	extraFields?: Record<string, string>;
 	override?: BuiltinAgentOverrideInfo;
@@ -1028,6 +1030,9 @@ function parseBuiltinOverrideEntry(
 	const input = value as Record<string, unknown>;
 	if (Object.hasOwn(input, "fallbackModels")) {
 		throw new Error(`Builtin override '${name}' in '${filePath}' uses removed field 'fallbackModels'; configure one model instead.`);
+	}
+	if (Object.hasOwn(input, "launcher")) {
+		throw new Error(`Builtin override '${name}' in '${filePath}' sets 'launcher', which settings overrides do not support; set 'launcher' in a user agent file instead.`);
 	}
 	const override: BuiltinAgentOverrideConfig = {};
 
@@ -2275,6 +2280,13 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			: undefined;
 		const memory = parseMemoryFrontmatter(frontmatter.memory);
 		const machine = validateOptionalMachine(frontmatter.machine, `Agent '${runtimeName}' frontmatter 'machine'`);
+		const launcher = frontmatter.launcher;
+		if (launcher !== undefined && !RUNNER_LAUNCHER_NAME_PATTERN.test(launcher)) {
+			throw new Error(`Agent '${runtimeName}' frontmatter 'launcher' ${JSON.stringify(launcher)} is invalid; launcher names ${RUNNER_LAUNCHER_NAME_RULE}.`);
+		}
+		if (launcher !== undefined && (runner?.type === "external-cli" || runner?.type === "external-job" || machine !== undefined)) {
+			throw new Error(`Agent '${runtimeName}' sets 'launcher', which wraps the local Pi background runner, so it cannot be combined with ${machine !== undefined ? "'machine'" : `runner.type='${runner!.type}'`}.`);
+		}
 		const agent: AgentConfig = {
 			name: runtimeName,
 			...(runner !== undefined ? { runner } : {}),
@@ -2314,6 +2326,7 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(subagentOnlyExtensions !== undefined ? { subagentOnlyExtensions } : {}),
 			...(mutationTools?.length ? { mutationTools } : {}),
 			...(machine !== undefined ? { machine } : {}),
+			...(launcher !== undefined ? { launcher } : {}),
 			...(frontmatter.output !== undefined ? { output: frontmatter.output } : {}),
 			...(outputMode !== undefined ? { outputMode } : {}),
 			...(outputSchema !== undefined ? { outputSchema } : {}),

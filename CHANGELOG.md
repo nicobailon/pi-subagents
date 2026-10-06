@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Background children could only run in the parent's sandbox unless they gave up native steering and results by using an external CLI runner. An agent can now set `launcher:` to a command defined in the user config's `runnerLaunchers`, such as a sandbox, which wraps its background runner; steering, supervisor questions, stop, resume and results keep working. Thanks to [@aaronkyriesenbach](https://github.com/aaronkyriesenbach) for the idea, design and nono testing. ([#2577](https://github.com/nicobailon/pi-subagents/issues/2577))
+
 ### Fixed
 
 - A long-running foreground child re-formatted every past tool call on each progress update, although progress shows only the latest 64, so each update got slower as the child's history grew. Progress updates now format only those 64 calls. ([#2704](https://github.com/nicobailon/pi-subagents/issues/2704))

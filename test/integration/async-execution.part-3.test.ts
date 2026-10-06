@@ -1979,6 +1979,70 @@ syncBuiltinESMExports();
 		}
 	});
 
+	it("append-step queues only agents whose launcher matches the running runner's", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const budget = (runId: string) => createRunFanoutBudget(runId, 8);
+		const agents = [makeAgent("worker"), makeAgent("netA", { launcher: "a" }), makeAgent("netA2", { launcher: "a" }), makeAgent("netB", { launcher: "b" })];
+		const executor = makeAsyncExecutor(agents, { runnerLaunchers: { a: ["true"], b: ["true"] } });
+		const cases: Array<[{ name: string; argv: string[] } | undefined, string, boolean]> = [
+			[{ name: "a", argv: ["true"] }, "netA2", true],
+			[{ name: "a", argv: ["true"] }, "netB", false],
+			[{ name: "a", argv: ["true"] }, "worker", false],
+			[undefined, "netA", false],
+		];
+		for (const [index, [launcher, agent, admitted]] of cases.entries()) {
+			const runId = `append-launcher-${index}-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, runId);
+			const runBudget = budget(runId);
+			try {
+				fs.mkdirSync(asyncDir, { recursive: true });
+				fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+					runId, sessionId: "session-123", mode: "chain", state: "running", startedAt: 100, lastUpdate: 200, cwd: tempDir, chainStepCount: 1,
+					...(launcher ? { launcher } : {}), steps: [{ agent: launcher ? "netA" : "worker", status: "running" }],
+				}));
+				writeRunFanoutBudgetDescriptor(asyncDir, runBudget);
+				const result = await executor.execute(`append-launcher-${index}`, { action: "append-step", id: runId, step: { agent, task: "Work" } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir)) as AsyncExecutionResult;
+				if (admitted) {
+					assert.equal(result.isError, undefined, result.content[0]?.text);
+					assert.equal(readPendingChainAppendRequests(asyncDir).length, 1);
+					assert.deepEqual(getRunFanoutBudgetSnapshot(runBudget), { used: 1, limit: 8, remaining: 7 });
+				} else {
+					assert.equal(result.isError, true, `case ${index}`);
+					assert.match(result.content[0]?.text ?? "", /its runner uses (?:launcher '\w+'|no launcher), but the appended agents use/);
+					assert.equal(readPendingChainAppendRequests(asyncDir).length, 0);
+					assert.deepEqual(getRunFanoutBudgetSnapshot(runBudget), { used: 0, limit: 8, remaining: 8 });
+				}
+			} finally {
+				fs.rmSync(asyncDir, { recursive: true, force: true });
+				fs.rmSync(runBudget.directory, { recursive: true, force: true });
+			}
+		}
+	});
+
+	it("append-step refuses a launcher mismatch before writing progress files", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const runId = `append-launcher-progress-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const runBudget = createRunFanoutBudget(runId, 8);
+		const progressPath = path.join(tempDir, "progress.md");
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId, sessionId: "session-123", mode: "chain", state: "running", startedAt: 100, lastUpdate: 200, cwd: tempDir, chainStepCount: 1,
+				launcher: { name: "a", argv: ["true"] }, steps: [{ agent: "netA", status: "running" }],
+			}));
+			writeRunFanoutBudgetDescriptor(asyncDir, runBudget);
+			fs.writeFileSync(progressPath, "existing progress\n");
+			const executor = makeAsyncExecutor([makeAgent("netA", { launcher: "a" }), makeAgent("netB", { launcher: "b" })], { runnerLaunchers: { a: ["true"], b: ["true"] } });
+			const result = await executor.execute("append-launcher-progress", { action: "append-step", id: runId, step: { parallel: [{ agent: "netB", task: "Implement the change", progress: true }] } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir)) as AsyncExecutionResult;
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /its runner uses launcher 'a', but the appended agents use launcher 'b'/);
+			assert.equal(fs.readFileSync(progressPath, "utf-8"), "existing progress\n");
+			assert.equal(readPendingChainAppendRequests(asyncDir).length, 0);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(runBudget.directory, { recursive: true, force: true });
+		}
+	});
+
 	it("workflow children keep the mandatory extensions admitted with the workflow after the host disposes its registration", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const childCwd = path.join(tempDir, "required-child");
 		fs.mkdirSync(childCwd, { recursive: true });

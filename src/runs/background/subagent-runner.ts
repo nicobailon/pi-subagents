@@ -49,6 +49,7 @@ import {
 	type SubagentChildStatusEvent,
 	type WorkflowLaneMetadata,
 	type HerdrMachineReference,
+	type RunnerLauncher,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -229,6 +230,7 @@ export interface SubagentRunConfig {
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
 	lane?: WorkflowLaneMetadata;
+	launcher?: RunnerLauncher;
 }
 
 interface StepResult {
@@ -2070,6 +2072,7 @@ export async function runSubagent(
 		...(config.workflowKey ? { workflowKey: config.workflowKey } : {}),
 		...(config.lane ? { lane: config.lane } : {}),
 		...(config.runnerProcessInstanceId ? { processTerminal: { version: 1 as const, state: "pending" as const, runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId } } : {}),
+		...(config.launcher ? { launcher: config.launcher } : {}),
 		steps: initialStatusSteps,
 		artifactsDir,
 		sessionDir: config.sessionDir,

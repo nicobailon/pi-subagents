@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DIRS, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
+import { DIRS, RUNNER_LAUNCHER_NAME_PATTERN, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import { snapshotRequiredChildExtensions } from "../../shared/required-child-extensions.ts";
@@ -327,7 +327,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		"subagentOnlyExtensions", "mcpDirectTools", "excludeTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
-		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef",
+		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef", "launcher",
 		"extensionBindings",
 		"requiredExtensions",
 	]);
@@ -339,6 +339,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (typeof parsed[field] !== "string" || !(parsed[field] as string).trim()) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a non-empty string.`);
 	}
 	if (parsed.version !== 1) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': version must be 1.`);
+	if (parsed.launcher !== undefined && (typeof parsed.launcher !== "string" || !RUNNER_LAUNCHER_NAME_PATTERN.test(parsed.launcher))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': launcher must be a launcher name.`);
 	try {
 		parsed.runFanoutBudget = validateRunFanoutBudgetDescriptor(parsed.runFanoutBudget);
 	} catch (error) {
@@ -636,6 +637,8 @@ export function applySteeringRecoveryAgentConfig(agentConfig: AgentConfig, descr
 		output: descriptor.outputPath,
 		toolBudget: descriptor.initialToolBudget,
 		maxSubagentDepth: descriptor.maxSubagentDepth,
+		// The recorded launcher wins over the current agent file, including recorded absence.
+		launcher: descriptor.launcher,
 	};
 }
 
