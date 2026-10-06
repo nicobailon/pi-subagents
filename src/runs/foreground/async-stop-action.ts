@@ -29,7 +29,7 @@ function getAsyncStopTarget(
 
 const STOP_MESSAGE = "Subagent stopped by user.";
 
-function sealPausedRun(asyncDir: string, status: AsyncStatus): string | undefined {
+function sealPausedRun(asyncDir: string, status: AsyncStatus, resultsDir: string): string | undefined {
 	const runnerProcessInstanceId = status.processTerminal?.runnerProcessInstanceId;
 	if (!runnerProcessInstanceId) return "runner process identity is missing";
 	const proof = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId });
@@ -38,8 +38,8 @@ function sealPausedRun(asyncDir: string, status: AsyncStatus): string | undefine
 	}
 	if (!status.sessionId) return "session identity is missing";
 	// The validated lookup skips unreadable or foreign files; those must be refused below, not replaced.
-	const existingResultPath = resultPayloadPathForSessionRun(DIRS.results, status.sessionId, status.runId)
-		?? resultPayloadFileForSessionRun(DIRS.results, status.sessionId, status.runId);
+	const existingResultPath = resultPayloadPathForSessionRun(resultsDir, status.sessionId, status.runId)
+		?? resultPayloadFileForSessionRun(resultsDir, status.sessionId, status.runId);
 	let existingResult: Record<string, unknown>;
 	if (!existingResultPath) {
 		// Delivery deletes the paused result, and an interrupted parent may never have received one; seal from status.
@@ -115,9 +115,20 @@ function sealPausedRun(asyncDir: string, status: AsyncStatus): string | undefine
 		steps,
 	};
 	delete stoppedStatus.activityState;
-	writeAsyncResultFile(resultFilePath(DIRS.results, status.runId), stoppedResult);
+	writeAsyncResultFile(resultFilePath(resultsDir, status.runId), stoppedResult);
 	writeAtomicJson(path.join(asyncDir, "status.json"), stoppedStatus);
 	updateActiveRunIndex(asyncDir, "stopped", status.toolCallId, { retryCapacityErrors: true, terminalIndexBeforeRelease: true });
+}
+
+/** After ownership/state checks, deliver stop and seal paused whole runs only with native terminal proof. */
+export function deliverAsyncRunStop(
+	input: Parameters<typeof deliverStopRequest>[0] & { status: AsyncStatus; resultsDir?: string },
+): string | undefined {
+	const { status, resultsDir = DIRS.results, ...delivery } = input;
+	const pausedWholeRun = status.state === "paused" && delivery.childId === undefined && delivery.targetIndex === undefined;
+	// A paused run whose runner closed its inbox can only be sealed from exact exit proof below.
+	if (!(pausedWholeRun && fs.existsSync(stopInboxClosedPath(delivery.asyncDir)))) deliverStopRequest(delivery);
+	if (pausedWholeRun) return sealPausedRun(delivery.asyncDir, status, resultsDir);
 }
 
 export function stopAsyncRun(
@@ -177,17 +188,13 @@ export function stopAsyncRun(
 		}
 	}
 	try {
-		// A paused run whose runner closed its inbox can only be sealed from exact exit proof below.
-		if (!(pausedWholeRun && fs.existsSync(stopInboxClosedPath(target.asyncDir)))) deliverStopRequest({ asyncDir: target.asyncDir, pid: typeof status.pid === "number" ? status.pid : undefined, kill, source: "stop-action", targetIndex: child?.index, childId: child?.id ?? childId });
-		if (pausedWholeRun) {
-			const failure = sealPausedRun(target.asyncDir, status);
-			if (failure) {
-				return {
-					content: [{ type: "text", text: `Stop request persisted for paused async run ${target.asyncId}, but terminal proof is not ready (${failure}). Retry stop after runner shutdown is observed.` }],
-					isError: true,
-					details: { mode: "management", results: [] },
-				};
-			}
+		const failure = deliverAsyncRunStop({ asyncDir: target.asyncDir, status, pid: typeof status.pid === "number" ? status.pid : undefined, kill, source: "stop-action", targetIndex: child?.index, childId: child?.id ?? childId });
+		if (failure) {
+			return {
+				content: [{ type: "text", text: `Stop request persisted for paused async run ${target.asyncId}, but terminal proof is not ready (${failure}). Retry stop after runner shutdown is observed.` }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
 		}
 		const tracked = state.asyncJobs.get(target.asyncId);
 		if (tracked) {
