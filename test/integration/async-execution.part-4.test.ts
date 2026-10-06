@@ -1885,7 +1885,8 @@ setTimeout(() => process.exit(90), 15000).unref();
 		// A settings override can add machine to an agent whose file sets launcher; the launch must refuse it.
 		const placed = await run({ agent: "sandboxed", task: "Work" }, makeAgent("sandboxed", { launcher: "wrap", machine: "workmac" }));
 		assert.equal(placed.isError, true);
-		assert.match(placed.content[0]?.text ?? "", /uses launcher 'wrap'.*cannot run on machine 'workmac'/);
+		// Windows refuses saved-machine placement itself before the launcher check is reached.
+		assert.match(placed.content[0]?.text ?? "", process.platform === "win32" ? /not supported from a Windows host/ : /uses launcher 'wrap'.*cannot run on machine 'workmac'/);
 		assert.equal(mockPi.callCount(), 0);
 	});
 
