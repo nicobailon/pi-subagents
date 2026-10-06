@@ -59,8 +59,8 @@ describe("extension maintenance lifecycle", () => {
 		assert.equal(result.status, 0, result.stderr);
 		assert.deepEqual(JSON.parse(result.stdout), {
 			atFactory: 0, atStart: 3, atRepeatedStart: 3, atShutdown: 0,
-			inspectorsAtFactory: ["herdr", "ghostty", "lifecycle-inspector"],
-			inspectorsAtShutdown: ["herdr", "ghostty"],
+			inspectorsAtFactory: ["herdr", "ghostty", "tmux", "lifecycle-inspector"],
+			inspectorsAtShutdown: ["herdr", "ghostty", "tmux"],
 		});
 	});
 });

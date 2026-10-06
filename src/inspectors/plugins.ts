@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { INSPECTOR_REGISTER_EVENT, type InspectorRegistrationRequest } from "../api/inspectors.ts";
 import { createHerdrInspectorPlugin } from "./herdr/plugin.ts";
 import { createGhosttyInspectorPlugin } from "./ghostty/plugin.ts";
+import { createTmuxInspectorPlugin } from "./tmux/plugin.ts";
 import type { InspectorPlugin } from "./types.ts";
 
 type InspectorOwner = Pick<ExtensionAPI, "events">;
@@ -11,7 +12,7 @@ const registries = new WeakMap<InspectorOwner["events"], { plugins: Map<string, 
 
 /** Built-ins retain host preference; external providers follow registration order. */
 export function getInspectorPlugins(pi: InspectorOwner): readonly InspectorPlugin[] {
-	return [createHerdrInspectorPlugin(), createGhosttyInspectorPlugin(), ...(registries.get(pi.events)?.plugins.values() ?? [])];
+	return [createHerdrInspectorPlugin(), createGhosttyInspectorPlugin(), createTmuxInspectorPlugin(), ...(registries.get(pi.events)?.plugins.values() ?? [])];
 }
 
 /** Registrations live while any owner runtime listens on this bus; child runtimes use their own bus. */
@@ -23,7 +24,7 @@ export function registerInspectorEventListener(pi: InspectorOwner): () => void {
 	}
 	registry.owners += 1;
 	const { plugins } = registry;
-	const builtinNames = new Set([createHerdrInspectorPlugin().name, createGhosttyInspectorPlugin().name]);
+	const builtinNames = new Set([createHerdrInspectorPlugin().name, createGhosttyInspectorPlugin().name, createTmuxInspectorPlugin().name]);
 	/* oxlint-disable anti-slop/no-runtime-typeof -- This listener validates the untyped event-bus boundary, including callable provider methods. */
 	const unsubscribe = pi.events.on(INSPECTOR_REGISTER_EVENT, (rawRequest) => {
 		if (!rawRequest || typeof rawRequest !== "object" || Array.isArray(rawRequest)) return;

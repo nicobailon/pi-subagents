@@ -495,9 +495,9 @@ An `InspectorPlugin` supplies:
 - `owns(context)`: synchronously check whether the provider owns an inspector binding for this target.
 - Optional `status(context)` and `close(context)`: inspect or close that binding, returning the same result type. Closing an inspector must not stop the subagent.
 
-The existing dispatcher tries Herdr, then Ghostty, then external providers in
+The existing dispatcher tries Herdr, then Ghostty, then tmux, then external providers in
 registration order. Names are case-sensitive; duplicate names and the built-in
-names `herdr` and `ghostty` are rejected. A selected provider's failure is not
+names `herdr`, `ghostty`, and `tmux` are rejected. A selected provider's failure is not
 retried through another provider. Status/close use the first provider whose
 `owns` returns true; unavailable lifecycle methods remain explicit errors.
 Providers own their pane bindings and must verify ownership before closing one.

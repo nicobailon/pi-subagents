@@ -27,22 +27,23 @@ describe("external inspector registration", () => {
 		t.after(registerInspectorEventListener(otherOwner));
 		const plugin = provider();
 		const registration = registerInspector(consumer, plugin);
-		assert.deepEqual(getInspectorPlugins(owner).map((item) => item.name), ["herdr", "ghostty", "test-host"]);
-		assert.equal(getInspectorPlugins(otherOwner).length, 2);
+		assert.deepEqual(getInspectorPlugins(owner).map((item) => item.name), ["herdr", "ghostty", "tmux", "test-host"]);
+		assert.equal(getInspectorPlugins(otherOwner).length, 3);
 		assert.throws(() => registerInspector(consumer, plugin), /already registered/);
 		assert.throws(() => registerInspector(consumer, provider("herdr")), /already registered/);
 		assert.throws(() => registerInspector(consumer, provider("ghostty")), /already registered/);
+		assert.throws(() => registerInspector(consumer, provider("tmux")), /already registered/);
 		registration.dispose();
 		registerInspector(consumer, plugin);
 		registration.dispose();
-		assert.equal(getInspectorPlugins(owner).length, 3, "an old disposer must not remove a new registration");
+		assert.equal(getInspectorPlugins(owner).length, 4, "an old disposer must not remove a new registration");
 		shutdown();
-		assert.equal(getInspectorPlugins(owner).length, 2);
+		assert.equal(getInspectorPlugins(owner).length, 3);
 		assert.throws(() => registerInspector(consumer, plugin), /not installed, not ready/);
 		t.after(registerInspectorEventListener(owner));
 		registerInspector(consumer, plugin);
 		shutdown();
-		assert.equal(getInspectorPlugins(owner).length, 3, "old runtime cleanup must not clear a replacement");
+		assert.equal(getInspectorPlugins(owner).length, 4, "old runtime cleanup must not clear a replacement");
 	});
 
 	it("keeps a registration when a duplicate runtime on the same bus replaces the one that claimed it", () => {
@@ -53,9 +54,9 @@ describe("external inspector registration", () => {
 		const registration = registerInspector({ events }, provider());
 		const cleanupReplacement = registerInspectorEventListener(replacement);
 		cleanupClaimed();
-		assert.deepEqual(getInspectorPlugins(replacement).map((item) => item.name), ["herdr", "ghostty", "test-host"]);
+		assert.deepEqual(getInspectorPlugins(replacement).map((item) => item.name), ["herdr", "ghostty", "tmux", "test-host"]);
 		registration.dispose();
-		assert.equal(getInspectorPlugins(replacement).length, 2);
+		assert.equal(getInspectorPlugins(replacement).length, 3);
 		registerInspector({ events }, provider()).dispose();
 		cleanupReplacement();
 	});
@@ -77,10 +78,10 @@ describe("external inspector registration", () => {
 			assert.equal(request.result?.ok, false);
 			if (request.result?.ok === false) assert.ok(request.result.error instanceof Error);
 		}
-		assert.equal(getInspectorPlugins(owner).length, 2);
+		assert.equal(getInspectorPlugins(owner).length, 3);
 	});
 
-	it("routes existing inspector actions and launch permissions to a registered provider without fallback on failure", async (t) => {
+	it("routes existing inspector actionsand launch permissions to a registered provider without fallback on failure", async (t) => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspector-registration-"));
 		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 		const asyncDir = path.join(root, "run-provider");
