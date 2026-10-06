@@ -3900,6 +3900,14 @@ function workflowChildOutputClaims(input: {
 		claims.set(claimPath, key);
 		childClaims.set(key, claimPath);
 	}
+	// Record a discovered output-less resume path for later admissions without adding same-batch duplicate errors.
+	for (const { key, path: resolved, resumedOutput } of resolvedEntries) {
+		if (resolved || !resumedOutput) continue;
+		const claimPath = resolveWorkflowHostOutputClaimPath(resumedOutput);
+		if (claims.has(claimPath)) continue;
+		claims.set(claimPath, key);
+		childClaims.set(key, claimPath);
+	}
 	return { claims, childClaims, overrides };
 }
 
