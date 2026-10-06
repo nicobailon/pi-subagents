@@ -6,6 +6,7 @@
 
 - A long-running foreground child re-formatted every past tool call on each progress update, although progress shows only the latest 64, so each update got slower as the child's history grew. Progress updates now format only those 64 calls. ([#2704](https://github.com/nicobailon/pi-subagents/issues/2704))
 - Fleet reread and re-rendered the selected transcript every 750 ms even when it had not changed, which took hundreds of milliseconds per refresh for a long transcript. It now reuses the rendered transcript until the file, selection, width or tool view changes. ([#2705](https://github.com/nicobailon/pi-subagents/issues/2705))
+- A Herdr-placed Pi child's bridge kept every frame it received, so a healthy run failed and started reconnecting after its 1,024th frame. Frames are now released once the session has taken them. ([#2706](https://github.com/nicobailon/pi-subagents/issues/2706))
 
 ## [0.76.1] - 2026-10-05
 
