@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { describe, it } from "node:test";
+import { formatToolCall } from "../../src/shared/formatters.ts";
 import {
 	boundStreamedRecentOutput,
 	boundStreamedRecentTools,
@@ -62,6 +63,37 @@ describe("streamed progress snapshot bounds", () => {
 	it("returns undefined when there are no tool calls", () => {
 		assert.equal(boundStreamedToolCalls({ toolCalls: [], messages: [] as never }), undefined);
 		assert.equal(boundStreamedToolCalls({ toolCalls: undefined, messages: undefined }), undefined);
+	});
+
+	it("derives the same chronological summaries as formatting the full history", () => {
+		const call = (i: number, args: unknown = { path: `file-${i}.ts` }) => ({ type: "toolCall", name: i % 2 ? "read" : "grep", arguments: args });
+		const expected = (calls: Array<ReturnType<typeof call>>) => calls.slice(-MAX_STREAMED_TOOL_CALLS).map((part) => {
+			const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments) ? part.arguments as Record<string, unknown> : {};
+			return { text: formatToolCall(part.name, args), expandedText: formatToolCall(part.name, args, true) };
+		});
+		for (const total of [1, MAX_STREAMED_TOOL_CALLS - 1, MAX_STREAMED_TOOL_CALLS, MAX_STREAMED_TOOL_CALLS + 7]) {
+			// Three calls per assistant message so the cutoff can fall inside a message, with other roles and text parts interleaved.
+			const calls = Array.from({ length: total }, (_, i) => call(i, i % 5 === 0 ? ["not", "an", "object"] : i % 7 === 0 ? null : undefined));
+			const messages: unknown[] = [];
+			for (let i = 0; i < calls.length; i += 3) {
+				messages.push({ role: "user", content: [{ type: "text", text: `user ${i}` }] });
+				messages.push({ role: "assistant", content: [{ type: "text", text: "thinking" }, ...calls.slice(i, i + 3)] });
+				messages.push({ role: "toolResult", toolCallId: `c${i}`, toolName: "read", content: [], isError: false });
+			}
+			assert.deepEqual(boundStreamedToolCalls({ toolCalls: undefined, messages: messages as never }), expected(calls), `total=${total}`);
+		}
+	});
+
+	it("does not read arguments of tool calls older than the streamed bound", () => {
+		const read = new Set<number>();
+		const messages = Array.from({ length: 200 }, (_, i) => ({
+			role: "assistant",
+			content: [{ type: "toolCall", name: "bash", get arguments() { read.add(i); return { command: `echo ${i}` }; } }],
+		}));
+		const bounded = boundStreamedToolCalls({ toolCalls: undefined, messages: messages as never });
+		assert.equal(bounded?.length, MAX_STREAMED_TOOL_CALLS);
+		assert.match(bounded!.at(-1)!.text, /echo 199/);
+		assert.deepEqual([...read].sort((a, b) => a - b), Array.from({ length: MAX_STREAMED_TOOL_CALLS }, (_, i) => 200 - MAX_STREAMED_TOOL_CALLS + i));
 	});
 
 	it("bounds a pathological running snapshot", () => {

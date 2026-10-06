@@ -266,8 +266,7 @@ function snapshotResult(result: SingleResult, progress: AgentProgress): SingleRe
  * foreground detach receipts and terminal consumers use snapshotResult directly.
  */
 function snapshotStreamResult(result: SingleResult, progress: AgentProgress): SingleResult {
-	const snapshot = snapshotResult(result, progress);
-	snapshot.messages = undefined;
+	const snapshot = snapshotResult({ ...result, messages: undefined }, progress);
 	snapshot.toolCalls = boundStreamedToolCalls(result);
 	return snapshot;
 }

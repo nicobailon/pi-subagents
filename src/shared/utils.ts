@@ -321,12 +321,14 @@ function compactCompletedProgress(progress: AgentProgress): AgentProgress {
 	};
 }
 
-function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSummary[] {
-	if (!messages?.length) return [];
+/** Summaries of the latest `limit` tool calls, in chronological order; older calls are never read. */
+function extractToolCallSummaries(messages: Message[] | undefined, limit = Infinity): ToolCallSummary[] {
 	const summaries: ToolCallSummary[] = [];
-	for (const msg of messages) {
+	for (let i = (messages?.length ?? 0) - 1; i >= 0 && summaries.length < limit; i--) {
+		const msg = messages![i]!;
 		if (msg.role !== "assistant") continue;
-		for (const part of msg.content) {
+		for (let j = msg.content.length - 1; j >= 0 && summaries.length < limit; j--) {
+			const part = msg.content[j]!;
 			if (part.type !== "toolCall") continue;
 			const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
 				? part.arguments
@@ -337,7 +339,7 @@ function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSumm
 			});
 		}
 	}
-	return summaries;
+	return summaries.reverse();
 }
 
 export function sumResultsUsage(results: SingleResult[]): Usage {
@@ -448,7 +450,7 @@ export function boundStreamedRecentOutput(recentOutput: string[]): string[] {
  * derives one from `messages`; bounded to the most recent calls.
  */
 export function boundStreamedToolCalls(result: Pick<SingleResult, "toolCalls" | "messages">): ToolCallSummary[] | undefined {
-	const summaries = result.toolCalls?.length ? result.toolCalls : extractToolCallSummaries(result.messages);
+	const summaries = result.toolCalls?.length ? result.toolCalls : extractToolCallSummaries(result.messages, MAX_STREAMED_TOOL_CALLS);
 	if (!summaries.length) return undefined;
 	return summaries.slice(-MAX_STREAMED_TOOL_CALLS).map((summary) => ({ ...summary }));
 }
