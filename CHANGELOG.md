@@ -9,6 +9,7 @@
 - A Herdr-placed Pi child's bridge kept every frame it received, so a healthy run failed and started reconnecting after its 1,024th frame. Frames are now released once the session has taken them. ([#2706](https://github.com/nicobailon/pi-subagents/issues/2706))
 - A workflow stage that resumed an earlier stage without its own `output` reused the earlier stage's report path, so it failed before launch when the earlier stage ran as a detached background child and overwrote the earlier report otherwise. It now writes to its own default report path. ([#2711](https://github.com/nicobailon/pi-subagents/issues/2711))
 - The `subagent` tool schema marked the `reviewed` value of `acceptance` with `deprecated: true`, which strict tool-schema validators reject with HTTP 400, so the tool failed for those providers. The schema no longer emits `deprecated`. Thanks to [@kingofdies](https://github.com/kingofdies) for the report. ([#2713](https://github.com/nicobailon/pi-subagents/issues/2713))
+- A background workflow's child rows showed no token usage or turn count, although each child's own status had them and the workflow total was their sum. Each child row now carries the usage and turn count from that child's settled result. Thanks to [@moxuun](https://github.com/moxuun) for the report. ([#2715](https://github.com/nicobailon/pi-subagents/issues/2715))
 
 ## [0.76.1] - 2026-10-05
 

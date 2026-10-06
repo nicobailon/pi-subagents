@@ -6274,6 +6274,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									step.async = step.async === true || Boolean(result.details.asyncId || result.details.asyncDir);
 									if (child.runId) step.runId = child.runId;
 									if (child.lane) step.lane = child.lane;
+									// The settled result is the only place an awaited detached child's usage reaches the parent row.
+									if (result.details.results.length > 0) {
+										const usage = sumResultsUsage(result.details.results);
+										step.tokens = { input: usage.input, output: usage.output, total: usage.input + usage.output };
+										if (usage.turns > 0) step.turnCount = usage.turns;
+									}
 								}
 								if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
 								const childStatus = missionWorkflowChildStatus(result);

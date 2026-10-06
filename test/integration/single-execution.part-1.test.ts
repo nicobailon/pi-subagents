@@ -2880,6 +2880,27 @@ Answer only from the supplied synthetic text.
 		fs.rmSync(childResultPath, { force: true });
 	});
 
+	it("carries workflow child usage onto the parent's step rows", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "detached child", matchArgIncludes: "Detached" });
+		mockPi.onCall({ output: "in-process child", matchArgIncludes: "In process" });
+		const started = await makeExecutor([makeAgent("echo")], {}, true).execute(
+			`scripted-workflow-child-usage-${Date.now()}`,
+			{ workflowScript: `const [a, b] = await runs.all([{ key: "detached", agent: "echo", task: "Detached" }, { key: "inline", agent: "echo", task: "In process", async: false }]); return a.runId;` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const status = await waitForAsyncState(started.details.asyncId!, (candidate) => ["complete", "failed", "stopped"].includes(candidate.state ?? ""), 60_000) as AsyncStatus;
+		assert.equal(status.state, "complete");
+		const detachedStatus = JSON.parse(fs.readFileSync(path.join(DIRS.async, status.workflow?.value as string, "status.json"), "utf-8")) as AsyncStatus;
+		const rows = Object.fromEntries((status.steps ?? []).map((step) => [step.workflowKey, { tokens: step.tokens, turnCount: step.turnCount }]));
+		const { input, output, total } = detachedStatus.totalTokens!;
+		assert.deepEqual(rows.detached?.tokens, { input, output, total });
+		assert.equal(rows.detached?.turnCount, detachedStatus.steps?.[0]?.turnCount);
+		assert.ok((rows.inline?.tokens?.total ?? 0) > 0);
+		assert.equal((rows.detached?.tokens?.total ?? 0) + (rows.inline?.tokens?.total ?? 0), status.totalTokens?.total);
+	});
+
 	it("persists workflow parent metadata in an async worktree child status and result", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {
 		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
