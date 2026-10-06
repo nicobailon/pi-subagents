@@ -1936,6 +1936,8 @@ Answer only from the supplied synthetic text.
 				{ workflowKey: "stage2", runId: undefined, reused: undefined },
 			]);
 			assert.ok(relaunched.workflow?.trace.some((entry) => entry.key === "stage1" && entry.state === "completed" && entry.reused === true));
+			const reusedRow = relaunched.steps?.find((step) => step.workflowKey === "stage1");
+			assert.deepEqual({ tokens: reusedRow?.tokens, turnCount: reusedRow?.turnCount }, { tokens: { input: 100, output: 50, total: 150 }, turnCount: 1 });
 		});
 
 		it("relaunches failed children, and a user stop records no stop cause and ends reuse", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -2001,6 +2003,11 @@ Answer only from the supplied synthetic text.
 				{ workflowKey: "stage3", reused: undefined },
 			]);
 			assert.equal(relaunched.steps?.[1]?.runId, stage2RunId);
+			assert.deepEqual(relaunched.steps?.map(({ workflowKey, tokens, turnCount }) => ({ workflowKey, total: tokens?.total, turnCount })), [
+				{ workflowKey: "stage1", total: 150, turnCount: 1 },
+				{ workflowKey: "stage2", total: 150, turnCount: 1 },
+				{ workflowKey: "stage3", total: 150, turnCount: 1 },
+			]);
 			assert.equal(fs.existsSync(path.join(DIRS.async, stage2RunId, "workflow-result.json")), false, "the relaunch consumes the awaited result like the normal path");
 		});
 
