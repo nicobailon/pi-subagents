@@ -58,6 +58,8 @@ export interface FleetTranscript {
 	events: FleetTranscriptEvent[];
 	truncated: boolean;
 	warning?: string;
+	/** The path was refused or the file could not be read, as opposed to a read that only skipped records. */
+	readFailed?: true;
 }
 
 interface FleetTranscriptReadOptions {
@@ -343,7 +345,7 @@ function parseTranscriptLines(lines: string[], conversationStarted = false): { e
 export function readFleetTranscript(filePath: string, options: FleetTranscriptReadOptions): FleetTranscript {
 	const validated = validateTranscriptPath(filePath, options.trustedRoots, options.trustedFiles, options.trustedFileRoot);
 	if (!validated.resolvedPath) {
-		return { path: filePath, events: [], truncated: false, ...(validated.warning ? { warning: safeDisplayText(validated.warning) } : {}) };
+		return { path: filePath, events: [], truncated: false, readFailed: true, ...(validated.warning ? { warning: safeDisplayText(validated.warning) } : {}) };
 	}
 	const maxRecords = Math.max(1, options.maxRecords ?? DEFAULT_MAX_RECORDS);
 	const tail = readTailLines(validated.resolvedPath, Math.max(1024, options.maxBytes ?? DEFAULT_MAX_BYTES));
@@ -358,6 +360,7 @@ export function readFleetTranscript(filePath: string, options: FleetTranscriptRe
 		path: filePath,
 		events: parsed.events,
 		truncated: tail.truncated || tail.lines.length > maxRecords || parsed.explicitTruncation,
+		...(tail.warning ? { readFailed: true as const } : {}),
 		...(warnings.length ? { warning: safeDisplayText(warnings.join(" ")) } : {}),
 	};
 }

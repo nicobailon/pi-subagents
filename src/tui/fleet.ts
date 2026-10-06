@@ -796,8 +796,10 @@ interface FleetTranscriptCache {
 
 function transcriptFingerprint(filePath: string): string {
 	try {
-		const stat = fs.statSync(filePath);
-		return `${stat.size}:${stat.mtimeMs}`;
+		// ino and ctime catch a same-size, same-mtime replacement. Bigint keeps
+		// Windows file ids, which exceed 2^53, exact.
+		const stat = fs.statSync(filePath, { bigint: true });
+		return `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
 	} catch {
 		return "missing";
 	}
@@ -859,7 +861,7 @@ export class SubagentFleetComponent implements Component {
 			this.refreshTimer = undefined;
 			if (this.disposed) return;
 			try {
-				this.invalidate();
+				this.refresh();
 				this.tui.requestRender();
 			} finally {
 				this.scheduleRefresh();
@@ -1261,7 +1263,10 @@ export class SubagentFleetComponent implements Component {
 		const body = transcript.events.length > 0
 			? renderFleetTranscript(transcript, width, this.theme, this.markdownTheme, { expandedTools: this.expandedTools })
 			: [];
-		this.transcriptCache = { path: target.path, fingerprint, width, expandedTools: this.expandedTools, transcript, body };
+		// A failed read (refused path, read error) may recover without a metadata change, so retry it.
+		this.transcriptCache = transcript.readFailed
+			? undefined
+			: { path: target.path, fingerprint, width, expandedTools: this.expandedTools, transcript, body };
 		return { transcript, body: [...body] };
 	}
 
