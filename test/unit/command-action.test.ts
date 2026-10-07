@@ -44,7 +44,7 @@ describe("supervisor command actions", () => {
 				await commands.shutdown();
 				const terminal = await commandAction({ state, target, operation: "status", index: 1 });
 				assert.equal(terminal.details.commands?.[0].state, "cancelled");
-			} finally { await commands.shutdown(); fs.rmSync(channel, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
+			} finally { await commands.shutdown(); fs.rmSync(channel, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 		});
 	}
 });
