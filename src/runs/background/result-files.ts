@@ -166,8 +166,18 @@ function writeIndexedPendingResultFile(resultPath: string, data: Record<string, 
 	const sessionId = nonEmptyString(data.sessionId);
 	if (!sessionId) throw new Error(`Cannot write async result '${resultPath}' without a sessionId.`);
 	const resultsDir = path.dirname(resultPath);
-	writeAtomicJson(resultPendingPath(resultsDir, sessionId, runId), data);
-	writeResultIndexForData(resultPath, data);
+	// A consumer can take the payload and remove its indexes as soon as the payload appears,
+	// so every index must exist before then. A failed index write still publishes the
+	// payload, unindexed but recoverable, before the error is rethrown.
+	let indexFailure: { error: unknown } | undefined;
+	writeAtomicJson(resultPendingPath(resultsDir, sessionId, runId), data, () => {
+		try {
+			writeResultIndexForData(resultPath, data);
+		} catch (error) {
+			indexFailure = { error };
+		}
+	});
+	if (indexFailure) throw indexFailure.error;
 	return { runId, sessionId, resultsDir };
 }
 
@@ -368,7 +378,9 @@ export function resultPayloadPathForIndexedRun(resultsDir: string, runId: string
 		}
 		const location = resultPayloadLocationFromIndex(resultsDir, entry);
 		if (location) return location.path;
-		fs.rmSync(entryPath, { force: true });
+		// A valid index can precede its payload while the writer is publishing it, so a lookup
+		// must not delete it. Payload-less indexes are swept by age in cleanupResultIndexes.
+		return undefined;
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
 		if (isUnaddressableResultCandidate(error)) return undefined;
