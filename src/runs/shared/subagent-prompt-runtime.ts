@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { BeforeProviderRequestEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, BeforeProviderRequestEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
 import { permissionDecision } from "./permissions.ts";
 import type { SteerRequest } from "../background/control-channel.ts";
@@ -204,10 +204,10 @@ function stripChildBoundaryInstructions(prompt: string): string {
 	return rewritten.replace(/^(?:[ \t]*\r?\n)+/, "");
 }
 
-export function rewriteSubagentPrompt(
-	prompt: string,
-	options: { inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean; fanoutChild?: boolean; structuredOutput?: boolean },
-): string {
+type InheritedPromptOptions = { inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean };
+type ChildBoundaryOptions = { fanoutChild?: boolean; structuredOutput?: boolean };
+
+function stripInheritedPromptText(prompt: string, options: InheritedPromptOptions): string {
 	let rewritten = prompt;
 	if (!options.inheritProjectContext) {
 		rewritten = stripProjectContext(rewritten);
@@ -218,12 +218,41 @@ export function rewriteSubagentPrompt(
 	if (!options.inheritSkills) {
 		rewritten = stripInheritedSkills(rewritten);
 	}
-	rewritten = stripSubagentOrchestrationSkill(rewritten);
-	rewritten = stripChildBoundaryInstructions(rewritten);
+	return stripChildBoundaryInstructions(stripSubagentOrchestrationSkill(rewritten));
+}
+
+function appendChildBoundary(prompt: string, options: ChildBoundaryOptions): string {
 	const boundary = options.fanoutChild ? CHILD_FANOUT_BOUNDARY_INSTRUCTIONS : CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS;
 	const structured = options.structuredOutput ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}` : "";
 	// Pi's base prompt stays first so providers that recognize it by its opening still do.
-	return `${rewritten}\n\n${boundary}${structured}`;
+	return `${stripChildBoundaryInstructions(prompt)}\n\n${boundary}${structured}`;
+}
+
+export function rewriteSubagentPrompt(prompt: string, options: InheritedPromptOptions & ChildBoundaryOptions): string {
+	return appendChildBoundary(stripInheritedPromptText(prompt, options), options);
+}
+
+/** In place, so later handlers and the final render never see the removed context. */
+function filterChildPromptOptions(options: BeforeAgentStartEvent["systemPromptOptions"], inherited: InheritedPromptOptions): void {
+	if (!inherited.inheritProjectContext) options.contextFiles = [];
+	else if (!inherited.inheritGlobalContext) options.contextFiles = options.contextFiles.filter((file) => !isGlobalContextFile(file.path));
+	options.skills = inherited.inheritSkills ? options.skills.filter((skill) => skill.name !== "pi-subagents") : [];
+	// Role prompts can embed context, skill catalogs, or an earlier child's boundary as text.
+	if (options.customPrompt) options.customPrompt = stripInheritedPromptText(options.customPrompt, inherited);
+	if (options.appendSystemPrompt) options.appendSystemPrompt = stripInheritedPromptText(options.appendSystemPrompt, inherited);
+}
+
+function rewritesChildPrompt(config: ChildRuntimeConfig): boolean {
+	return config.inheritProjectContext !== undefined || config.inheritGlobalContext !== undefined || config.inheritSkills !== undefined || Boolean(config.fanoutChild);
+}
+
+/** Installed after every other extension: a returned prompt freezes out sections added after it. */
+export function registerSubagentPromptBoundary(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
+	if (!rewritesChildPrompt(config)) return;
+	pi.on("before_agent_start", (event) => {
+		const finalized = appendChildBoundary(event.systemPrompt, { fanoutChild: config.fanoutChild, structuredOutput: Boolean(config.structuredOutput) });
+		return finalized === event.systemPrompt ? undefined : { systemPrompt: finalized };
+	});
 }
 
 function isParentOnlySubagentMessage(message: unknown): boolean {
@@ -558,19 +587,12 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 			pi.setSessionName(childSessionName);
 		}
 
-		const { inheritProjectContext, inheritGlobalContext, inheritSkills } = config;
-		const fanoutChild = config.fanoutChild;
-		let rewritten = event.systemPrompt;
-		if (inheritProjectContext !== undefined || inheritGlobalContext !== undefined || inheritSkills !== undefined || fanoutChild) {
-			rewritten = rewriteSubagentPrompt(event.systemPrompt, {
-				inheritProjectContext: inheritProjectContext ?? true,
-				inheritGlobalContext: inheritGlobalContext ?? true,
-				inheritSkills: inheritSkills ?? true,
-				fanoutChild,
-				structuredOutput: Boolean(config.structuredOutput),
-			});
-		}
-		if (rewritten === event.systemPrompt) return;
-		return { systemPrompt: rewritten };
+		// Filter the inputs instead of returning a prompt; the boundary hook appends the boundary last.
+		if (!rewritesChildPrompt(config)) return;
+		filterChildPromptOptions((event as BeforeAgentStartEvent).systemPromptOptions, {
+			inheritProjectContext: config.inheritProjectContext ?? true,
+			inheritGlobalContext: config.inheritGlobalContext ?? true,
+			inheritSkills: config.inheritSkills ?? true,
+		});
 	});
 }

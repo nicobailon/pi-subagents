@@ -3,7 +3,7 @@ import { listBackgroundWorkProviders } from "../../api/background-work.ts";
 import { ReadonlyDrainObservation } from "./readonly-drain-observation.ts";
 import registerFanoutChildSubagentExtension, { createChildSafeState } from "../../extension/fanout-child.ts";
 import registerSubagentFastModeExtension from "./fast-mode-extension.ts";
-import registerSubagentPromptRuntime from "./subagent-prompt-runtime.ts";
+import registerSubagentPromptRuntime, { registerSubagentPromptBoundary } from "./subagent-prompt-runtime.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
 import type { ChildSessionLaunch } from "./child-session.ts";
@@ -164,11 +164,12 @@ function childHooks(config: ChildRuntimeConfig, capture?: OwnedCapture, holdFina
 			registerSubagentPromptRuntime(pi, runtime, proof.observation);
 		} },
 	];
+	if (config.fast) hooks.push({ name: "pi-subagents:fast-mode", factory: (pi) => registerSubagentFastModeExtension(pi) });
+	if (config.fanoutChild) hooks.push({ name: "pi-subagents:fanout-child", factory: (pi) => registerFanoutChildSubagentExtension(pi, runtime) });
+	hooks.push({ name: "pi-subagents:prompt-boundary", factory: (pi) => registerSubagentPromptBoundary(pi, runtime) });
 	if (proof) {
 		proof.factories = hooks.map((hook) => hook.factory);
 		promptProofs.set(hooks[0]!.factory, proof);
 	}
-	if (config.fast) hooks.push({ name: "pi-subagents:fast-mode", factory: (pi) => registerSubagentFastModeExtension(pi) });
-	if (config.fanoutChild) hooks.push({ name: "pi-subagents:fanout-child", factory: (pi) => registerFanoutChildSubagentExtension(pi, runtime) });
 	return hooks;
 }

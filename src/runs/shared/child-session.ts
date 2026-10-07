@@ -189,18 +189,16 @@ function inheritParentProviders(modelRuntime: ModelRuntimeInstance, parentProvid
 }
 
 const CHILD_PROMPT_RUNTIME_EXTENSION_PATH = "<inline:pi-subagents:prompt-runtime>";
+const CHILD_PROMPT_BOUNDARY_EXTENSION_PATH = "<inline:pi-subagents:prompt-boundary>";
 
 /** The prompt runtime filters parent-only context before ambient extensions inspect
- *  the child prompt. Other inline hooks keep their normal position after ambient
- *  extensions, and ambient extension order stays unchanged. */
-function prioritizeChildPromptRuntime<T extends { extensions: Array<{ path: string }> }>(result: T): T {
-	const index = result.extensions.findIndex(({ path }) => path === CHILD_PROMPT_RUNTIME_EXTENSION_PATH);
-	if (index <= 0) return result;
-	const extensions = [...result.extensions];
-	const [promptRuntime] = extensions.splice(index, 1);
-	if (!promptRuntime) return result;
-	extensions.unshift(promptRuntime);
-	return { ...result, extensions };
+ *  the child prompt, and the boundary hook appends the child boundary after every
+ *  extension has added its prompt sections. Every other extension keeps its order. */
+function orderChildPromptHooks<T extends { extensions: Array<{ path: string }> }>(result: T): T {
+	const runtime = result.extensions.filter(({ path }) => path === CHILD_PROMPT_RUNTIME_EXTENSION_PATH);
+	const boundary = result.extensions.filter(({ path }) => path === CHILD_PROMPT_BOUNDARY_EXTENSION_PATH);
+	const others = result.extensions.filter(({ path }) => path !== CHILD_PROMPT_RUNTIME_EXTENSION_PATH && path !== CHILD_PROMPT_BOUNDARY_EXTENSION_PATH);
+	return { ...result, extensions: [...runtime, ...others, ...boundary] };
 }
 
 /** Ambient bash overrides keep their original backend and priority. */
@@ -468,7 +466,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					api.registerTool(commands.wrap(pi.createBashTool(launch.cwd, { commandPrefix: settingsManager.getShellCommandPrefix(), shellPath: settingsManager.getShellPath() }) as unknown as ToolDefinition));
 					api.registerTool(commands.tool());
 				} }] : []), ...codemode, ...(builtinMcp ? [builtinMcp] : [])],
-				extensionsOverride: (result) => prioritizeChildPromptRuntime(prioritizeChildCommandRuntime(result)),
+				extensionsOverride: (result) => orderChildPromptHooks(prioritizeChildCommandRuntime(result)),
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				...(launch.appendSystemPrompt !== undefined ? { appendSystemPrompt: [launch.appendSystemPrompt] } : {}),
 			});

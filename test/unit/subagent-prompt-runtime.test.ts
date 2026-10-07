@@ -23,6 +23,7 @@ import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
 	registerPermissionGate,
+	registerSubagentPromptBoundary,
 	rewriteSubagentPrompt,
 	stripGlobalContext,
 	stripInheritedSkills,
@@ -1085,37 +1086,39 @@ describe("subagent prompt runtime", () => {
 		});
 	}
 
-	it("rewrites the final child-visible prompt through before_agent_start", async () => {
-		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
+	it("filters parent-only context out of the prompt inputs in place without replacing the prompt", async () => {
+		let beforeAgentStart: ((event: unknown) => Promise<unknown>) | undefined;
 		registerSubagentPromptRuntime({
-			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
+			on(event: string, handler: (payload: unknown) => Promise<unknown>) {
 				if (event === "before_agent_start") beforeAgentStart = handler;
 			},
-			getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
-		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }> }, childConfig({ inheritProjectContext: false, inheritGlobalContext: true, inheritSkills: false }));
+			getAllTools: () => [],
+		} as never, childConfig({ inheritProjectContext: true, inheritGlobalContext: false, inheritSkills: true }));
+		const options = {
+			customPrompt: `Role.\n\n<skill name="pi-subagents">\nOrchestrate.\n</skill>\n\n${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}`,
+			appendSystemPrompt: `Extra.\n\n${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}`,
+			contextFiles: [{ path: path.join(getAgentDir(), "AGENTS.md"), content: "Global" }, { path: "/repo/AGENTS.md", content: "Repo" }],
+			skills: [{ name: "pi-subagents" }, { name: "safe-bash" }],
+			sections: {},
+		};
 
-		assert.ok(beforeAgentStart, "expected before_agent_start handler");
-
-		const rewritten = await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
-		assert.ok(rewritten);
-		assert.ok(!rewritten.systemPrompt.includes("# Project Context"));
-		assert.ok(!rewritten.systemPrompt.includes("<available_skills>"));
-		assert.ok(rewritten.systemPrompt.includes("Current date: 2026-04-16"));
+		assert.equal(await beforeAgentStart?.({ systemPrompt: "rendered", systemPromptOptions: options }), undefined);
+		assert.deepEqual(options.contextFiles.map((file) => file.content), ["Repo"]);
+		assert.deepEqual(options.skills.map((skill) => skill.name), ["safe-bash"]);
+		assert.equal(options.customPrompt, "Role.");
+		assert.equal(options.appendSystemPrompt, "Extra.");
 	});
 
-	it("uses the fanout boundary through before_agent_start for a fanout child", async () => {
-		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) | undefined;
-		registerSubagentPromptRuntime({
-			on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>) {
-				if (event === "before_agent_start") beforeAgentStart = handler;
-			},
-			getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
-		} as { on(event: string, handler: (payload: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>): void; getAllTools(): Array<{ name: string }> }, childConfig({ fanoutChild: true, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: true }));
+	it("appends the child boundary once to the complete prompt, after another extension's own prompt", () => {
+		const handlers: Array<(event: { systemPrompt: string }) => { systemPrompt: string } | undefined> = [];
+		const api = { on: (_event: string, handler: (typeof handlers)[number]) => handlers.push(handler) } as never;
+		registerSubagentPromptBoundary(api, childConfig({ fanoutChild: true, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: true }));
+		registerSubagentPromptBoundary(api, childConfig());
 
-		const rewritten = await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
-		assert.ok(rewritten);
-		assert.ok(rewritten.systemPrompt.startsWith("You are a subagent."));
-		assert.ok(rewritten.systemPrompt.endsWith(`\n\n${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}`));
+		assert.equal(handlers.length, 1, "inert without inheritance settings or fanout");
+		const finalized = handlers[0]!({ systemPrompt: `Own prompt.\n\n${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}` });
+		assert.equal(finalized?.systemPrompt, `Own prompt.\n\n${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}`);
+		assert.equal(handlers[0]!({ systemPrompt: finalized!.systemPrompt }), undefined);
 	});
 
 	it("filters parent-only artifacts from polluted fork context while preserving ordinary history", () => {

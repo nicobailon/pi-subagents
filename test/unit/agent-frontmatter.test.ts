@@ -1804,7 +1804,7 @@ Do work
 		const allowed = buildInProcessChildLaunch({ ...launch, model: "openai-codex/gpt-6-sol:low" });
 
 		assert.ok(allowed.toolPlan.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fast-mode-extension.ts")));
-		assert.deepEqual(allowed.session.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode"]);
+		assert.deepEqual(allowed.session.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode", "pi-subagents:prompt-boundary"]);
 		assert.throws(() => buildInProcessChildLaunch({ ...launch, model: "anthropic/claude-sonnet-4" }), /fast mode supports only/);
 		assert.throws(() => buildInProcessChildLaunch({ ...launch, model: "openai/gpt-6-sol" }), /fast mode supports only/);
 	});
