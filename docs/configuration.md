@@ -323,6 +323,26 @@ Controls the under-editor widget for active background runs. It defaults to `tru
 
 Starts each newly mounted under-editor async widget in its one-line folded state. It defaults to `false`. A header click still toggles the widget, and the folded state still resets when the widget is removed or Pi reloads.
 
+## `programStatus`
+
+```json
+{ "programStatus": false }
+```
+
+Reports each background run's state to the terminal with [OSC 7501, the Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status), so a terminal that supports it (Ghostty and Rex, for example) can show which runs are working, waiting on you, finished, or failed. It defaults to `true`; set it to `false` to send nothing. Terminals that don't support OSC 7501 ignore it, so turn it off only if your terminal prints unknown escape sequences.
+
+Reports are sent only from an interactive TUI session whose standard output is a terminal and whose `TERM` is not `dumb`, and only when a record changes. Each run gets its own record under `subagents/`: `subagents/<run>` for a run, where `<run>` is the first 12 characters of its run id, and `subagents/<workflow-run>.<key>` for a background workflow child. The key keeps letters, digits, `_`, `+` and `-` (other characters become `-`); a key longer than 19 characters is shortened to its first 12 characters plus a short hash. Workflow children are siblings of their workflow's record, not nested under it, so clearing a finished workflow never removes a running child. The root record belongs to Pi itself, so this extension never writes it.
+
+| Run | Reported state |
+|---|---|
+| queued or running | `working` |
+| running, with a `contact_supervisor` question the parent left unanswered when it finished its turn | `blocked` (`kind=question`) |
+| complete | `done` |
+| failed, partial, or rejected | `error` |
+| stopped or paused | `idle` |
+
+The message names the agent or workflow key, the current tool while working, and the outcome. It never includes the task text. Finished runs keep their `done`, `error`, or `idle` record after they leave the async widget, for as long as they are in Fleet's recent history (the last 20 finished runs). Records of runs this session no longer tracks, for example after switching sessions, are cleared. At most 64 records are shown: running and waiting runs first, then finished ones, most recently updated first; older finished records are cleared to make room. Foreground runs are not reported, and tmux drops these sequences unless you configure passthrough.
+
 ## `waitTool`
 
 ```json

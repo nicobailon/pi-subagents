@@ -291,6 +291,10 @@ Package skill content.
 		assert.equal(loadConfig().asyncWidgetCollapsed, true);
 		writeFile(configPath, JSON.stringify({ asyncWidgetCollapsed: "true" }));
 		assert.deepEqual(loadConfig(), {});
+		writeFile(configPath, JSON.stringify({ programStatus: false }));
+		assert.equal(loadConfig().programStatus, false);
+		writeFile(configPath, JSON.stringify({ programStatus: "off" }));
+		assert.throws(() => updateConfig((config) => config), /config\.programStatus must be a boolean/);
 
 		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "other" }));
 		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh" or "fork"/);

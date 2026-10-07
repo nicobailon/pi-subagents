@@ -29,6 +29,8 @@ subagent({ action: "status", id: "..." })      // one run
 
 Or ask naturally: "Show me the current async runs."
 
+In a terminal that supports [OSC 7501](https://www.superlogical.com/rex/docs/build/program-status), each background run is also reported to the terminal as working, waiting on you, finished, or failed. See [`programStatus`](configuration.md#programstatus).
+
 ### Usage and cost accounting
 
 Run `/subagent-cost` for the parent session's combined parent and child token usage and cost. It includes completed async workflow children when their persisted receipts and metadata remain available. Missing child metadata is reported as unavailable when the receipt identifies that child. If the workflow receipt itself is missing, unreadable, invalid, or non-terminal, affected children can be omitted from the total without an unavailable count, so treat the result as a lower bound when run artifacts are unavailable.

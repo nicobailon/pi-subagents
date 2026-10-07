@@ -11,6 +11,7 @@ import { createNativeSupervisorChannel, ensureSupervisorChannelDir, resolveSuper
 import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { resolveSubagentRunId } from "../../src/runs/background/run-id-resolver.ts";
+import { registerProgramStatusReporter } from "../../src/integrations/program-status.ts";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
 
 interface AsyncJobTrackerModule {
@@ -29,6 +30,7 @@ interface AsyncJobTrackerModule {
 			kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 			now?: () => number;
 			supervisorRequestState?: (event: ControlEvent) => "pending" | "resolved" | "unknown";
+			onJobsChanged?: () => void;
 		},
 	): {
 		ensurePoller(): void;
@@ -391,6 +393,34 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(state.fleetJobs.get("run-1")?.status, "complete", "fleet history should outlive widget cleanup");
 			assert.ok(ui.renderRequests > 0, "expected widget cleanup to request a rerender");
 			assert.equal(ui.widgets.at(-1), undefined);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("reports a tracked run to the terminal as working, then done, and keeps the done record after widget cleanup", async () => {
+		const asyncRoot = createTempDir("pi-async-job-program-status-");
+		try {
+			const state = createState();
+			const ui = createUiContext();
+			const writes: string[] = [];
+			const programStatus = registerProgramStatusReporter({
+				enabled: true,
+				getJobs: () => new Map([...state.fleetJobs, ...state.asyncJobs]).values(),
+				getPendingRequests: () => [],
+				write: (data) => writes.push(data),
+				isTTY: true,
+				env: { TERM: "xterm-256color" },
+			});
+			programStatus.sessionStarted({ hasUI: true, mode: "tui" });
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { completionRetentionMs: 5, onJobsChanged: programStatus.sync });
+			tracker.resetJobs(ui.ctx as never);
+			tracker.handleStarted({ id: "run-osc", asyncDir: path.join(asyncRoot, "run-osc"), agent: "worker" });
+			tracker.handleComplete({ id: "run-osc", success: true });
+			await waitForCondition(() => state.asyncJobs.size === 0, "widget cleanup", 1000);
+
+			const states = writes.map((report) => /state=(\w+):id=([^:]+)/.exec(report)?.slice(1).join(" "));
+			assert.deepEqual(states, ["working subagents/runosc", "done subagents/runosc"]);
 		} finally {
 			removeTempDir(asyncRoot);
 		}

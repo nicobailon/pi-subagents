@@ -2690,6 +2690,8 @@ export interface ExtensionConfig {
 	asyncWidget?: boolean;
 	/** Start the under-editor async runs widget folded. Defaults to false. */
 	asyncWidgetCollapsed?: boolean;
+	/** Report subagent run state to the terminal with OSC 7501. Defaults to true. */
+	programStatus?: boolean;
 	/** Exact provider/model candidates mapped to operator-declared equivalent response IDs. Empty arrays add no accepted IDs. */
 	modelResponseAliases?: Record<string, string[]>;
 	/** Named argv prefixes for background runners; agents select one with `launcher: <name>`. User config only. */
