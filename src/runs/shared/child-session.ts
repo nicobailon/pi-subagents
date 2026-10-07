@@ -114,6 +114,8 @@ export interface ChildSession {
 	readonly sessionFile: string | undefined;
 	readonly sessionId: string;
 	readonly modelId: string | undefined;
+	/** Provider id of the selected model when this child inherited that provider from the parent's registry instead of loading its extension. */
+	readonly inheritedProvider?: string;
 	/** Live provider/id of the selected model when Pi marks it virtual (`api === "pi-virtual"`); assistant messages then name the dispatched physical model. */
 	readonly virtualModelId?: string;
 	readonly contextWindow?: number;
@@ -159,7 +161,8 @@ type ModelRuntimeInstance = Awaited<ReturnType<PiCodingAgentModule["ModelRuntime
 
 export type ParentProviderRegistry = Pick<ModelRuntimeInstance, "getRegisteredProviderIds" | "getRegisteredProviderConfig" | "getRegisteredNativeProvider">;
 
-function inheritParentProviders(modelRuntime: ModelRuntimeInstance, parentProviders: ParentProviderRegistry, claimedProviderIds: ReadonlySet<string>, onError: ((error: ChildSessionExtensionError) => void) | undefined): boolean {
+/** Registers the parent's providers this child did not claim itself and returns their ids. */
+function inheritParentProviders(modelRuntime: ModelRuntimeInstance, parentProviders: ParentProviderRegistry, claimedProviderIds: ReadonlySet<string>, onError: ((error: ChildSessionExtensionError) => void) | undefined): Set<string> {
 	let providerIds: readonly string[];
 	try {
 		providerIds = parentProviders.getRegisteredProviderIds();
@@ -167,7 +170,7 @@ function inheritParentProviders(modelRuntime: ModelRuntimeInstance, parentProvid
 		onError?.({ extensionPath: "<parent-providers>", event: "inherit_provider", error });
 		throw new Error(`Failed to enumerate parent providers: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 	}
-	let registered = false;
+	const inherited = new Set<string>();
 	for (const providerId of new Set(providerIds)) {
 		if (claimedProviderIds.has(providerId)) continue;
 		try {
@@ -176,13 +179,13 @@ function inheritParentProviders(modelRuntime: ModelRuntimeInstance, parentProvid
 			if (native) modelRuntime.registerNativeProvider(native);
 			else if (config) modelRuntime.registerProvider(providerId, config);
 			else throw new Error(`Parent provider '${providerId}' has no registered native provider or config.`);
-			registered = true;
+			inherited.add(providerId);
 		} catch (error) {
 			onError?.({ extensionPath: `<parent-provider:${providerId}>`, event: "inherit_provider", error });
 			throw new Error(`Failed to inherit parent provider '${providerId}': ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 		}
 	}
-	return registered;
+	return inherited;
 }
 
 const CHILD_PROMPT_RUNTIME_EXTENSION_PATH = "<inline:pi-subagents:prompt-runtime>";
@@ -485,6 +488,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					session.dispose();
 				}
 			};
+			let inheritedProviders = new Set<string>();
 			const open = async () => {
 				const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
 				applyProcessEnv(launch.processEnv);
@@ -494,10 +498,8 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					? loader.getExtensions().errors.filter(({ path }) => requiredPaths.has(path)) : [];
 				if (loadErrors.length > 0) throw new Error(`Required child extension failed to load: ${loadErrors.map(({ path, error }) => `${path}: ${error}`).join("; ")}`);
 				const queued = flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError, requiredPaths);
-				const inherited = launch.parentProviderRegistry
-					? inheritParentProviders(modelRuntime, launch.parentProviderRegistry, queued.claimedProviderIds, launch.onExtensionError)
-					: false;
-				if (queued.registered || inherited) {
+				if (launch.parentProviderRegistry) inheritedProviders = inheritParentProviders(modelRuntime, launch.parentProviderRegistry, queued.claimedProviderIds, launch.onExtensionError);
+				if (queued.registered || inheritedProviders.size > 0) {
 					try {
 						await modelRuntime.refresh({ allowNetwork: false });
 					} catch (error) {
@@ -594,6 +596,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				get sessionFile() { return session.sessionFile; },
 				get sessionId() { return session.sessionId; },
 				get modelId() { return session.model ? `${session.model.provider}/${session.model.id}` : undefined; },
+				get inheritedProvider() { return session.model && inheritedProviders.has(session.model.provider) ? session.model.provider : undefined; },
 				get virtualModelId() { return session.model?.api === "pi-virtual" ? `${session.model.provider}/${session.model.id}` : undefined; },
 				get contextWindow() { return session.model?.contextWindow; },
 			};

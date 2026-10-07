@@ -66,7 +66,7 @@ import { assertThinkingWithinCeiling, intersectThinkingCeilings } from "../../sh
 import { formatStructuredOutputRejectionError, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
-import { formatChildModelResolutionDiagnostic, isChildModelResolutionFailure } from "../shared/model-resolution-diagnostic.ts";
+import { formatChildModelResolutionDiagnostic, formatInheritedProviderDiagnostic, isChildModelResolutionFailure } from "../shared/model-resolution-diagnostic.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
@@ -1312,10 +1312,11 @@ async function runSingleAttempt(
 			if (!closeError && promptErrorMessage !== undefined) {
 				closeError = promptErrorMessage;
 			}
-			// A foreground child never loads the parent's ambient extensions, so a
-			// provider one registers resolves as "not found" before the child starts.
-			// Annotate only a creation/prompt failure that produced no turn; keep the
-			// core error and add the host rule and both remedies after it.
+			// A foreground child never loads the parent's ambient extensions. A model
+			// whose provider the parent registry does not serve resolves as "not found"
+			// before the child starts; a provider it does serve is inherited without its
+			// extension's session hooks and can fail the first request. Keep the
+			// original error first and add the host rule and remedies after it.
 			if (promptErrorMessage !== undefined
 				&& closeError === promptErrorMessage
 				&& isChildModelResolutionFailure(promptErrorMessage)
@@ -1323,6 +1324,12 @@ async function runSingleAttempt(
 				&& result.usage.turns === 0
 				&& !launch.session.ambientExtensions) {
 				closeError = `${promptErrorMessage}\n\n${formatChildModelResolutionDiagnostic({ agent: agent.name, model: launch.session.model, host: "parent", capabilityCeiling: launch.toolPlan.capabilityCeiling })}`;
+			} else if (session?.inheritedProvider
+				&& closeError !== undefined
+				&& (closeError === promptErrorMessage || closeError === assistantError)
+				&& progress.toolCount === 0
+				&& (result.messages ?? []).every((message) => message.role !== "assistant" || (message as { stopReason?: string }).stopReason === "error")) {
+				closeError = `${closeError}\n\n${formatInheritedProviderDiagnostic({ agent: agent.name, model: launch.session.model, provider: session.inheritedProvider, capabilityCeiling: launch.toolPlan.capabilityCeiling })}`;
 			}
 			const forcedDrainAfterFinalSuccess = (forced || forcedTermination) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(result.messages ?? []);

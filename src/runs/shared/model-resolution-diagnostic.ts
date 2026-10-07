@@ -74,3 +74,28 @@ export function formatChildModelResolutionDiagnostic(diagnostic: ChildModelResol
 		`If ${model} is served by a provider extension, that extension is not loaded for this child: list it in \`subagentOnlyExtensions\` or \`extensions\` in the agent frontmatter, or leave \`extensions\` unset so the child loads the ambient extensions.`,
 	].join("\n");
 }
+
+/**
+ * Explain a local foreground child that failed before any successful response
+ * on a provider it inherited from the parent's registry. The child got the
+ * provider but not the parent extension that registered it, so a provider that
+ * depends on that extension's session hooks can reject the child's requests.
+ * Whether this provider does is unknown here, hence the conditional wording.
+ */
+export function formatInheritedProviderDiagnostic(diagnostic: ChildModelResolutionDiagnostic & { provider: string }): string {
+	const subject = diagnostic.agent ? `Agent '${diagnostic.agent}'` : "Subagent";
+	const model = diagnostic.model ? `'${diagnostic.model}'` : "this model";
+	const provider = `'${diagnostic.provider}'`;
+	const facts = `${subject} ran as a foreground child, which never loads the parent's ambient extensions. Provider ${provider} for ${model} was registered by a parent extension; the child inherited the provider but not that extension's session hooks.`;
+	if (capabilityCeilingDeniesExtensions(diagnostic)) {
+		return [
+			facts,
+			`${denyExtensionsClause(diagnostic)}, so that extension cannot load for this child: \`async: true\` does not help either, and listed \`subagentOnlyExtensions\` or \`extensions\` entries are suppressed.`,
+			`If ${provider} depends on those hooks, relax the capability ceiling to allow extensions, or use a model whose provider does not.`,
+		].join("\n");
+	}
+	return [
+		facts,
+		`If ${provider} depends on those hooks, run this agent with \`async: true\` (a background child loads the ambient extensions unless the agent sets \`extensions\`), or load the extension for this agent with \`subagentOnlyExtensions\` or \`extensions\` in the agent frontmatter.`,
+	].join("\n");
+}
