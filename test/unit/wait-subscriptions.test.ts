@@ -122,6 +122,7 @@ describe("non-blocking wait subscriptions", () => {
 			const registered: Array<{ name: string; description: string; execute: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean }> }> = [];
 			registerWaitTool({
 				events: new TestBus(),
+				on() {},
 				registerTool(value: unknown) { registered.push(value as typeof registered[number]); },
 			} as never, state, true, {
 				arm() { throw new Error("headless calls must not arm subscriptions"); },
@@ -134,6 +135,41 @@ describe("non-blocking wait subscriptions", () => {
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("ends a blocking bg_wait when the user sends a message while the agent is busy", async () => {
+		const state = makeState();
+		state.foregroundRuns = new Map([["run-live", {
+			runId: "run-live",
+			mode: "single",
+			cwd: os.tmpdir(),
+			sessionId: "session-a",
+			updatedAt: Date.now(),
+			children: [{ agent: "worker", index: 0, status: "detached" }],
+		}]]);
+		type WaitResult = { isError?: boolean; details: { wait?: { reason: string; activeRunIds: string[] } } };
+		const registered: Array<{ execute: (...args: unknown[]) => Promise<WaitResult> }> = [];
+		const inputHandlers: Array<(event: { source: string; streamingBehavior?: string }) => void> = [];
+		const sendInput = (event: { source: string; streamingBehavior?: string }) => {
+			for (const handler of inputHandlers) handler(event);
+		};
+		registerWaitTool({
+			events: new TestBus(),
+			on(event: string, handler: typeof inputHandlers[number]) { if (event === "input") inputHandlers.push(handler); },
+			registerTool(value: unknown) { registered.push(value as typeof registered[number]); },
+		} as never, state, true);
+
+		const pending = registered[0]!.execute("wait", { id: "run-live", timeoutMs: 60_000 }, undefined, undefined, { hasUI: true });
+		sendInput({ source: "extension", streamingBehavior: "steer" });
+		sendInput({ source: "interactive" });
+		const early = await Promise.race([pending.then(() => "settled"), new Promise((resolve) => setTimeout(() => resolve("pending"), 300))]);
+		assert.equal(early, "pending");
+
+		sendInput({ source: "interactive", streamingBehavior: "steer" });
+		const result = await pending;
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.wait?.reason, "user_input");
+		assert.deepEqual(result.details.wait?.activeRunIds, ["run-live"]);
 	});
 
 	it("restores durable registrations and wakes on exact completion", () => {

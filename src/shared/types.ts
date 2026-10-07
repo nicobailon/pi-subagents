@@ -1464,8 +1464,8 @@ export interface Details {
 		activeRunIds: string[];
 		activeProviderItems: Array<{ provider: string; id: string }>;
 	} | {
-		/** Non-terminal internal auto-drain yield; tracked work remains active. */
-		reason: "supervisor_request";
+		/** Non-terminal yield for a supervisor request or a user message; tracked work remains active. */
+		reason: "supervisor_request" | "user_input";
 		timedOut: false;
 		activeRunIds: string[];
 		activeProviderItems: Array<{ provider: string; id: string }>;

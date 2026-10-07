@@ -24,18 +24,34 @@ ${child ? "This child runtime does not install the root session's native complet
 • { id: "...", nonBlocking: true } — resolve the prefix once, persist an exact-run wake subscription, and return immediately. Use this for detached work without native completion delivery; the originating interactive session wakes on completion, failure, attention, reconciliation failure, or timeout.
 • { stopOnAttention: false } — for blocking waits only, keep waiting through idle or long-thinking attention; supervisor/contact requests still stop the wait.
 • { timeoutMs: 600000 } — stop waiting after N ms; active work keeps running. Omitted values use waitTool.defaultTimeoutMs, then 30 minutes. Window expiry returns a non-error window_elapsed result with active work identities.
+A message the user sends while a blocking wait is open ends the wait with a non-error user_input result; active work keeps running.
 
 Non-blocking subscriptions are visible in subagent status and differ from disabling waitTool: waitTool.enabled=false returns immediately without registering any future wake. Provider jobs are session-scoped and identified exactly, so replacing one job with another cannot hide a completion. Provider extensions must be explicitly loaded in this process. In a child agent, keep \`bg_wait\` in the child tool allowlist and load each provider through the agent's extensions or subagentOnlyExtensions; this tool never loads providers or grants tools itself.${enabled ? "" : "\n\nConfigured behavior: bg_wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED and returns immediately without blocking."}`;
-	const execute: ToolDefinition<typeof SubagentWaitParams, Details>["execute"] = async (_id, params, signal, onUpdate, ctx) => finalizeToolResult(await waitForSubagents(params, signal, {
-		state,
-		nestedRootRunId: child?.nestedRootRunId,
-		events: pi.events,
-		enabled,
-		hasPendingSupervisorRequest,
-		...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
-		onUpdate,
-		...(subscriptions && ctx?.hasUI ? { subscribe: (input) => subscriptions.arm(input) } : {}),
-	}));
+	// Messages typed while the agent is busy (steer or follow-up) end open waits so they reach the model.
+	const userInputWaits = new Set<AbortController>();
+	pi.on("input", (event) => {
+		if (event.source === "extension" || !event.streamingBehavior) return;
+		for (const controller of userInputWaits) controller.abort();
+	});
+	const execute: ToolDefinition<typeof SubagentWaitParams, Details>["execute"] = async (_id, params, signal, onUpdate, ctx) => {
+		const userInput = new AbortController();
+		userInputWaits.add(userInput);
+		try {
+			return finalizeToolResult(await waitForSubagents(params, signal, {
+				state,
+				nestedRootRunId: child?.nestedRootRunId,
+				events: pi.events,
+				enabled,
+				hasPendingSupervisorRequest,
+				userInputSignal: userInput.signal,
+				...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
+				onUpdate,
+				...(subscriptions && ctx?.hasUI ? { subscribe: (input) => subscriptions.arm(input) } : {}),
+			}));
+		} finally {
+			userInputWaits.delete(userInput);
+		}
+	};
 	const primaryTool: ToolDefinition<typeof SubagentWaitParams, Details> = {
 		name: "bg_wait",
 		label: "Background Wait",

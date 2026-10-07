@@ -685,6 +685,30 @@ describe("bg_wait tool", () => {
 		}
 	});
 
+	it("yields without an error when the user sends a message", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-user-input-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
+			const userInput = new AbortController();
+			let polls = 0;
+			const sleep = async (_ms: number, signal?: AbortSignal) => {
+				polls += 1;
+				userInput.abort();
+				assert.equal(signal?.aborted, true, "a user message should wake the poll sleep");
+			};
+
+			const result = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, { sleep, userInputSignal: userInput.signal }));
+			assert.equal(result.isError, undefined);
+			assert.deepEqual(result.details.wait, { reason: "user_input", timedOut: false, activeRunIds: ["run-a"], activeProviderItems: [] });
+			assert.match(textOf(result), /user sent a message/);
+			assert.equal(polls, 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("can keep blocking through idle attention when stopOnAttention is false", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-tolerant-attn-"));
 		try {
