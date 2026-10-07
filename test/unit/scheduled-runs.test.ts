@@ -820,8 +820,9 @@ describe("project schedule management", () => {
 		const linkType = process.platform === "win32" ? "junction" : "dir";
 		fs.symlinkSync(config, path.join(home, ".pi"), linkType);
 		fs.symlinkSync(config, path.join(project, ".pi"), linkType);
-		const previousHome = process.env.HOME;
+		const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 		process.env.HOME = home;
+		process.env.USERPROFILE = home;
 		try {
 			const manager = () => createScheduledRunManager({
 				config: { scheduledRuns: { enabled: true } },
@@ -835,7 +836,10 @@ describe("project schedule management", () => {
 			assert.equal(fs.existsSync(path.join(config, "subagents", "schedules", "home", "schedule.json")), true);
 			assert.throws(() => manager().bindSession(context(project)), /resolves outside the real project/);
 		} finally {
-			process.env.HOME = previousHome;
+			for (const [key, value] of Object.entries(previous)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
 		}
 	});
 
