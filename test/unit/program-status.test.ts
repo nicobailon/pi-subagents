@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 
-import { registerProgramStatusReporter } from "../../src/integrations/program-status.ts";
+import { registerProgramStatusReporter, type ProgramStatusReporter } from "../../src/integrations/program-status.ts";
 import type { AsyncJobState } from "../../src/shared/types.ts";
 
 type Job = Pick<AsyncJobState, "asyncId" | "status"> & Partial<AsyncJobState>;
@@ -18,9 +18,13 @@ function decode(report: string): Record<string, string> {
 		const at = pair.indexOf("=");
 		return [pair.slice(0, at), pair.slice(at + 1)];
 	}));
-	if (fields.msg !== undefined) fields.msg = Buffer.from(fields.msg, "base64").toString("utf-8");
+	for (const key of ["title", "msg"]) {
+		if (fields[key] !== undefined) fields[key] = Buffer.from(fields[key], "base64").toString("utf-8");
+	}
 	return fields;
 }
+
+const reporters: ProgramStatusReporter[] = [];
 
 function reporter(input: { jobs?: Job[]; pending?: Array<{ id: string; runId: string }>; enabled?: boolean; isTTY?: boolean; env?: Record<string, string>; hasUI?: boolean; mode?: string } = {}) {
 	const writes: string[] = [];
@@ -35,35 +39,41 @@ function reporter(input: { jobs?: Job[]; pending?: Array<{ id: string; runId: st
 		env: input.env ?? { TERM: "xterm-ghostty" },
 	});
 	instance.sessionStarted({ hasUI: input.hasUI ?? true, mode: input.mode ?? "tui" });
+	reporters.push(instance);
 	return { instance, writes, jobs, pending, records: () => writes.map(decode) };
 }
 
 describe("OSC 7501 program status", () => {
+	// Each active reporter holds a process SIGCONT listener until it is disposed.
+	afterEach(() => {
+		for (const instance of reporters.splice(0)) instance.dispose("quit");
+	});
+
 	it("reports one record per run under subagents/, and only when a record changes", () => {
 		const runId = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
 		const { instance, writes, jobs, records } = reporter({ jobs: [job(runId, "running", { currentTool: "bash" })] });
-		assert.equal(writes[0], `\x1b]7501;state=working:id=subagents/0f1e2d3c4b5a:app=pi-subagents:msg=${Buffer.from("worker running bash").toString("base64")}\x1b\\`);
+		assert.equal(writes[0], `\x1b]7501;state=working:id=subagents/0f1e2d3c4b5a:app=pi-subagents:title=${Buffer.from("worker").toString("base64")}:msg=${Buffer.from("Running bash").toString("base64")}\x1b\\`);
 		instance.sync();
 		instance.sync();
 		assert.equal(writes.length, 1);
 
 		jobs.set("child", job("child", "running", { parentWorkflowRunId: "abcdef12-3456-7890-abcd-ef1234567890", workflowKey: "review pass/2", agents: ["reviewer"] }));
 		instance.sync();
-		assert.deepEqual(records()[1], { state: "working", id: `subagents/abcdef123456.review-pass--${createHash("sha1").update("review pass/2").digest("hex").slice(0, 6)}`, app: "pi-subagents", msg: "review pass/2 running" });
+		assert.deepEqual(records()[1], { state: "working", id: `subagents/abcdef123456.review-pass--${createHash("sha1").update("review pass/2").digest("hex").slice(0, 6)}`, app: "pi-subagents", title: "review pass/2", msg: "Running" });
 
 		const states: Array<[AsyncJobState["status"], string, string]> = [
-			["complete", "done", "worker finished"],
-			["failed", "error", "worker failed"],
-			["partial", "error", "worker finished with failures"],
-			["rejected", "error", "worker was rejected"],
-			["stopped", "idle", "worker stopped"],
-			["paused", "idle", "worker paused"],
-			["queued", "working", "worker running"],
+			["complete", "done", "Finished"],
+			["failed", "error", "Failed"],
+			["partial", "error", "Finished with failures"],
+			["rejected", "error", "Rejected"],
+			["stopped", "idle", "Stopped"],
+			["paused", "idle", "Paused"],
+			["queued", "working", "Running"],
 		];
 		for (const [status, state, msg] of states) {
 			jobs.set(runId, job(runId, status));
 			instance.sync();
-			assert.deepEqual(records().at(-1), { state, id: "subagents/0f1e2d3c4b5a", app: "pi-subagents", msg });
+			assert.deepEqual(records().at(-1), { state, id: "subagents/0f1e2d3c4b5a", app: "pi-subagents", title: "worker", msg });
 		}
 	});
 
@@ -74,7 +84,7 @@ describe("OSC 7501 program status", () => {
 		assert.equal(records().length, 1, "a new request is the parent's to handle first");
 		instance.agentStarted();
 		instance.agentSettled();
-		assert.deepEqual(records().at(-1), { state: "blocked", id: "subagents/runa", app: "pi-subagents", kind: "question", msg: "worker is waiting for a reply" });
+		assert.deepEqual(records().at(-1), { state: "blocked", id: "subagents/runa", app: "pi-subagents", kind: "question", title: "worker", msg: "Waiting for a reply" });
 		instance.agentStarted();
 		assert.equal(records().at(-1)?.state, "working", "the parent is working on it again");
 		pending.length = 0;
@@ -83,14 +93,17 @@ describe("OSC 7501 program status", () => {
 		assert.equal(records().length, 3);
 	});
 
-	it("keeps msg free of control characters and within 2048 bytes", () => {
+	it("keeps title and msg free of control characters and within 192 and 2048 bytes", () => {
 		const longTool = `bash\x1b[31m\u0085${"界".repeat(1000)}`;
-		const { records } = reporter({ jobs: [job("run-b", "running", { currentTool: longTool })] });
+		const { records } = reporter({ jobs: [job("run-b", "running", { currentTool: longTool, workflowKey: `lane\x1b[2J${"界".repeat(100)}` })] });
 		const record = records()[0]!;
 		const bytes = Buffer.byteLength(record.msg!, "utf-8");
 		assert.ok(bytes <= 2048, `msg is ${bytes} bytes`);
 		assert.ok(bytes > 2040, "truncated close to the limit, on a code point boundary");
 		assert.doesNotMatch(record.msg!, /[\u0000-\u001f\u007f-\u009f�]/);
+		const titleBytes = Buffer.byteLength(record.title!, "utf-8");
+		assert.ok(titleBytes <= 192 && titleBytes > 186, `title is ${titleBytes} bytes`);
+		assert.doesNotMatch(record.title!, /[\u0000-\u001f\u007f-\u009f�]/);
 	});
 
 	it("shows at most 64 records, active runs first", () => {
@@ -193,6 +206,7 @@ describe("OSC 7501 program status", () => {
 			{ enabled: false },
 			{ isTTY: false },
 			{ env: { TERM: "dumb" } },
+			{ env: { TERM: "xterm-ghostty", PI_PROGRAM_STATUS: "0" } },
 			{ hasUI: false },
 			{ mode: "rpc" },
 		];
@@ -202,5 +216,15 @@ describe("OSC 7501 program status", () => {
 			instance.sync();
 			assert.deepEqual(writes, [], JSON.stringify(input));
 		}
+	});
+
+	it("sends its records again when Pi resumes from a suspend, until it is disposed", { skip: process.platform === "win32" ? "no SIGCONT on Windows" : undefined }, () => {
+		const { instance, writes } = reporter({ jobs: [job("run-h", "running"), job("run-i", "complete")] });
+		const shown = [...writes];
+		process.emit("SIGCONT");
+		assert.deepEqual(writes.slice(2), shown);
+		instance.dispose("quit");
+		process.emit("SIGCONT");
+		assert.equal(writes.length, 4);
 	});
 });

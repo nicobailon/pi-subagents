@@ -13,6 +13,7 @@ type ProgramState = "working" | "blocked" | "done" | "error" | "idle";
 const ID_ROOT = "subagents";
 const MAX_RECORDS = 64;
 const MAX_MSG_BYTES = 2048;
+const MAX_TITLE_BYTES = 192;
 const RUN_SEGMENT_CHARS = 12;
 // 32-character segment limit, minus the run part and the `.` separator.
 const MAX_KEY_CHARS = 32 - RUN_SEGMENT_CHARS - 1;
@@ -94,36 +95,36 @@ function jobLabel(job: AsyncJobState): string {
 
 // Prompt text never goes into the record: it is shown outside the terminal grid.
 function message(job: AsyncJobState, state: ProgramState): string {
-	const label = jobLabel(job);
 	switch (state) {
 		case "working":
-			return job.currentTool ? `${label} running ${job.currentTool}` : `${label} running`;
+			return job.currentTool ? `Running ${job.currentTool}` : "Running";
 		case "blocked":
-			return `${label} is waiting for a reply`;
+			return "Waiting for a reply";
 		case "done":
-			return `${label} finished`;
+			return "Finished";
 		case "error":
-			return job.status === "partial" ? `${label} finished with failures` : job.status === "rejected" ? `${label} was rejected` : `${label} failed`;
+			return job.status === "partial" ? "Finished with failures" : job.status === "rejected" ? "Rejected" : "Failed";
 		case "idle":
-			return `${label} ${job.status}`;
+			return job.status === "paused" ? "Paused" : "Stopped";
 	}
 }
 
-function encodeMessage(text: string): string {
+function encodeText(text: string, maxBytes: number): string {
 	let bytes = Buffer.from(sanitizeDisplayText(text), "utf-8");
-	if (bytes.length > MAX_MSG_BYTES) {
-		let end = MAX_MSG_BYTES;
+	if (bytes.length > maxBytes) {
+		let end = maxBytes;
 		while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
 		bytes = bytes.subarray(0, end);
 	}
 	return bytes.toString("base64");
 }
 
-export function programStatusReport(fields: { state: ProgramState | "clear"; id: string; kind?: "question"; msg?: string }): string {
+export function programStatusReport(fields: { state: ProgramState | "clear"; id: string; kind?: "question"; title?: string; msg?: string }): string {
 	const pairs = [`state=${fields.state}`, `id=${fields.id}`];
 	if (fields.state !== "clear") pairs.push("app=pi-subagents");
 	if (fields.kind) pairs.push(`kind=${fields.kind}`);
-	if (fields.msg !== undefined) pairs.push(`msg=${encodeMessage(fields.msg)}`);
+	if (fields.title !== undefined) pairs.push(`title=${encodeText(fields.title, MAX_TITLE_BYTES)}`);
+	if (fields.msg !== undefined) pairs.push(`msg=${encodeText(fields.msg, MAX_MSG_BYTES)}`);
 	return `\x1b]7501;${pairs.join(":")}\x1b\\`;
 }
 
@@ -136,6 +137,13 @@ export function registerProgramStatusReporter(options: ProgramStatusReporterOpti
 	let parentIdle = true;
 	// A request counts as waiting on the user only after the parent settled without answering it.
 	let unansweredAtSettle = new Set<string>();
+	// Pi clears every OSC 7501 record when it suspends on Ctrl+Z and re-reports only its own root
+	// record on resume, so the records this extension shows are sent again.
+	const resend = (): void => {
+		if (!active) return;
+		for (const report of sent.values()) write(report);
+	};
+	let listeningForResume = false;
 
 	// The shown records are recomputed from the current jobs on every sync: active runs first, then
 	// finished ones, each most recently updated first, up to the cap. Only the difference is written.
@@ -152,7 +160,7 @@ export function registerProgramStatusReporter(options: ProgramStatusReporterOpti
 			const id = recordId(job);
 			if (!id) continue;
 			const state = programState(job, blockedRuns.has(job.asyncId));
-			const report = programStatusReport({ state, id, ...(state === "blocked" ? { kind: "question" as const } : {}), msg: message(job, state) });
+			const report = programStatusReport({ state, id, ...(state === "blocked" ? { kind: "question" as const } : {}), title: jobLabel(job), msg: message(job, state) });
 			candidates.push({ id, report, active: state === "working" || state === "blocked", updatedAt: job.updatedAt ?? job.startedAt ?? 0 });
 		}
 		candidates.sort((left, right) => Number(right.active) - Number(left.active) || right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
@@ -175,7 +183,11 @@ export function registerProgramStatusReporter(options: ProgramStatusReporterOpti
 
 	return {
 		sessionStarted({ hasUI, mode }) {
-			active = options.enabled && hasUI && mode === "tui" && isTTY && env.TERM !== "dumb";
+			active = options.enabled && hasUI && mode === "tui" && isTTY && env.TERM !== "dumb" && env.PI_PROGRAM_STATUS !== "0";
+			if (active && !listeningForResume && process.platform !== "win32") {
+				process.on("SIGCONT", resend);
+				listeningForResume = true;
+			}
 			sync();
 		},
 		sync,
@@ -194,6 +206,10 @@ export function registerProgramStatusReporter(options: ProgramStatusReporterOpti
 			}
 			sent.clear();
 			active = false;
+			if (listeningForResume) {
+				process.off("SIGCONT", resend);
+				listeningForResume = false;
+			}
 		},
 	};
 }
