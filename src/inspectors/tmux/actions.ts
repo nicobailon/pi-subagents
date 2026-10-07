@@ -157,7 +157,13 @@ export async function openTmuxInspector(
 		...(launch.mission ? { missionId: launch.mission.id, missionPath: launch.mission.path } : {}),
 		command: launch.displayCommand,
 	};
-	writeAtomicJson(bindingPath(context.target.asyncDir, context.target.index), binding);
+	try {
+		writeAtomicJson(bindingPath(context.target.asyncDir, context.target.index), binding);
+	} catch (error) {
+		// Without a binding, status and close cannot find the pane, so remove it before reporting the failure.
+		await client.run(["kill-pane", "-t", id], { timeoutMs: 5_000 });
+		throw error;
+	}
 	return result(`Opened read-only tmux inspector pane ${id} for async run ${context.target.runId}. Closing the pane does not stop the run.\nControls inside the pane: steer <message>, stop, status. Ctrl-C closes the pane.`);
 }
 

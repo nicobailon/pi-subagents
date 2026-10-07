@@ -227,6 +227,24 @@ describe("tmux inspector open", () => {
 		assert.equal(readTmuxInspectorBinding(root), undefined);
 	});
 
+	it("kills the created pane when saving the binding fails", async () => {
+		const root = tempRoot();
+		// A file where the bindings directory belongs makes the binding write fail after the split.
+		fs.writeFileSync(path.join(root, "inspectors"), "");
+		const commands: string[] = [];
+		const client = fakeClient({
+			"-V": ["tmux 3.7c"],
+			"display-message": ["%5", "4242"],
+			"split-window": ["%6"],
+			"select-pane": [""],
+			"set-option": [""],
+			"kill-pane": [""],
+		}, commands);
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		await assert.rejects(Promise.resolve().then(() => plugin.open(ctx(root, { TMUX: "1" }), launch(), {})));
+		assert.ok(commands.some((command) => command.startsWith("kill-pane -t %6")));
+	});
+
 	it("stamps the child index into the marker and the binding", async () => {
 		const root = tempRoot();
 		const commands: string[] = [];
