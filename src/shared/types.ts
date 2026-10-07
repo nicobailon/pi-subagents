@@ -2627,6 +2627,7 @@ export interface ScheduledRunsConfig {
 }
 
 export type FleetViewPlacement = "aboveEditor" | "belowEditor";
+export type AsyncWidgetLayout = "adaptive" | "rows";
 
 export const FLEET_KEYBINDING_ACTIONS = [
 	"close",
@@ -2690,6 +2691,8 @@ export interface ExtensionConfig {
 	asyncWidget?: boolean;
 	/** Start the under-editor async runs widget folded. Defaults to false. */
 	asyncWidgetCollapsed?: boolean;
+	/** Unfolded async runs widget layout: "adaptive" fits run details to the terminal height, "rows" shows one line per run. Defaults to "adaptive". */
+	asyncWidgetLayout?: AsyncWidgetLayout;
 	/** Report subagent run state to the terminal with OSC 7501. Defaults to true. */
 	programStatus?: boolean;
 	/** Exact provider/model candidates mapped to operator-declared equivalent response IDs. Empty arrays add no accepted IDs. */

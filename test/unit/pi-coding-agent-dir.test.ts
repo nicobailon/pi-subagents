@@ -291,6 +291,13 @@ Package skill content.
 		assert.equal(loadConfig().asyncWidgetCollapsed, true);
 		writeFile(configPath, JSON.stringify({ asyncWidgetCollapsed: "true" }));
 		assert.deepEqual(loadConfig(), {});
+		for (const asyncWidgetLayout of ["adaptive", "rows"]) {
+			writeFile(configPath, JSON.stringify({ asyncWidgetLayout }));
+			assert.equal(loadConfig().asyncWidgetLayout, asyncWidgetLayout);
+		}
+		writeFile(configPath, JSON.stringify({ asyncWidgetLayout: "compact" }));
+		assert.deepEqual(loadConfig(), {});
+		assert.throws(() => updateConfig((config) => config), /config\.asyncWidgetLayout must be "adaptive" or "rows"/);
 		writeFile(configPath, JSON.stringify({ programStatus: false }));
 		assert.equal(loadConfig().programStatus, false);
 		writeFile(configPath, JSON.stringify({ programStatus: "off" }));

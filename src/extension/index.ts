@@ -332,6 +332,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const fleetViewPlacement = resolveFleetViewPlacement(config.fleetViewPlacement);
 	const asyncWidgetEnabled = config.asyncWidget !== false;
 	const asyncWidgetCollapsed = config.asyncWidgetCollapsed === true;
+	const asyncWidgetLayout = config.asyncWidgetLayout ?? "adaptive";
 	const summaryInlineToolDisplay = config.inlineToolDisplay === "summary";
 	const tempArtifactsDir = getArtifactsDir(null);
 	const artifactCleanupDays = config.artifactConfig?.cleanupDays ?? DEFAULT_ARTIFACT_CONFIG.cleanupDays;
@@ -507,6 +508,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose: disposeAsyncJobTracker } = createAsyncJobTracker(pi, state, DIRS.async, {
 		widgetEnabled: asyncWidgetEnabled,
 		widgetCollapsed: asyncWidgetCollapsed,
+		widgetLayout: asyncWidgetLayout,
 		onJobTerminal: (job) => {
 			holdOwedResult(job);
 			refreshResultDelivery();

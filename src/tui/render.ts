@@ -13,6 +13,7 @@ import {
 	type AsyncJobState,
 	type AsyncJobStep,
 	type AsyncParallelGroupStatus,
+	type AsyncWidgetLayout,
 	type Details,
 	type HostStepState,
 	type HostStepVerdict,
@@ -2761,7 +2762,7 @@ function fitWidgetLineBudget(lines: string[], theme: Theme, width: number, expan
 	return [...lines.slice(0, visibleLines), truncLine(theme.fg("dim", hint), width)];
 }
 
-function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[], theme: Theme, width: number, expanded: boolean, frame?: number, projectionFor?: WorkflowWidgetProjectionLookup): string[] {
+function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[], theme: Theme, width: number, expanded: boolean, frame?: number, projectionFor?: WorkflowWidgetProjectionLookup, layout: AsyncWidgetLayout = "adaptive"): string[] {
 	if (expanded) {
 		resetWidgetLayoutSession();
 		return fitWidgetLineBudget(buildLines(), theme, width, true);
@@ -2794,14 +2795,16 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 		return rendered.lines.slice(0, session.lockedRows);
 	}
 
-	const lines = buildLines();
-	if (lines.length <= availableRows) {
-		widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
-		return fitWidgetLineBudget(lines, theme, width, false);
-	}
-	if (availableRows > 2 && jobs.length === 1 && projectionFor?.(jobs[0]!).stageProgress) {
-		widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
-		return fitWidgetLineBudget(lines, theme, width, false);
+	if (layout === "adaptive") {
+		const lines = buildLines();
+		if (lines.length <= availableRows) {
+			widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
+			return fitWidgetLineBudget(lines, theme, width, false);
+		}
+		if (availableRows > 2 && jobs.length === 1 && projectionFor?.(jobs[0]!).stageProgress) {
+			widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
+			return fitWidgetLineBudget(lines, theme, width, false);
+		}
 	}
 
 	if (availableRows <= 2) {
@@ -2905,7 +2908,7 @@ function materializedWidgetChildLines(job: AsyncJobState, theme: Theme, width: n
 	return lines;
 }
 
-function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"], initiallyCollapsed = false): (tui: { requestRender(): void }, theme: Theme) => Component {
+function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"], initiallyCollapsed = false, layout: AsyncWidgetLayout = "adaptive"): (tui: { requestRender(): void }, theme: Theme) => Component {
 	return (tui, theme) => {
 		const container = new Container();
 		let cachedRenderWidth: number | undefined;
@@ -2983,7 +2986,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"],
 			cachedExpanded = expanded;
 			cachedLines = (collapsed
 				? buildSingleLineWidgetLines(jobs, theme, width, frame)
-				: fitAdaptiveWidgetLines(roots, buildLines, theme, width, expanded, frame, projectionFor)
+				: fitAdaptiveWidgetLines(roots, buildLines, theme, width, expanded, frame, projectionFor, layout)
 			).map((line) => paddedWidgetLine(line, renderWidth));
 			return cachedLines;
 		};
@@ -3085,7 +3088,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 /**
  * Render the async jobs widget
  */
-export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[], initiallyCollapsed = false): void {
+export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[], initiallyCollapsed = false, layout: AsyncWidgetLayout = "adaptive"): void {
 	if (jobs.length === 0) {
 		resetWidgetLayoutSession();
 		asyncWidgetUpdates.delete(ctx.ui);
@@ -3101,7 +3104,7 @@ export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[], initi
 	// component instead so progress cannot move it past other extensions' widgets.
 	const update = asyncWidgetUpdates.get(ctx.ui);
 	if (update) update(jobs);
-	else ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui, initiallyCollapsed));
+	else ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, ctx.ui, initiallyCollapsed, layout));
 }
 
 function renderSingleCompact(

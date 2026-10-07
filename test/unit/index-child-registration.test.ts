@@ -644,12 +644,12 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("mounts an initially collapsed async widget when configured", () => {
+	it("mounts the async widget with its configured fold and layout", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-async-widget-collapsed-config-"));
 		try {
 			const configDir = path.join(agentDir, "extensions", "subagent");
 			fs.mkdirSync(configDir, { recursive: true });
-			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ asyncWidgetCollapsed: true }), "utf-8");
+			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ asyncWidgetCollapsed: true, asyncWidgetLayout: "rows" }), "utf-8");
 			const script = String.raw`
 				import registerSubagentExtension from "./index.ts";
 				const eventHandlers = new Map();
@@ -679,6 +679,9 @@ describe("subagent extension child mode", () => {
 				const component = widget({ requestRender() {} }, ctx.ui.theme);
 				const lines = component.render(120);
 				if (lines.length !== 1) throw new Error("configured collapsed widget must render one line: " + JSON.stringify(lines));
+				component.handleMouse({ type: "click", button: "left", y: 0, shift: false, alt: false, ctrl: false });
+				const unfolded = component.render(120);
+				if (unfolded.length !== 2 || !unfolded[0].includes("Async agents")) throw new Error("configured rows layout must render a header and one line for the run: " + JSON.stringify(unfolded));
 				for (const handler of handlers.get("session_shutdown")) await handler();
 			`;
 			const env = parentToolEnv(agentDir);

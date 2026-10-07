@@ -187,6 +187,9 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.asyncWidgetCollapsed !== undefined && typeof config.asyncWidgetCollapsed !== "boolean") {
 		throw new Error("config.asyncWidgetCollapsed must be a boolean");
 	}
+	if (config.asyncWidgetLayout !== undefined && config.asyncWidgetLayout !== "adaptive" && config.asyncWidgetLayout !== "rows") {
+		throw new Error('config.asyncWidgetLayout must be "adaptive" or "rows"');
+	}
 	if (config.programStatus !== undefined && typeof config.programStatus !== "boolean") {
 		throw new Error("config.programStatus must be a boolean");
 	}

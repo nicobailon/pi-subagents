@@ -323,6 +323,16 @@ Controls the under-editor widget for active background runs. It defaults to `tru
 
 Starts each newly mounted under-editor async widget in its one-line folded state. It defaults to `false`. A header click still toggles the widget, and the folded state still resets when the widget is removed or Pi reloads.
 
+## `asyncWidgetLayout`
+
+```json
+{ "asyncWidgetLayout": "rows" }
+```
+
+Sets the layout of the unfolded under-editor async widget. Defaults to `"adaptive"`; valid values are `"adaptive"` and `"rows"`.
+
+`"adaptive"` gives each run its own detail rows while the terminal has room, and switches to one line per run on a short terminal. `"rows"` shows a header line and one line per run even when the terminal has room for detail rows. It uses no more rows than the adaptive layout may: runs that do not fit are counted on a `+N more` line, and a workflow's lanes fill any rows left over. In both layouts, a header click and `asyncWidgetCollapsed` fold the widget to its count line, and Pi's expand key shows the detailed layout.
+
 ## `programStatus`
 
 ```json

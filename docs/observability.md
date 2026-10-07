@@ -81,6 +81,7 @@ For compact chat results with FleetView as the only live editor surface, merge t
 - `fleetView: true` retains live progress. Open `/subagents-fleet` for details instead of repeatedly requesting status just to watch progress. Pi's expand key does not expand summary results; keep `"rich"` if you want expandable inline output.
 - `asyncWidget: false` hides only the additional under-editor async widget, leaving FleetView available. This configuration reduces visible surfaces; it does not guarantee ordering relative to other extensions.
 - `asyncWidgetCollapsed: true` starts each newly mounted async widget as a one-line live status summary; click its header to expand it.
+- `asyncWidgetLayout: "rows"` shows each run in the async widget as one line under a header instead of a block of detail rows; Pi's expand key still shows the details.
 
 Thanks to [DraconDev](https://github.com/DraconDev) for reporting the display noise and suggesting summary mode in [#1931](https://github.com/nicobailon/pi-subagents/issues/1931).
 
