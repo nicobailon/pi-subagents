@@ -34,6 +34,11 @@ export interface ProgramStatusReporter {
 	sync(): void;
 	agentStarted(): void;
 	agentSettled(): void;
+	/**
+	 * Stops reporting. Unless Pi is quitting, clears every record sent, since the runtime that replaces
+	 * this one cannot clear them. On quit, finished records stay for the user, as the spec intends.
+	 */
+	dispose(shutdownReason?: string): void;
 }
 
 // `.` is left out so it can only appear as the run/key separator.
@@ -47,10 +52,10 @@ function runSegment(runId: string): string {
 
 // A clear removes the record's descendants too, so workflow children are siblings of their run,
 // never nested under another record of ours: `subagents/<run>.<key>`, one segment of at most 32 characters.
+// A key that needs any change gets a hash of the original, so keys differing only in replaced characters stay distinct.
 function keySegment(key: string): string {
-	const sanitized = segment(key);
-	if (sanitized.length <= MAX_KEY_CHARS) return sanitized;
-	return `${sanitized.slice(0, 12)}-${createHash("sha1").update(key).digest("hex").slice(0, 6)}`;
+	if (key.length <= MAX_KEY_CHARS && /^[A-Za-z0-9_+-]+$/.test(key)) return key;
+	return `${segment(key).slice(0, 12)}-${createHash("sha1").update(key).digest("hex").slice(0, 6)}`;
 }
 
 function recordId(job: AsyncJobState): string | undefined {
@@ -182,6 +187,13 @@ export function registerProgramStatusReporter(options: ProgramStatusReporterOpti
 			parentIdle = true;
 			unansweredAtSettle = new Set([...options.getPendingRequests()].map((request) => request.id));
 			sync();
+		},
+		dispose(shutdownReason) {
+			if (active && shutdownReason !== "quit") {
+				for (const id of sent.keys()) write(programStatusReport({ state: "clear", id }));
+			}
+			sent.clear();
+			active = false;
 		},
 	};
 }

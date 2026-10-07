@@ -123,7 +123,7 @@ type SubagentExecutor = ReturnType<SubagentExecutorModule["createSubagentExecuto
 type SubagentExecutorDeps = Parameters<SubagentExecutorModule["createSubagentExecutor"]>[0];
 
 interface SubagentRuntimeEntry {
-	cleanup(): void;
+	cleanup(shutdownReason?: string): void;
 	sessionManager: object | null;
 	visibleControlNotices: Set<string>;
 }
@@ -1025,9 +1025,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const runtimeEntry: SubagentRuntimeEntry = {
 		sessionManager: null,
 		visibleControlNotices,
-		cleanup() {
+		cleanup(shutdownReason) {
 			if (runtimeCleaned) return;
 			runtimeCleaned = true;
+			programStatus.dispose(shutdownReason);
 			releaseHostSessionLiveness();
 			releaseHostSessionLiveness = () => {};
 			// Workflow continuations retain their launch context; abort them before
@@ -1188,7 +1189,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (event) => {
 		completionNotifier.sessionShutdown(event?.reason);
 		parentWake.sessionShutdown(event?.reason);
-		runtimeEntry.cleanup();
+		runtimeEntry.cleanup(event?.reason);
 		try {
 			await disposeChildSessions();
 		} catch (error) {

@@ -49,7 +49,7 @@ describe("OSC 7501 program status", () => {
 
 		jobs.set("child", job("child", "running", { parentWorkflowRunId: "abcdef12-3456-7890-abcd-ef1234567890", workflowKey: "review pass/2", agents: ["reviewer"] }));
 		instance.sync();
-		assert.deepEqual(records()[1], { state: "working", id: "subagents/abcdef123456.review-pass-2", app: "pi-subagents", msg: "review pass/2 running" });
+		assert.deepEqual(records()[1], { state: "working", id: `subagents/abcdef123456.review-pass--${createHash("sha1").update("review pass/2").digest("hex").slice(0, 6)}`, app: "pi-subagents", msg: "review pass/2 running" });
 
 		const states: Array<[AsyncJobState["status"], string, string]> = [
 			["complete", "done", "worker finished"],
@@ -143,7 +143,7 @@ describe("OSC 7501 program status", () => {
 		const ids = records().map((record) => record.id!);
 		const sha = (key: string) => createHash("sha1").update(key).digest("hex").slice(0, 6);
 		assert.deepEqual(ids, [
-			"subagents/abcdef123456.lint-fix-s1-x",
+			`subagents/abcdef123456.lint-fix-s1--${sha("lint.fix/s1 x")}`,
 			`subagents/abcdef123456.review-aaaaa-${sha(longA)}`,
 			`subagents/abcdef123456.review-aaaaa-${sha(longB)}`,
 		]);
@@ -153,6 +153,39 @@ describe("OSC 7501 program status", () => {
 			assert.deepEqual(rest, []);
 			assert.match(segment!, /^[A-Za-z0-9_+-]{12}\.[A-Za-z0-9_+-]{1,19}$/);
 		}
+	});
+
+	it("keeps keys apart that differ only in characters the id cannot carry", () => {
+		const parentWorkflowRunId = "abcdef12-3456-7890-abcd-ef1234567890";
+		const { records } = reporter({ jobs: [
+			job("child-dot", "running", { parentWorkflowRunId, workflowKey: "a.b", updatedAt: 2 }),
+			job("child-dash", "running", { parentWorkflowRunId, workflowKey: "a-b", updatedAt: 1 }),
+		] });
+		assert.deepEqual(records().map((record) => record.id), [
+			`subagents/abcdef123456.a-b-${createHash("sha1").update("a.b").digest("hex").slice(0, 6)}`,
+			"subagents/abcdef123456.a-b",
+		]);
+	});
+
+	it("clears every record it sent when its runtime is replaced, but leaves them when Pi quits", () => {
+		const jobs = [job("run-f", "complete"), job("run-g", "running")];
+		const reloaded = reporter({ jobs });
+		reloaded.instance.dispose("reload");
+		reloaded.instance.sync();
+		assert.deepEqual(reloaded.records().slice(2).map(({ state, id }) => `${state} ${id}`).sort(), ["clear subagents/runf", "clear subagents/rung"]);
+
+		const replaced = reporter({ jobs });
+		replaced.instance.dispose();
+		assert.equal(replaced.records().slice(2).length, 2, "a replacement without a shutdown event clears too");
+
+		const quit = reporter({ jobs });
+		quit.instance.dispose("quit");
+		quit.instance.sync();
+		assert.equal(quit.writes.length, 2, "done and error records stay after Pi exits");
+
+		const inactive = reporter({ jobs, isTTY: false });
+		inactive.instance.dispose("reload");
+		assert.deepEqual(inactive.writes, []);
 	});
 
 	it("writes nothing when turned off or not on an interactive terminal", () => {
