@@ -7,6 +7,7 @@ import { listMissions, missionRecordPath, resolveMissionStoreLocation } from "..
 import type { MissionStoreConfig } from "../missions/types.ts";
 import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../policy/authority.ts";
 import { DIRS, type Details, type SubagentState } from "../shared/types.ts";
+import { tryLease } from "../shared/file-lease.ts";
 import { readStatus } from "../shared/utils.ts";
 import { resolveSubagentRunId } from "../runs/background/run-id-resolver.ts";
 import { resolveNodeExecutable } from "../shared/node-executable.ts";
@@ -16,6 +17,9 @@ import type { InspectorAction, InspectorContext, InspectorLaunch, InspectorParam
 
 export { INSPECTOR_ACTIONS } from "./types.ts";
 export type { InspectorAction, InspectorParams, InspectorPlugin } from "./types.ts";
+
+// Covers a provider's slowest normal open (a 15 s split or launch plus its follow-up commands).
+const INSPECTOR_LEASE_WAIT_MS = 30_000;
 
 function result(text: string, isError = false): AgentToolResult<Details> {
 	const response: AgentToolResult<Details> = {
@@ -116,6 +120,8 @@ export interface InspectorDispatcherDeps {
 	runnerPath?: string;
 	env?: NodeJS.ProcessEnv;
 	plugins?: readonly InspectorPlugin[];
+	/** How long open and close wait for another open or close of the same target. */
+	leaseWaitMs?: number;
 }
 export async function handleInspectorAction(action: InspectorAction, params: InspectorParams, deps: InspectorDispatcherDeps): Promise<AgentToolResult<Details>> {
 	const target = resolveTarget(params, deps);
@@ -129,20 +135,40 @@ export async function handleInspectorAction(action: InspectorAction, params: Ins
 	if (deps.now) context.now = deps.now;
 	if (action === "inspector.command") return result(launchFor(target, deps).displayCommand);
 	const plugins = deps.plugins ?? [];
-	if (action === "inspector.open") {
-		for (const plugin of plugins) {
-			if (await plugin.available(context)) return plugin.open(context, launchFor(target, deps), params);
-		}
-		return result("No inspector plugin is available. Start a supported inspector host, or use inspector.command for a standalone command.", true);
-	}
-	const owner = plugins.find((plugin) => plugin.owns(context));
-	if (!owner) return result(`No inspector plugin owns this binding for async run ${target.runId}.`);
 	if (action === "inspector.status") {
+		const owner = plugins.find((plugin) => plugin.owns(context));
+		if (!owner) return result(`No inspector plugin owns this binding for async run ${target.runId}.`);
 		return owner.status
 			? owner.status(context)
 			: result(`Inspector plugin '${owner.name}' does not support status for async run ${target.runId}.`, true);
 	}
-	return owner.close
-		? owner.close(context)
-		: result(`Inspector plugin '${owner.name}' does not support close for async run ${target.runId}.`, true);
+	// Open and close read, create and delete the target's binding. Two callers at once, including another Pi
+	// process sharing the run directory, would each open a pane and one binding would overwrite the other.
+	const label = target.index === undefined ? "" : ` child ${target.index}`;
+	const lockPath = path.join(fs.realpathSync.native(target.asyncDir), `inspector-${target.index ?? "root"}.lock`);
+	const deadline = Date.now() + (deps.leaseWaitMs ?? INSPECTOR_LEASE_WAIT_MS);
+	let release = tryLease(lockPath);
+	while (!release) {
+		if (deps.signal?.aborted) return result(`Inspector ${action} for async run ${target.runId}${label} was cancelled while waiting for another inspector open or close to finish.`, true);
+		if (Date.now() >= deadline) return result(`Another inspector open or close for async run ${target.runId}${label} is still in progress. Try again when it finishes.`, true);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		release = tryLease(lockPath);
+	}
+	try {
+		// The wait may end with the lease in the same tick the caller cancelled; never act for a cancelled caller.
+		if (deps.signal?.aborted) return result(`Inspector ${action} for async run ${target.runId}${label} was cancelled while waiting for another inspector open or close to finish.`, true);
+		if (action === "inspector.open") {
+			for (const plugin of plugins) {
+				if (await plugin.available(context)) return await plugin.open(context, launchFor(target, deps), params);
+			}
+			return result("No inspector plugin is available. Start a supported inspector host, or use inspector.command for a standalone command.", true);
+		}
+		const owner = plugins.find((plugin) => plugin.owns(context));
+		if (!owner) return result(`No inspector plugin owns this binding for async run ${target.runId}.`);
+		return owner.close
+			? await owner.close(context)
+			: result(`Inspector plugin '${owner.name}' does not support close for async run ${target.runId}.`, true);
+	} finally {
+		release();
+	}
 }
