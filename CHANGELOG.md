@@ -6,6 +6,7 @@
 
 - Background children could only run in the parent's sandbox unless they gave up native steering and results by using an external CLI runner. An agent can now set `launcher:` to a command defined in the user config's `runnerLaunchers`, such as a sandbox, which wraps its background runner; steering, supervisor questions, stop, resume and results keep working. Thanks to [@aaronkyriesenbach](https://github.com/aaronkyriesenbach) for the idea, design and nono testing. ([#2577](https://github.com/nicobailon/pi-subagents/issues/2577))
 - A terminal could not tell which background subagent runs were working, waiting on the user, finished, or failed without reading the screen. Each run's state is now reported with OSC 7501, the Program Status Protocol, which terminals such as Ghostty can show; set `programStatus: false` to turn it off. ([#2724](https://github.com/nicobailon/pi-subagents/issues/2724))
+- Fleet's `Enter`/`H` inspector needed Herdr or Ghostty, so tmux users had to write their own provider. A bundled `tmux` inspector now opens the read-only inspector in a split pane of the current tmux window, with status and close support. Thanks to [@tobymao](https://github.com/tobymao) for the plugin. ([#2719](https://github.com/nicobailon/pi-subagents/pull/2719))
 
 ### Fixed
 
