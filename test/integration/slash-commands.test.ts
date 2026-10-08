@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
 import { registerAgent } from "../../src/api/agents.ts";
@@ -10,6 +11,7 @@ import { clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry
 import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
+import { renderSubagentMessage } from "../../src/tui/subagent-messages.ts";
 import { ASYNC_DIR, DIRS } from "../../src/shared/types.ts";
 import type { WatchdogReviewFunction } from "../../src/watchdog/runtime.ts";
 
@@ -211,7 +213,6 @@ function writeProjectChain(root: string, fileName: string, content: string): voi
 
 function createWatchdogHarness(review?: WatchdogReviewFunction) {
 	const commands = new Map<string, RegisteredSlashCommand>();
-	const renderers = new Map<string, (message: { content: string; details?: unknown }, options: { expanded: boolean }, theme: { fg(name: string, value: string): string; bold(value: string): string }) => { render(width: number): string[] } | undefined>();
 	const sent: unknown[] = [];
 	const entries: Array<{ customType: string; data: unknown }> = [];
 	const pi = {
@@ -219,16 +220,14 @@ function createWatchdogHarness(review?: WatchdogReviewFunction) {
 		on() {},
 		registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
 		registerShortcut() {},
-		registerMessageRenderer(type: string, renderer: (message: { content: string; details?: unknown }, options: { expanded: boolean }, theme: { fg(name: string, value: string): string; bold(value: string): string }) => { render(width: number): string[] } | undefined) {
-			renderers.set(type, renderer);
-		},
+		registerMessageRenderer() {},
 		registerEntryRenderer() {},
 		appendEntry(customType: string, data: unknown) { entries.push({ customType, data }); },
 		getThinkingLevel() { return "medium" as const; },
 		sendMessage(message: unknown) { sent.push(message); },
 	};
 	const runtime = registerMainWatchdog!(pi as never, review ? { review } : undefined);
-	return { commands, renderers, runtime, sent, entries };
+	return { commands, runtime, sent, entries };
 }
 
 async function captureSlashCommandParams(
@@ -469,7 +468,7 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 
 	it("routes explicit low and medium test findings to entries and high findings to messages", async () => {
 		await withIsolatedHome(async () => {
-			const { commands, renderers, sent, entries } = createWatchdogHarness();
+			const { commands, sent, entries } = createWatchdogHarness();
 			await commands.get("subagents-watchdog")!.handler("test concern low check the concern", createCommandContext());
 			await commands.get("subagents-watchdog")!.handler("test concern medium check the medium concern", createCommandContext());
 			await commands.get("subagents-watchdog")!.handler("test blocker high check the blocker", createCommandContext());
@@ -482,8 +481,12 @@ describe("subagents watchdog slash command", { skip: !available ? "watchdog comm
 			assert.equal(blocker.details?.importance, "high");
 			assert.match(blocker.content ?? "", /<blocker_guidance>/);
 
-			const renderer = renderers.get("subagent_watchdog_warning")!;
-			const rendered = renderer(blocker as never, { expanded: true }, { fg: (_name, value) => value, bold: (value) => value })!.render(100).join("\n");
+			// Expanded blocks render markdown with Pi's theme, which Pi initializes at startup.
+			initTheme("dark");
+			const theme = { fg: (_name: string, value: string) => value, bg: (_name: string, value: string) => value, bold: (value: string) => value };
+			// SAFETY: the renderer reads only fg, bg, and bold from Pi's theme.
+			const rendered = renderSubagentMessage({ customType: blocker.customType ?? "", content: blocker.content ?? "", details: blocker.details }, { expanded: true }, theme as never)!.render(100).join("\n");
+			assert.match(rendered, /\[subagent\] watchdog blocker/);
 			assert.match(rendered, /Subagent watchdog Blocker \(displayed\): check the blocker/);
 			assert.match(rendered, /Manual \/subagents-watchdog test blocker message/);
 		});
