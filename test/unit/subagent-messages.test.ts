@@ -46,9 +46,9 @@ function stripAnsi(text: string): string {
 	return text.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-/** The collapsed line's label color and its headline, with theme tokens marked. */
+/** The collapsed line's label color and its headline before the hint, with theme tokens marked. */
 function tokenLine(line: string | undefined): { label: string; headline: string } | undefined {
-	const match = /^\[customMessageBg\] <(\w+)><b>\[subagent\]<\/b><\/\1> (.*)\[\/customMessageBg\]$/.exec(line ?? "");
+	const match = /^\[customMessageBg\] <(\w+)><b>\[subagent\]<\/b><\/\1> (.*) <dim>\((?:click|ctrl\+o) to expand\)<\/dim>\[\/customMessageBg\]$/.exec(line ?? "");
 	return match ? { label: match[1]!, headline: match[2]! } : undefined;
 }
 
@@ -73,12 +73,12 @@ const watchdogWarning = { severity: "blocker", importance: "high", category: "ot
 describe("subagent messages in the main chat", () => {
 	it("shows a supervisor request as one [subagent] line", () => {
 		const headline = (details: unknown) => visibleLines(renderMessage("subagent_supervisor_request", details));
-		assert.deepEqual(headline({ ...request, reason: "need_decision" }), [" [subagent] worker needs a decision"]);
-		assert.deepEqual(headline({ ...request, reason: "interview_request" }), [" [subagent] worker asks for structured answers"]);
-		assert.deepEqual(headline({ ...request, reason: "progress_update" }), [" [subagent] worker sent a progress update"]);
-		assert.deepEqual(headline(request), [" [subagent] worker needs a decision"]);
-		assert.deepEqual(headline({ ...request, agent: 42 }), [" [subagent] supervisor request"]);
-		assert.deepEqual(headline(undefined), [" [subagent] supervisor request"]);
+		assert.deepEqual(headline({ ...request, reason: "need_decision" }), [" [subagent] worker needs a decision (click to expand)"]);
+		assert.deepEqual(headline({ ...request, reason: "interview_request" }), [" [subagent] worker asks for structured answers (click to expand)"]);
+		assert.deepEqual(headline({ ...request, reason: "progress_update" }), [" [subagent] worker sent a progress update (click to expand)"]);
+		assert.deepEqual(headline(request), [" [subagent] worker needs a decision (click to expand)"]);
+		assert.deepEqual(headline({ ...request, agent: 42 }), [" [subagent] supervisor request (click to expand)"]);
+		assert.deepEqual(headline(undefined), [" [subagent] supervisor request (click to expand)"]);
 	});
 
 	it("shows attention and steering notices as one [subagent] line with toned status words", () => {
@@ -92,7 +92,7 @@ describe("subagent messages in the main chat", () => {
 			["subagent_steering_notice", { runId: "run-1", state: "lost" }, "steering notice", "<customMessageText>steering notice</customMessageText>"],
 		];
 		for (const [customType, details, text, toned] of rows) {
-			assert.deepEqual(visibleLines(renderMessage(customType, details)), [` [subagent] ${text}`], customType);
+			assert.deepEqual(visibleLines(renderMessage(customType, details)), [` [subagent] ${text} (click to expand)`], customType);
 			assert.equal(tonedHeadline(customType, details), toned, customType);
 		}
 	});
@@ -109,7 +109,7 @@ describe("subagent messages in the main chat", () => {
 			[undefined, "Something else", "background run finished", "<customMessageText>background run finished</customMessageText>"],
 		];
 		for (const [details, content, text, toned] of rows) {
-			assert.deepEqual(visibleLines(renderMessage("subagent-notify", details, { content })), [` [subagent] ${text}`], text);
+			assert.deepEqual(visibleLines(renderMessage("subagent-notify", details, { content })), [` [subagent] ${text} (click to expand)`], text);
 			assert.equal(tonedHeadline("subagent-notify", details, content), toned, text);
 		}
 	});
@@ -133,7 +133,7 @@ describe("subagent messages in the main chat", () => {
 			["subagent-workflow-result-write-failed", undefined, "", "workflow result save failed", "<customMessageText>workflow result </customMessageText><error>save failed</error>"],
 		];
 		for (const [customType, details, content, text, toned] of rows) {
-			assert.deepEqual(visibleLines(renderMessage(customType, details, { content })), [` [subagent] ${text}`], text);
+			assert.deepEqual(visibleLines(renderMessage(customType, details, { content })), [` [subagent] ${text} (click to expand)`], text);
 			assert.equal(tonedHeadline(customType, details, content), toned, text);
 		}
 	});
@@ -146,11 +146,11 @@ describe("subagent messages in the main chat", () => {
 			["subagent_watchdog_clarification", undefined, "Which migration is current?", "watchdog needs clarification", "<customMessageText>watchdog </customMessageText><warning>needs clarification</warning>"],
 		];
 		for (const [customType, details, content, text, toned] of rows) {
-			assert.deepEqual(visibleLines(renderMessage(customType, details, { content })), [` [subagent] ${text}`], text);
+			assert.deepEqual(visibleLines(renderMessage(customType, details, { content })), [` [subagent] ${text} (click to expand)`], text);
 			assert.equal(tonedHeadline(customType, details, content), toned, text);
 		}
-		assert.deepEqual(visibleLines(renderEntry("subagent_watchdog_warning", watchdogWarning)), [" [subagent] watchdog blocker"]);
-		assert.deepEqual(visibleLines(renderEntry("subagent_watchdog_warning", { summary: "No evidence" })), [" [subagent] watchdog warning"]);
+		assert.deepEqual(visibleLines(renderEntry("subagent_watchdog_warning", watchdogWarning)), [" [subagent] watchdog blocker (click to expand)"]);
+		assert.deepEqual(visibleLines(renderEntry("subagent_watchdog_warning", { summary: "No evidence" })), [" [subagent] watchdog warning (click to expand)"]);
 	});
 
 	it("expands watchdog warnings to the readable warning instead of the model's XML", () => {
@@ -166,8 +166,8 @@ describe("subagent messages in the main chat", () => {
 	});
 
 	it("shows the supervisor reply entry as one [subagent] line", () => {
-		assert.deepEqual(visibleLines(renderEntry("subagent_supervisor_reply", reply)), [" [subagent] reply sent to worker"]);
-		assert.deepEqual(visibleLines(renderEntry("subagent_supervisor_reply", { ...reply, message: ["bad"] })), [" [subagent] supervisor reply"]);
+		assert.deepEqual(visibleLines(renderEntry("subagent_supervisor_reply", reply)), [" [subagent] reply sent to worker (click to expand)"]);
+		assert.deepEqual(visibleLines(renderEntry("subagent_supervisor_reply", { ...reply, message: ["bad"] })), [" [subagent] supervisor reply (click to expand)"]);
 	});
 
 	it("expands a message to the text the main agent read, as markdown", () => {
@@ -203,11 +203,11 @@ describe("subagent messages in the main chat", () => {
 		]);
 	});
 
-	it("shows no expand hint, whether or not Pi's expand key is bound", async (t) => {
+	it("names Pi's expand key in the hint, or a click when no key is bound", async (t) => {
 		const collapsed = () => visibleLines(renderMessage("subagent_supervisor_request", { ...request, reason: "need_decision" }));
-		assert.deepEqual(collapsed(), [" [subagent] worker needs a decision"]);
+		assert.deepEqual(collapsed(), [" [subagent] worker needs a decision (click to expand)"]);
 		await bindExpandKey(t, "ctrl+o");
-		assert.deepEqual(collapsed(), [" [subagent] worker needs a decision"]);
+		assert.deepEqual(collapsed(), [" [subagent] worker needs a decision (ctrl+o to expand)"]);
 	});
 
 	it("colors the [subagent] label by message kind", () => {
@@ -244,7 +244,7 @@ describe("subagent messages in the main chat", () => {
 		const lines = renderMessage("subagent_supervisor_request", { ...request, reason: "need_decision" }, { theme: tokenTheme, width: 300 });
 		assert.deepEqual(lines, [
 			"[customMessageBg][/customMessageBg]",
-			"[customMessageBg] <customMessageLabel><b>[subagent]</b></customMessageLabel> <customMessageText>worker </customMessageText><warning>needs a decision</warning>[/customMessageBg]",
+			"[customMessageBg] <customMessageLabel><b>[subagent]</b></customMessageLabel> <customMessageText>worker </customMessageText><warning>needs a decision</warning> <dim>(click to expand)</dim>[/customMessageBg]",
 			"[customMessageBg][/customMessageBg]",
 		]);
 		const expanded = renderMessage("subagent_supervisor_request", { ...request, reason: "need_decision" }, { theme: tokenTheme, width: 300, expanded: true, content: "First line\n\n- second line" });
@@ -278,7 +278,7 @@ describe("subagent messages in the main chat", () => {
 			const height = component.render(100).length;
 			return component.handleMouse?.({ type: "click", button, x: 2, y: 1, screenX: 2, screenY: 1, width: 100, height, shift: false, alt: false, ctrl: false });
 		};
-		const collapsed = [" [subagent] worker needs a decision"];
+		const collapsed = [" [subagent] worker needs a decision (click to expand)"];
 		const expanded = [" [subagent] worker needs a decision", " Should I continue?"];
 
 		const block = render(message, false);
@@ -296,7 +296,7 @@ describe("subagent messages in the main chat", () => {
 		const message = { role: "custom" as const, customType: "subagent_supervisor_request", content: "Should I continue?", display: true, details: { ...request, reason: "need_decision" }, timestamp: 1 };
 		const host = new CustomMessageComponent(message, renderSubagentMessage);
 		const shown = () => visibleLines(host.render(100));
-		const collapsed = [" [subagent] worker needs a decision"];
+		const collapsed = [" [subagent] worker needs a decision (click to expand)"];
 		const expanded = [" [subagent] worker needs a decision", " Should I continue?"];
 
 		assert.deepEqual(shown(), collapsed);

@@ -1,4 +1,4 @@
-import { getMarkdownTheme, type Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme, keyText, type Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Markdown, MouseRegion, Spacer, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { SUBAGENT_CONTROL_MESSAGE_TYPE } from "../extension/control-notices.ts";
 import { SUBAGENT_STEERING_MESSAGE_TYPE } from "../extension/steering-notices.ts";
@@ -277,8 +277,10 @@ class SubagentMessageBlock extends Box {
 	private rebuild(): void {
 		const { theme, view } = this;
 		const content = new Container();
-		content.addChild(oneLine(`${theme.fg(KIND_LABEL_COLORS[view.kind], theme.bold("[subagent]"))} ${headlineText(view.headline, theme)}`));
-		if (this.isExpanded() && view.body.trim()) {
+		const title = `${theme.fg(KIND_LABEL_COLORS[view.kind], theme.bold("[subagent]"))} ${headlineText(view.headline, theme)}`;
+		const expanded = this.isExpanded();
+		content.addChild(oneLine(expanded ? title : `${title} ${theme.fg("dim", `(${keyText("app.tools.expand") || "click"} to expand)`)}`));
+		if (expanded && view.body.trim()) {
 			content.addChild(new Spacer(1));
 			content.addChild(new Markdown(safeTerminalText(view.body), 0, 0, getMarkdownTheme(), { color: (text) => theme.fg("customMessageText", text) }));
 		}

@@ -1402,23 +1402,23 @@ describe("subagent extension child mode", () => {
 		]);
 		assert.deepEqual(output.entryTypes, ["subagent_supervisor_reply", "subagent_watchdog_warning"]);
 		assert.deepEqual(Object.fromEntries(output.blocks.messages), {
-			subagent_supervisor_request: [" [subagent] supervisor request"],
-			subagent_control_notice: [" [subagent] subagent notice"],
-			subagent_steering_notice: [" [subagent] steering notice"],
-			"subagent-notify": [" [subagent] background run finished"],
-			"subagent-completion-unanswered": [" [subagent] completion results unanswered"],
-			"subagent-completion-unhandled": [" [subagent] completion results unhandled"],
-			"subagent-supervisor-unanswered": [" [subagent] supervisor requests unanswered"],
-			"subagent-supervisor-blocked": [" [subagent] supervisor requests blocked"],
-			"subagent-wait-subscription": [" [subagent] bg_wait fired"],
-			"subagent-incremental-child-notify": [" [subagent] workflow child update"],
-			"subagent-workflow-result-write-failed": [" [subagent] workflow result save failed"],
-			subagent_watchdog_warning: [" [subagent] watchdog warning"],
-			subagent_watchdog_clarification: [" [subagent] watchdog needs clarification"],
+			subagent_supervisor_request: [" [subagent] supervisor request (click to expand)"],
+			subagent_control_notice: [" [subagent] subagent notice (click to expand)"],
+			subagent_steering_notice: [" [subagent] steering notice (click to expand)"],
+			"subagent-notify": [" [subagent] background run finished (click to expand)"],
+			"subagent-completion-unanswered": [" [subagent] completion results unanswered (click to expand)"],
+			"subagent-completion-unhandled": [" [subagent] completion results unhandled (click to expand)"],
+			"subagent-supervisor-unanswered": [" [subagent] supervisor requests unanswered (click to expand)"],
+			"subagent-supervisor-blocked": [" [subagent] supervisor requests blocked (click to expand)"],
+			"subagent-wait-subscription": [" [subagent] bg_wait fired (click to expand)"],
+			"subagent-incremental-child-notify": [" [subagent] workflow child update (click to expand)"],
+			"subagent-workflow-result-write-failed": [" [subagent] workflow result save failed (click to expand)"],
+			subagent_watchdog_warning: [" [subagent] watchdog warning (click to expand)"],
+			subagent_watchdog_clarification: [" [subagent] watchdog needs clarification (click to expand)"],
 		});
 		assert.deepEqual(Object.fromEntries(output.blocks.entries), {
-			subagent_supervisor_reply: [" [subagent] supervisor reply"],
-			subagent_watchdog_warning: [" [subagent] watchdog warning"],
+			subagent_supervisor_reply: [" [subagent] supervisor reply (click to expand)"],
+			subagent_watchdog_warning: [" [subagent] watchdog warning (click to expand)"],
 		});
 	});
 
