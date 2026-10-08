@@ -397,6 +397,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Background task completed: **worker**\n\n(no output)"),
 				display: false,
+				details: { runs: [{ agent: "worker", status: "completed" }] },
 			},
 			options: { triggerTurn: true },
 		});
@@ -511,6 +512,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Detached foreground task completed: **reviewer**\n\nRecovered final review"),
 				display: true,
+				details: { runs: [{ agent: "reviewer", status: "completed" }] },
 			},
 			options: { triggerTurn: true },
 		});
@@ -553,6 +555,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent(`Background task completed: **worker** (2/3)\n\n${summary}`),
 				display: false,
+				details: { runs: [{ agent: "worker", status: "completed" }] },
 			},
 			options: { triggerTurn: true },
 		});
@@ -578,6 +581,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Background task completed: **worker**\n\nDone\n\nSession file: /tmp/session.jsonl"),
 				display: false,
+				details: { runs: [{ agent: "worker", status: "completed" }] },
 			},
 			options: { triggerTurn: true },
 		}]);
@@ -603,6 +607,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Background task paused: **worker**\n\nPaused after interrupt. Waiting for explicit next action."),
 				display: true,
+				details: { runs: [{ agent: "worker", status: "paused" }] },
 			},
 			options: { triggerTurn: true },
 		});
@@ -631,6 +636,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Background task paused: **workflow**\n\nRun 'detaches' detached for intercom coordination.\n\nChild outputs:\n- key=detaches run=child-1 status=paused\n  Saved output: unavailable\n  Preview: unavailable (no safe inline output)\n\nWorkflow run: workflow-1\nChild runs: detaches=child-1 (paused)"),
 				display: true,
+				details: { runs: [{ agent: "workflow", status: "paused" }] },
 			},
 			options: { triggerTurn: true },
 		});
@@ -696,6 +702,7 @@ describe("registerSubagentNotify", () => {
 			customType: "subagent-notify",
 			content,
 			display: false,
+			details: { runs: [{ agent: "alpha", status: "completed" }, { agent: "beta", status: "completed" }, { agent: "gamma", status: "completed" }] },
 		});
 		assert.deepEqual(sent[0]!.options, { triggerTurn: true });
 	});

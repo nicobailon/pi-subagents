@@ -18,10 +18,6 @@ export function controlNoticeTarget(details: SubagentControlMessageDetails): str
 	return details.childIntercomTarget;
 }
 
-export function formatSubagentControlNotice(details: SubagentControlMessageDetails, content?: string): string {
-	return details.noticeText ?? content ?? formatControlNoticeMessage(details.event, controlNoticeTarget(details));
-}
-
 function deliverControlNotice(input: {
 	pi: Pick<ExtensionAPI, "sendMessage">;
 	visibleControlNotices: Set<string>;

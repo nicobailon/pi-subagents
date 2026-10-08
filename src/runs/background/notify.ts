@@ -633,6 +633,8 @@ function sendCompletion(pi: Pick<ParentWake, "sendMessage">, items: PendingCompl
 				customType: "subagent-notify",
 				content,
 				display,
+				// Render-only: Pi does not send details to the model.
+				details: { runs: details.map(({ agent, status }) => ({ agent, status })) },
 			},
 			{ triggerTurn },
 		);

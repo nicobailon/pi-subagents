@@ -1344,6 +1344,84 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("renders every message pi-subagents shows in main as a one-line [subagent] block", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const events = { on() { return () => {}; }, emit() {} };
+			const messageRenderers = [];
+			const entryRenderers = [];
+			const fakePi = new Proxy({
+				events,
+				registerTool() {},
+				registerCommand() {},
+				registerShortcut() {},
+				registerMessageRenderer(type, renderer) { messageRenderers.push([type, renderer]); },
+				registerEntryRenderer(type, renderer) { entryRenderers.push([type, renderer]); },
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			const theme = { fg: (_token, text) => text, bg: (_token, text) => text, bold: (text) => text };
+			const shown = (component) => component.render(120).map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd()).filter((line) => line.trim());
+			const blocks = { messages: [], entries: [] };
+			for (const [type, renderer] of messageRenderers) {
+				if (type.startsWith("subagent-slash")) continue;
+				blocks.messages.push([type, shown(renderer({ role: "custom", customType: type, content: "Saved text", display: true, timestamp: 1 }, { expanded: false, outputPad: 1 }, theme))]);
+			}
+			for (const [type, renderer] of entryRenderers) blocks.entries.push([type, shown(renderer({ type: "custom", customType: type, data: undefined }, { expanded: false }, theme))]);
+			console.log(JSON.stringify({ messageTypes: messageRenderers.map(([type]) => type).sort(), entryTypes: entryRenderers.map(([type]) => type).sort(), blocks }));
+		`;
+
+		const output = JSON.parse(execFileSync(
+			process.execPath,
+			["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+			{ cwd: projectRoot, env: parentToolEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+		).trim().split("\n").at(-1)!) as { messageTypes: string[]; entryTypes: string[]; blocks: { messages: Array<[string, string[]]>; entries: Array<[string, string[]]> } };
+
+		assert.deepEqual(output.messageTypes, [
+			"subagent-completion-unanswered",
+			"subagent-completion-unhandled",
+			"subagent-incremental-child-notify",
+			"subagent-notify",
+			"subagent-slash-result",
+			"subagent-slash-text-result",
+			"subagent-supervisor-blocked",
+			"subagent-supervisor-unanswered",
+			"subagent-wait-subscription",
+			"subagent-workflow-result-write-failed",
+			"subagent_control_notice",
+			"subagent_steering_notice",
+			"subagent_supervisor_request",
+			"subagent_watchdog_clarification",
+			"subagent_watchdog_warning",
+		]);
+		assert.deepEqual(output.entryTypes, ["subagent_supervisor_reply", "subagent_watchdog_warning"]);
+		assert.deepEqual(Object.fromEntries(output.blocks.messages), {
+			subagent_supervisor_request: [" [subagent] supervisor request"],
+			subagent_control_notice: [" [subagent] subagent notice"],
+			subagent_steering_notice: [" [subagent] steering notice"],
+			"subagent-notify": [" [subagent] background run finished"],
+			"subagent-completion-unanswered": [" [subagent] completion results unanswered"],
+			"subagent-completion-unhandled": [" [subagent] completion results unhandled"],
+			"subagent-supervisor-unanswered": [" [subagent] supervisor requests unanswered"],
+			"subagent-supervisor-blocked": [" [subagent] supervisor requests blocked"],
+			"subagent-wait-subscription": [" [subagent] bg_wait fired"],
+			"subagent-incremental-child-notify": [" [subagent] workflow child update"],
+			"subagent-workflow-result-write-failed": [" [subagent] workflow result save failed"],
+			subagent_watchdog_warning: [" [subagent] watchdog warning"],
+			subagent_watchdog_clarification: [" [subagent] watchdog needs clarification"],
+		});
+		assert.deepEqual(Object.fromEntries(output.blocks.entries), {
+			subagent_supervisor_reply: [" [subagent] supervisor reply"],
+			subagent_watchdog_warning: [" [subagent] watchdog warning"],
+		});
+	});
+
 	it("returns before registering anything in a child-hosting process", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";

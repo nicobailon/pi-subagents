@@ -137,10 +137,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("emits successful async workflow child settlements without provider turns", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ matchArgIncludes: "Child A", output: "A done" });
 		mockPi.onCall({ matchArgIncludes: "Child B", output: "B done" });
-		const sent: Array<{ message: { customType?: string; content?: string }; options?: { triggerTurn?: boolean } }> = [];
+		const sent: Array<{ message: { customType?: string; content?: string; details?: unknown }; options?: { triggerTurn?: boolean } }> = [];
 		const sendMessage = (message: unknown, options?: unknown) => {
 			sent.push({
-				message: message as { customType?: string; content?: string },
+				message: message as { customType?: string; content?: string; details?: unknown },
 				options: options as { triggerTurn?: boolean } | undefined,
 			});
 		};
@@ -158,6 +158,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(
 			childMessages().map(({ message }) => message.content?.split("\n", 1)[0]).sort(),
 			["Workflow child completed: **a**", "Workflow child completed: **b**"],
+		);
+		assert.deepEqual(
+			childMessages().map(({ message }) => message.details).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+			[{ childKey: "a", outcome: "completed" }, { childKey: "b", outcome: "completed" }],
 		);
 		assert.ok(childMessages().every(({ options }) => options?.triggerTurn === false));
 	});

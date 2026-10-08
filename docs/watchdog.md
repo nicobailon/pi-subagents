@@ -46,13 +46,15 @@ you ─▶ agent turn ─▶ edits repo ─▶ agent_end ─▶ watchdog review
                                              └─ warning: low/medium user entry, or high steered message
 ```
 
-Collapsed warnings show the title and evidence line. Expanded warnings show evidence, recommended action, importance, category, and source:
+A warning shows as one `[subagent] watchdog concern` or `[subagent] watchdog blocker` line, like every other message pi-subagents shows in the chat. Pi's expand key, or a click on the line, opens it to the summary, evidence, recommended action, importance, category, and source:
 
 ```
-● Subagent watchdog Blocker (displayed): Claims tests passed without running them
-  Evidence: The transcript claims `npm test` passed but no test command appears in the tool log.
-  Recommended action: Run the focused test before finishing.
-  Importance: High · Category: Test Gap · Source: main
+[subagent] watchdog blocker
+
+Subagent watchdog Blocker (displayed): Claims tests passed without running them
+Evidence: The transcript claims npm test passed but no test command appears in the tool log.
+Recommended action: Run the focused test before finishing.
+Importance: High · Category: Test Gap · Source: main
 ```
 
 When consecutive boundary reviews raise the same warning, the agent is not making progress. After `stalemateRepeats` identical warnings in a row (default 3), the warning is shown as `stalemate`, no continuation is triggered, and the turn ends. Your next prompt resets the count.

@@ -6164,6 +6164,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 											customType: "subagent-incremental-child-notify",
 											content: formatIncrementalChildCompletion(notification),
 											display: notification.outcome !== "completed",
+											// Render-only: Pi does not send details to the model.
+											details: { childKey: notification.childKey, outcome: notification.outcome },
 										},
 										{ triggerTurn: incrementalChildCompletionTriggersTurn(notification, requestParams.scheduleOrigin) },
 									);
