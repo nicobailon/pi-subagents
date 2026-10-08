@@ -153,6 +153,19 @@ describe("subagent messages in the main chat", () => {
 		assert.deepEqual(visibleLines(renderEntry("subagent_watchdog_warning", { summary: "No evidence" })), [" [subagent] watchdog warning (click to expand)"]);
 	});
 
+	it("keeps a watchdog warning's lifecycle state on the collapsed line", () => {
+		const rows: Array<[unknown, string]> = [
+			[{ ...watchdogWarning, state: "displayed" }, "watchdog blocker"],
+			[{ ...watchdogWarning, state: "stalemate", stalemateRepeats: 3 }, "watchdog blocker · stalemate"],
+			[{ ...watchdogWarning, severity: "concern", stale: true, state: "stale" }, "watchdog concern · stale"],
+			[{ ...watchdogWarning, state: "failed", error: "review timed out" }, "watchdog blocker · failed review"],
+		];
+		for (const [details, text] of rows) {
+			assert.deepEqual(visibleLines(renderMessage("subagent_watchdog_warning", details, { content: "<subagent_watchdog>" })), [` [subagent] ${text} (click to expand)`], text);
+			assert.deepEqual(visibleLines(renderEntry("subagent_watchdog_warning", details)), [` [subagent] ${text} (click to expand)`], text);
+		}
+	});
+
 	it("expands watchdog warnings to the readable warning instead of the model's XML", () => {
 		const readable = [
 			" [subagent] watchdog blocker",

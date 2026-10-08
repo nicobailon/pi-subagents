@@ -1,10 +1,10 @@
-import type { WatchdogWarningDetails } from "./types.ts";
+import type { WatchdogWarning, WatchdogWarningDetails } from "./types.ts";
 
 function titleCase(value: string): string {
 	return value.split("-").map((part) => part ? `${part[0]?.toUpperCase()}${part.slice(1)}` : part).join(" ");
 }
 
-function stateLabels(warning: WatchdogWarningDetails): string[] {
+export function stateLabels(warning: WatchdogWarning): string[] {
 	const labels: string[] = [];
 	if (warning.state === "displayed") labels.push("displayed");
 	if (warning.stale || warning.state === "stale") labels.push("stale");

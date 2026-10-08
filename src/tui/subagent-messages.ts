@@ -5,7 +5,7 @@ import { SUBAGENT_STEERING_MESSAGE_TYPE } from "../extension/steering-notices.ts
 import { parseSupervisorReplyData, parseSupervisorRequestDetails, SUPERVISOR_REPLY_ENTRY_TYPE, SUPERVISOR_REQUEST_MESSAGE_TYPE } from "../intercom/supervisor-ui.ts";
 import { parseSubagentNotifyContent } from "../runs/background/notify.ts";
 import { safeTerminalText } from "../shared/display-text.ts";
-import { formatWatchdogWarningRenderText } from "../watchdog/render.ts";
+import { formatWatchdogWarningRenderText, stateLabels } from "../watchdog/render.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE, WATCHDOG_WARNING_IMPORTANCES, WATCHDOG_WARNING_SEVERITIES, type WatchdogWarning } from "../watchdog/types.ts";
 import { normalizeWatchdogWarningDetails } from "../watchdog/warning-format.ts";
 
@@ -175,7 +175,13 @@ function isWatchdogWarning(value: unknown): value is WatchdogWarning {
 /** The model reads watchdog warnings as XML; people get the watchdog's readable text. */
 function watchdogWarningView(details: unknown, fallbackBody: string): BlockView {
 	if (!isWatchdogWarning(details)) return { kind: "watchdog", headline: ["watchdog warning"], body: fallbackBody };
-	return { kind: "watchdog", headline: ["watchdog ", { status: details.severity }], body: formatWatchdogWarningRenderText(normalizeWatchdogWarningDetails(details)) };
+	// Every shown warning is "displayed"; the other labels say the run was held or the review went wrong.
+	const labels = stateLabels(details).filter((label) => label !== "displayed");
+	return {
+		kind: "watchdog",
+		headline: ["watchdog ", { status: details.severity }, ...(labels.length ? [` · ${labels.join(", ")}`] : [])],
+		body: formatWatchdogWarningRenderText(normalizeWatchdogWarningDetails(details)),
+	};
 }
 
 function supervisorReplyView(data: unknown): BlockView {
