@@ -89,6 +89,17 @@ describe("mission store", () => {
 		}
 	});
 
+	it("reports a project root it cannot resolve instead of guessing a store", { skip: process.platform === "win32" ? "symlink loops need privileges on Windows" : undefined }, () => {
+		const test = symlinkedFixture();
+		try {
+			const loop = path.join(test.root, "loop");
+			fs.symlinkSync(loop, loop);
+			assert.throws(() => resolveMissionStoreLocation({ projectRoot: path.join(loop, "project"), agentDir: test.agentDir }), { code: "ELOOP" });
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
 	it("expands configured relative paths against the project root as given", () => {
 		const test = symlinkedFixture();
 		try {

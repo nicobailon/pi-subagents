@@ -289,7 +289,9 @@ function canonicalProjectRoot(root: string): string {
 	for (;;) {
 		try {
 			return path.join(fs.realpathSync.native(current), ...missing.reverse());
-		} catch {
+		} catch (error) {
+			// Only a missing component walks upward; EACCES, ELOOP and the rest must surface.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			const parent = path.dirname(current);
 			if (parent === current) return root;
 			missing.push(path.basename(current));
