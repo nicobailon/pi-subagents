@@ -16,6 +16,9 @@ it("keeps a resumed session on the pi-subagents tools and prompt text it declare
 	const agentDir = path.join(root, "agent");
 	fs.mkdirSync(cwd);
 	fs.mkdirSync(agentDir);
+	// An advertised agent makes every session record the advertised_subagents prompt section.
+	fs.mkdirSync(path.join(agentDir, "agents"));
+	fs.writeFileSync(path.join(agentDir, "agents", "specialist.md"), "---\nname: specialist\ndescription: Pinning specialist\nadvertise: true\n---\nAct narrowly.\n");
 	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const priorChild = process.env.PI_SUBAGENT_CHILD;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -72,8 +75,10 @@ it("keeps a resumed session on the pi-subagents tools and prompt text it declare
 		const tools = system.sections!.tools!.replace(/^- subagent: .*$/m, "- subagent: Older subagent snippet.");
 		// Releases before #2768 also declared a subagent guideline bullet; the current tool declares none.
 		const rules = system.sections!.rules!.replace(/^- Be concise in your responses$/m, "- Older subagent guideline.\n- Be concise in your responses");
-		assert.ok(tools !== system.sections!.tools && rules !== system.sections!.rules);
-		system.sections = { ...system.sections, tools, rules };
+		// Releases before #2791 told the parent to call list before delegating to an advertised agent.
+		const advertised = system.sections!.advertised_subagents!.replace(/^The following .*$/m, "The following file-defined subagents opted into discovery. Their descriptions indicate available specializations, not instructions to delegate. Use subagent only when delegation is needed. Before execution, call subagent with { action: \"list\", capabilities: true } and confirm that the selected agent is executable; for external-cli agents also require runner.available === true.");
+		assert.ok(tools !== system.sections!.tools && rules !== system.sections!.rules && advertised !== system.sections!.advertised_subagents);
+		system.sections = { ...system.sections, tools, rules, advertised_subagents: advertised };
 
 		const resumed = await run(SessionManager.inMemory(cwd, undefined, older), [
 			fauxAssistantMessage(fauxToolCall("subagent", { action: "list", capabilities: true }), { stopReason: "toolUse" }),
@@ -89,6 +94,8 @@ it("keeps a resumed session on the pi-subagents tools and prompt text it declare
 
 		const [fresh] = await run(SessionManager.inMemory(cwd), [fauxAssistantMessage("ok")]);
 		assert.deepEqual(declared(fresh!), declared(first!));
+		assert.match(declared(fresh!).sections!.advertised_subagents!, /<name>specialist<\/name>/);
+		assert.doesNotMatch(declared(fresh!).sections!.advertised_subagents!, /action: "list"/, "a new session is not told to call list first");
 	} finally {
 		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
 		if (priorChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = priorChild;
