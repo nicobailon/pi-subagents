@@ -105,7 +105,7 @@ describe("result intercom formatter", () => {
 				],
 			});
 
-			assert.match(payload.message, /Revive child: subagent\(\{ action: "resume", id: "run-multi", index: 0, message: "\.\.\." \}\)/);
+			assert.match(payload.message, /Revive child: subagent\(\{ action: "resume", id: "run-multi", message: "\.\.\.", options: \{ index: 0 \} \}\)/);
 			assert.doesNotMatch(payload.message, /unsupported for multi-child/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

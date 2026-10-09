@@ -150,7 +150,7 @@ function formatResumeGuidance(runId: string | undefined, children: Array<{ agent
 	}
 	const childWithSession = knownChildren.find(({ child }) => hasExistingSessionFile(child.sessionFile));
 	if (childWithSession) {
-		return `Revive child: subagent({ action: "resume", id: "${runId}", index: ${childWithSession.index}, message: "..." })`;
+		return `Revive child: subagent({ action: "resume", id: "${runId}", message: "...", options: { index: ${childWithSession.index} } })`;
 	}
 	return "Resume: unavailable; no child session file was persisted.";
 }
@@ -235,8 +235,8 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 		if (child.transcriptError) lines.push(`  Transcript warning: ${child.transcriptError}`);
 	}
 	lines.push("", `Status: subagent({ action: "status", id: "${run.runId}" })`);
-	if (run.children.length === 1) lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", view: "transcript" })`);
-	else lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", index: 0, view: "transcript" })`);
+	if (run.children.length === 1) lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", options: { view: "transcript" } })`);
+	else lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", options: { index: 0, view: "transcript" } })`);
 	const detached = run.children.some((child) => child.status === "detached");
 	const resumable = run.children.find((child) => hasExistingSessionFile(child.sessionFile));
 	if (detached) {
@@ -244,7 +244,7 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 	} else if (resumable) {
 		lines.push(run.children.length === 1
 			? `Revive: subagent({ action: "resume", id: "${run.runId}", message: "..." })`
-			: `Revive child: subagent({ action: "resume", id: "${run.runId}", index: ${resumable.index}, message: "..." })`);
+			: `Revive child: subagent({ action: "resume", id: "${run.runId}", message: "...", options: { index: ${resumable.index} } })`);
 	} else {
 		lines.push("Resume: unavailable; no child session file was persisted.");
 	}
@@ -389,7 +389,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (params.view === "transcript") {
 				if (runs.length === 1) return inspectSubagentStatus({ ...params, id: runs[0]!.id }, deps);
 				return {
-					content: [{ type: "text", text: runs.length === 0 ? "No active async run transcript is available." : `Transcript view requires an id when ${runs.length} active async runs exist. Use subagent({ action: "status", view: "fleet" }) to choose one.` }],
+					content: [{ type: "text", text: runs.length === 0 ? "No active async run transcript is available." : `Transcript view requires an id when ${runs.length} active async runs exist. Use subagent({ action: "status", options: { view: "fleet" } }) to choose one.` }],
 					isError: true,
 					details: { mode: "single", results: [] },
 				};
@@ -680,7 +680,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					if (step.externalJob?.resultArtifactPath) lines.push(`  Result artifact: ${step.externalJob.resultArtifactPath}`);
 					if ((step.status === "complete" || step.status === "completed") && step.externalJob?.state === "completed" && step.externalJob.providerJobId && externalJobFollowUpSupported(step.runner.provider)) {
 						hasExternalJobFollowUpHint = true;
-						lines.push(`  Follow-up: subagent({ action: "resume", id: "${status.runId}", index: ${index}, message: "..." })`);
+						lines.push(`  Follow-up: subagent({ action: "resume", id: "${status.runId}", message: "...", options: { index: ${index} } })`);
 					}
 				}
 				lines.push(...formatNestedRunStatusLines(step.children, { indent: "  ", commandHints: true, maxLines: 20 }));
@@ -688,7 +688,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				if (stepOutputPath !== outputPath && fs.existsSync(stepOutputPath)) lines.push(`  Output: ${stepOutputPath}`);
 				if (step.status === "running" && step.runner?.type !== "external-cli" && step.runner?.type !== "external-job" && status.mode !== "workflow") {
 					lines.push(`  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`);
-					lines.push(`  Steer: subagent({ action: "steer", id: "${status.runId}", index: ${index}, message: "..." })`);
+					lines.push(`  Steer: subagent({ action: "steer", id: "${status.runId}", message: "...", options: { index: ${index} } })`);
 				} else if (step.status === "running" && (step.runner?.type === "external-cli" || step.runner?.type === "external-job")) {
 					lines.push("  Steer: unavailable; external runners do not accept live messages.");
 				}
@@ -705,7 +705,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				if (liveWorkflowControls.length === 0) lines.push("Steer: unavailable; no live foreground route is registered in the active session.");
 				else for (const control of liveWorkflowControls) {
 					for (const index of [...control.activeChildren!.keys()].sort((left, right) => left - right)) {
-						lines.push(`Steer live foreground child: subagent({ action: "steer", id: "${control.runId}", index: ${index}, message: "..." })`);
+						lines.push(`Steer live foreground child: subagent({ action: "steer", id: "${control.runId}", message: "...", options: { index: ${index} } })`);
 					}
 				}
 				lines.push(...workflowAsyncChildSteeringGuidance(status, deps.state));

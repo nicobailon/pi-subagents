@@ -28,13 +28,15 @@ An explicit `mission` object must have exactly one non-empty `title` or `summary
 ```ts
 const created = subagent({
   action: "mission.create",
-  mission: { title: "Ship auth refresh", objective: "Implement and validate token refresh" }
+  options: {
+    mission: { title: "Ship auth refresh", objective: "Implement and validate token refresh" }
+  }
 })
 // After a ```js workflow block that runs the approved auth refresh plan:
-subagent({ workflow: true, missionId: "<mission-id>" })
+subagent({ workflow: true, options: { missionId: "<mission-id>" } })
 
 // Or create and attach in one launch
-subagent({ workflow: true, mission: { title: "Ship auth refresh" } })
+subagent({ workflow: true, options: { mission: { title: "Ship auth refresh" } } })
 ```
 
 ### Goal missions
@@ -44,11 +46,13 @@ Set `goal: true` with a token budget to make an open mission an active continuat
 ```ts
 subagent({
   action: "mission.create",
-  mission: {
-    title: "Ship auth refresh",
-    objective: "Implement and validate token refresh",
-    goal: true,
-    budget: { tokens: 400000 }
+  options: {
+    mission: {
+      title: "Ship auth refresh",
+      objective: "Implement and validate token refresh",
+      goal: true,
+      budget: { tokens: 400000 }
+    }
   }
 })
 ```
@@ -92,10 +96,12 @@ return runs.run("main", { agent: "reviewer", task: "Review the current diff." })
 subagent({
   action: "schedule.create",
   id: "evening-review",
-  name: "Evening review",
-  at: "+30m",
-  baseRef: "refs/heads/release",
-  workflow: true
+  workflow: true,
+  options: {
+    name: "Evening review",
+    at: "+30m",
+    baseRef: "refs/heads/release"
+  }
 })
 ```
 
@@ -103,14 +109,14 @@ Create a fixed recurring workflow from a script file:
 
 ```ts
 // .pi/workflows/backlog.js: return runs.run('main', { agent: 'worker', task: args.task })
-subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflow: "./.pi/workflows/backlog.js", args: { task: "Maintain core" } })
+subagent({ action: "schedule.create", id: "backlog", workflow: "./.pi/workflows/backlog.js", args: { task: "Maintain core" }, options: { every: "6h", catchUp: "latest" } })
 ```
 
 Create a daily or weekly local-time schedule:
 
 ```ts
-subagent({ action: "schedule.create", every: "day", at: "09:00", timezone: "Asia/Taipei", workflow: "./.pi/workflows/review.js" })
-subagent({ action: "schedule.create", every: "week", on: ["mon", "tue", "wed", "thu", "fri"], at: "09:00", timezone: "America/New_York", workflow: "./.pi/workflows/review.js" })
+subagent({ action: "schedule.create", workflow: "./.pi/workflows/review.js", options: { every: "day", at: "09:00", timezone: "Asia/Taipei" } })
+subagent({ action: "schedule.create", workflow: "./.pi/workflows/review.js", options: { every: "week", on: ["mon", "tue", "wed", "thu", "fri"], at: "09:00", timezone: "America/New_York" } })
 ```
 
 Calendar schedules require `HH:mm` and an explicit IANA `timezone` or `UTC`. Weekly `on` is a non-empty weekday array; duplicates are removed and weekdays sorted. Daily schedules do not accept `on`. Missing local times and skipped dates are skipped; a repeated time fires at its first instant only. The pending local date is persisted with a UTC cache that is refreshed on restoration using the host's current timezone data. Use a calendar-capable version in every session sharing these definitions; older schedulers reject the unknown trigger kind.
@@ -120,7 +126,7 @@ Fixed intervals support `m`, `h`, `d`, and `w` units and advance from the planne
 Create a quiet recurring workflow whose successful completions stay visible but do not wake the parent session:
 
 ```ts
-subagent({ action: "schedule.create", id: "nightly-sweep", every: "24h", quiet: true, workflow: true })
+subagent({ action: "schedule.create", id: "nightly-sweep", workflow: true, options: { every: "24h", quiet: true } })
 ```
 
 Manage schedules with `schedule.list`, `schedule.show`, `schedule.history`, `schedule.pause`, `schedule.resume`, `schedule.run`, `schedule.run-due`, and `schedule.delete`.
@@ -128,7 +134,7 @@ Manage schedules with `schedule.list`, `schedule.show`, `schedule.history`, `sch
 Attach an existing mission to give each scheduled workflow access to the same durable `state.get/set`:
 
 ```ts
-subagent({ action: "schedule.create", id: "backlog", every: "6h", workflow: "./.pi/workflows/backlog.js", missionId: "<mission-id>" })
+subagent({ action: "schedule.create", id: "backlog", workflow: "./.pi/workflows/backlog.js", options: { every: "6h", missionId: "<mission-id>" } })
 ```
 
 The mission must be readable in the store resolved from the schedule's target `cwd` and current mission configuration. Creation checks it without changing its status. Every fire uses the normal explicit mission launch path, including after session restoration; missing or invalid records fail before workflow execution. Schedules accept only an existing `missionId`, not mission creation or updates. The script's fixed `args` and its mutable mission state remain separate.

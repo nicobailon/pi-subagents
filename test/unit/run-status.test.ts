@@ -352,7 +352,7 @@ describe("async run status inspection", () => {
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
-			assert.match(text, /Follow-up: subagent\(\{ action: "resume", id: "run-external-follow-up", index: 0, message: "\.\.\." \}\)/);
+			assert.match(text, /Follow-up: subagent\(\{ action: "resume", id: "run-external-follow-up", message: "\.\.\.", options: \{ index: 0 \} \}\)/);
 			assert.match(text, /Resume: use the external-job follow-up hint above\./);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -871,8 +871,8 @@ describe("async run status inspection", () => {
 			assert.match(text, /0\. worker: Inspect fleet \| running/);
 			assert.match(text, /external-cli · 150ms/);
 			assert.match(text, /run-fleet \| running .*\| parallel \| 1 agent running · 0\/2 done/);
-			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", view: "transcript" \}\)/);
-			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", index: 0, view: "transcript" \}\)/);
+			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", options: \{ view: "transcript" \} \}\)/);
+			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", options: \{ index: 0, view: "transcript" \} \}\)/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -1442,7 +1442,7 @@ describe("async run status inspection", () => {
 			});
 
 			const text = textContent(result);
-			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-multi", index: 0, message: "\.\.\." \}\)/);
+			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-multi", message: "\.\.\.", options: \{ index: 0 \} \}\)/);
 			assert.doesNotMatch(text, /unsupported for multi-child/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -1590,7 +1590,7 @@ describe("async run status inspection", () => {
 			const result = inspectSubagentStatus({ id: "run-result-index" }, { asyncDirRoot: asyncRoot, resultsDir });
 
 			const text = textContent(result);
-			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-result-index", index: 1, message: "\.\.\." \}\)/);
+			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-result-index", message: "\.\.\.", options: \{ index: 1 \} \}\)/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

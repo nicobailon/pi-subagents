@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { SUBAGENT_FEATURES, resolveDisabledFeatureSurface, validateDisabledFeatures, type SubagentFeature } from "../../src/shared/disabled-features.ts";
-import { SubagentParams, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
+import { SUBAGENT_OPTION_KEYS, SubagentParams, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
 import { readSubagentGuide } from "../../src/extension/subagent-guide.ts";
 import { buildSubagentToolDescription, SUBAGENT_SAFETY_GUIDANCE } from "../../src/extension/tool-description.ts";
@@ -91,8 +91,9 @@ describe("disabled feature groups", () => {
 	});
 
 	for (const group of GROUPS) {
-		it(`${group.name}: removes exactly its parameters from the schema`, () => {
-			for (const param of group.params) assert.ok(fullKeys.includes(param), `${param} is not a schema parameter`);
+		it(`${group.name}: removes exactly its top-level parameters from the schema`, () => {
+			// Options fields are opaque in the provider schema; the executor rejects disabled ones.
+			for (const param of group.params) assert.ok(fullKeys.includes(param) || SUBAGENT_OPTION_KEYS.includes(param), `${param} is not a subagent parameter`);
 			// workflow-scripts replaces the removed script parameters with chain/tasks after task.
 			const added = group.name === "workflow-scripts" ? ["tasks", "chain"] : [];
 			assert.deepEqual(schemaKeys(group.config), fullKeys.filter((key) => !group.params.includes(key)).flatMap((key) => key === "task" ? [key, ...added] : [key]));
@@ -154,7 +155,7 @@ describe("disabled feature discovery", () => {
 		"not watchdog-only thinking",
 		"tool budget, fast",
 		"usageBudget is shared",
-		"unless mission:false",
+		"unless options.mission:false",
 		"create/update/delete",
 		"mission.*",
 		"schedule.*",
@@ -177,7 +178,7 @@ describe("disabled feature discovery", () => {
 			for (const text of featureText) assert.ok(!description.includes(text), `${toolDescriptionMode ?? "default"} description still has ${text}`);
 			// Every safety line stays; with workflow-scripts disabled only the script-writing wording changes.
 			for (const line of SUBAGENT_SAFETY_GUIDANCE.split("\n").filter((text) => !/runs\.|workflow call/.test(text))) assert.ok(description.includes(line), `${toolDescriptionMode ?? "default"} description lacks safety line ${line}`);
-			assert.match(description, /Thinking uses model suffix\./);
+			if (toolDescriptionMode === "full") assert.match(description, /Thinking uses model suffix\./);
 		}
 		assert.match(buildSubagentToolDescription({ toolDescriptionMode: "full" }, { disabledFeatures }), /Management discovery: list\/get\/models\/guide; doctor\. Use guide topics agents, observability, tool-reference, configuration, models or extension-api for/);
 	});
@@ -197,6 +198,20 @@ describe("disabled feature discovery", () => {
 		const disabled = resultText(await createExecutor({ disabledFeatures: ["watchdog"] }).executePublic("guide", request, new AbortController().signal, undefined, ctx()));
 		assert.ok(disabled.endsWith(guide));
 		assert.match(disabled.slice(0, -guide.length), /^Disabled by config[^\n]*\n- disabledFeatures "watchdog": options scope, target, thinking; actions watchdog\.status, watchdog\.check, watchdog\.configure, watchdog\.recommend-model\n\n$/);
+	});
+
+	it("keeps every tool-reference section within the 8,000-char guide cap when every feature is disabled", async () => {
+		const executor = createExecutor({ disabledFeatures: Object.keys(SUBAGENT_FEATURES) as SubagentFeature[], scheduledRuns: { enabled: false } });
+		const read = async (topic: string) => resultText(await executor.executePublic("guide", { action: "guide", topic }, new AbortController().signal, undefined, ctx()));
+		const toc = await read("tool-reference");
+		assert.match(toc, /^Disabled by config/);
+		const sections = [...toc.matchAll(/^\s*(tool-reference\/\S+) — /gm)].map((match) => match[1]!);
+		assert.ok(sections.length > 10);
+		for (const section of sections) {
+			const text = await read(section);
+			assert.match(text, /^Some options and actions documented here are disabled by config/, section);
+			assert.ok(text.length <= 8_000, `${section}: ${text.length}`);
+		}
 	});
 
 	it("advertises only enabled RPC management actions", async () => {

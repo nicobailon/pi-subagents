@@ -21,7 +21,7 @@ import {
 } from "../shared/types.ts";
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { readStatus } from "../shared/utils.ts";
-import { SubagentParams } from "./schemas.ts";
+import { SubagentFlatParams } from "./schemas.ts";
 import { disabledFeatureUseError, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
 import { collectSubagentCost, SUBAGENT_COST_REPORT_VERSION } from "../slash/subagent-cost.ts";
@@ -336,7 +336,7 @@ class SubagentRpcError extends Error {
 	}
 }
 
-const subagentParamsValidator = Compile(SubagentParams);
+const subagentParamsValidator = Compile(SubagentFlatParams);
 
 export function subagentRpcReplyEvent(requestId: string): string {
 	return `${SUBAGENT_RPC_REPLY_EVENT_PREFIX}${requestId}`;

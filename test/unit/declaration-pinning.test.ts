@@ -6,6 +6,7 @@ import { it } from "node:test";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentSystemMessage, type AssistantMessage, type Message } from "@earendil-works/pi-ai";
 import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 import registerSubagentExtension from "../../src/extension/index.ts";
+import { SubagentFlatParams } from "../../src/extension/schemas.ts";
 
 const systemMessages = (messages: Message[]) => messages.filter((message) => message.role === "system");
 
@@ -63,16 +64,19 @@ it("keeps a resumed session on the pi-subagents tools and prompt text it declare
 		const subagent = system.toolsAdded!.find((tool) => tool.name === "subagent")!;
 		const bgWait = system.toolsAdded!.find((tool) => tool.name === "bg_wait")!;
 		subagent.description = "Older subagent description.";
+		// Releases before #2767 declared every management field at the top level.
+		subagent.parameters = JSON.parse(JSON.stringify(SubagentFlatParams));
 		bgWait.description = "Older bg_wait description.";
 		// SAFETY: bg_wait declares an object schema with properties.
 		delete (bgWait.parameters as { properties: Record<string, unknown> }).properties.stopOnAttention;
 		const tools = system.sections!.tools!.replace(/^- subagent: .*$/m, "- subagent: Older subagent snippet.");
-		const rules = system.sections!.rules!.replace(/^- .*delegation.*$/m, "- Older subagent guideline.");
+		// Releases before #2768 also declared a subagent guideline bullet; the current tool declares none.
+		const rules = system.sections!.rules!.replace(/^- Be concise in your responses$/m, "- Older subagent guideline.\n- Be concise in your responses");
 		assert.ok(tools !== system.sections!.tools && rules !== system.sections!.rules);
 		system.sections = { ...system.sections, tools, rules };
 
 		const resumed = await run(SessionManager.inMemory(cwd, undefined, older), [
-			fauxAssistantMessage(fauxToolCall("subagent", { action: "list" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxToolCall("subagent", { action: "list", capabilities: true }), { stopReason: "toolUse" }),
 			fauxAssistantMessage("listed"),
 			fauxAssistantMessage("woken"),
 		], true);

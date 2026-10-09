@@ -1,5 +1,6 @@
 import { splitKnownThinkingSuffix as splitThinkingSuffix, type ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import { checkModelScope, SCOPED_PATTERN, type ModelScopeCheckRule, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
+import { editDistance } from "../../shared/edit-distance.ts";
 
 export type { AvailableModelInfo };
 
@@ -262,6 +263,33 @@ function suggestAlternateProviderModel(
 	return `${suggestion}${thinkingSuffix}`;
 }
 
+const MAX_MODEL_CANDIDATES = 5;
+
+/** Exact registry ids for an unresolved request: the same id under any provider first, then near spellings. */
+function closestModelCandidates(model: string, availableModels: AvailableModelInfo[] | undefined): string[] {
+	if (!availableModels || availableModels.length === 0) return [];
+	const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
+	const { queryProvider, queryIdRaw } = splitQualifiedModelQuery(baseModel, availableModels);
+	const queryId = normalizeModelSegment(queryIdRaw);
+	const queryIdNoDate = stripTrailingDateStamp(queryId);
+	return availableModels
+		.map((entry) => {
+			const id = normalizeModelSegment(entry.id);
+			const distance = editDistance(queryId, id);
+			return {
+				fullId: entry.fullId,
+				sameId: id === queryId || stripTrailingDateStamp(id) === queryIdNoDate,
+				sameProvider: normalizeModelSegment(entry.provider) === queryProvider,
+				distance,
+				close: distance <= Math.max(2, Math.floor(id.length / 3)),
+			};
+		})
+		.filter((entry) => entry.sameId || entry.close)
+		.sort((left, right) => Number(right.sameId) - Number(left.sameId) || left.distance - right.distance || Number(right.sameProvider) - Number(left.sameProvider) || left.fullId.localeCompare(right.fullId))
+		.slice(0, MAX_MODEL_CANDIDATES)
+		.map((entry) => `${entry.fullId}${thinkingSuffix}`);
+}
+
 function resolveRequiredSubagentModelCandidate(
 	model: string,
 	availableModels: AvailableModelInfo[] | undefined,
@@ -270,8 +298,9 @@ function resolveRequiredSubagentModelCandidate(
 	const resolved = resolveSubagentModelCandidate(model, availableModels, preferredProvider);
 	if (resolved) return resolved;
 	const suggestion = suggestAlternateProviderModel(model, availableModels);
+	const candidates = closestModelCandidates(model, availableModels).filter((candidate) => candidate !== suggestion);
 	throw new Error(
-		`Unknown subagent model '${model}' in the active Pi model registry.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
+		`Unknown subagent model '${model}' in the active Pi model registry.${suggestion ? ` Did you mean '${suggestion}'?` : ""}${candidates.length ? ` Closest registry models: ${candidates.join(", ")}.` : ""}`,
 	);
 }
 

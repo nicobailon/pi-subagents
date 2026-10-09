@@ -159,7 +159,7 @@ const SubagentParamProperties = {
 	extensionBindings: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Child-only plain JSON; package.name/1; depth 16, 256 props, 16 KiB." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,
-		description: "Management/control only; omit for execution. validate accepts workflow: true or a script path. Discover actions with guide topic tool-reference."
+		description: "Management/control only; omit for execution. validate accepts workflow: true or a script path. Discover actions with {action:\"guide\",options:{topic:\"tool-reference\"}}."
 	})),
 	capabilities: Type.Optional(Type.Boolean({ description: "list: compact capability rows/details without system prompts." })),
 	name: Type.Optional(Type.String({ description: "schedule.create name." })),
@@ -262,6 +262,7 @@ const SubagentParamProperties = {
 		description: "Child output path or false; relative workflow paths use managed artifact routing. Bind durable output here, not task prose; return outputReference/outputPathMapping/artifactPaths.",
 	})),
 	outputMode: Type.Optional(OutputModeOverride),
+	maxOutput: Type.Optional(Type.Object({ bytes: Type.Optional(Type.Integer({ minimum: 1 })), lines: Type.Optional(Type.Integer({ minimum: 1 })) }, { additionalProperties: false })),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Child model provider/id; bare id only if unique. Suffix :off/minimal/low/medium/high/xhigh/max overrides agent thinking default." })),
 	fast: Type.Optional(Type.Boolean({ description: "Native OpenAI-Codex priority tier; default false, may cost more/quota." })),
@@ -277,15 +278,30 @@ const SubagentParamProperties = {
 	})),
 };
 
-const SubagentParamsSchema = Type.Object(SubagentParamProperties);
+/** Full flat parameter shape accepted by RPC, slash, scheduled and workflow callers. */
+export const SubagentFlatParams = Type.Object(SubagentParamProperties);
 
-export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
+// Management/control fields go inside one opaque `options` object, so they are not sent on every request.
+const { runId: _runId, maxRuntimeMs: _maxRuntimeMs, isolation: _isolation, ...ModelProperties } = SubagentParamProperties;
+const { agent, task, workflow, args, async, model, cwd, worktree, output, action, id, message, ...SubagentOptionProperties } = ModelProperties;
+
+export const SUBAGENT_OPTION_KEYS: readonly string[] = Object.keys(SubagentOptionProperties);
+
+/** Values the model passes in `options`, checked with the same property schemas as flat callers. */
+export const SubagentOptionParams = Type.Object(SubagentOptionProperties, { additionalProperties: false });
+
+const ModelTopLevelProperties = {
+	agent, task, workflow, args, async, model, cwd, worktree, output, action, id, message,
+	options: Type.Optional(Type.Unsafe<Record<string, unknown>>({ type: "object", additionalProperties: true, description: "Every field not listed here, such as acceptance, timeoutMs, context, view and index; guide tool-reference/parameter-reference." })),
+};
+
+export const SubagentParams = keepTopLevelParameterDescriptions(Type.Object(ModelTopLevelProperties));
 
 // Replaces workflow scripts when disabledFeatures lists "workflow-scripts". Kept small because every
 // field is sent on every request; the executor validates step shapes and placeholders strictly.
 const StructuredTask = { type: "object", properties: { agent: { type: "string", minLength: 1 }, task: { type: "string" } }, required: ["agent", "task"], additionalProperties: false };
 const StructuredWorkflowProperties = {
-	action: Type.Optional(Type.String({ minLength: 1, description: "Management/control only; omit for execution. Discover actions with guide topic tool-reference." })),
+	action: Type.Optional(Type.String({ minLength: 1, description: "Management/control only; omit for execution. Discover actions with {action:\"guide\",options:{topic:\"tool-reference\"}}." })),
 	task: Type.Optional(Type.String({ description: "One-child task with agent, or the original request ({task}) with chain/tasks." })),
 	tasks: Type.Optional(Type.Unsafe({ type: "array", minItems: 1, items: StructuredTask, description: "Parallel children; results in order." })),
 	// Flattened step: {agent, task?, as?} or {parallel}; no object-shape union for provider converters.
@@ -300,7 +316,7 @@ const StructuredWorkflowProperties = {
 export function createSubagentParamsSchema(disabled?: DisabledFeatureSurface): typeof SubagentParams {
 	if (!disabled || disabled.params.size === 0) return SubagentParams;
 	const structured = disabled.features.has("workflow-scripts");
-	const enabledProperties = Object.fromEntries(Object.entries(SubagentParamProperties).flatMap(([name, schema]) => {
+	const enabledProperties = Object.fromEntries(Object.entries(ModelTopLevelProperties).flatMap(([name, schema]) => {
 		if (disabled.params.has(name)) return [];
 		if (structured && name === "action") return [[name, StructuredWorkflowProperties.action]];
 		if (structured && name === "task") return [[name, StructuredWorkflowProperties.task], ["tasks", StructuredWorkflowProperties.tasks], ["chain", StructuredWorkflowProperties.chain]];

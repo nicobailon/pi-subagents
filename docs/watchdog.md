@@ -112,7 +112,7 @@ Omit `main.model` to inherit the session model and thinking level. A `main.model
 
 The watchdog resolves one reviewer model and makes one review call. Unavailable models fail visibly; rate limits, quota, authentication, provider timeouts, findings, clarification, cancellation, and the overall watchdog deadline never switch models automatically. An inherited model keeps the current session model and thinking level.
 
-Agents can call `subagent({ action: "watchdog.recommend-model" })` and `subagent({ action: "watchdog.configure", model: "recommended", scope: "session" | "user" | "project" })`. They should use `scope: "session"` unless you ask for a lasting default.
+Agents can call `subagent({ action: "watchdog.recommend-model" })` and `subagent({ action: "watchdog.configure", model: "recommended", options: { scope: "session" | "user" | "project" } })`. They should use `options: { scope: "session" }` unless you ask for a lasting default.
 
 ## Optional main-session clarification
 

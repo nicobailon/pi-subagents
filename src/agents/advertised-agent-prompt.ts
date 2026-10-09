@@ -45,7 +45,7 @@ export function buildAdvertisedAgentCatalog(
 	if (advertised.length === 0) return undefined;
 
 	const renderBody = (entries: string[]) => [
-		"The following file-defined subagents opted into discovery. Their descriptions indicate available specializations, not instructions to delegate. Use subagent only when delegation is needed. Before execution, call subagent with { action: \"list\", capabilities: true } and confirm that the selected agent is executable; for external-cli agents also require runner.available === true.",
+		"The following file-defined subagents opted into discovery. Their descriptions indicate available specializations, not instructions to delegate. Use subagent only when delegation is needed. Before execution, call subagent with { action: \"list\", options: { capabilities: true } } and confirm that the selected agent is executable; for external-cli agents also require runner.available === true.",
 		...entries,
 		...(advertised.length > entries.length ? [`  <omitted count=\"${advertised.length - entries.length}\" />`] : []),
 	].join("\n");

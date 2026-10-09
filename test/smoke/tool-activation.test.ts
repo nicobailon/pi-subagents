@@ -27,6 +27,10 @@ function serializedCharacters(tools: ReturnType<typeof getCurrentTools>): number
 	return tools.filter((tool) => packageToolNames.has(tool.name)).reduce((total, tool) => total + JSON.stringify(tool).length, 0);
 }
 
+function perToolSizes(tools: ReturnType<typeof getCurrentTools>): string {
+	return tools.filter((tool) => packageToolNames.has(tool.name)).map((tool) => `${tool.name}=${JSON.stringify(tool).length}`).join(", ");
+}
+
 async function runNativeSession(config: Record<string, unknown> | undefined, responses: FauxResponseStep[], prompts: string[]): Promise<void> {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-activation-"));
 	const cwd = path.join(root, "project");
@@ -73,6 +77,7 @@ async function runNativeSession(config: Record<string, unknown> | undefined, res
 
 test("native Pi exposes the full subagent schema on the request immediately after activation", { timeout: 30_000 }, async () => {
 	const captured: number[] = [];
+	const sizes: string[] = [];
 	await runNativeSession({ toolActivation: "dynamic" }, [
 		(context) => {
 			const tools = getCurrentTools(context.messages);
@@ -80,6 +85,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 			assert.match(systemPrompt, /pi-subagents is installed/i);
 			assert.match(systemPrompt, /complexity alone is not authorization/i);
 			captured.push(serializedCharacters(tools));
+			sizes.push(perToolSizes(tools));
 			const loader = tools.find((tool) => tool.name === "subagents_enable");
 			const wait = tools.find((tool) => tool.name === "bg_wait");
 			const supervisor = tools.find((tool) => tool.name === "subagent_supervisor");
@@ -93,6 +99,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 		(context) => {
 			const tools = getCurrentTools(context.messages);
 			captured.push(serializedCharacters(tools));
+			sizes.push(perToolSizes(tools));
 			// Replay on resume relies on the first declared tool set recording the loader.
 			const firstDeclared = context.messages.find((message) => message.role === "system" && message.toolsAdded?.length);
 			assert.ok(firstDeclared?.role === "system" && firstDeclared.toolsAdded?.some((tool) => tool.name === "subagents_enable"));
@@ -104,10 +111,11 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 	], ["Use the authorized delegation tools."]);
 
 	assert.equal(captured.length, 2);
-	assert.ok(captured[0]! <= 5_500, `cold package schemas exceeded budget: ${captured[0]}`);
-	assert.ok(captured[1]! <= 24_000, `activated package schemas exceeded budget: ${captured[1]}`);
-	assert.ok(captured[1]! - captured[0]! >= 17_500, "lazy activation should remove the full subagent schema from cold requests");
-	console.log(`schema characters cold=${captured[0]} activated=${captured[1]}`);
+	// Every package tool definition is sent on every request. Raising these budgets needs owner approval (#2770).
+	assert.ok(captured[0]! <= 2_200, `cold package tool text exceeded budget: ${captured[0]} (${sizes[0]})`);
+	assert.ok(captured[1]! <= 5_500, `activated package tool text exceeded budget: ${captured[1]} (${sizes[1]})`);
+	assert.ok(captured[1]! - captured[0]! >= 3_000, "lazy activation should remove the full subagent schema from cold requests");
+	console.log(`package tool characters cold=${captured[0]} (${sizes[0]}) activated=${captured[1]} (${sizes[1]})`);
 });
 
 test("native Pi starts auto sessions with subagent and no loader when the model cannot add tools", { timeout: 30_000 }, async () => {

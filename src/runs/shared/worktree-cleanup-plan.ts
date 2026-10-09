@@ -885,7 +885,7 @@ export function formatWorktreeCleanupPlan(created: CreatedWorktreeCleanupPlan): 
 		"",
 		`Plan saved: ${planPath}`,
 		"Plan-only mode: no worktrees or branches were removed.",
-		`Apply this reviewed plan: subagent({ action: "worktree.cleanup", mode: "apply", repo: ${JSON.stringify(plan.repoRoot)}, planId: ${JSON.stringify(plan.planId)} })`,
+		`Apply this reviewed plan: subagent({ action: "worktree.cleanup", options: { mode: "apply", repo: ${JSON.stringify(plan.repoRoot)}, planId: ${JSON.stringify(plan.planId)} } })`,
 	];
 	return lines.join("\n");
 }

@@ -12,6 +12,8 @@ clarify → scout → worker → fresh reviewers → worker
 
 Packaged `worker` defaults to fresh context so implementation starts from its assigned brief instead of the parent's unfinished conversation. Packaged `oracle` and `advisor` default to forked context; if the parent has no persisted session file or current leaf yet, that implicit default falls back to `fresh`. Explicit `context`, `context: "profile"`, and global `defaultSubagentContext` still override these profile defaults.
 
+Launch children in the background (`async` follows `asyncByDefault`, normally true) and consume each result at the point a later step depends on it. Native completion wakes the parent session, so the parent returns control instead of sleeping or polling. Use `async: false` only when the parent must block, not for final reviews or gates. When an oracle or advisor reaches an unknown that needs a decision, it asks through supervisor dialogue; use a one-shot oracle call only when one was requested.
+
 Child-safety boundaries are enforced at runtime:
 
 - Child sessions do not receive the bundled `pi-subagents` skill.
@@ -48,6 +50,8 @@ Add `autofix` to `/parallel-review` or `/parallel-cleanup` to apply only the syn
 ## Scripted workflows
 
 Use direct `{ agent, task }` for one bounded child. Use a workflow script when the parent needs a stable keyed child, sequence, fanout, steering, retry, or aggregation. For ordinary parallel fanout, use `await runs.all([{ key, agent, task }, ...])`. It resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from unawaited `runs.run` launches. Store a `runs.run` promise only when the script later observes it with `await`, `Promise.race`, or `Promise.all`, such as steering a live child before awaiting its result. Scripts are ordinary JavaScript statement bodies. Use an explicit `return` for a useful result.
+
+Use top-level `await`, plain helper functions, or Promise chains; nested async functions, async arrows, and async methods are rejected (see [opt-in bounded workflows](#opt-in-bounded-workflows)).
 
 The `workflow` field selects the script source:
 
@@ -104,9 +108,12 @@ Use a named workflow resource when a permission or policy extension needs to dis
 ```js
 subagent({ workflow: "review", args: { task: "Review the change" } });
 subagent({ workflow: "run-ci", args: { command: "npm test" } });
+subagent({ workflow: "parallel", args: { tasks: [{ agent: "reviewer", task: "Review src/api" }, { agent: "scout", task: "Map the tests" }] } });
 ```
 
-The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Reply-block (`workflow: true`) and file-path scripts remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent` or `task`; this first slice ships only the package-owned `review` and `run-ci` resources, not a user/project resource registry.
+The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Reply-block (`workflow: true`) and file-path scripts remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent` or `task`; the package ships the `review`, `run-ci` and `parallel` resources, not a user/project resource registry.
+
+`parallel` runs independent children together without writing a script: `args.tasks` is a list of `{ agent, task }` items, the children run in one `runs.all` batch, and the result lists each child's output in order. A failed child fails the workflow. Use a workflow script when steps depend on each other.
 
 ### Opt-in bounded workflows
 
@@ -120,9 +127,11 @@ return runs.run("review", { agent: "reviewer", task: "Review:\n" + scan.output }
 ```js
 subagent({
   workflow: true,
-  timeoutMs: 900000,
-  toolBudget: { soft: 40, hard: 60 },
-  usageBudget: { tokens: { soft: 100000, hard: 150000 } }
+  options: {
+    timeoutMs: 900000,
+    toolBudget: { soft: 40, hard: 60 },
+    usageBudget: { tokens: { soft: 100000, hard: 150000 } }
+  }
 });
 ```
 

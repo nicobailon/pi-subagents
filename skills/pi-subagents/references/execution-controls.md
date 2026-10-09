@@ -211,19 +211,19 @@ return runs.run("correctness", { agent: "reviewer", task: "Review the current di
 ```
 
 ```typescript
-const run = subagent({ workflow: true, async: true, context: "fresh" })
+const run = subagent({ workflow: true, async: true, options: { context: "fresh" } })
 // Continue local inspection, then later call status with the returned id.
 ```
 
 While children run, the persistent FleetView and the collapsed foreground tool-result card show live per-child detail: resolved model and thinking level, `[fresh]`/`[fork]` context, tool/token/elapsed counters, and current activity. The collapsed running card also prints the configured expand-key hint ("Press … for live detail"); expanding it shows nested children, recent tools, and recent output. Model badges appear once the child's model resolves at first attempt start. `/subagents-fleet` opens the live fleet inspector, which also has per-child controls (`s` steer, `D` stop with confirmation). When optional Herdr 0.7.5+ is available, `H` opens a raw inspector dashboard for the selected active async child; this mirrors artifacts rather than attaching to the headless child. When optional Orca progress tabs are enabled, Pi creates one passive Orca observer tab for the top-level subagent call. Parallel and chain children share that tab and write child section headers into the mirrored log instead of opening one tab per child. Pi remains authoritative for lifecycle, status, control, artifacts, and results; the Orca tab is display-only. Pi also writes passive display metadata under `.pi/subagents/views/orca/` when possible, so other surfaces can discover the observer without treating it as an owned child run. Use visual panes for confusing or long-running active async work when the human wants a dedicated surface or FleetView is insufficient, not for routine headless runs.
 
-Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. Use `subagent({ action: "status", view: "fleet" })` when supervising several active foreground/background runs and `subagent({ action: "status", id: "...", view: "transcript", index: 0 })` when you need the latest child output without digging through artifacts. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
+Inspect async runs with `subagent({ action: "status", id: "..." })` or `subagent({ action: "status" })` for active runs. Use `subagent({ action: "status", options: { view: "fleet" } })` when supervising several active foreground/background runs and `subagent({ action: "status", id: "...", options: { view: "transcript", index: 0 } })` when you need the latest child output without digging through artifacts. If a delegated fanout child launches nested runs, the parent status view shows them as a tree and you can target a nested run directly with its nested id.
 
 Stop a current-session top-level async run with `stop` (or `/subagents-stop`). Stopped runs finish as `stopped`/cancelled and are not resumable. For an active foreground single-subagent run, `/subagents-detach [run-id]` leaves the child running without terminating it and returns the eventual result through status/wait.
 
 ```typescript
 subagent({ action: "stop", id: "run-id" })
-subagent({ action: "stop", id: "run-id", childId: "child-id" })
+subagent({ action: "stop", id: "run-id", options: { childId: "child-id" } })
 ```
 
 Use `childId` only for active async/workflow runs whose status snapshot shows a
@@ -237,7 +237,7 @@ Use `steer` for top-level live async guidance and `resume` after a delegated run
 ```typescript
 subagent({ action: "steer", id: "run-id", message: "Focus on the failing test." })
 subagent({ action: "resume", id: "run-id", message: "Follow up on this point." })
-subagent({ action: "resume", id: "run-id", index: 1, message: "Continue reviewer 2." })
+subagent({ action: "resume", id: "run-id", message: "Continue reviewer 2.", options: { index: 1 } })
 subagent({ action: "resume", id: "nested-run-id", message: "Continue this nested reviewer." })
 ```
 
@@ -275,10 +275,10 @@ Schedules are durable project records under `.pi/subagents/schedules/`. They are
 
 ```typescript
 // One-shot reviewer, after a ```js workflow block with the script
-subagent({ action: "schedule.create", id: "evening-review", name: "Evening review", at: "+30m", workflow: true })
+subagent({ action: "schedule.create", id: "evening-review", workflow: true, options: { name: "Evening review", at: "+30m" } })
 
 // Fixed recurring workflow from a script file
-subagent({ action: "schedule.create", id: "backlog", every: "6h", catchUp: "latest", workflow: "./.pi/workflows/backlog.js" })
+subagent({ action: "schedule.create", id: "backlog", workflow: "./.pi/workflows/backlog.js", options: { every: "6h", catchUp: "latest" } })
 
 subagent({ action: "schedule.list" })
 subagent({ action: "schedule.show", id: "backlog" })
@@ -345,8 +345,8 @@ Steering supports three delivery modes via the `mode` parameter (`steer` is the 
 - `mode: "auto"` — same next-safe-point delivery path as `steer`, but without the automatic pause-and-revive recovery after a missed acknowledgment.
 
 ```typescript
-subagent({ action: "steer", id: "abc123", mode: "follow_up", message: "After this step, also validate the config file." })
-subagent({ action: "steer", id: "abc123", mode: "auto", message: "Switch to the failing test now." })
+subagent({ action: "steer", id: "abc123", message: "After this step, also validate the config file.", options: { mode: "follow_up" } })
+subagent({ action: "steer", id: "abc123", message: "Switch to the failing test now.", options: { mode: "auto" } })
 ```
 
 For async runs, `delivered` records that the child consumed the correlated user input; foreground `delivered` records in-process transport acceptance. Neither is proof of model compliance. A live foreground follow-up acknowledgment reports `queued`, meaning Pi accepted it into its follow-up queue, not that it was delivered. The foreground transport does not provide a later correlated queued-to-delivered receipt.
@@ -384,7 +384,7 @@ GPT 5.5 main session, or the reverse). Recommendation and configuration:
 ```typescript
 subagent({ action: "watchdog.status" })
 subagent({ action: "watchdog.recommend-model" })
-subagent({ action: "watchdog.configure", model: "recommended", scope: "session" })
+subagent({ action: "watchdog.configure", model: "recommended", options: { scope: "session" } })
 subagent({ action: "watchdog.check" })
 ```
 
@@ -426,15 +426,15 @@ Routing rule:
 Project panes run a separate Pi session from the target directory. Subagents launched inside that pane use that project's config, agents, skills, files, git state, and mission records. The pane binding lives under `<projectRoot>/.pi/subagents/project-panes/herdr.json`. When Pi runs inside Herdr, the owning pane reports compact active-work status and title suffixes, and the parent inline status counts opened project panes. Use Herdr itself or `project.status` / `project.close` for pane-level follow-up. For ordinary headless delegation to another repo, prefer explicit `cwd` first; reserve project panes for visible or persistent project ownership.
 
 ```typescript
-subagent({ action: "mission.create", mission: { title: "Ship auth refresh", objective: "Implement and validate refresh handling" } })
-subagent({ workflow: true, missionId: "<mission-id>" }) // after a ```js workflow block
-subagent({ workflow: true, mission: false }) // after a ```js workflow block
-subagent({ action: "mission.list", missionScope: "global" })
-subagent({ action: "mission.resolve-decision", missionId: "<mission-id>", id: "<decision-id>", summary: "Settled: ship the v2 API; no schema freeze needed." })
+subagent({ action: "mission.create", options: { mission: { title: "Ship auth refresh", objective: "Implement and validate refresh handling" } } })
+subagent({ workflow: true, options: { missionId: "<mission-id>" } }) // after a ```js workflow block
+subagent({ workflow: true, options: { mission: false } }) // after a ```js workflow block
+subagent({ action: "mission.list", options: { missionScope: "global" } })
+subagent({ action: "mission.resolve-decision", id: "<decision-id>", options: { missionId: "<mission-id>", summary: "Settled: ship the v2 API; no schema freeze needed." } })
 subagent({ action: "project.open", cwd: "/path/to/other-repo", message: "Own this mission for the project and report back with receipts." })
 subagent({ action: "project.status", cwd: "/path/to/other-repo" })
 subagent({ action: "project.close", cwd: "/path/to/other-repo" })
-subagent({ action: "mission.close", missionId: "<mission-id>", missionStatus: "completed", summary: "Auth refresh shipped and tests pass." })
+subagent({ action: "mission.close", options: { missionId: "<mission-id>", missionStatus: "completed", summary: "Auth refresh shipped and tests pass." } })
 ```
 
 ## Worktree Isolation
@@ -457,7 +457,7 @@ requires a clean git state and is mainly for intentionally parallel write
 workflows. On completion, use each child's handoff path from its
 `artifactPaths` instead of scraping combined text. Each manifest records child status and output references, full
 patch paths and stats, and whether each temporary worktree and branch was
-removed. The manifest is journaled immediately after managed worktree setup, before children run, so abrupt exits retain owned paths and branches for recovery. Dirty or divergent work without a successfully captured patch is preserved with a partial-cleanup warning. Permanently discard recorded preserved work with `subagent({ action: "worktree.discard", handoffPath: "<child handoff path>" })`; authority defaults to interactive confirmation and refuses headlessly, and partial results print manual Git recovery commands. If you want one writer thread and several advisory agents, prefer a
+removed. The manifest is journaled immediately after managed worktree setup, before children run, so abrupt exits retain owned paths and branches for recovery. Dirty or divergent work without a successfully captured patch is preserved with a partial-cleanup warning. Permanently discard recorded preserved work with `subagent({ action: "worktree.discard", options: { handoffPath: "<child handoff path>" } })`; authority defaults to interactive confirmation and refuses headlessly, and partial results print manual Git recovery commands. If you want one writer thread and several advisory agents, prefer a
 single-writer pattern instead.
 
 Git worktrees start from tracked files, so ignored or untracked build state

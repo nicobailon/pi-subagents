@@ -25,7 +25,7 @@ export async function verifyRevival(
 	const completed = nextCompletion("standalone child response verified REVIVAL_");
 	// Establish a real owner first, then challenge it while its provider call holds the lease.
 	const winnerLaunch = await tool.execute(
-		"REVIVAL_A", { action: "resume", id: source.asyncId, message: "REVIVAL_A", acceptance: false, timeoutMs: 20000 },
+		"REVIVAL_A", { action: "resume", id: source.asyncId, message: "REVIVAL_A", options: { acceptance: false, timeoutMs: 20000 } },
 		new AbortController().signal, undefined, ctx,
 	);
 	const winner = winnerLaunch.details as Run;
@@ -45,7 +45,7 @@ export async function verifyRevival(
 	const request = fs.readFileSync("/stage/lifecycle.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line)).find((event) => event.event === "request" && event.pid === lease.owner.pid);
 	assert.ok(JSON.stringify(request.messages).includes("standalone child response verified SINGLE"), "revival must load the actual previous SDK conversation");
 	const refusal = await tool.execute(
-		"REVIVAL_B", { action: "resume", id: source.asyncId, message: "REVIVAL_B", acceptance: false, timeoutMs: 20000 },
+		"REVIVAL_B", { action: "resume", id: source.asyncId, message: "REVIVAL_B", options: { acceptance: false, timeoutMs: 20000 } },
 		new AbortController().signal, undefined, ctx,
 	).then(() => assert.fail("a second revival must not acquire the owned session"), String);
 	assert.ok(refusal.includes(`'${canonicalSessionFile}' is already owned by run '${winner.asyncId}'`), "a second revival must refuse the exact owned session and name its owner");
@@ -75,7 +75,7 @@ export async function verifyRevival(
 	await finish(winner, "complete", lease.owner.token);
 
 	const failedCompletion = nextCompletion("fixture revival failure");
-	const failedLaunch = await tool.execute("revival-failure", { action: "resume", id: winner.asyncId, message: "REVIVAL_FAIL", acceptance: false, timeoutMs: 20000 }, new AbortController().signal, undefined, ctx);
+	const failedLaunch = await tool.execute("revival-failure", { action: "resume", id: winner.asyncId, message: "REVIVAL_FAIL", options: { acceptance: false, timeoutMs: 20000 } }, new AbortController().signal, undefined, ctx);
 	const failed = failedLaunch.details as Run;
 	await failedCompletion;
 	await waitForFile(`${failed.asyncDir}/process-terminal.json`, (text) => JSON.parse(text).state !== "pending");

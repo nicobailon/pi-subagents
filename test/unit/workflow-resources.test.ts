@@ -161,6 +161,31 @@ describe("named workflow resources", () => {
 		assert.equal((execution.value as { ok?: boolean }).ok, true);
 	});
 
+	it("runs args.tasks in parallel through the built-in parallel workflow and rejects malformed tasks", async () => {
+		const resolved = resolveWorkflowResource("parallel", { tasks: [{ agent: "reviewer", task: "Review src/api" }, { agent: "scout", task: "Map the tests" }] });
+		assert.equal(resolved.ok, true);
+		if (!resolved.ok) return;
+		assert.equal(typeof consumeWorkflowResourcePermit(resolved.resource.permit, resolved.resource.script), "object");
+		const launched: Array<{ key: string; agent: unknown; task: unknown }> = [];
+		const execution = await runWorkflowScript({
+			script: resolved.resource.script,
+			async launch(key, input) {
+				launched.push({ key, agent: input.agent, task: input.task });
+				return { key, ok: true, output: `${input.agent} done`, artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "unused", artifactPaths: [] }; },
+		});
+		assert.deepEqual(launched.map(({ agent, task }) => ({ agent, task })), [{ agent: "reviewer", task: "Review src/api" }, { agent: "scout", task: "Map the tests" }]);
+		assert.deepEqual((execution.value as { children: Array<{ agent: string; output: string }> }).children.map(({ agent, output }) => ({ agent, output })), [
+			{ agent: "reviewer", output: "reviewer done" },
+			{ agent: "scout", output: "scout done" },
+		]);
+
+		assert.deepEqual(resolveWorkflowResource("parallel", {}), { ok: false, error: "workflow 'parallel' args.tasks must be a non-empty array of { agent, task } items." });
+		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "reviewer" }] }) as { error: string }).error, /args\.tasks\[0\]\.task must be a non-empty string/);
+		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b" }], concurrency: 2 }) as { error: string }).error, /unsupported fields: concurrency/);
+	});
+
 	it("does not authorize raw equivalent scripts or unconsumed/forged permits", () => {
 		const forged = { __workflowResourcePermit: Symbol("forged") } as never;
 		assert.equal(authorizeWorkflowResourceHost(forged, "ci", "npm test"), "Workflow resource authority is unavailable.");

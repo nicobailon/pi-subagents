@@ -12,7 +12,8 @@ import { createChildCommandRuntime, controlChildCommand, readChildCommandState }
 const ctx = { sessionManager: { getSessionId: () => "test-session", getSessionFile: () => undefined } } as ExtensionContext;
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(predicate: () => boolean, diagnostic?: () => unknown) {
-	const deadline = Date.now() + 3000;
+	// Waits on real Node child processes, which can take several seconds to start on loaded Windows runners.
+	const deadline = Date.now() + 10_000;
 	while (!predicate()) { assert.ok(Date.now() < deadline, `condition did not become true${diagnostic ? `: ${JSON.stringify(diagnostic())}` : ""}`); await delay(10); }
 }
 function processAlive(pid: number) { try { process.kill(pid, 0); return true; } catch { return false; } }
@@ -24,7 +25,7 @@ function serviceCommand(pidFile: string) {
 }
 
 describe("child commands using Pi's real bash backend", () => {
-	it("yields a live process, runs another command, and cancels only the selected process", { timeout: 10_000 }, async () => {
+	it("yields a live process, runs another command, and cancels only the selected process", { timeout: 30_000 }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-child-commands-"));
 		const commands = createChildCommandRuntime(dir);
 		const bash = commands.wrap(createBashToolDefinition(dir));
@@ -54,7 +55,7 @@ describe("child commands using Pi's real bash backend", () => {
 		} finally { await commands.shutdown(); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
-	it("lets the supervisor yield a bash call that was already blocking", { timeout: 10_000 }, async () => {
+	it("lets the supervisor yield a bash call that was already blocking", { timeout: 30_000 }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-child-yield-"));
 		const commands = createChildCommandRuntime(dir);
 		try {
@@ -70,7 +71,7 @@ describe("child commands using Pi's real bash backend", () => {
 		} finally { await commands.shutdown(); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
-	it("returns command failures and per-command timeouts without poisoning the session", { timeout: 10_000 }, async () => {
+	it("returns command failures and per-command timeouts without poisoning the session", { timeout: 30_000 }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-child-errors-"));
 		const commands = createChildCommandRuntime(dir);
 		const bash = commands.wrap(createBashToolDefinition(dir));
@@ -84,7 +85,7 @@ describe("child commands using Pi's real bash backend", () => {
 		} finally { await commands.shutdown(); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
-	it("cancels unfinished background work and fails closed when the child finishes", { timeout: 10_000 }, async () => {
+	it("cancels unfinished background work and fails closed when the child finishes", { timeout: 30_000 }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-child-finish-"));
 		const commands = createChildCommandRuntime(dir);
 		try {
@@ -101,7 +102,7 @@ describe("child commands using Pi's real bash backend", () => {
 
 
 describe("Pi agent loop command cancellation", () => {
-	it("continues the same agent turn after the supervisor cancels a blocking command", { timeout: 10_000 }, async () => {
+	it("continues the same agent turn after the supervisor cancels a blocking command", { timeout: 30_000 }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-command-agent-"));
 		const commands = createChildCommandRuntime(dir);
 		const pidFile = path.join(dir, "agent.pid");
@@ -133,7 +134,7 @@ describe("Pi agent loop command cancellation", () => {
 			assert.equal(agent.state.errorMessage, undefined);
 		} finally { agent.abort(); await commands.shutdown(); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
-	it("continues after a yielded command and observes targeted cancellation through the child tool", { timeout: 10_000 }, async () => {
+	it("continues after a yielded command and observes targeted cancellation through the child tool", { timeout: 30_000 }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-command-yield-agent-"));
 		const commands = createChildCommandRuntime(dir);
 		const responses = [

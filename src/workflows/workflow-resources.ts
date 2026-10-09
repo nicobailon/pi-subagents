@@ -161,6 +161,16 @@ function resolveRunCi(args: Readonly<Record<string, unknown>>): ReturnType<Workf
 	};
 }
 
+function resolveParallel(args: Readonly<Record<string, unknown>>): ReturnType<WorkflowResourceDefinition["resolve"]> {
+	const unsupported = Object.keys(args).filter((key) => key !== "tasks");
+	if (unsupported.length > 0) return { error: `workflow 'parallel' args contain unsupported fields: ${unsupported.join(", ")}. Pass args.tasks: [{ agent, task }, ...].` };
+	try {
+		return { script: buildStructuredWorkflowScript("tasks", args.tasks, undefined) };
+	} catch (error) {
+		return { error: `workflow 'parallel' args.${error instanceof Error ? error.message : String(error)}` };
+	}
+}
+
 function resolveReview(args: Readonly<Record<string, unknown>>): ReturnType<WorkflowResourceDefinition["resolve"]> {
 	const unsupported = Object.keys(args).filter((key) => key !== "task");
 	if (unsupported.length > 0) return { error: `workflow 'review' args contain unsupported fields: ${unsupported.join(", ")}.` };
@@ -174,6 +184,7 @@ function resolveReview(args: Readonly<Record<string, unknown>>): ReturnType<Work
 const WORKFLOW_RESOURCES: readonly WorkflowResourceDefinition[] = [
 	{ name: "review", version: 1, resolve: resolveReview },
 	{ name: "run-ci", version: 1, resolve: resolveRunCi },
+	{ name: "parallel", version: 1, resolve: resolveParallel },
 ];
 
 function findWorkflowResource(name: string): WorkflowResourceDefinition | undefined {

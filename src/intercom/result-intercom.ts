@@ -228,7 +228,7 @@ function asyncResumeGuidance(input: {
 	}
 	if (resumable.length > 0) {
 		const firstIndex = resumable[0]?.index ?? input.children.indexOf(resumable[0]!);
-		return `Revive child: subagent({ action: "resume", id: "${input.asyncId}", index: ${firstIndex}, message: "..." })`;
+		return `Revive child: subagent({ action: "resume", id: "${input.asyncId}", message: "...", options: { index: ${firstIndex} } })`;
 	}
 	return "Resume: unavailable; no child session file was persisted.";
 }

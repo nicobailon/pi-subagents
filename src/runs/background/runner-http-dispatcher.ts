@@ -84,6 +84,7 @@ export function runnerHttpDispatcherOptions(timeoutMs: number): {
 	proxyTunnel: true;
 	headersTimeout: number;
 	bodyTimeout: number;
+	connect: { autoSelectFamilyAttemptTimeout: number };
 } {
 	return {
 		allowH2: false,
@@ -91,6 +92,8 @@ export function runnerHttpDispatcherOptions(timeoutMs: number): {
 		proxyTunnel: true,
 		headersTimeout: timeoutMs,
 		bodyTimeout: timeoutMs,
+		// Match Pi's dispatcher: Node's 250ms default ends valid connection attempts on high-latency routes.
+		connect: { autoSelectFamilyAttemptTimeout: 2_000 },
 	};
 }
 
