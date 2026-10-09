@@ -298,13 +298,15 @@ Debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi/subagents/ar
 - `{runId}_{agent}.jsonl`
 - `{runId}_{agent}_meta.json`
 
-Metadata records timing, usage, exit code, the resolved model, and the resolved acceptance ledger with its parsed child report. A strictly guarded retained-session recovery after a verified compaction abort may continue once on that same model; it never selects another model.
+Metadata records the parent session id, timing, usage, exit code, the resolved model, and the resolved acceptance ledger with its parsed child report. A strictly guarded retained-session recovery after a verified compaction abort may continue once on that same model; it never selects another model.
 
 For npm package projects, project-scoped artifacts need a `.npmignore` rule (or `.gitignore` when no `.npmignore` exists) or a `files` allowlist that does not include `.pi/subagents/`. pi-subagents warns at launch when these package settings can include the artifacts. Use `artifactDir: "session"` or `"temp"` to keep them outside the package worktree.
 
 ## Sessions
 
 Session files are stored under a per-run session directory. With `context: "fork"`, each child starts from a branched session file produced from the parent's current leaf (foreground children open it in-process; background children receive it as `--session`). That is a real session fork, not an injected summary. An omitted launch `context` that resolves through `defaultContext: fork` uses the same branch when the parent session file and current leaf exist, and otherwise starts fresh.
+
+A child session's header records the launching session's file as `parentSession`, the field Pi uses for its own forks, so a reader can find the parent session without parsing the directory layout. A nested child points at the session of the child that launched it. Run metadata (`{runId}_{agent}_meta.json`) also records `parentSessionId`, the launching session's id.
 
 ## Completion notifications
 

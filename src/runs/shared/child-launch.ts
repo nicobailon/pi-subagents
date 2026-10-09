@@ -66,6 +66,8 @@ export interface BuildInProcessChildLaunchInput {
 	remoteSkillNames?: string[];
 	remoteReads?: string[] | false;
 	parentSessionId?: string;
+	/** The launching session's file; a new child session records it as its parent. */
+	parentSessionFile?: string;
 	forkCacheKey?: string;
 	sessionEnabled: boolean;
 	sessionDir?: string;
@@ -328,6 +330,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(input.projectTrusted !== undefined ? { projectTrusted: input.projectTrusted } : {}),
 		...(input.machine ? { remoteResources: { agent: input.childAgentName, ...(input.remoteSkillNames ? { skills: input.remoteSkillNames } : {}), ...(input.remoteReads !== undefined ? { reads: input.remoteReads } : {}), ...(toolPlan.explicitToolAllowlist ? { toolCeiling: [...toolPlan.effectiveToolAllowlist] } : toolPlan.capabilityCeiling?.allowedTools ? { toolCeiling: [...toolPlan.capabilityCeiling.allowedTools] } : {}) } } : {}),
 		storage: childStorage(input),
+		...(input.parentSessionFile ? { parentSessionFile: input.parentSessionFile } : {}),
 		...(input.model ? { model: input.model } : {}),
 		...(toolPlan.explicitToolAllowlist ? { tools: toolPlan.effectiveToolAllowlist } : {}),
 		...(toolPlan.builtinMcpTools?.length ? { builtinMcpTools: toolPlan.builtinMcpTools } : {}),

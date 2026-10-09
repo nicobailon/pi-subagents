@@ -64,6 +64,8 @@ export interface ChildSessionLaunch {
 	/** Logical names resolved only by the remote ambient package. */
 	remoteResources?: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false };
 	storage: ChildSessionStorage;
+	/** The launching session's file, recorded as the new child session's `parentSession` header like Pi's forks. */
+	parentSessionFile?: string;
 	/** Model reference as the agent config names it (`provider/id`, optionally `:thinking`). */
 	model?: string;
 	/** Explicit tool allowlist; undefined keeps pi's defaults. */
@@ -505,13 +507,19 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 						throw new Error(`Failed to refresh child providers: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 					}
 				}
+				const newSessionOptions = launch.parentSessionFile ? { parentSession: launch.parentSessionFile } : undefined;
+				const newSessionFile = launch.storage.kind === "file" && !fs.existsSync(launch.storage.sessionFile);
 				const sessionManager = launch.storage.kind === "file"
 					? pi.SessionManager.open(launch.storage.sessionFile, undefined, launch.cwd)
 					: launch.storage.kind === "dir"
-						? pi.SessionManager.create(launch.cwd, launch.storage.sessionDir)
+						? pi.SessionManager.create(launch.cwd, launch.storage.sessionDir, newSessionOptions)
 						: launch.storage.kind === "memory"
-							? pi.SessionManager.inMemory(launch.cwd)
-							: pi.SessionManager.create(launch.cwd);
+							? pi.SessionManager.inMemory(launch.cwd, newSessionOptions)
+							: pi.SessionManager.create(launch.cwd, undefined, newSessionOptions);
+				// SessionManager.open takes no parent for a file it is about to create, so set it on the
+				// header Pi writes with the first assistant message. Forked and resumed files keep theirs.
+				const header = newSessionFile && launch.parentSessionFile ? sessionManager.getHeader() : null;
+				if (header) header.parentSession = launch.parentSessionFile;
 				const resolvedModel = launch.model
 					? pi.resolveCliModel({ cliModel: launch.model, modelRuntime })
 					: undefined;
