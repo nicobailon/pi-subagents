@@ -6,6 +6,7 @@ import type { TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveModelCandidate } from "../runs/shared/model-resolution.ts";
 import { splitKnownThinkingSuffix, toModelInfo } from "./model-info.ts";
+import { opencodeSessionHeaders } from "./opencode-session-headers.ts";
 import type { ForkContextConfig } from "./types.ts";
 
 const MAX_INHERITED_SESSION_BYTES = 64 * 1024;
@@ -421,7 +422,7 @@ function splitProviderModel(value: string): { provider: string; id: string } | u
 }
 
 export async function createPrunedForkSessionWriter(
-	ctx: Pick<ExtensionContext, "modelRegistry" | "model">,
+	ctx: Pick<ExtensionContext, "modelRegistry" | "model" | "sessionManager">,
 	config: ForkContextConfig | undefined,
 	signal?: AbortSignal,
 ): Promise<(sessionFile: string) => Promise<void>> {
@@ -435,6 +436,9 @@ export async function createPrunedForkSessionWriter(
 	if (!named) throw new Error(`Pruned fork model '${config.model}' must resolve to provider/model.`);
 	const model = ctx.modelRegistry.find(named.provider, named.id);
 	if (!model) throw new Error(`Pruned fork model '${config.model}' was not found as '${baseModel}'.`);
+	// OpenCode rejects requests without its session header (400 MissingSessionID).
+	const sessionId = ctx.sessionManager.getSessionId();
+	const sessionHeaders = opencodeSessionHeaders(model, sessionId);
 
 	let sharedSummary: Promise<string> | undefined;
 	const summarize: SummaryFunction = async (payload) => {
@@ -445,6 +449,8 @@ export async function createPrunedForkSessionWriter(
 			}, {
 				maxTokens: Math.min(MAX_SUMMARY_TOKENS, typeof model.maxTokens === "number" && model.maxTokens > 0 ? model.maxTokens : MAX_SUMMARY_TOKENS),
 				signal,
+				sessionId,
+				...(sessionHeaders ? { headers: sessionHeaders } : {}),
 			}).result();
 			if (response.stopReason === "error" || response.stopReason === "aborted") {
 				throw new Error(`Pruned fork summarization stopped with ${response.stopReason}${response.errorMessage ? `: ${response.errorMessage}` : ""}`);

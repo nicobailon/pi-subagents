@@ -27,6 +27,7 @@ import { PI_CODING_AGENT_PACKAGE, resolveBunPiExecutable, resolveInstalledPiPack
 import { JITI_ALIAS_ENV, resolveHostPeerAliases } from "./runner-aliases.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
+import { resolveRuntimeModulePath } from "../../shared/runtime-module-path.ts";
 import { backgroundProcessOptions } from "../shared/background-process-options.ts";
 import { normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, PROMPT_REDACTED, resolveChildCwd } from "../../shared/utils.ts";
@@ -157,16 +158,21 @@ function resolveJitiCliPath(): string | undefined {
 }
 
 const jitiCliPath = resolveJitiCliPath();
-const asyncRunnerSourcePath = path.join(
-	path.dirname(fileURLToPath(import.meta.url)),
-	`subagent-runner-bootstrap${path.extname(fileURLToPath(import.meta.url))}`,
-);
-const sourceUnderNodeModules = asyncRunnerSourcePath.split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
+const asyncRunnerModuleDir = path.dirname(fileURLToPath(import.meta.url));
+// Resolved lazily so an in-place package update (a TypeScript source layout
+// replaced by the compiled JavaScript one) cannot leave a running process
+// pointing at a sibling file that has been removed.
+function asyncRunnerSourcePath(): string {
+	return resolveRuntimeModulePath(asyncRunnerModuleDir, "subagent-runner-bootstrap");
+}
+function sourceUnderNodeModules(): boolean {
+	return asyncRunnerSourcePath().split(path.sep).some((segment) => segment.toLowerCase() === "node_modules");
+}
 function supportsNativeRunner(nodeExecutable: string): boolean {
 	return Boolean(process.features.typescript)
 	&& typeof nodeModule.registerHooks === "function"
 	&& nodeExecutable === process.execPath
-	&& !sourceUnderNodeModules;
+	&& !sourceUnderNodeModules();
 }
 
 interface AsyncExecutionContext {
@@ -681,12 +687,12 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	const binaryHost = resolveBunPiExecutable();
 	const nodeExecutable = resolveNodeExecutable();
 	const nativeRunnerSupported = supportsNativeRunner(nodeExecutable);
-	const runner = asyncRunnerSourcePath;
+	const runner = asyncRunnerSourcePath();
 	const runnerIsJavaScript = path.extname(runner) === ".js";
-	const bootstrap = path.join(path.dirname(runner), `binary-bootstrap${path.extname(fileURLToPath(import.meta.url))}`);
+	const bootstrap = resolveRuntimeModulePath(path.dirname(runner), "binary-bootstrap");
 	if (binaryHost && !fs.existsSync(bootstrap)) return { error: `Background runner bootstrap not found: ${bootstrap}` };
 	if (!binaryHost && !runnerIsJavaScript && !nativeRunnerSupported && !jitiCliPath) {
-		return { error: sourceUnderNodeModules
+		return { error: sourceUnderNodeModules()
 			? "Background runner source is installed under node_modules, so upstream jiti is required for TypeScript execution."
 			: "Background runner requires enabled native TypeScript with synchronous module hooks, or installed upstream jiti for TypeScript execution." };
 	}
