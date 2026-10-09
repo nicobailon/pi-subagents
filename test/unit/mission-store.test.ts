@@ -28,7 +28,8 @@ function fixture() {
 // The real project sits one level deeper than the link, so "../x" names different
 // directories when resolved from each path.
 function symlinkedFixture() {
-	const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-missions-")));
+	// .native also expands Windows 8.3 short names (RUNNER~1), matching the store's canonical root.
+	const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-missions-")));
 	const realRoot = path.join(root, "physical", "project");
 	const linkRoot = path.join(root, "link");
 	const agentDir = path.join(root, "agent");
