@@ -146,7 +146,7 @@ export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["ge
 		"- /subagents-watchdog model <provider/model[:thinking]>",
 		"- /subagents-watchdog model inherit",
 		"- /subagents-watchdog session model recommended",
-		"Agent action: subagent({ action: \"watchdog.configure\", model: \"recommended\", scope: \"session\" })",
+		"Agent action: subagent({ action: \"watchdog.configure\", model: \"recommended\", options: { scope: \"session\" } })",
 	);
 	return lines.join("\n");
 }

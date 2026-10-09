@@ -1580,7 +1580,7 @@ describe("subagent extension child mode", () => {
 			const list = await registeredTool.execute("list-check", { action: "list" }, new AbortController().signal, undefined, ctx);
 			if (list.isError) throw new Error("list should be allowed: " + JSON.stringify(list.content));
 			await assert.rejects(
-				registeredTool.execute("create-check", { action: "create", config: { name: "x" } }, new AbortController().signal, undefined, ctx),
+				registeredTool.execute("create-check", { action: "create", options: { config: { name: "x" } } }, new AbortController().signal, undefined, ctx),
 				/not available from child-safe subagent fanout mode/,
 			);
 			await assert.rejects(
@@ -1588,7 +1588,7 @@ describe("subagent extension child mode", () => {
 				/not available from child-safe subagent fanout mode/,
 			);
 			await assert.rejects(
-				registeredTool.execute("grant-check", { action: "grant-spawn-budget", additional: 1 }, new AbortController().signal, undefined, { ...ctx, hasUI: true }),
+				registeredTool.execute("grant-check", { action: "grant-spawn-budget", options: { additional: 1 } }, new AbortController().signal, undefined, { ...ctx, hasUI: true }),
 				/root interactive parent session/,
 			);
 		`;

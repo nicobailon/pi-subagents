@@ -25,7 +25,7 @@ describe("subagent control attention state", () => {
 		assert.equal(claimControlNotification(resolveControlConfig(), { ...event, ts: event.ts + 1000 }, seen), false);
 		assert.equal(claimControlNotification(resolveControlConfig(), { ...event, toolCallId: "second" }, seen), true);
 		const notice = formatControlNoticeMessage({ ...event, index: 2 });
-		assert.match(notice, /"action":"command.cancel","id":"run","index":2,"toolCallId":"first"/);
+		assert.match(notice, /"action":"command.cancel","id":"run","options":\{"index":2,"toolCallId":"first"\}/);
 		assert.match(notice, /"action":"command.yield"/);
 	});
 
@@ -216,6 +216,7 @@ describe("subagent control attention state", () => {
 		assert.match(message, /Status: subagent\(\{ action: "status", id: "78f659a3" \}\)/);
 		assert.match(message, /Interrupt: subagent\(\{ action: "interrupt", id: "78f659a3" \}\)/);
 		assert.doesNotMatch(message, /Wait:/);
+		assert.match(formatControlNoticeMessage({ ...event, index: 2 }), /Top-level live async nudge: subagent\(\{ action: "steer", id: "78f659a3", message: "[^"]*", options: \{ index: 2 \} \}\)/);
 	});
 
 	it("formats open-tool attention notices with tool facts", () => {
@@ -239,7 +240,7 @@ describe("subagent control attention state", () => {
 		assert.match(message, /dev server or watch command/);
 		assert.match(message, /Elapsed time alone does not prove/);
 		assert.match(message, /yield a needed persistent command or cancel the exact incorrect command/);
-		assert.match(message, /Transcript: subagent\(\{ action: "status", id: "78f659a3", view: "transcript" \}\)/);
+		assert.match(message, /Transcript: subagent\(\{ action: "status", id: "78f659a3", options: \{ view: "transcript" \} \}\)/);
 		assert.doesNotMatch(message, /live async nudge|live nested nudge|Interrupt:|Direct intercom target:/);
 		assert.match(formatControlIntercomMessage(event), /A queued steer does not cancel an in-flight bash call/);
 	});
@@ -250,7 +251,7 @@ describe("subagent control attention state", () => {
 			reason: "tool_open_threshold", currentTool: "bash",
 		});
 		const message = formatControlNoticeMessage(event);
-		assert.match(message, /Transcript: subagent\(\{ action: "status", id: "parallel-run", view: "transcript", index: 2 \}\)/);
+		assert.match(message, /Transcript: subagent\(\{ action: "status", id: "parallel-run", options: \{ view: "transcript", index: 2 \} \}\)/);
 		assert.match(message, /interrupt is run-scoped and may affect siblings/);
 		assert.doesNotMatch(message, /subagent\(\{ action: "interrupt"/);
 	});

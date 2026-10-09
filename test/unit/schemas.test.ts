@@ -153,12 +153,18 @@ function getPropertySchema(schema: JsonSchemaNode | undefined, path: string[]): 
 }
 
 let schemas: Record<string, JsonSchemaNode> = {};
+// Full flat property schemas: RPC validation and model `options` validation both use these definitions.
 let SubagentParams: SubagentParamsSchema | undefined;
+// What the model-facing tool sends to the provider: execution fields plus one opaque options object.
+let ProviderParams: JsonSchemaNode | undefined;
+let createProviderSchema: ((disabled?: unknown) => JsonSchemaNode) | undefined;
 let SubagentWaitParams: JsonSchemaNode | undefined;
 let schemasAvailable = true;
 try {
 	schemas = await import("../../src/extension/schemas.ts") as Record<string, JsonSchemaNode>;
-	SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
+	SubagentParams = schemas.SubagentFlatParams as SubagentParamsSchema;
+	ProviderParams = schemas.SubagentParams;
+	createProviderSchema = schemas.createSubagentParamsSchema as unknown as typeof createProviderSchema;
 	SubagentWaitParams = schemas.SubagentWaitParams as JsonSchemaNode;
 } catch (error) {
 	if (missingPackageName(error) !== "typebox") throw error;
@@ -270,7 +276,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const description = String(actionSchema.description ?? "");
 		assert.match(description, /Management\/control only; omit for execution/);
 		assert.match(description, /validate accepts workflow: true or a script path/);
-		assert.match(description, /guide topic tool-reference/);
+		assert.match(description, /\{action:"guide",options:\{topic:"tool-reference"\}\}/);
 		assert.doesNotMatch(description, /orchestration\./);
 	});
 
@@ -457,22 +463,24 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.deepEqual(missingItemsPaths, []);
 	});
 
-	it("keeps only top-level parameter descriptions to keep the provider payload compact", () => {
-		assert.ok(SubagentParams, "SubagentParams schema should exist");
-		const schema = SubagentParams as unknown as JsonSchemaNode;
+	it("keeps only top-level parameter descriptions to keep the provider payload compact", async () => {
+		assert.ok(ProviderParams, "SubagentParams schema should exist");
+		const schema = ProviderParams;
 		const serialized = JSON.stringify(schema);
-		assert.ok(serialized.length <= 13_010, `expected concise schema at or under 13,010 chars, got ${serialized.length}`);
+		assert.ok(serialized.length <= 2_100, `expected concise schema at or under 2,100 chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
-		assert.equal(serialized.split("Evidence policy;").length - 1, 1);
-		assert.match(String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.agent?.description ?? ""), /management target/);
-		const acceptanceDescription = String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.acceptance?.description ?? "");
-		assert.match(acceptanceDescription, /Evidence policy/);
-		assert.match(acceptanceDescription, /guide tool-reference.*levels, evidence and review.required/);
-		const missionDescription = String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.mission?.description ?? "");
-		assert.match(missionDescription, /exactly one non-empty title or summary/);
-		assert.match(missionDescription, /goal only true/);
-		assert.match(missionDescription, /requires budget\.tokens/);
+		const properties = schema.properties as Record<string, JsonSchemaNode>;
+		assert.deepEqual(Object.keys(properties), ["agent", "task", "workflow", "args", "async", "model", "cwd", "worktree", "output", "action", "id", "message", "options"]);
+		assert.match(String(properties.agent?.description ?? ""), /management target/);
+		assert.equal(properties.options?.type, "object");
+		assert.equal(properties.options?.additionalProperties, true);
+		assert.equal(properties.options?.properties, undefined);
+		assert.match(String(properties.options?.description ?? ""), /acceptance, timeoutMs.*guide tool-reference\/parameter-reference/);
+		const { resolveDisabledFeatureSurface } = await import("../../src/shared/disabled-features.ts");
+		const structured = createProviderSchema!(resolveDisabledFeatureSurface({ disabledFeatures: ["workflow-scripts"] }));
+		assert.ok(JSON.stringify(structured).length <= 2_400, `expected structured schema at or under 2,400 chars, got ${JSON.stringify(structured).length}`);
+		assert.deepEqual(Object.keys(structured.properties as JsonSchemaNode), ["agent", "task", "tasks", "chain", "async", "model", "cwd", "worktree", "output", "action", "id", "message", "options"]);
 
 		const nestedDescriptionPaths: string[] = [];
 		const stack: Array<{ path: string; value: unknown }> = [{ path: "SubagentParams", value: schema }];
@@ -493,8 +501,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 	});
 
 	it("preserves TypeBox metadata while pruning provider-visible descriptions", () => {
-		assert.ok(SubagentParams, "SubagentParams schema should exist");
-		const schema = SubagentParams as unknown as JsonSchemaNode;
+		assert.ok(ProviderParams, "SubagentParams schema should exist");
+		const schema = ProviderParams;
 		const rootKind = Object.getOwnPropertyDescriptor(schema, "~kind");
 		assert.equal(rootKind?.value, "Object");
 		assert.equal(rootKind?.enumerable, false);

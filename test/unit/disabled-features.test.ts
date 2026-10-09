@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { SUBAGENT_FEATURES, resolveDisabledFeatureSurface, validateDisabledFeatures, type SubagentFeature } from "../../src/shared/disabled-features.ts";
-import { SubagentParams, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
+import { SUBAGENT_OPTION_KEYS, SubagentParams, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
 import { readSubagentGuide } from "../../src/extension/subagent-guide.ts";
 import { buildSubagentToolDescription, SUBAGENT_SAFETY_GUIDANCE } from "../../src/extension/tool-description.ts";
@@ -91,8 +91,9 @@ describe("disabled feature groups", () => {
 	});
 
 	for (const group of GROUPS) {
-		it(`${group.name}: removes exactly its parameters from the schema`, () => {
-			for (const param of group.params) assert.ok(fullKeys.includes(param), `${param} is not a schema parameter`);
+		it(`${group.name}: removes exactly its top-level parameters from the schema`, () => {
+			// Options fields are opaque in the provider schema; the executor rejects disabled ones.
+			for (const param of group.params) assert.ok(fullKeys.includes(param) || SUBAGENT_OPTION_KEYS.includes(param), `${param} is not a subagent parameter`);
 			// workflow-scripts replaces the removed script parameters with chain/tasks after task.
 			const added = group.name === "workflow-scripts" ? ["tasks", "chain"] : [];
 			assert.deepEqual(schemaKeys(group.config), fullKeys.filter((key) => !group.params.includes(key)).flatMap((key) => key === "task" ? [key, ...added] : [key]));
@@ -154,7 +155,7 @@ describe("disabled feature discovery", () => {
 		"not watchdog-only thinking",
 		"tool budget, fast",
 		"usageBudget is shared",
-		"unless mission:false",
+		"unless options.mission:false",
 		"create/update/delete",
 		"mission.*",
 		"schedule.*",

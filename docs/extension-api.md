@@ -459,10 +459,10 @@ The async runner process does not import provider internals. It writes operation
 Inspect is the portable command and action surface for an existing async run. The public actions are:
 
 ```ts
-subagent({ action: "inspector.command", id: "<run-id>", index: 0 })
-subagent({ action: "inspector.open", id: "<run-id>", index: 0, focus: true })
-subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
-subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
+subagent({ action: "inspector.command", id: "<run-id>", options: { index: 0 } })
+subagent({ action: "inspector.open", id: "<run-id>", options: { index: 0, focus: true } })
+subagent({ action: "inspector.status", id: "<run-id>", options: { index: 0 } })
+subagent({ action: "inspector.close", id: "<run-id>", options: { index: 0 } })
 ```
 
 `inspector.command` returns a standalone runner command without contacting a host or writing a binding. `inspector.open` selects an available built-in or externally registered inspector plugin. `status` and `close` select the plugin that owns the run binding and report clearly when that plugin does not support the requested lifecycle action. Without an available plugin, `open` fails closed with an actionable message; ordinary launches remain headless. Closing an inspector never stops the run.

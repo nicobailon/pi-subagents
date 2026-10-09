@@ -120,9 +120,11 @@ return runs.run("review", { agent: "reviewer", task: "Review:\n" + scan.output }
 ```js
 subagent({
   workflow: true,
-  timeoutMs: 900000,
-  toolBudget: { soft: 40, hard: 60 },
-  usageBudget: { tokens: { soft: 100000, hard: 150000 } }
+  options: {
+    timeoutMs: 900000,
+    toolBudget: { soft: 40, hard: 60 },
+    usageBudget: { tokens: { soft: 100000, hard: 150000 } }
+  }
 });
 ```
 

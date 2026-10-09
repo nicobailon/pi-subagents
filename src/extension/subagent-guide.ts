@@ -82,14 +82,14 @@ function parseSections(topic: string, lines: string[]): GuideSection[] {
 
 function tableOfContents(topic: string, sections: GuideSection[]): string {
 	const rows = sections.map((section) => `${"  ".repeat(section.level - 2)}${section.address} — ${section.title}`);
-	return `Sections of guide topic '${topic}'. Read one with {action:"guide",topic:"<section address>"}:\n${rows.join("\n")}`;
+	return `Sections of guide topic '${topic}'. Read one with {action:"guide",options:{topic:"<section address>"}}:\n${rows.join("\n")}`;
 }
 
 function sectionText(lines: string[], section: GuideSection): string {
 	const text = lines.slice(section.start, section.end).join("\n").trim();
 	if (text.length <= SUBAGENT_GUIDE_SECTION_MAX_CHARS || !section.children.length) return text;
 	const intro = lines.slice(section.start, section.children[0]!.start).join("\n").trim();
-	return `${intro}\n\nSubsections (read one with {action:"guide",topic:"<address>"}):\n${section.children.map((child) => `${child.address} — ${child.title}`).join("\n")}`;
+	return `${intro}\n\nSubsections (read one with {action:"guide",options:{topic:"<address>"}}):\n${section.children.map((child) => `${child.address} — ${child.title}`).join("\n")}`;
 }
 
 function readGuideFiles(topic: string, files: string[], root: string): string[] {

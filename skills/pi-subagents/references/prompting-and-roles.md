@@ -92,7 +92,7 @@ return results.map(result => result.output);
 ```
 
 ```typescript
-subagent({ workflow: true, context: "fresh" })
+subagent({ workflow: true, options: { context: "fresh" } })
 ```
 
 ### Review-loop technique
@@ -166,7 +166,7 @@ return { worker: worker.output, validations: validations.map(v => v.output) };
 ```
 
 ```typescript
-subagent({ workflow: true, async: true, context: "fresh" })
+subagent({ workflow: true, async: true, options: { context: "fresh" } })
 ```
 
 ## Builtin Agents

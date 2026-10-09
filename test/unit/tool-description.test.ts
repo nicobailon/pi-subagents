@@ -78,7 +78,7 @@ describe("registered subagent tool description", () => {
 				/Raw-script sandboxes add deeply frozen args/,
 				/raw-script args persist as evidence, so never include secrets/,
 				/action is management\/control; validate accepts workflow:true or a path without launching/,
-				/action:"list",capabilities:true.*executable, non-disabled.*runner.available === true/,
+				/action:"list",options:\{capabilities:true\}.*executable, non-disabled.*runner.available === true/,
 				/Passive PATH\/PATHEXT\/X_OK.*not authentication\/version\/launch proof/,
 				/exactly one top-level subagent workflow call with async:true/,
 				/explicit return, top-level await.*nested async function\/arrow\/method helpers are rejected/,
@@ -102,8 +102,8 @@ describe("registered subagent tool description", () => {
 				/interactive_shell, pi -ne, Codex\/Claude\/Cursor CLI.*explicit owner approval/,
 				/fallback requires explicit owner approval, not Pi core's generic pi -ne hint/,
 				/Ordinary child subagents are not orchestrators.*depth\/session limits/,
-				/Before advanced orchestration.*action:"guide",topic:"workflows\/scripted-workflows".*pi-subagents skill/,
-				/action:"guide",topic:"tool-reference".*controls\/evidence gates/,
+				/Before advanced orchestration.*action:"guide",options:\{topic:"workflows\/scripted-workflows"\}.*pi-subagents skill/,
+				/action:"guide",options:\{topic:"tool-reference"\}.*controls\/evidence gates/,
 			]) assert.match(description, contract);
 		}
 	});

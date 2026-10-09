@@ -700,7 +700,7 @@ export function registerSlashCommands(
 		description: "Host integration bridge: answer an async child inspection request with a correlated widget payload (no model turn)",
 		handler: async (args, ctx) => {
 			if (ctx.mode === "tui") {
-				ctx.ui.notify("Inspection replies are emitted only on RPC surfaces. Use /subagents or subagent({ action: \"status\", view: \"transcript\" }) interactively.", "info");
+				ctx.ui.notify("Inspection replies are emitted only on RPC surfaces. Use /subagents or subagent({ action: \"status\", options: { view: \"transcript\" } }) interactively.", "info");
 				return;
 			}
 			if (!ctx.hasUI) return;

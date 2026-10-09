@@ -222,37 +222,13 @@ import {
 	type SteeringTargetState,
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
+import { closestMatch, editDistance, hasSingleAdjacentTransposition } from "../../shared/edit-distance.ts";
 
 const MUTATING_MANAGEMENT_ACTIONS = new Set(["command.yield", "command.cancel", "create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.rollback", "dismiss", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
 const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["command.cancel", "delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "schedule.delete"]);
 
 function resolveSteerDeliveryMode(mode: SubagentParamsLike["mode"]): SteerDeliveryMode | undefined {
 	return mode === "steer" || mode === "follow_up" || mode === "auto" ? mode : undefined;
-}
-
-function editDistance(left: string, right: string): number {
-	const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-	for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
-		let diagonal = previous[0]!;
-		previous[0] = leftIndex;
-		for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
-			const above = previous[rightIndex]!;
-			previous[rightIndex] = left[leftIndex - 1] === right[rightIndex - 1]
-				? diagonal
-				: Math.min(diagonal, above, previous[rightIndex - 1]!) + 1;
-			diagonal = above;
-		}
-	}
-	return previous[right.length]!;
-}
-
-function hasSingleAdjacentTransposition(left: string, right: string): boolean {
-	if (left.length !== right.length) return false;
-	const mismatch = [...left].findIndex((character, index) => character !== right[index]);
-	return mismatch >= 0
-		&& left[mismatch] === right[mismatch + 1]
-		&& left[mismatch + 1] === right[mismatch]
-		&& left.slice(mismatch + 2) === right.slice(mismatch + 2);
 }
 
 export function unknownSubagentActionMessage(action: string, disabled?: DisabledFeatureSurface): string {
@@ -1965,7 +1941,7 @@ async function resumeAsyncRun(input: {
 				type: "text",
 				text: [
 					`Async child '${target.runId}' index ${target.index} is still running. action='resume' only revives paused, completed, or failed children.`,
-					`Send live input with subagent({ action: "steer", id: "${target.runId}", index: ${target.index}, message: "..." }).`,
+					`Send live input with subagent({ action: "steer", id: "${target.runId}", message: "...", options: { index: ${target.index} } }).`,
 				].join("\n"),
 			}],
 			isError: true,
@@ -2566,11 +2542,7 @@ function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLik
 			const { agents } = discovered;
 			const resolved = resolveAgentName(name, agents);
 			if (resolved.agent || resolved.error) return canonicalizeAgentName(name, agents, discovered.agentDiagnostics, diagnosticContextFromDiscovery(discovered, cwd, scope)).error;
-			const requested = name.trim().toLowerCase();
-			const suggestion = [...new Set(agents.flatMap((agent) => [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])]))]
-				.map((candidate) => ({ candidate, distance: editDistance(requested, candidate.toLowerCase()) }))
-				.filter(({ candidate, distance }) => distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate.toLowerCase()))
-				.sort((left, right) => left.distance - right.distance || left.candidate.localeCompare(right.candidate))[0]?.candidate;
+			const suggestion = closestMatch(name.trim(), new Set(agents.flatMap((agent) => [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])])));
 			return `Unknown agent '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""} Use subagent({ action: "list" }) to inspect agents.`;
 		},
 	};

@@ -84,8 +84,8 @@ function buildRecommendationText(ctx: ExtensionContext, runtime?: MainWatchdogRu
 		"Subagent watchdog recommended model",
 		recommendation.source === "configured" ? formatWatchdogRecommendation(recommendation) : `Recommended: ${recommendation.model}:${recommendation.thinking}`,
 		`Reason: ${recommendation.reason}`,
-		"Apply temporarily with subagent({ action: \"watchdog.configure\", scope: \"session\", model: \"recommended\" }).",
-		"Persist with scope: \"project\" or scope: \"user\" only when the user asks for that scope.",
+		"Apply temporarily with subagent({ action: \"watchdog.configure\", model: \"recommended\", options: { scope: \"session\" } }).",
+		"Persist with options.scope \"project\" or \"user\" only when the user asks for that scope.",
 	].join("\n");
 }
 
