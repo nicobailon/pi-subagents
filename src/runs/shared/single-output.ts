@@ -174,6 +174,42 @@ export function formatSavedOutputReference(savedPath: string, fullOutput: string
 	};
 }
 
+export const INLINE_OUTPUT_HEAD_CHARS = 2_000;
+
+/**
+ * Keeps at most INLINE_OUTPUT_HEAD_CHARS of a child's output inline and points to the file holding all of it.
+ * Output stays whole when it is short or no readable file contains it, so no text is lost.
+ */
+export function capInlineOutput(output: string, fullOutputPath: string | undefined): string {
+	if (output.length <= INLINE_OUTPUT_HEAD_CHARS || !fullOutputPath) return output;
+	let fullOutput: string;
+	try {
+		fullOutput = fs.readFileSync(fullOutputPath, "utf-8");
+	} catch {
+		return output;
+	}
+	if (!fullOutput.includes(output)) return output;
+	const lineEnd = output.lastIndexOf("\n", INLINE_OUTPUT_HEAD_CHARS);
+	let end = lineEnd >= INLINE_OUTPUT_HEAD_CHARS - 200 ? lineEnd : INLINE_OUTPUT_HEAD_CHARS;
+	if (/[\uD800-\uDBFF]/.test(output[end - 1] ?? "")) end -= 1;
+	const reference = formatSavedOutputReference(fullOutputPath, fullOutput);
+	return `${output.slice(0, end)}\n…\nFull output: ${reference.path} (${formatByteSize(reference.bytes)}, ${reference.lines} ${reference.lines === 1 ? "line" : "lines"}). Read it if needed.`;
+}
+
+/** Applies capInlineOutput to each `agent:\noutput` section of a run summary whose child output is long. */
+export function capSummaryOutputs(summary: string, results: ReadonlyArray<{ agent?: unknown; output?: unknown; artifactPaths?: { outputPath?: unknown }; artifactOutputSaveFailed?: unknown }> | undefined): string {
+	let capped = summary;
+	for (const result of results ?? []) {
+		if (typeof result.agent !== "string" || typeof result.output !== "string" || result.output.length <= INLINE_OUTPUT_HEAD_CHARS) continue;
+		const fullOutputPath = result.artifactOutputSaveFailed === true || typeof result.artifactPaths?.outputPath !== "string" ? undefined : result.artifactPaths.outputPath;
+		const section = `${result.agent}:\n${result.output}`;
+		const index = capped.indexOf(section);
+		if (index < 0) continue;
+		capped = `${capped.slice(0, index)}${result.agent}:\n${capInlineOutput(result.output, fullOutputPath)}${capped.slice(index + section.length)}`;
+	}
+	return capped;
+}
+
 export function validateFileOnlyOutputMode(outputMode: OutputMode | undefined, outputPath: string | undefined, context: string): string | undefined {
 	if (outputMode === "file-only" && !outputPath) {
 		return `${context} sets outputMode: "file-only" but does not configure an output file. Set output to a path or use outputMode: "inline".`;

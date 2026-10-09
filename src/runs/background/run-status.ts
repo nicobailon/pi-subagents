@@ -35,6 +35,10 @@ import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../wor
 import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { workflowAsyncChildSteeringGuidance } from "../shared/workflow-async-child-guidance.ts";
 import { formatWorkflowKeyRevival, projectWorkflowKeyRevival } from "../../workflows/workflow-revival.ts";
+import { capSummaryOutputs } from "../shared/single-output.ts";
+
+/** A step whose structured output has a path line needs only a short inline preview. */
+const STRUCTURED_PREVIEW_WITH_PATH_CHARS = 500;
 
 interface RunStatusParams {
 	action?: string;
@@ -640,7 +644,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					const revival = projectWorkflowKeyRevival(asyncDirRoot, status.runId, step.workflowKey, step.runId);
 					if (revival) lines.push(`  ${formatWorkflowKeyRevival(revival)}`);
 				}
-				const structuredOutputPreview = step.structuredOutput === undefined ? undefined : formatWorkflowJsonPreview(step.structuredOutput, 4_000);
+				const structuredOutputPreview = step.structuredOutput === undefined ? undefined : formatWorkflowJsonPreview(step.structuredOutput, step.structuredOutputPath ? STRUCTURED_PREVIEW_WITH_PATH_CHARS : 4_000);
 				if (structuredOutputPreview !== undefined) lines.push(`  Structured output: ${structuredOutputPreview}`);
 				if (step.structuredOutputPath) lines.push(`  Structured output path: ${step.structuredOutputPath}`);
 				lines.push(...formatTimeoutRecoveryLines(step.timeoutRecovery, "  "));
@@ -769,14 +773,15 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			lines.push(...formatTimeoutRecoveryLines(data.timeoutRecovery, "  "));
 			for (const [index, child] of children.entries()) {
 				const structuredOutput = (child as { structuredOutput?: unknown }).structuredOutput;
-				const structuredOutputPreview = structuredOutput === undefined ? undefined : formatWorkflowJsonPreview(structuredOutput, 4_000);
-				if (structuredOutputPreview !== undefined) lines.push(`  Structured output${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPreview}`);
 				const structuredOutputPath = (child as { structuredOutputPath?: unknown }).structuredOutputPath;
-				if (typeof structuredOutputPath === "string" && structuredOutputPath.trim()) lines.push(`  Structured output path${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPath}`);
+				const hasStructuredOutputPath = typeof structuredOutputPath === "string" && structuredOutputPath.trim() !== "";
+				const structuredOutputPreview = structuredOutput === undefined ? undefined : formatWorkflowJsonPreview(structuredOutput, hasStructuredOutputPath ? STRUCTURED_PREVIEW_WITH_PATH_CHARS : 4_000);
+				if (structuredOutputPreview !== undefined) lines.push(`  Structured output${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPreview}`);
+				if (hasStructuredOutputPath) lines.push(`  Structured output path${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPath}`);
 				lines.push(...formatTimeoutRecoveryLines(child.timeoutRecovery, "  "));
 			}
 			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped" }));
-			if (data.summary) lines.push("", data.summary);
+			if (data.summary) lines.push("", capSummaryOutputs(data.summary, data.results));
 			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);
 			if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match the result run id.");
 			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", ...(runId ? { runId } : {}), ...(data.toolCallId ? { toolCallId: data.toolCallId } : {}), results: [], ...(workflowReceiptPath ? { workflowReceiptPath } : {}), ...(workflowChildren ? { workflowChildren } : {}) } };
