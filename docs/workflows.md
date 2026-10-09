@@ -108,9 +108,12 @@ Use a named workflow resource when a permission or policy extension needs to dis
 ```js
 subagent({ workflow: "review", args: { task: "Review the change" } });
 subagent({ workflow: "run-ci", args: { command: "npm test" } });
+subagent({ workflow: "parallel", args: { tasks: [{ agent: "reviewer", task: "Review src/api" }, { agent: "scout", task: "Map the tests" }] } });
 ```
 
-The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Reply-block (`workflow: true`) and file-path scripts remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent` or `task`; this first slice ships only the package-owned `review` and `run-ci` resources, not a user/project resource registry.
+The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Reply-block (`workflow: true`) and file-path scripts remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent` or `task`; the package ships the `review`, `run-ci` and `parallel` resources, not a user/project resource registry.
+
+`parallel` runs independent children together without writing a script: `args.tasks` is a list of `{ agent, task }` items, the children run in one `runs.all` batch, and the result lists each child's output in order. A failed child fails the workflow. Use a workflow script when steps depend on each other.
 
 ### Opt-in bounded workflows
 

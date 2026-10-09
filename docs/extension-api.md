@@ -19,7 +19,7 @@ registerWorkflowResource({
 }): { dispose(): void }
 ```
 
-Names are case-sensitive, at most 128 characters, and match `[A-Za-z0-9][A-Za-z0-9._-]*`; use an extension prefix. Versions are positive safe integers. Registration throws for invalid input, protected builtins (`review`, `run-ci`, and `chain` and `tasks`, which back the tool's structured inputs), or duplicate names within the same session. Different sessions may register the same name. Dispose before replacement; there is no silent overwrite.
+Names are case-sensitive, at most 128 characters, and match `[A-Za-z0-9][A-Za-z0-9._-]*`; use an extension prefix. Versions are positive safe integers. Registration throws for invalid input, protected builtins (`review`, `run-ci`, `parallel`, and `chain` and `tasks`, which back the tool's structured inputs), or duplicate names within the same session. Different sessions may register the same name. Dispose before replacement; there is no silent overwrite.
 
 Register in `session_start` using **`ctx.sessionManager.getSessionId()`**, not the session file path or a tool argument. Dispose in `session_shutdown`. New/resumed/forked sessions and reloads need registration from the replacement runtime's `session_start`; do not retain old `pi`/`ctx` references. The extension owns cleanup, not an automatic registration lifecycle manager. Disposal is idempotent and cannot remove a newer replacement. Missing cleanup can cause a duplicate-registration failure on reload.
 
