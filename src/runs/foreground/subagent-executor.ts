@@ -6962,7 +6962,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (action === "guide") {
 				try {
 					const guide = readSubagentGuide(paramsWithResolvedCwd.topic);
-					const notice = paramsWithResolvedCwd.topic?.split("/")[0] === "tool-reference" ? disabledFeatureNotice(disabledFeatures) : undefined;
+					const [topic, section] = paramsWithResolvedCwd.topic?.split("/") ?? [];
+					const fullNotice = topic === "tool-reference" ? disabledFeatureNotice(disabledFeatures) : undefined;
+					// Sections are capped at 8,000 chars, so they get a one-line pointer instead of the full list.
+					const notice = fullNotice && section !== undefined ? "Some options and actions documented here are disabled by config in this session; guide topic tool-reference lists them." : fullNotice;
 					return {
 						content: [{ type: "text", text: notice ? `${notice}\n\n${guide}` : guide }],
 						details: { mode: "management", results: [] },

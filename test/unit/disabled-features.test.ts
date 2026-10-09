@@ -199,6 +199,20 @@ describe("disabled feature discovery", () => {
 		assert.match(disabled.slice(0, -guide.length), /^Disabled by config[^\n]*\n- disabledFeatures "watchdog": options scope, target, thinking; actions watchdog\.status, watchdog\.check, watchdog\.configure, watchdog\.recommend-model\n\n$/);
 	});
 
+	it("keeps every tool-reference section within the 8,000-char guide cap when every feature is disabled", async () => {
+		const executor = createExecutor({ disabledFeatures: Object.keys(SUBAGENT_FEATURES) as SubagentFeature[], scheduledRuns: { enabled: false } });
+		const read = async (topic: string) => resultText(await executor.executePublic("guide", { action: "guide", topic }, new AbortController().signal, undefined, ctx()));
+		const toc = await read("tool-reference");
+		assert.match(toc, /^Disabled by config/);
+		const sections = [...toc.matchAll(/^\s*(tool-reference\/\S+) — /gm)].map((match) => match[1]!);
+		assert.ok(sections.length > 10);
+		for (const section of sections) {
+			const text = await read(section);
+			assert.match(text, /^Some options and actions documented here are disabled by config/, section);
+			assert.ok(text.length <= 8_000, `${section}: ${text.length}`);
+		}
+	});
+
 	it("advertises only enabled RPC management actions", async () => {
 		const handlers: Array<(data: unknown) => void> = [];
 		const replies = new Map<string, unknown>();
