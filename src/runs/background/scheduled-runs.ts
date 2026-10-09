@@ -38,6 +38,9 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const DEFAULT_MAX_PENDING = 20;
 const MAX_HISTORY = 100;
 const STALE_LAUNCH_CLAIM_MS = 5 * 60_000;
+// An attached async run without a terminal status after 24h is treated as dead. The budget is
+// deliberately conservative so a legitimately long run is never falsely reaped.
+const STALE_ATTACHED_RUN_MS = 24 * 60 * 60 * 1000;
 const SCHEDULE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 type ScheduledRunTimers = Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
@@ -857,6 +860,10 @@ export class ScheduledRunManager {
 				schedule.updatedAt = timestamp(this.now());
 				store.write(schedule);
 				fs.rmSync(path.join(store.directory(schedule.id), "active.lock"), { force: true });
+			} else if (schedule.activeRunId && run && this.isStaleAttachedRun(run, this.now())) {
+				// A dead async runner never wrote a terminal status, so the claim and its
+				// lock would overlap-skip every later fire forever. Recover once the budget elapses.
+				this.recoverStaleAttachedRun(store, schedule, run);
 			}
 		}
 		if (!rearm || schedule.paused) return;
@@ -925,16 +932,22 @@ export class ScheduledRunManager {
 		const nextLocalDateBeforeClaim = schedule.trigger.kind === "calendar" ? schedule.trigger.nextLocalDate : undefined;
 		const run: ScheduleRunRecord = { schemaVersion: 1, id: this.randomId(), scheduleId: schedule.id, plannedAt: timestamp(planned), dueReason, state: "running", startedAt: timestamp(now) };
 		if (schedule.activeRunId) {
-			run.state = "skipped";
-			run.completedAt = timestamp(now);
-			if (advance) {
-				schedule.trigger = nextAfter(schedule.trigger, planned, now);
-				schedule.updatedAt = timestamp(now);
-				store.write(schedule);
+			const active = store.history(schedule.id).find((item) => item.id === schedule.activeRunId);
+			if (active && this.isStaleAttachedRun(active, now)) {
+				// Recover the dead claim, then continue below and launch this fire normally.
+				this.recoverStaleAttachedRun(store, schedule, active);
+			} else {
+				run.state = "skipped";
+				run.completedAt = timestamp(now);
+				if (advance) {
+					schedule.trigger = nextAfter(schedule.trigger, planned, now);
+					schedule.updatedAt = timestamp(now);
+					store.write(schedule);
+				}
+				store.writeRun(schedule, run, "schedule.skipped_overlap");
+				this.arm(schedule, store);
+				return run;
 			}
-			store.writeRun(schedule, run, "schedule.skipped_overlap");
-			this.arm(schedule, store);
-			return run;
 		}
 		const lockPath = path.join(store.directory(schedule.id, true), "active.lock");
 		fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
@@ -957,27 +970,82 @@ export class ScheduledRunManager {
 				throw error;
 			}
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			run.state = "skipped";
-			run.completedAt = timestamp(now);
-			// Losing the claim gives this snapshot no authority to change the owner.
-			const latest = store.find(schedule.id);
-			if (!latest) {
-				this.clearTimer(store, schedule.id);
+			// A lock whose holder id matches a real run record that is missing or no longer
+			// running is orphaned: the owner died between lock creation and the schedule write.
+			// Reclaim it and make a single retry; if the retry also loses the race, skip as usual.
+			let reclaimed = false;
+			try {
+				const holder = fs.readFileSync(lockPath, "utf-8").trim();
+				// A holder id whose own run receipt exists but is no longer running is orphaned:
+				// the owner died after the run reached a terminal state but before the lock was
+				// cleaned up. Reclaim it and make a single retry; if the retry also loses the
+				// race, skip as usual. Unknown holders are left untouched (a foreign owner may
+				// still be persisting its claim).
+				if (holder && SCHEDULE_ID.test(holder)) {
+					const holderRun = store.getRun(schedule.id, holder);
+					if (holderRun && holderRun.state !== "running") {
+						fs.rmSync(lockPath, { force: true });
+						try {
+							const retry = fs.openSync(lockPath, "wx", 0o600);
+							fs.writeFileSync(retry, run.id, "utf-8");
+							fs.closeSync(retry);
+							lock = retry;
+							reclaimed = true;
+						} catch (retryError) {
+							if ((retryError as NodeJS.ErrnoException).code !== "EEXIST") throw retryError;
+						}
+					}
+				}
+			} catch {
+				// An unreadable lock gives no authority to reclaim it; skip as usual.
+			}
+			if (reclaimed) {
+				schedule.activeRunId = run.id;
+				schedule.lastRunId = run.id;
+				if (advance) schedule.trigger = nextAfter(schedule.trigger, planned, now);
+				schedule.updatedAt = timestamp(now);
+				try {
+					store.write(schedule);
+					store.writeRun(schedule, run, "schedule.run.started");
+				} catch (error) {
+					// No child has launched: release this run's claim, then report the original error.
+					// Another session may already have recovered the claim and launched its own run.
+					try {
+						const latest = store.find(schedule.id);
+						if (latest?.activeRunId === run.id) {
+							latest.activeRunId = undefined;
+							latest.updatedAt = timestamp(this.now());
+							store.write(latest);
+						}
+						if (fs.readFileSync(lockPath, "utf-8") === run.id) fs.rmSync(lockPath);
+					} catch (cleanupError) {
+						console.warn(`[pi-subagents] Could not release schedule claim '${run.id}': ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+					}
+					throw error;
+				}
+			} else {
+				run.state = "skipped";
+				run.completedAt = timestamp(now);
+				// Losing the claim gives this snapshot no authority to change the owner.
+				const latest = store.find(schedule.id);
+				if (!latest) {
+					this.clearTimer(store, schedule.id);
+					return run;
+				}
+				store.writeRun(latest, run, "schedule.skipped_overlap");
+				if (latest.trigger.kind === "once") {
+					this.clearTimer(store, latest.id);
+				} else {
+					// The owner may hold the lock before persisting its cursor. Back off
+					// locally without consuming that pending occurrence on disk.
+					const next = nextRunAt(latest);
+					const notBefore = next !== undefined && next <= now
+						? Date.parse(nextAfter(latest.trigger, duePlannedAt(latest, now) ?? planned, now).nextRunAt!)
+						: undefined;
+					this.arm(latest, store, notBefore);
+				}
 				return run;
 			}
-			store.writeRun(latest, run, "schedule.skipped_overlap");
-			if (latest.trigger.kind === "once") {
-				this.clearTimer(store, latest.id);
-			} else {
-				// The owner may hold the lock before persisting its cursor. Back off
-				// locally without consuming that pending occurrence on disk.
-				const next = nextRunAt(latest);
-				const notBefore = next !== undefined && next <= now
-					? Date.parse(nextAfter(latest.trigger, duePlannedAt(latest, now) ?? planned, now).nextRunAt!)
-					: undefined;
-				this.arm(latest, store, notBefore);
-			}
-			return run;
 		}
 		schedule.activeRunId = run.id;
 		schedule.lastRunId = run.id;
@@ -1129,6 +1197,39 @@ export class ScheduledRunManager {
 		const ctx = this.contexts.get(store.root);
 		if (!ctx) throw new Error("Schedule runtime context is unavailable.");
 		return ctx;
+	}
+
+	private asyncStatusFile(run: ScheduleRunRecord): string | undefined {
+		return run.asyncDir ? path.join(run.asyncDir, "status.json") : undefined;
+	}
+
+	private isStaleAttachedRun(run: ScheduleRunRecord, now: number): boolean {
+		if (run.state !== "running" || !run.asyncId) return false;
+		const startedAt = run.startedAt ? Date.parse(run.startedAt) : Number.NaN;
+		if (!Number.isFinite(startedAt) || startedAt + STALE_ATTACHED_RUN_MS > now) return false;
+		const file = this.asyncStatusFile(run);
+		if (!file) return true;
+		try {
+			const status = readJson(file, "async status") as Partial<AsyncStatus>;
+			return !["complete", "failed", "stopped", "rejected"].includes(String(status.state));
+		} catch {
+			// A missing or unreadable status file is not terminal.
+			return true;
+		}
+	}
+
+	private recoverStaleAttachedRun(store: ScheduleStore, schedule: ScheduleRecord, run: ScheduleRunRecord): void {
+		const now = this.now();
+		run.state = "failed_run";
+		run.completedAt = timestamp(now);
+		run.error = "Recovered a stale attached run: the async run never reached a terminal state within the 24h stale budget.";
+		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
+		schedule.activeRunId = undefined;
+		schedule.updatedAt = timestamp(now);
+		store.write(schedule);
+		fs.rmSync(path.join(store.directory(schedule.id), "active.lock"), { force: true });
+		store.writeRun(schedule, run, "schedule.run.failed");
+		this.arm(schedule, store);
 	}
 
 	private activeRun(store: ScheduleStore, schedule: ScheduleRecord): ScheduleRunRecord | undefined {
