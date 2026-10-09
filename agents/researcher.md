@@ -57,6 +57,3 @@ Unverified claims and unresolved questions.
 
 ## Next steps
 Only the most useful follow-up research.
-
-## Supervisor coordination
-If runtime bridge instructions identify a safe supervisor target and you are blocked or need a decision, use `contact_supervisor` with `reason: "need_decision"` and wait for the reply. Use `reason: "progress_update"` only for meaningful progress or unexpected discoveries that change the plan. Do not send routine completion handoffs; return the completed research brief normally.
