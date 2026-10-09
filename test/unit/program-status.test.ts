@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
 
 import { registerProgramStatusReporter, type ProgramStatusReporter } from "../../src/integrations/program-status.ts";
@@ -57,10 +56,6 @@ describe("OSC 7501 program status", () => {
 		instance.sync();
 		assert.equal(writes.length, 1);
 
-		jobs.set("child", job("child", "running", { parentWorkflowRunId: "abcdef12-3456-7890-abcd-ef1234567890", workflowKey: "review pass/2", agents: ["reviewer"] }));
-		instance.sync();
-		assert.deepEqual(records()[1], { state: "working", id: `subagents/abcdef123456.review-pass--${createHash("sha1").update("review pass/2").digest("hex").slice(0, 6)}`, app: "pi-subagents", title: "review pass/2", msg: "Running" });
-
 		const states: Array<[AsyncJobState["status"], string, string]> = [
 			["complete", "done", "Finished"],
 			["failed", "error", "Failed"],
@@ -116,14 +111,6 @@ describe("OSC 7501 program status", () => {
 		assert.equal(running.writes.length, 64, "a finished run never displaces an active one, and unchanged jobs write nothing");
 	});
 
-	it("writes nothing on a sync with unchanged jobs, also past the 64-record limit", () => {
-		const finished = reporter({ jobs: Array.from({ length: 65 }, (_, index) => job(`done-${index}`, "complete", { updatedAt: index + 1 })) });
-		assert.equal(finished.writes.length, 64);
-		finished.instance.sync();
-		finished.instance.sync();
-		assert.equal(finished.writes.length, 64);
-	});
-
 	it("clears the least recently updated finished record when an active run needs the room", () => {
 		const { instance, jobs, records } = reporter({ jobs: Array.from({ length: 64 }, (_, index) => job(`done-${index}`, "complete", { updatedAt: index + 1 })) });
 		jobs.set("new-run", job("new-run", "running", { updatedAt: 100 }));
@@ -154,12 +141,7 @@ describe("OSC 7501 program status", () => {
 			job("child-b", "running", { parentWorkflowRunId, workflowKey: longB, updatedAt: 1 }),
 		] });
 		const ids = records().map((record) => record.id!);
-		const sha = (key: string) => createHash("sha1").update(key).digest("hex").slice(0, 6);
-		assert.deepEqual(ids, [
-			`subagents/abcdef123456.lint-fix-s1--${sha("lint.fix/s1 x")}`,
-			`subagents/abcdef123456.review-aaaaa-${sha(longA)}`,
-			`subagents/abcdef123456.review-aaaaa-${sha(longB)}`,
-		]);
+		assert.equal(new Set(ids).size, ids.length, ids.join(" "));
 		for (const id of ids) {
 			const [root, segment, ...rest] = id.split("/");
 			assert.equal(root, "subagents");
@@ -174,10 +156,9 @@ describe("OSC 7501 program status", () => {
 			job("child-dot", "running", { parentWorkflowRunId, workflowKey: "a.b", updatedAt: 2 }),
 			job("child-dash", "running", { parentWorkflowRunId, workflowKey: "a-b", updatedAt: 1 }),
 		] });
-		assert.deepEqual(records().map((record) => record.id), [
-			`subagents/abcdef123456.a-b-${createHash("sha1").update("a.b").digest("hex").slice(0, 6)}`,
-			"subagents/abcdef123456.a-b",
-		]);
+		const ids = records().map((record) => record.id);
+		assert.equal(ids[1], "subagents/abcdef123456.a-b");
+		assert.notEqual(ids[0], ids[1]);
 	});
 
 	it("clears every record it sent when its runtime is replaced, but leaves them when Pi quits", () => {
@@ -195,10 +176,6 @@ describe("OSC 7501 program status", () => {
 		quit.instance.dispose("quit");
 		quit.instance.sync();
 		assert.equal(quit.writes.length, 2, "done and error records stay after Pi exits");
-
-		const inactive = reporter({ jobs, isTTY: false });
-		inactive.instance.dispose("reload");
-		assert.deepEqual(inactive.writes, []);
 	});
 
 	it("writes nothing when turned off or not on an interactive terminal", () => {

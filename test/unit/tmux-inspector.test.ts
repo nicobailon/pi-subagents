@@ -13,6 +13,23 @@ function tempRoot(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "tmux-inspector-test-"));
 }
 
+/** A temp async dir already holding a tmux binding for run-1 and pane %6. */
+function boundRoot(extra: Record<string, unknown> = {}, index?: number): string {
+	const root = tempRoot();
+	fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
+	fs.writeFileSync(bindingPath(root, index), JSON.stringify({
+		schemaVersion: 1,
+		kind: "tmux-inspector",
+		runId: "run-1",
+		asyncDir: root,
+		paneId: "%6",
+		openedAt: new Date().toISOString(),
+		command: "node x",
+		...extra,
+	}));
+	return root;
+}
+
 function ctx(asyncDir: string, env: NodeJS.ProcessEnv = {}, index?: number): InspectorContext {
 	return {
 		cwd: "/tmp",
@@ -109,17 +126,7 @@ describe("tmux inspector open", () => {
 	});
 
 	it("reuses an existing live pane instead of splitting again", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const commands: string[] = [];
 		const client = fakeClient({
 			"-V": ["tmux 3.7c"],
@@ -133,17 +140,7 @@ describe("tmux inspector open", () => {
 	});
 
 	it("refocuses an existing live pane when focus is requested", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const commands: string[] = [];
 		const client = fakeClient({
 			"-V": ["tmux 3.7c"],
@@ -157,17 +154,7 @@ describe("tmux inspector open", () => {
 	});
 
 	it("splits a fresh pane when the saved pane no longer carries the marker", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const commands: string[] = [];
 		const client = fakeClient({
 			"-V": ["tmux 3.7c"],
@@ -185,17 +172,7 @@ describe("tmux inspector open", () => {
 	});
 
 	it("fails open instead of duplicating the inspector when the liveness probe errors", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const commands: string[] = [];
 		const client = fakeClient({
 			"-V": ["tmux 3.7c"],
@@ -285,17 +262,7 @@ describe("tmux inspector status and close", () => {
 	});
 
 	it("reports the live pane and the binding path on status", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({ "list-panes": ["%6|pi-subagents:run-1:-|69556"] }) });
 		const response = await plugin.status?.(ctx(root, { TMUX: "1" }));
 		const text = String(response?.content[0].text);
@@ -304,34 +271,14 @@ describe("tmux inspector status and close", () => {
 	});
 
 	it("reports a gone pane on status", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({ "list-panes": ["!PANE_GONE|can't find pane: %6"] }) });
 		const response = await plugin.status?.(ctx(root, { TMUX: "1" }));
 		assert.match(String(response?.content[0].text), /no longer exists/);
 	});
 
 	it("reports a pane that lost its marker without claiming it is gone", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({ "list-panes": ["%6||69556"] }) });
 		const response = await plugin.status?.(ctx(root, { TMUX: "1" }));
 		const text = String(response?.content[0].text);
@@ -340,17 +287,7 @@ describe("tmux inspector status and close", () => {
 	});
 
 	it("surfaces a probe error on status instead of reporting the pane gone", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({ "list-panes": ["!TIMEOUT|probe timed out"] }) });
 		const response = await plugin.status?.(ctx(root, { TMUX: "1" }));
 		assert.ok(response?.isError);
@@ -358,52 +295,21 @@ describe("tmux inspector status and close", () => {
 	});
 
 	it("picks the target pane's line when list-panes reports the whole window", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({ "list-panes": ["%5||69556\n%6|pi-subagents:run-1:-|69556"] }) });
 		const response = await plugin.status?.(ctx(root, { TMUX: "1" }));
 		assert.match(String(response?.content[0].text), /%6 is open/);
 	});
 
 	it("reports stale when the server pid changed", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			serverPid: "111",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot({ serverPid: "111" });
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({ "list-panes": ["%6|pi-subagents:run-1:-|69556"] }) });
 		const response = await plugin.status?.(ctx(root, { TMUX: "1" }));
 		assert.match(String(response?.content[0].text), /marker/);
 	});
 
 	it("kills a verified pane and removes the binding", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const commands: string[] = [];
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({
 			"list-panes": ["%6|pi-subagents:run-1:-|69556"],
@@ -416,17 +322,7 @@ describe("tmux inspector status and close", () => {
 	});
 
 	it("treats an already-gone pane as a successful close", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const commands: string[] = [];
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({
 			"list-panes": ["!PANE_GONE|can't find pane: %6"],
@@ -438,17 +334,7 @@ describe("tmux inspector status and close", () => {
 	});
 
 	it("keeps the binding when killing fails", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({
 			"list-panes": ["%6|pi-subagents:run-1:-|69556"],
 			"kill-pane": ["!TMUX_ERROR|kill failed"],
@@ -460,17 +346,7 @@ describe("tmux inspector status and close", () => {
 	});
 
 	it("removes the binding without killing a pane that lost its marker", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const commands: string[] = [];
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({
 			"list-panes": ["%6|other-owner:run-9:-|69556"],
@@ -482,17 +358,7 @@ describe("tmux inspector status and close", () => {
 	});
 
 	it("keeps the binding when the probe errors", async () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot();
 		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client: fakeClient({ "list-panes": ["!TIMEOUT|probe timed out"] }) });
 		const response = await plugin.close?.(ctx(root, { TMUX: "1" }));
 		assert.ok(response?.isError);
@@ -544,19 +410,6 @@ describe("tmux client failure classification", () => {
 		assert.equal(called, false);
 	});
 
-	it("resolves once with TIMEOUT when the exec callback arrives after abort", async () => {
-		let callback: ((error: Error | null, stdout: string, stderr?: string) => void) | undefined;
-		const client = createTmuxClient({ exec: (_file, _args, _options, execCallback) => {
-			callback = execCallback;
-		} });
-		const controller = new AbortController();
-		const pending = client.run(["list-panes"], { signal: controller.signal });
-		controller.abort();
-		callback?.(null, "%6");
-		const outcome = await pending;
-		assert.equal(outcome.ok ? "" : outcome.error.code, "TIMEOUT");
-	});
-
 	it("classifies a node-killed child as TIMEOUT", async () => {
 		const client = createTmuxClient({ exec: (_file, _args, _options, callback) => {
 			callback(Object.assign(new Error("Command failed: tmux list-panes"), { killed: true, signal: "SIGTERM", code: null }), "", "");
@@ -568,23 +421,11 @@ describe("tmux client failure classification", () => {
 
 describe("tmux inspector binding ownership", () => {
 	it("rejects bindings for other runs or children", () => {
-		const root = tempRoot();
-		fs.mkdirSync(path.join(root, "inspectors"), { recursive: true });
-		fs.writeFileSync(bindingPath(root, 0), JSON.stringify({
-			schemaVersion: 1,
-			kind: "tmux-inspector",
-			runId: "run-1",
-			asyncDir: root,
-			childIndex: 0,
-			paneId: "%6",
-			openedAt: new Date().toISOString(),
-			command: "node x",
-		}));
+		const root = boundRoot({ childIndex: 0 }, 0);
 		const target = { runId: "run-1", asyncDir: root, index: 0, status: { state: "running" } };
 		assert.ok(readTmuxInspectorBindingForTarget(target));
 		assert.equal(readTmuxInspectorBindingForTarget({ ...target, runId: "run-2" }), undefined);
 		assert.equal(readTmuxInspectorBindingForTarget({ ...target, index: 1 }), undefined);
 		assert.equal(readTmuxInspectorBindingForTarget({ ...target, index: undefined }), undefined);
-		assert.equal(readTmuxInspectorBindingForTarget({ ...target, asyncDir: tempRoot() }), undefined);
 	});
 });

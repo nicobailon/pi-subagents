@@ -82,7 +82,7 @@ describe("external inspector registration", () => {
 		assert.equal(getInspectorPlugins(owner).length, 3);
 	});
 
-	it("routes existing inspector actionsand launch permissions to a registered provider without fallback on failure", async (t) => {
+	it("routes existing inspector actions and launch permissions to a registered provider without fallback on failure", async (t) => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspector-registration-"));
 		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 		const asyncDir = path.join(root, "run-provider");

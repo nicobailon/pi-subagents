@@ -4,7 +4,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { Details } from "../../shared/types.ts";
 import type { InspectorContext, InspectorLaunch, InspectorTarget } from "../types.ts";
-import { detectTmux, type TmuxClient, type TmuxErrorCode } from "./client.ts";
+import type { TmuxClient, TmuxErrorCode } from "./client.ts";
 
 export interface TmuxInspectorBinding {
 	schemaVersion: 1;
@@ -104,7 +104,7 @@ export async function openTmuxInspector(
 	focus: boolean,
 	client: TmuxClient,
 ): Promise<AgentToolResult<Details>> {
-	const detected = await detectTmux(client, context.signal);
+	const detected = await client.run(["-V"], { timeoutMs: 3_000, signal: context.signal });
 	if (!detected.ok) return result(errorText(detected.error), true);
 	const existing = readTmuxInspectorBindingForTarget(context.target);
 	if (existing) {

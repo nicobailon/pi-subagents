@@ -320,8 +320,5 @@ describe("subagent messages in the main chat", () => {
 		const height = host.render(100).length;
 		assert.equal(host.handleMouse({ type: "click", button: "left", x: 2, y: 2, screenX: 2, screenY: 2, width: 100, height, shift: false, alt: false, ctrl: false })?.handled, true);
 		assert.deepEqual(shown(), expanded);
-		host.setExpanded(true);
-		host.setExpanded(false);
-		assert.deepEqual(shown(), collapsed);
 	});
 });

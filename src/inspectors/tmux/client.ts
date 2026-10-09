@@ -83,8 +83,3 @@ export function createTmuxClient(options: { bin?: string; exec?: ExecTmux } = {}
 		},
 	};
 }
-
-/** Confirm tmux answers before an open attempts a split. */
-export async function detectTmux(client: TmuxClient, signal?: AbortSignal): Promise<TmuxResult<string>> {
-	return client.run(["-V"], { timeoutMs: 3_000, signal });
-}

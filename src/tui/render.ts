@@ -2908,7 +2908,7 @@ function materializedWidgetChildLines(job: AsyncJobState, theme: Theme, width: n
 	return lines;
 }
 
-function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"], initiallyCollapsed = false, layout: AsyncWidgetLayout = "adaptive"): (tui: { requestRender(): void }, theme: Theme) => Component {
+function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"], initiallyCollapsed = false, layout: AsyncWidgetLayout): (tui: { requestRender(): void }, theme: Theme) => Component {
 	return (tui, theme) => {
 		const container = new Container();
 		let cachedRenderWidth: number | undefined;

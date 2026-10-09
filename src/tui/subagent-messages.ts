@@ -245,13 +245,6 @@ function headlineText(headline: Headline, theme: Theme): string {
 	return plain ? text + theme.fg("customMessageText", safeTerminalText(plain)) : text;
 }
 
-function oneLine(text: string): Component {
-	return {
-		render: (width) => [truncateToWidth(text, width, "…")],
-		invalidate() {},
-	};
-}
-
 /**
  * A click toggles one block until Pi's expand key changes the state of every
  * block. Keyed by the message or entry object, which Pi keeps across rebuilds.
@@ -285,7 +278,8 @@ class SubagentMessageBlock extends Box {
 		const content = new Container();
 		const title = `${theme.fg(KIND_LABEL_COLORS[view.kind], theme.bold("[subagent]"))} ${headlineText(view.headline, theme)}`;
 		const expanded = this.isExpanded();
-		content.addChild(oneLine(expanded ? title : `${title} ${theme.fg("dim", `(${keyText("app.tools.expand") || "click"} to expand)`)}`));
+		const line = expanded ? title : `${title} ${theme.fg("dim", `(${keyText("app.tools.expand") || "click"} to expand)`)}`;
+		content.addChild({ render: (width) => [truncateToWidth(line, width, "…")], invalidate() {} });
 		if (expanded && view.body.trim()) {
 			content.addChild(new Spacer(1));
 			content.addChild(new Markdown(safeTerminalText(view.body), 0, 0, getMarkdownTheme(), { color: (text) => theme.fg("customMessageText", text) }));

@@ -119,7 +119,7 @@ function encodeText(text: string, maxBytes: number): string {
 	return bytes.toString("base64");
 }
 
-export function programStatusReport(fields: { state: ProgramState | "clear"; id: string; kind?: "question"; title?: string; msg?: string }): string {
+function programStatusReport(fields: { state: ProgramState | "clear"; id: string; kind?: "question"; title?: string; msg?: string }): string {
 	const pairs = [`state=${fields.state}`, `id=${fields.id}`];
 	if (fields.state !== "clear") pairs.push("app=pi-subagents");
 	if (fields.kind) pairs.push(`kind=${fields.kind}`);
