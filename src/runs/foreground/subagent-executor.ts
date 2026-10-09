@@ -4285,6 +4285,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		? new Promise<Awaited<ReturnType<typeof runSync>>>((resolve) => { resolveDetachedWorkflowChild = resolve; })
 		: undefined;
 	try {
+		const childSessionFile = sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent, modelOrigin);
 		const launched = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			machine: foregroundMachine,
 			parentProviderRegistry: ctx.modelRegistry,
@@ -4308,7 +4309,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			intercomEvents: deps.pi.events,
 			runId,
 			sessionDir: sessionDirForIndex(0),
-			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent, modelOrigin),
+			sessionFile: childSessionFile,
 			share: shareEnabled,
 			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 			artifactConfig,
@@ -4349,6 +4350,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				detachForeground = detach;
 			},
 			onDetachedExit: async (result) => {
+				if (foregroundControl) foregroundControl.stopForRuntimeReplacement = undefined;
 				if (resolveDetachedWorkflowChild) {
 					resolveDetachedWorkflowChild(result);
 					return;
@@ -4395,6 +4397,16 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			capabilityCeiling: data.capabilityCeiling,
 			allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 		}));
+		if (launched.detached && foregroundControl) {
+			// Record the stop before aborting so the next runtime's history restore finds it.
+			foregroundControl.stopForRuntimeReplacement = () => {
+				// The detach receipt predates the session file that resume needs.
+				const sessionFile = childSessionFile && fs.existsSync(childSessionFile) ? childSessionFile : undefined;
+				const stopped = { ...launched, detached: undefined, stopped: true, exitCode: 1, error: RUNTIME_REPLACED_STOP_ERROR, finalOutput: RUNTIME_REPLACED_STOP_ERROR, sessionFile };
+				rememberForegroundRun(deps.state, { modelResponseAliases, runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: [stopped], params, effectiveOutput, effectiveOutputMode, extensionBindings: params.extensionBindings, requiredExtensions });
+				childSessionControls?.stop(RUNTIME_REPLACED_STOP_ERROR);
+			};
+		}
 		r = launched.detached && detachedWorkflowChild ? await detachedWorkflowChild : launched;
 	} catch (error) {
 		await cleanupSingleWorktree();
@@ -4761,6 +4773,7 @@ function workflowSteerReceipt(key: string, result: AgentToolResult<Details>): Wo
 }
 
 const CHILD_SESSION_NOT_RUNNING_YET = "Child session is not running yet.";
+const RUNTIME_REPLACED_STOP_ERROR = "Subagent stopped because the pi-subagents runtime that ran it was replaced (reload or session switch).";
 const MAX_WORKFLOW_RESUME_HINT_BYTES = 1024;
 const MAX_WORKFLOW_CHILD_RUN_ID_BYTES = 256;
 const WORKFLOW_RESUME_HINT_PARENT_STATES = new Set(["complete", "failed", "partial"]);

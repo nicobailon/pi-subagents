@@ -130,7 +130,7 @@ Enter and `H` use the available Inspect plugin. Inside tmux, this includes the b
 
 Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", options: { view: "fleet" } })` fallback, and mutations use explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id.
 
-Use `/subagents-detach [run-id]` only for an active foreground single-subagent run you want to leave running without terminating; the eventual result remains available through status/wait.
+Use `/subagents-detach [run-id]` only for an active foreground single-subagent run you want to leave running without terminating; the eventual result remains available through status/wait. A detached foreground child runs inside the current pi-subagents runtime. When `/reload`, a session resume, or a session switch replaces that runtime, the child is stopped, and `status` then shows it as stopped with the reason. `resume` continues it from its session.
 
 Set `foregroundDetachShortcut` in `~/.pi/agent/extensions/subagent/config.json` to bind the same action to a shortcut. The running foreground card shows the configured shortcut beside its live-detail hint:
 

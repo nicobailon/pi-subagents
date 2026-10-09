@@ -940,6 +940,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			programStatus.dispose(shutdownReason);
 			releaseHostSessionLiveness();
 			releaseHostSessionLiveness = () => {};
+			// Detached foreground children run in this runtime's memory, and the next runtime
+			// cannot see or control them, so stop each one and record it as stopped.
+			for (const control of state.foregroundControls.values()) {
+				try {
+					control.stopForRuntimeReplacement?.();
+				} catch (error) {
+					console.error(`Failed to stop detached foreground run ${control.runId}:`, error);
+				}
+			}
 			// Workflow continuations retain their launch context; abort them before
 			// teardown so a reload cannot launch through a stale context.
 			for (const controller of state.workflowControllers?.values() ?? []) {

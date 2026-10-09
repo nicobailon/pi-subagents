@@ -573,6 +573,7 @@ async function runSingleAttempt(
 		let sessionSettled = false;
 		let lifecycleFinished = false;
 		let detached = false;
+		let hostStopReason: string | undefined;
 		let intercomStarted = false;
 		let assistantError: string | undefined;
 		let removeAbortListener: (() => void) | undefined;
@@ -1334,9 +1335,10 @@ async function runSingleAttempt(
 			}
 			const forcedDrainAfterFinalSuccess = (forced || forcedTermination) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(result.messages ?? []);
-			if (!closeError && (abortedBySignal || session?.shutDown) && !result.interrupted && !result.timedOut) {
-				closeError = session?.shutDown ? "Subagent stopped because the parent session shut down." : STOPPED_BEFORE_COMPLETION_ERROR;
+			if (!closeError && (abortedBySignal || session?.shutDown || hostStopReason) && !result.interrupted && !result.timedOut) {
+				closeError = hostStopReason ?? (session?.shutDown ? "Subagent stopped because the parent session shut down." : STOPPED_BEFORE_COMPLETION_ERROR);
 			}
+			if (hostStopReason && !result.interrupted && !result.timedOut) result.stopped = true;
 			// A workflow child ended by the workflow's abort signal was stopped, not failed.
 			if (options.abortedAsStopped && abortedBySignal && !session?.shutDown && !result.interrupted && !result.timedOut) result.stopped = true;
 			if (!closeError && forced && !forcedDrainAfterFinalSuccess) {
@@ -1432,7 +1434,15 @@ async function runSingleAttempt(
 				if (abortedBySignal || interruptedByControl || result.timedOut) {
 					abortChild();
 				}
-				options.onChildSession?.({ steer: (text) => created.steer(text), followUp: (text) => created.followUp(text) });
+				options.onChildSession?.({
+					steer: (text) => created.steer(text),
+					followUp: (text) => created.followUp(text),
+					stop: (reason) => {
+						if (sessionSettled || lifecycleFinished) return;
+						hostStopReason = reason;
+						abortChild();
+					},
+				});
 				messageBaseline = created.messages.length;
 				await created.prompt(`Task: ${task}`);
 				settle(undefined);
