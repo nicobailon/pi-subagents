@@ -534,7 +534,7 @@ describe("supervisor ask registration", () => {
 			const requestId = writeRequest({ sessionId: runtime.owner, runId });
 			const status = JSON.stringify({ runId, sessionId: runtime.sessionFile, state: "running", mode: "single", pid: process.pid, startedAt: Date.now(), steps: [{ agent: "worker", status: "running" }] });
 			fs.writeFileSync(path.join(root, "status.json"), status);
-			await assert.rejects(runtime.call("subagent", { action: "steer", dir: root, message: "After the decision, inspect docs." }), (error: Error) => {
+			await assert.rejects(runtime.call("subagent", { action: "steer", options: { dir: root }, message: "After the decision, inspect docs." }), (error: Error) => {
 				assert.ok(error.message.includes(`"replyTo":"${requestId}"`), error.message);
 				assert.match(error.message, /not delivered or queued/);
 				return true;

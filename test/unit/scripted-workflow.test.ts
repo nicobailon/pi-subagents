@@ -3413,6 +3413,14 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 
+	it("runs workflows when the host has frozen Promise.prototype.then in every realm", () => {
+		const preload = path.resolve("test/fixtures/frozen-promise-then-preload.cjs");
+		const fixture = path.resolve("test/fixtures/frozen-promise-then-workflow.ts");
+		const result = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--require", preload, fixture], { encoding: "utf-8" });
+		assert.equal(result.status, 0, result.stderr);
+		assert.deepEqual(JSON.parse(result.stdout), { ok: true, value: { output: "pong" } });
+	});
+
 	it("rejects an unavailable recovery target without falling back from a stale cwd", {
 		skip: process.platform === "win32" ? "requires deleting a live process cwd, which Windows forbids" : undefined,
 	}, async () => {

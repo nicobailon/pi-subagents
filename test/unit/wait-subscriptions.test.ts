@@ -137,6 +137,15 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
+	it("tells the root session that async runs wake it natively and a child to collect its descendants", () => {
+		const descriptions: string[] = [];
+		const pi = { events: new TestBus(), on() {}, registerTool(value: { description: string }) { descriptions.push(value.description); } } as never;
+		registerWaitTool(pi, makeState(), true);
+		registerWaitTool(pi, makeState(), true, undefined, undefined, { nestedRootRunId: "root" });
+		assert.match(descriptions[0]!, /async subagent runs already wake this session natively/);
+		assert.match(descriptions[1]!, /no native completion notifier: use blocking bg_wait to collect your owned descendants/);
+	});
+
 	it("ends a blocking bg_wait when the user sends a message while the agent is busy", async () => {
 		const state = makeState();
 		state.foregroundRuns = new Map([["run-live", {
@@ -286,7 +295,7 @@ describe("non-blocking wait subscriptions", () => {
 
 			const message = sent[0] ?? "";
 			assert.match(message, /Resume-first/);
-			assert.match(message, /subagent\(\{ action: "resume", id: "run-revive", index: 1, message:/);
+			assert.match(message, /subagent\(\{ action: "resume", id: "run-revive", message: "[^"]*", options: \{ index: 1 \} \}\)/);
 			assert.match(message, /before reporting failure or launching a replacement/);
 			assert.match(message, /only if revive fails or the user explicitly asks/);
 		} finally {

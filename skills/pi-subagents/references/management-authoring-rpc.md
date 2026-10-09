@@ -35,14 +35,16 @@ subagent({ action: "refine.rollback", agent: "reviewer" })
 ```typescript
 subagent({
   action: "create",
-  config: {
-    name: "my-agent",
-    package: "code-analysis",
-    description: "Project-specific implementation helper",
-    systemPrompt: "Your system prompt here.",
-    systemPromptMode: "replace",
-    model: "provider/model-id",
-    tools: "read,grep,find,ls,bash"
+  options: {
+    config: {
+      name: "my-agent",
+      package: "code-analysis",
+      description: "Project-specific implementation helper",
+      systemPrompt: "Your system prompt here.",
+      systemPromptMode: "replace",
+      model: "provider/model-id",
+      tools: "read,grep,find,ls,bash"
+    }
   }
 })
 ```
@@ -53,8 +55,10 @@ subagent({
 subagent({
   action: "update",
   agent: "code-analysis.my-agent",
-  config: {
-    thinking: "high"
+  options: {
+    config: {
+      thinking: "high"
+    }
   }
 })
 ```
@@ -70,11 +74,11 @@ subagent({ action: "delete", agent: "code-analysis.my-agent" })
 ```typescript
 // Copy a bundled builtin/package agent to user scope as an editable custom file.
 subagent({ action: "eject", agent: "reviewer" })
-subagent({ action: "eject", agent: "reviewer", agentScope: "project" })
+subagent({ action: "eject", agent: "reviewer", options: { agentScope: "project" } })
 
 // Hide an agent from runtime discovery without deleting it (reversible).
 subagent({ action: "disable", agent: "reviewer" })
-subagent({ action: "enable", agent: "reviewer", agentScope: "project" })
+subagent({ action: "enable", agent: "reviewer", options: { agentScope: "project" } })
 
 // Delete the scope's custom agent file and/or settings override, restoring the bundled default.
 subagent({ action: "reset", agent: "reviewer" })

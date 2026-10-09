@@ -1165,6 +1165,20 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 1);
 	});
 
+	it("runs the built-in parallel workflow's tasks as children of one named workflow", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Parallel child completed" });
+		const result = await makeExecutor([makeAgent("reviewer"), makeAgent("scout")]).executePublic(
+			"named-parallel-resource",
+			{ workflow: "parallel", args: { tasks: [{ agent: "reviewer", task: "Review src/api" }, { agent: "scout", task: "Map the tests" }] }, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "parallel workflow failed");
+		assert.equal(result.details.workflow?.resource?.name, "parallel");
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("executes a registered mixed foreground workflow without widening session or child authority", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const ctx = makeMinimalCtx(tempDir);
 		// A persistent session's file path is not its SDK session ID.

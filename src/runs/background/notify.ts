@@ -22,6 +22,7 @@ import { safeTerminalText } from "../../shared/display-text.ts";
 import type { ParentWake } from "../../shared/parent-wake.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
+import { capSummaryOutputs } from "../shared/single-output.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
 
 export interface SubagentNotifyChildOutput {
@@ -36,6 +37,7 @@ export interface SubagentNotifyChildOutput {
 	structuredOutputPath?: string;
 	outputArtifactError?: RetainedPathError;
 	structuredOutputError?: RetainedPathError;
+	error?: string;
 	preview: string;
 	previewTruncated?: boolean;
 	previewUnavailableReason?: string;
@@ -100,10 +102,12 @@ export interface CompletionNotification {
 		revival?: string;
 		success?: boolean;
 		output?: string;
+		error?: string;
 		structuredOutput?: unknown;
 		structuredOutputPath?: string;
 		outputState?: "present" | "absent" | "unknown";
 		outputReference?: string | { path?: string };
+		savedOutputPath?: string;
 		artifactPaths?: { outputPath?: string };
 		outputSaveError?: string;
 		artifactOutputSaveFailed?: true;
@@ -164,7 +168,8 @@ export interface CompletionNotifier {
 	dispose(): void;
 }
 
-const CHILD_OUTPUT_PREVIEW_MAX_BYTES = 4 * 1024;
+const CHILD_OUTPUT_PREVIEW_MAX_BYTES = 2_000;
+const ERROR_LINE_MAX_BYTES = 300;
 const CHILD_OUTPUT_PREVIEW_COUNT = 8;
 const PREVIEW_TRUNCATION_MARKER = "...[preview truncated]";
 const COMPLETION_SEND_TTL_MS = 10 * 60 * 1000;
@@ -258,6 +263,12 @@ function isDegenerateOutput(text: string): boolean {
 	return !text.trim() || text.trim() === "</think>";
 }
 
+function firstErrorLine(error: unknown): string | undefined {
+	if (typeof error !== "string") return undefined;
+	const line = error.split("\n").find((part) => part.trim())?.trim();
+	return line ? boundedSafeText(line, ERROR_LINE_MAX_BYTES) : undefined;
+}
+
 function childInlinePreview(child: CompletionChild): { preview?: string; truncated?: boolean; unavailableReason?: string } {
 	const output = typeof child.output === "string" ? child.output : "";
 	const outputReference = childSavedOutputPath(child);
@@ -289,6 +300,7 @@ function formatChildOutputBlock(children: SubagentNotifyChildOutput[] | undefine
 		if (child.structuredOutputPath) lines.push(`  Structured output (retention-managed): ${boundedSafeText(child.structuredOutputPath)}`);
 		if (child.outputArtifactError) lines.push(formatRetainedPathError("Output artifact", child.outputArtifactError));
 		if (child.structuredOutputError) lines.push(formatRetainedPathError("Structured output", child.structuredOutputError));
+		if (child.error) lines.push(`  Error: ${child.error}`);
 		if (child.previewTruncated && !child.savedOutputPath && !child.outputArtifactPath) lines.push("  Full output unavailable");
 		if (index >= CHILD_OUTPUT_PREVIEW_COUNT) {
 			lines.push("  Preview: unavailable (notice preview budget exceeded)");
@@ -708,9 +720,19 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 	const directNoOutputSummary = directChild && (!directSummary
 		|| directSummary === "(no output)"
 		|| (directAgent && directSummary === `${directAgent}:\n(no output)`));
-	const resultPreview = directStructuredPreview && (directNoOutputSummary || directDegenerateSummary)
+	const outputPreview = directStructuredPreview && (directNoOutputSummary || directDegenerateSummary)
 		? `Structured output:\n${directStructuredPreview}`
-		: summary;
+		: capSummaryOutputs(summary, result.results);
+	// A failed child that produced output reports that output as its summary, so its error needs its own line.
+	const errorSources = status === "completed" ? [] : [
+		{ agent: undefined, error: result.error },
+		...(workflowRunId ? [] : result.results ?? []).filter((child) => child.success !== true).map((child) => ({ agent: child.agent, error: child.error })),
+	];
+	const errorLines = [...new Set(errorSources.flatMap(({ agent: errorAgent, error }) => {
+		const line = firstErrorLine(error);
+		return line && !outputPreview.includes(line) ? [`Error${errorAgent && (result.results?.length ?? 0) > 1 ? ` (${errorAgent})` : ""}: ${line}`] : [];
+	}))];
+	const resultPreview = errorLines.length ? `${errorLines.join("\n")}\n\n${outputPreview}` : outputPreview;
 	const childRuns = result.results?.flatMap((child) => {
 		const runId = typeof child.runId === "string" && child.runId.trim() ? child.runId.trim() : undefined;
 		const workflowKey = typeof child.workflowKey === "string" && child.workflowKey.trim() ? child.workflowKey.trim() : undefined;
@@ -732,17 +754,20 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 			const structuredOutput = child.stopped === true || child.timedOut === true
 				? { status: "unavailable" as const }
 				: retainedChildPath(child.structuredOutputPath, child.structuredOutput !== undefined);
+			const status = childStatus(child, result.state);
+			const error = status === "completed" || status === "running" ? undefined : firstErrorLine(child.error);
 			return {
 				...(workflowKey ? { workflowKey } : {}),
 				...(runId ? { runId } : {}),
 				...(typeof child.agent === "string" ? { agent: child.agent } : {}),
-				status: childStatus(child, result.state),
+				status,
 				...(typeof child.revival === "string" && child.revival ? { revival: child.revival } : {}),
 				...(savedOutputPath ? { savedOutputPath } : {}),
 				...(outputArtifact.status === "verified" ? { outputArtifactPath: outputArtifact.path } : {}),
 				...(structuredOutput.status === "verified" ? { structuredOutputPath: structuredOutput.path } : {}),
 				...(outputArtifact.status === "error" ? { outputArtifactError: outputArtifact.error } : {}),
 				...(structuredOutput.status === "error" ? { structuredOutputError: structuredOutput.error } : {}),
+				...(error ? { error } : {}),
 				...(inline.preview ? { preview: inline.preview } : { preview: "" }),
 				...(inline.truncated ? { previewTruncated: true } : {}),
 				...(inline.unavailableReason ? { previewUnavailableReason: inline.unavailableReason } : {}),

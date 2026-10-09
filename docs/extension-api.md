@@ -19,7 +19,7 @@ registerWorkflowResource({
 }): { dispose(): void }
 ```
 
-Names are case-sensitive, at most 128 characters, and match `[A-Za-z0-9][A-Za-z0-9._-]*`; use an extension prefix. Versions are positive safe integers. Registration throws for invalid input, protected builtins (`review`, `run-ci`, and `chain` and `tasks`, which back the tool's structured inputs), or duplicate names within the same session. Different sessions may register the same name. Dispose before replacement; there is no silent overwrite.
+Names are case-sensitive, at most 128 characters, and match `[A-Za-z0-9][A-Za-z0-9._-]*`; use an extension prefix. Versions are positive safe integers. Registration throws for invalid input, protected builtins (`review`, `run-ci`, `parallel`, and `chain` and `tasks`, which back the tool's structured inputs), or duplicate names within the same session. Different sessions may register the same name. Dispose before replacement; there is no silent overwrite.
 
 Register in `session_start` using **`ctx.sessionManager.getSessionId()`**, not the session file path or a tool argument. Dispose in `session_shutdown`. New/resumed/forked sessions and reloads need registration from the replacement runtime's `session_start`; do not retain old `pi`/`ctx` references. The extension owns cleanup, not an automatic registration lifecycle manager. Disposal is idempotent and cannot remove a newer replacement. Missing cleanup can cause a duplicate-registration failure on reload.
 
@@ -459,10 +459,10 @@ The async runner process does not import provider internals. It writes operation
 Inspect is the portable command and action surface for an existing async run. The public actions are:
 
 ```ts
-subagent({ action: "inspector.command", id: "<run-id>", index: 0 })
-subagent({ action: "inspector.open", id: "<run-id>", index: 0, focus: true })
-subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
-subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
+subagent({ action: "inspector.command", id: "<run-id>", options: { index: 0 } })
+subagent({ action: "inspector.open", id: "<run-id>", options: { index: 0, focus: true } })
+subagent({ action: "inspector.status", id: "<run-id>", options: { index: 0 } })
+subagent({ action: "inspector.close", id: "<run-id>", options: { index: 0 } })
 ```
 
 `inspector.command` returns a standalone runner command without contacting a host or writing a binding. `inspector.open` selects an available built-in or externally registered inspector plugin. `status` and `close` select the plugin that owns the run binding and report clearly when that plugin does not support the requested lifecycle action. Without an available plugin, `open` fails closed with an actionable message; ordinary launches remain headless. Closing an inspector never stops the run.

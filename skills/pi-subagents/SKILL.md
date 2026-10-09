@@ -87,7 +87,7 @@ that runner explicitly supports the option.
 
 ## Read the reference for the branch
 
-For exact API fields and worked examples, call `subagent({action:"guide",topic:"tool-reference"})` or `topic:"workflows"`. The compact tool definition is not the recipe catalog; use `topic:"missions"` for mission updates and schedules.
+For exact API fields and worked examples, call `subagent({action:"guide",options:{topic:"tool-reference"}})` or `topic:"workflows"`. The compact tool definition is not the recipe catalog; use `topic:"missions"` for mission updates and schedules.
 
 | Branch | Read |
 | --- | --- |

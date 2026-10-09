@@ -22,7 +22,7 @@ pi
 ```
 
 ```js
-subagent({ workflow: "./workflow.js", agentScope: "both" })
+subagent({ workflow: "./workflow.js", options: { agentScope: "both" } })
 ```
 
 The gate command (`./classify --report ...`) is a shell command run in the child's cwd, so it can stay relative.

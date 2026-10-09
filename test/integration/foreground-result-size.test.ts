@@ -1,5 +1,6 @@
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import type { MockPi } from "../support/helpers.ts";
 import { createMockPi, createTempDir, removeTempDir, events, tryImport } from "../support/helpers.ts";
 
@@ -184,5 +185,45 @@ describe("foreground result payload compaction", { skip: !available ? "subagent 
 
 		const payloadSize = JSON.stringify(result).length;
 		assert.ok(payloadSize < 80_000, `expected compact foreground payload, got ${payloadSize} bytes`);
+	});
+
+	it("inlines the head of a long foreground output and names the file that holds all of it", async () => {
+		const output = Array.from({ length: 200 }, (_, index) => `report line ${index} ${"x".repeat(40)}`).join("\n");
+		mockPi.onCall({ jsonl: [events.assistantMessage(output)] });
+
+		const result = await makeExecutor(tempDir).execute(
+			"id",
+			{ agent: "tester", task: "Write a long report" },
+			new AbortController().signal,
+			undefined,
+			makeCtx(tempDir),
+		);
+
+		const text = result.content[0]?.text ?? "";
+		assert.ok(text.includes(output.slice(0, 1_500)));
+		assert.ok(!text.includes("report line 199"));
+		const fullOutputPath = text.match(/\nFull output: (.+) \(\d+\.\d KB, 200 lines\)\. Read it if needed\./)?.[1];
+		assert.ok(fullOutputPath, text.slice(-300));
+		assert.ok(fs.readFileSync(fullOutputPath, "utf-8").includes(output));
+	});
+
+	it("caps a long foreground output saved to an explicit output file and keeps the saved-file line", async () => {
+		const output = Array.from({ length: 200 }, (_, index) => `saved line ${index} ${"x".repeat(40)}`).join("\n");
+		mockPi.onCall({ jsonl: [events.assistantMessage(output)] });
+
+		const result = await makeExecutor(tempDir).execute(
+			"id",
+			{ agent: "tester", task: "Write a long report", output: "report.md" },
+			new AbortController().signal,
+			undefined,
+			makeCtx(tempDir),
+		);
+
+		const text = result.content[0]?.text ?? "";
+		assert.ok(text.includes(output.slice(0, 1_500)));
+		assert.ok(!text.includes("saved line 199"), `expected a capped result, got ${text.length} chars`);
+		const savedPath = text.match(/\nOutput saved to: (.+) \(\d+\.\d KB, 200 lines\)\. Read this file if needed\./)?.[1];
+		assert.ok(savedPath, text.slice(-300));
+		assert.ok(fs.readFileSync(savedPath, "utf-8").includes(output));
 	});
 });

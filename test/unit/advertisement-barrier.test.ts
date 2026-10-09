@@ -96,7 +96,7 @@ setTimeout(() => { if (phase === "old") fs.writeFileSync(${JSON.stringify(oldDon
 				assert.match(text, /<name>global-specialist<\/name>/);
 				assert.match(text, /<name>local-specialist<\/name>/);
 			}
-			assert.match(loader.content[0].text, /If your tool list includes subagent \(possibly prefixed\), call subagent\(\{action:"list",capabilities:true\}\)\./);
+			assert.match(loader.content[0].text, /If your tool list includes subagent \(possibly prefixed\), call it now\./);
 			assert.match(loader.content[0].text, /Otherwise, wait for the next user prompt; do not retry now\./);
 			assert.match(loader.content[0].text, /Start Pi with --exclude-tools subagents_enable to keep subagent always available\./);
 			process.env.TEST_NPM_PHASE = "seed";

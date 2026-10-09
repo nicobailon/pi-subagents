@@ -174,6 +174,59 @@ export function formatSavedOutputReference(savedPath: string, fullOutput: string
 	};
 }
 
+export const INLINE_OUTPUT_HEAD_CHARS = 2_000;
+/** Larger files are not read to check a cap; the output then stays whole. */
+const MAX_FULL_OUTPUT_FILE_BYTES = 50 * 1024 * 1024;
+/** The line finalizeSingleOutput appends when inline output was also saved to an explicit output file. */
+const SAVED_OUTPUT_LINE = /\n\nOutput saved to: (.+) \([^()\n]*\)\. Read this file if needed\.$/;
+
+function readFullOutputFile(filePath: string): string | undefined {
+	try {
+		const stat = fs.statSync(filePath);
+		if (!stat.isFile() || stat.size > MAX_FULL_OUTPUT_FILE_BYTES) return undefined;
+		return fs.readFileSync(filePath, "utf-8");
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Keeps at most INLINE_OUTPUT_HEAD_CHARS of a child's output inline and points to the file holding all of it.
+ * Files come only from run records, never from the child's text: a trailing `Output saved to:` line is kept as the
+ * pointer only when it names the run's recorded saved-output path, and that recorded path is what gets read.
+ * Output stays whole when it is short or no readable file contains it, so no text is lost.
+ */
+export function capInlineOutput(output: string, files: { artifactPath?: string; savedPath?: string }): string {
+	const match = files.savedPath ? output.match(SAVED_OUTPUT_LINE) : null;
+	const savedLine = match && files.savedPath && match[1] === path.resolve(files.savedPath) ? match : undefined;
+	const body = savedLine ? output.slice(0, savedLine.index) : output;
+	const filePath = savedLine ? files.savedPath : files.artifactPath;
+	if (body.length <= INLINE_OUTPUT_HEAD_CHARS || !filePath) return output;
+	const fullOutput = readFullOutputFile(filePath);
+	if (fullOutput === undefined || !fullOutput.includes(body)) return output;
+	const lineEnd = body.lastIndexOf("\n", INLINE_OUTPUT_HEAD_CHARS);
+	let end = lineEnd >= INLINE_OUTPUT_HEAD_CHARS - 200 ? lineEnd : INLINE_OUTPUT_HEAD_CHARS;
+	if (/[\uD800-\uDBFF]/.test(body[end - 1] ?? "")) end -= 1;
+	if (savedLine) return `${body.slice(0, end)}\n…${output.slice(body.length)}`;
+	const reference = formatSavedOutputReference(filePath, fullOutput);
+	return `${body.slice(0, end)}\n…\nFull output: ${reference.path} (${formatByteSize(reference.bytes)}, ${reference.lines} ${reference.lines === 1 ? "line" : "lines"}). Read it if needed.`;
+}
+
+/** Applies capInlineOutput to each `agent:\noutput` section of a run summary whose child output is long. */
+export function capSummaryOutputs(summary: string, results: ReadonlyArray<{ agent?: unknown; output?: unknown; artifactPaths?: { outputPath?: unknown }; artifactOutputSaveFailed?: unknown; savedOutputPath?: unknown }> | undefined): string {
+	let capped = summary;
+	for (const result of results ?? []) {
+		if (typeof result.agent !== "string" || typeof result.output !== "string" || result.output.length <= INLINE_OUTPUT_HEAD_CHARS) continue;
+		const artifactPath = result.artifactOutputSaveFailed === true || typeof result.artifactPaths?.outputPath !== "string" ? undefined : result.artifactPaths.outputPath;
+		const savedPath = typeof result.savedOutputPath === "string" && result.savedOutputPath ? result.savedOutputPath : undefined;
+		const section = `${result.agent}:\n${result.output}`;
+		const index = capped.indexOf(section);
+		if (index < 0) continue;
+		capped = `${capped.slice(0, index)}${result.agent}:\n${capInlineOutput(result.output, { artifactPath, savedPath })}${capped.slice(index + section.length)}`;
+	}
+	return capped;
+}
+
 export function validateFileOnlyOutputMode(outputMode: OutputMode | undefined, outputPath: string | undefined, context: string): string | undefined {
 	if (outputMode === "file-only" && !outputPath) {
 		return `${context} sets outputMode: "file-only" but does not configure an output file. Set output to a path or use outputMode: "inline".`;

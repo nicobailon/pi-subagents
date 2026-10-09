@@ -48,7 +48,7 @@ async subagent worker · background
     Press configured-expand-key for live detail
 ```
 
-To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
+To inspect one background child in text, use `subagent({ action: "status", id: "...", options: { view: "transcript" } })`; add `index` for a specific child in a parallel or chain run.
 
 In Pi fullscreen mode with mouse dispatch, left-click
 anywhere on the async widget's header row to fold it into a live one-line status
@@ -128,7 +128,7 @@ Set `fleetKeybindings` in the extension config to replace inspector-level keys w
 
 Enter and `H` use the available Inspect plugin. Inside tmux, this includes the bundled tmux plugin: it splits the focused window, runs the inspector pane there, and records a binding, so `status` and `close` are available and ordinary tmux keys such as the prefix keep working in the pane. On macOS with Ghostty 1.3+ (TERM_PROGRAM=ghostty), this includes the other bundled open-only plugin using Ghostty's preview AppleScript API; status and close are unavailable because no binding is written. In a child-specific inspector, type ordinary guidance and press Enter to send it through the acknowledged steer channel; `steer <message>`, `status`, and `stop` remain available as explicit controls. The bundled Herdr plugin uses Herdr 0.7.5+.
 
-Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", view: "fleet" })` fallback, and mutations use explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id.
+Without a TUI, `/subagents-fleet` retains the textual `subagent({ action: "status", options: { view: "fleet" } })` fallback, and mutations use explicit commands: run `/subagents-stop` and pick from the selector, or use `/subagents-stop <run-id>` / `subagent({ action: "stop", id: "..." })` when you already know the id.
 
 Use `/subagents-detach [run-id]` only for an active foreground single-subagent run you want to leave running without terminating; the eventual result remains available through status/wait.
 

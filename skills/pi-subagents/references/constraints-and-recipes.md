@@ -64,7 +64,7 @@ its overhead. Recipes select a shape; they do not authorize delegation:
 
 ## Error Handling
 
-- **Unknown agent:** run `subagent({ action: "list" })`; check scope/precedence and author new orchestration as a workflow script, not legacy chains.
+- **Unknown agent:** the error lists the available agents and the directories searched; check scope/precedence and author new orchestration as a workflow script, not legacy chains.
 - **Setup, discovery, or intercom confusion:** run `subagent({ action: "doctor" })`.
 - **Max subagent depth exceeded:** flatten the workflow or raise `maxSubagentDepth` in config.
 - **Missing session file for a fork:** persist the parent session before using `context: "fork"`.

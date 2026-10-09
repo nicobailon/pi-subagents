@@ -60,6 +60,14 @@ describe("single model resolution", () => {
 		assert.equal(resolveEffectiveSubagentModel("missing", "gpt-5-mini", undefined, models, undefined, { source: "inherited" }), "missing");
 	});
 
+	it("lists up to five exact registry ids for an unknown or ambiguous model", () => {
+		assert.throws(() => resolveModelSelection("gpt-5-mni:high", models), /Unknown subagent model 'gpt-5-mni:high'.*Closest registry models: openai\/gpt-5-mini:high\./);
+		assert.throws(() => resolveModelSelection("shared", models), /Unknown subagent model 'shared'.*Closest registry models: anthropic\/shared, openai\/shared\./);
+		const crowded = ["a", "b", "c", "d", "e", "f", "g"].map((provider) => ({ provider, id: "same", fullId: `${provider}/same` }));
+		assert.throws(() => resolveModelSelection("same", crowded), (error: Error) => /Closest registry models: a\/same, b\/same, c\/same, d\/same, e\/same\.$/.test(error.message));
+		assert.throws(() => resolveModelSelection("missing", models), (error: Error) => !error.message.includes("Closest registry models"));
+	});
+
 	it("normalizes registry spelling without switching a qualified provider", () => {
 		assert.equal(normalizeModelSegment("GPT_5--MINI"), "gpt-5-mini");
 		assert.equal(fuzzyResolveModel("GPT_5_MINI", models), "openai/gpt-5-mini");

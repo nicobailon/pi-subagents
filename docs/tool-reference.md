@@ -4,7 +4,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 
 In a fresh parent session, `subagents_enable({})` makes the full `subagent` tool available on the immediately following model request without launching work. Pi may call it when delegation is authorized by the current request or applicable instructions, or to manage existing runs. Direct execution remains the default; task complexity does not grant delegation authority. The public `subagent` name and parameters are unchanged after activation.
 
-Call `{ action: "guide", topic: "tool-reference" }` for this reference or `topic: "workflows"` for [workflow recipes](workflows.md). Use `topic: "agents"` for authoring, `topic: "missions"` for missions/schedules, and `topic: "watchdog"` for watchdog controls. Guide reads do not change the schema or grant authority.
+Call `{ action: "guide", options: { topic: "tool-reference" } }` for this reference or `options: { topic: "workflows" }` for [workflow recipes](workflows.md). Use `topic: "agents"` for authoring, `topic: "missions"` for missions/schedules, and `topic: "watchdog"` for watchdog controls, always inside `options`. Guide reads do not change the schema or grant authority.
 
 ## Execution examples
 
@@ -30,7 +30,7 @@ The host resolves the script and authority internally and records bounded proven
 ```js
 { workflow: "./workflows/review.js", args: { target: "src/workflows" }, cwd: "/path/to/project" }
 { action: "validate", workflow: "./workflows/review.js", args: { target: "src/workflows" } }
-{ action: "schedule.create", every: "6h", workflow: "./workflows/review.js", args: { target: "src/workflows" } }
+{ action: "schedule.create", workflow: "./workflows/review.js", args: { target: "src/workflows" }, options: { every: "6h" } }
 ```
 
 Each script below is the ```` ```js workflow ```` block of a reply that then calls `subagent({ workflow: true })`:
@@ -67,49 +67,59 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 
 ## Parameter reference
 
+The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `model`, `cwd`, `worktree`, `output`, `action`, `id` and `message` at the top level and every other field inside `options`, for example `subagent({ action: "status", id: "<run-id>", options: { view: "transcript" } })`. Management fields and the `runId`, `maxRuntimeMs` and `isolation` aliases also keep working at the top level, as in RPC payloads, slash commands, schedules and workflow `runs.run`/`runs.all` items; a field given in both places with different values is rejected.
+
+### Target and management parameters
+
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
+| `options` | object | - | Management and control fields; the rows named `options.<name>` below go here. Unknown keys are rejected with the closest valid option. The same fields are also accepted at the top level. |
 | `agent` | string | - | One direct child or agent-management target. Workflow child agents are set inside `runs.run` or `runs.all`. |
 | `task` | string | agent default | Direct child's task; requires `agent`, excludes `action` and workflow inputs. `agent` may also select a management target. |
 | `action` | string | - | Offline workflow `validate`, agent management (including `guide`, `children.list`, and `refine`/`refine.show`/`refine.rollback`), lane evidence (`lane.status`, `lane.recordMerge`, `lane.recordSupersession`), mission (`mission.create/list/show/update/resolve-decision/attach-run/close`), Inspect actions (`inspector.command/open/status/close`), Herdr project pane (`project.open/status/close`), status/control, reviewed `worktree.cleanup`, schedule, watchdog, or doctor action. |
-| `topic` | `overview \| workflows \| agents \| missions \| observability \| tool-reference \| configuration \| models \| watchdog \| extension-api \| council` | `overview` | Packaged guide topic for `action: "guide"`. |
-| `config` | object/string | - | Agent config for management create/update. |
-| `context` | `fresh \| fork \| profile` | global or per-agent default, else `fresh` | Explicit `fresh` or `fork` overrides every workflow child. `profile` requires the selected agent's declared `defaultContext` and ignores config `defaultSubagentContext`; missing agent defaults fail. When omitted, [`defaultSubagentContext`](configuration.md#defaultsubagentcontext) wins over each agent's `defaultContext`; implicit fork falls back to fresh without a persisted parent session and leaf. Explicit fork is strict. Packaged `worker` defaults to `fresh`; packaged `oracle` and `advisor` default to `fork`. |
-| `model` | string | agent default | Call `{action:"models"}` first and copy an exact `provider/id`; bare ids resolve only if unique, and agent names are not model ids. A suffix such as `provider/id:high` (`off/minimal/low/medium/high/xhigh/max`) overrides agent thinking. The `thinking` field is only for `watchdog.configure`, ignored on dispatch. On the `claude-code` and `claude-code-writer` adapters the model is Claude Code's own alias or id, and the same suffix becomes its `--effort`, bounded by `subagents.maxThinking` and by an enforced `subagents.modelScope`. |
-| `missionId` | string | - | Attach a workflow, including each fire of `schedule.create`, to an existing project mission. Scheduled attachment uses ordinary lifecycle and retention rules. |
-| `mission` | object/false | auto-create | Override the default enclosing mission with `{ title \| summary, objective?, goal?, budget?, labels? }`. Set exactly one non-empty `title` or `summary`; `objective` and `labels` are optional. `goal` may only be `true`, requires `budget.tokens`, and enables continuation notices. Pass `false` for an intentionally ephemeral workflow with no mission for it or its children and no `state` global. Explicit mission persistence failures are strict. |
-| `handoffPath` | string | - | Aggregate handoff manifest for `action: "worktree.discard"` or lane evidence actions, or optional explicit metadata for `action: "worktree.cleanup"`. |
-| `repo` | string | runtime cwd | Repository path for `action: "worktree.cleanup"`; required explicitly for apply. The configured worktree base filters candidates by their per-project folder under it but never discovers them. |
-| `planId` | string | - | Saved, reviewed cleanup plan ID; required for apply, rejected in plan mode. |
-| `mode` | `steer \| follow_up \| auto \| plan \| apply` | - | Delivery mode for `action: "steer"`; `worktree.cleanup` accepts `plan` or `apply`; apply requires an explicit repository and saved plan ID. |
-| `laneId` | string | - | Exact `runId` stored in the handoff manifest for `lane.status`, `lane.recordMerge`, or `lane.recordSupersession`. |
-| `merge` | object | - | Attested merge evidence for `lane.recordMerge`; requires a positive PR number, full reviewed/merge SHAs, tree-equivalence and post-merge-check statuses, attestor, and timestamp. |
-| `supersession` | object | - | Attested replacement-lane evidence for `lane.recordSupersession`; requires a different replacement lane id, attestor, and timestamp. |
-| `focus` | boolean | false | Focus the newly split host inspector pane for `action: "inspector.open"` or the new Herdr project pane for `action: "project.open"`; not a standalone action. `inspector.command` is read-only and does not contact Herdr or write a binding. Panes open in the background unless you set `focus: true`. Existing saved project panes can be focused through the public project-pane API when Herdr reports a tab or workspace id. |
-| `view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
-| `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
-| `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
-| `capabilities` | boolean | `false` | With `action: "list"`, return compact prompt-free rows and `details.agentCapabilities` machine-readable records for each agent's declared/default routing capabilities. External CLI rows also include their command and passive local availability. |
+| `options.topic` | `overview \| workflows \| agents \| missions \| observability \| tool-reference \| configuration \| models \| watchdog \| extension-api \| council`, or `<topic>/<section>` | `overview` | Packaged guide topic for `action: "guide"`. A docs topic returns its table of contents; `<topic>/<section>` returns one section. |
+| `options.config` | object/string | - | Agent config for management create/update. |
+| `options.context` | `fresh \| fork \| profile` | global or per-agent default, else `fresh` | Explicit `fresh` or `fork` overrides every workflow child. `profile` requires the selected agent's declared `defaultContext` and ignores config `defaultSubagentContext`; missing agent defaults fail. When omitted, [`defaultSubagentContext`](configuration.md#defaultsubagentcontext) wins over each agent's `defaultContext`; implicit fork falls back to fresh without a persisted parent session and leaf. Explicit fork is strict. Packaged `worker` defaults to `fresh`; packaged `oracle` and `advisor` default to `fork`. |
+| `model` | string | agent default | An exact `provider/id`; bare ids resolve only if unique, and agent names are not model ids. An unknown or ambiguous model fails with up to 5 closest registry ids to copy; `{action:"models"}` lists them all. A suffix such as `provider/id:high` (`off/minimal/low/medium/high/xhigh/max`) overrides agent thinking. The `thinking` field is only for `watchdog.configure`, ignored on dispatch. On the `claude-code` and `claude-code-writer` adapters the model is Claude Code's own alias or id, and the same suffix becomes its `--effort`, bounded by `subagents.maxThinking` and by an enforced `subagents.modelScope`. |
+| `options.missionId` | string | - | Attach a workflow, including each fire of `schedule.create`, to an existing project mission. Scheduled attachment uses ordinary lifecycle and retention rules. |
+| `options.mission` | object/false | auto-create | Override the default enclosing mission with `{ title \| summary, objective?, goal?, budget?, labels? }`. Set exactly one non-empty `title` or `summary`; `objective` and `labels` are optional. `goal` may only be `true`, requires `budget.tokens`, and enables continuation notices. Pass `false` for an intentionally ephemeral workflow with no mission for it or its children and no `state` global. Explicit mission persistence failures are strict. |
+| `options.handoffPath` | string | - | Aggregate handoff manifest for `action: "worktree.discard"` or lane evidence actions, or optional explicit metadata for `action: "worktree.cleanup"`. |
+| `options.repo` | string | runtime cwd | Repository path for `action: "worktree.cleanup"`; required explicitly for apply. The configured worktree base filters candidates by their per-project folder under it but never discovers them. |
+| `options.planId` | string | - | Saved, reviewed cleanup plan ID; required for apply, rejected in plan mode. |
+| `options.mode` | `steer \| follow_up \| auto \| plan \| apply` | - | Delivery mode for `action: "steer"`; `worktree.cleanup` accepts `plan` or `apply`; apply requires an explicit repository and saved plan ID. |
+| `options.laneId` | string | - | Exact `runId` stored in the handoff manifest for `lane.status`, `lane.recordMerge`, or `lane.recordSupersession`. |
+| `options.merge` | object | - | Attested merge evidence for `lane.recordMerge`; requires a positive PR number, full reviewed/merge SHAs, tree-equivalence and post-merge-check statuses, attestor, and timestamp. |
+| `options.supersession` | object | - | Attested replacement-lane evidence for `lane.recordSupersession`; requires a different replacement lane id, attestor, and timestamp. |
+| `options.focus` | boolean | false | Focus the newly split host inspector pane for `action: "inspector.open"` or the new Herdr project pane for `action: "project.open"`; not a standalone action. `inspector.command` is read-only and does not contact Herdr or write a binding. Panes open in the background unless you set `focus: true`. Existing saved project panes can be focused through the public project-pane API when Herdr reports a tab or workspace id. |
+| `options.view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
+| `options.lines` | number | `80` | Maximum transcript lines for `action: "status"` with `options.view: "transcript"`; capped at 500. |
+| `options.agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
+| `options.capabilities` | boolean | `false` | With `action: "list"`, return compact prompt-free rows and `details.agentCapabilities` machine-readable records for each agent's declared/default routing capabilities. External CLI rows also include their command and passive local availability. |
+
+### Execution parameters
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
 | `async` | boolean | default-on | Background execution. Workflows default to background. `async:false` blocks the parent until completion. A local foreground child runs inside the parent Pi process and never loads the parent's ambient extensions, but it does inherit the providers those extensions registered. A pane-native remote foreground child instead uses the remote machine's provider discovery and configuration. Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) must run as background children, which load them inside the detached runner process. |
-| `chatProgress` | `auto \| off \| live-card` | `auto` | Workflow chat projection. `auto` renders a live in-chat card only for watched foreground workflows in the same Git repository, including managed worktrees; it is off otherwise. Explicit `live-card` requires `async:false` and the same Git repository. Async workflows have no inline live card, so omit `chatProgress` or use `auto`/`off`; use `async:false` only when the parent must block. |
-| `isolation` | `none \| worktree` | - | Workflow child isolation. `none` runs in the shared cwd and does not need Git. `worktree` requires a managed Git worktree. Do not combine it with a contradictory `worktree` value. |
-| `baseRef` | string | `HEAD` | `HEAD` or a supported named ref such as `refs/heads/release`, `refs/tags/v1`, or `origin/main`. Full 40/64-character commit IDs and revision expressions such as `HEAD~1` are unsupported. The ref must resolve to a commit at worktree allocation; omitted values default to `HEAD` resolved at that time. Source-checkout cleanliness is still checked. For a workflow script, set it on the outer request as a default or on an individual `runs.run`/`runs.all` child to override it. |
-| `timeoutMs` / `maxRuntimeMs` | number | config `timeoutMs`, else 30 min foreground / single-agent async | Optional run-level max runtime in milliseconds. Both aliases may be supplied only when their values agree. When omitted, the global [`timeoutMs`](configuration.md#timeoutms) config provides the default; absent that, foreground and plain single-agent async runs fall back to 30 minutes, while composite async runs (chains, parallel tasks, workflows) stay unbounded at the top level. Expiration of this run-level deadline is terminal. |
-| `toolTimeoutMs` | number | fast-tool default | Optional positive hard per-tool-call deadline in milliseconds. Precedence: call value → agent frontmatter → config → `PI_SUBAGENT_TOOL_TIMEOUT_MS`. The timer starts on `tool_execution_start`, clears on the matching `tool_execution_end`, and terminates the run with `timedOut: true` if the tool remains open. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It never extends the run deadline; `contact_supervisor`, `intercom`, and `bg_wait` are exempt. |
-| `checkpointBeforeDeadlineMs` | number | none | Async single-agent runs only. The runner requests that the child "checkpoint and stop" this many milliseconds before the run deadline (finish the current tool call, report changed files, build/test state, remaining work, commit/PR state; start no new work). This best-effort steer uses the normal steering lifecycle at the next tool boundary, so the receipt is visible in status and events; the ordinary deadline kill still applies. Precedence: call value → config `checkpointBeforeDeadlineMs`. Disarmed when the deadline leaves under one second before the checkpoint. |
-| `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`: `hard` is a positive integer and `soft`, if set, is a positive integer no greater than `hard`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, and accepts either a nonempty array of tool names or `"*"` for every tool call. Final assistant text is never blocked. |
-| `usageBudget` | object | none | Optional root-only reported-usage budget `{ tokens?: { soft?, hard }, costUsd?: { soft?, hard } }`. Include at least one metric; each `hard` must be positive and each optional `soft` positive and no greater than its `hard`. Soft limits are status-only. Hard limits prevent later child launches after reported usage is reconciled; already-running children are not stopped and no reservations are made. |
-| `extensionBindings` | object | none | Child-only plain JSON keyed by namespaces like `package.name/1` (positive version): at most 16 namespaces, nesting depth 16, 256 total object properties, and 16 KiB of canonical UTF-8 JSON. Native Pi launches only; external runners and retained resumes reject it. |
-| `preflight` | object | none | Advisory lane hints for raw scripts (`workflow: true` or a script path) only; not accepted with named workflows or direct children. See [bounded workflows](workflows.md#opt-in-bounded-workflows). |
+| `options.chatProgress` | `auto \| off \| live-card` | `auto` | Workflow chat projection. `auto` renders a live in-chat card only for watched foreground workflows in the same Git repository, including managed worktrees; it is off otherwise. Explicit `live-card` requires `async:false` and the same Git repository. Async workflows have no inline live card, so omit `chatProgress` or use `auto`/`off`; use `async:false` only when the parent must block. |
+| `isolation` | `none \| worktree` | - | Alias kept at the top level; prefer `worktree`. Workflow child isolation. `none` runs in the shared cwd and does not need Git. `worktree` requires a managed Git worktree. Do not combine it with a contradictory `worktree` value. |
+| `options.baseRef` | string | `HEAD` | `HEAD` or a supported named ref such as `refs/heads/release`, `refs/tags/v1`, or `origin/main`. Full 40/64-character commit IDs and revision expressions such as `HEAD~1` are unsupported. The ref must resolve to a commit at worktree allocation; omitted values default to `HEAD` resolved at that time. Source-checkout cleanliness is still checked. For a workflow script, set it on the outer request as a default or on an individual `runs.run`/`runs.all` child to override it. |
+| `options.timeoutMs` | number | config `timeoutMs`, else 30 min foreground / single-agent async | Optional run-level max runtime in milliseconds. The top-level alias `maxRuntimeMs` is also accepted; both must agree. When omitted, the global [`timeoutMs`](configuration.md#timeoutms) config provides the default; absent that, foreground and plain single-agent async runs fall back to 30 minutes, while composite async runs (chains, parallel tasks, workflows) stay unbounded at the top level. Expiration of this run-level deadline is terminal. |
+| `options.toolTimeoutMs` | number | fast-tool default | Optional positive hard per-tool-call deadline in milliseconds. Precedence: call value → agent frontmatter → config → `PI_SUBAGENT_TOOL_TIMEOUT_MS`. The timer starts on `tool_execution_start`, clears on the matching `tool_execution_end`, and terminates the run with `timedOut: true` if the tool remains open. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It never extends the run deadline; `contact_supervisor`, `intercom`, and `bg_wait` are exempt. |
+| `options.checkpointBeforeDeadlineMs` | number | none | Async single-agent runs only. The runner requests that the child "checkpoint and stop" this many milliseconds before the run deadline (finish the current tool call, report changed files, build/test state, remaining work, commit/PR state; start no new work). This best-effort steer uses the normal steering lifecycle at the next tool boundary, so the receipt is visible in status and events; the ordinary deadline kill still applies. Precedence: call value → config `checkpointBeforeDeadlineMs`. Disarmed when the deadline leaves under one second before the checkpoint. |
+| `options.toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`: `hard` is a positive integer and `soft`, if set, is a positive integer no greater than `hard`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, and accepts either a nonempty array of tool names or `"*"` for every tool call. Final assistant text is never blocked. |
+| `options.usageBudget` | object | none | Optional root-only reported-usage budget `{ tokens?: { soft?, hard }, costUsd?: { soft?, hard } }`. Include at least one metric; each `hard` must be positive and each optional `soft` positive and no greater than its `hard`. Soft limits are status-only. Hard limits prevent later child launches after reported usage is reconciled; already-running children are not stopped and no reservations are made. |
+| `options.extensionBindings` | object | none | Child-only plain JSON keyed by namespaces like `package.name/1` (positive version): at most 16 namespaces, nesting depth 16, 256 total object properties, and 16 KiB of canonical UTF-8 JSON. Native Pi launches only; external runners and retained resumes reject it. |
+| `options.preflight` | object | none | Advisory lane hints for raw scripts (`workflow: true` or a script path) only; not accepted with named workflows or direct children. See [bounded workflows](workflows.md#opt-in-bounded-workflows). |
 | `cwd` | string | runtime cwd | Override working directory. With `machine`, the directory on that machine. |
-| `machine` | string | - | Herdr saved machine (label or profile id) for external-cli agents; see [agents.md](agents.md#running-external-cli-agents-on-a-herdr-saved-machine). |
-| `maxOutput` | object | none | Final output truncation limits `{ bytes?, lines? }`. For child runs it is only applied when set; there is no default cap on the inline path, so use `outputMode: "file-only"` for large outputs. For workflow script results, the Return, Emitted, and Console sections are always capped, at 200 KB / 5000 lines unless `maxOutput` sets other limits. |
-| `artifacts` | boolean | true | Write debug artifacts. |
-| `includeProgress` | boolean | false | Include full progress in result. |
-| `share` | boolean | false | Upload session export to GitHub Gist. |
-| `sessionDir` | string | derived | Override session log directory. |
-| `acceptance` | string/object/false | inferred | Configure evidence gates. See [Acceptance gates](#acceptance-gates). |
-| `gate` | string \| object | - | One host-run verification command, shorthand for `acceptance: { level: "verified", verify: [{ id: "gate", command }] }`. The object form `{ command, output?: "json", schema?, timeoutMs? }` adds a [typed gate](#typed-gates): with `output: "json"`, a passing command's stdout becomes the child's `structuredOutput`. Also valid on individual `runs.run`/`runs.all` items. Rejects `acceptance` except `false` (treated as omitted), rejects retained `resume`, and `output: "json"` rejects `outputSchema`. |
+| `options.machine` | string | - | Herdr saved machine (label or profile id) for external-cli agents; see [agents.md](agents.md#running-external-cli-agents-on-a-herdr-saved-machine). |
+| `options.maxOutput` | object | none | Final output truncation limits `{ bytes?, lines? }`. For child runs it is only applied when set; there is no default cap on the inline path, so use `outputMode: "file-only"` for large outputs. For workflow script results, the Return, Emitted, and Console sections are always capped, at 200 KB / 5000 lines unless `maxOutput` sets other limits. |
+| `options.artifacts` | boolean | true | Write debug artifacts. |
+| `options.includeProgress` | boolean | false | Include full progress in result. |
+| `options.share` | boolean | false | Upload session export to GitHub Gist. |
+| `options.sessionDir` | string | derived | Override session log directory. |
+| `options.acceptance` | string/object/false | inferred | Configure evidence gates. See [Acceptance gates](#acceptance-gates). |
+| `options.gate` | string \| object | - | One host-run verification command, shorthand for `acceptance: { level: "verified", verify: [{ id: "gate", command }] }`. The object form `{ command, output?: "json", schema?, timeoutMs? }` adds a [typed gate](#typed-gates): with `output: "json"`, a passing command's stdout becomes the child's `structuredOutput`. Also valid on individual `runs.run`/`runs.all` items. Rejects `acceptance` except `false` (treated as omitted), rejects retained `resume`, and `output: "json"` rejects `outputSchema`. |
 
 ### Budget guidance for writers
 
@@ -181,20 +191,20 @@ For a simple implementation challenge outside a workflow script, send the challe
 
 ### Guide
 
-`{ action: "guide" }` reads the packaged `README.md` from the installed version. Pass `topic` to read its packaged `docs/<topic>.md` file instead; see the `topic` parameter table for valid values. The `council` topic returns the packaged `skills/council-mode/SKILL.md` with the references it asks for, so `/council` works when Pi runs with `--no-skills`. Unknown topics list the valid values and do not change files. Use `/subagents-guide [topic]` for the slash equivalent.
+`{ action: "guide" }` reads the packaged `README.md` from the installed version. Pass a docs topic to get the intro of its packaged `docs/<topic>.md` and a table of section addresses, then pass `topic: "<topic>/<section>"` (for example `"tool-reference/acceptance-gates"`) to read one section. A section runs from its heading to the next heading at the same or a higher level, and no response is longer than 8,000 characters: a larger section returns its intro and its subsection addresses. The `council` topic returns the packaged `skills/council-mode/SKILL.md` with the references it asks for, so `/council` works when Pi runs with `--no-skills`. Unknown topics list the valid values, unknown sections list the topic's table of contents, and neither changes files. Use `/subagents-guide [topic]` for the slash equivalent.
 
 Agent definitions are not loaded into context by default. Management actions let the LLM discover, inspect, create, update, and delete agents at runtime. An unknown action returns safe next steps (`status` and `list`) and may suggest a close non-destructive action. Destructive actions are only named for a near-complete one-character typo, and suggestions never execute an action.
 
 ```ts
 { action: "list" }
-{ action: "list", agentScope: "project" }
-{ action: "list", capabilities: true }
+{ action: "list", options: { agentScope: "project" } }
+{ action: "list", options: { capabilities: true } }
 { action: "get", agent: "scout" }
 { action: "models" }
 { action: "models", agent: "reviewer" }
 { action: "get", agent: "code-analysis.scout" }
 
-{ action: "create", config: {
+{ action: "create", options: { config: {
   name: "Code Scout",
   package: "code-analysis",
   description: "Scans codebases for patterns and issues",
@@ -214,24 +224,24 @@ Agent definitions are not loaded into context by default. Management actions let
   output: "context.md",
   reads: "shared-context.md",
   progress: true
-}}
+}}}
 
 
-{ action: "update", agent: "code-analysis.scout", config: { model: "openai/gpt-4o" } }
-{ action: "update", agent: "code-analysis.scout", config: { acceptance: "" } } // clear the frontmatter default
-{ action: "update", agent: "code-analysis.scout", config: { acceptanceRole: false } } // restore default lightweight attestation
+{ action: "update", agent: "code-analysis.scout", options: { config: { model: "openai/gpt-4o" } } }
+{ action: "update", agent: "code-analysis.scout", options: { config: { acceptance: "" } } } // clear the frontmatter default
+{ action: "update", agent: "code-analysis.scout", options: { config: { acceptanceRole: false } } } // restore default lightweight attestation
 { action: "delete", agent: "scout" }
 
 { action: "eject", agent: "reviewer" }
-{ action: "eject", agent: "reviewer", agentScope: "project" }
+{ action: "eject", agent: "reviewer", options: { agentScope: "project" } }
 { action: "disable", agent: "reviewer" }
-{ action: "enable", agent: "reviewer", agentScope: "project" }
+{ action: "enable", agent: "reviewer", options: { agentScope: "project" } }
 { action: "reset", agent: "reviewer" }
 ```
 
 Rules:
 
-- `capabilities: true` changes `action: "list"` to compact one-line rows and adds `details.agentCapabilities: { agents, restrictedCount, capabilityCeilingSources? }`. Each agent row includes source, aliases, runner type/capabilities, tools, MCP direct tools, mutation tools, model/thinking, default async/timeout, declared acceptance policy/role, output path/mode, skills/extensions, and whether the current capability ceiling allows execution. External CLI rows include `runner.command`, `runner.available`, and a bounded `runner.unavailableReason` when passive PATH/PATHEXT/X_OK lookup cannot find the command. It never includes an agent's system prompt. Rows show declared/default capabilities and command discoverability, not authentication, version compatibility, or successful launch; launch preflight remains authoritative.
+- `options.capabilities: true` changes `action: "list"` to compact one-line rows and adds `details.agentCapabilities: { agents, restrictedCount, capabilityCeilingSources? }`. Each agent row includes source, aliases, runner type/capabilities, tools, MCP direct tools, mutation tools, model/thinking, default async/timeout, declared acceptance policy/role, output path/mode, skills/extensions, and whether the current capability ceiling allows execution. External CLI rows include `runner.command`, `runner.available`, and a bounded `runner.unavailableReason` when passive PATH/PATHEXT/X_OK lookup cannot find the command. It never includes an agent's system prompt. Rows show declared/default capabilities and command discoverability, not authentication, version compatibility, or successful launch; launch preflight remains authoritative.
 - `create` uses `config.scope`, not `agentScope`.
 - `config.name` is the local frontmatter name; optional `config.package` registers the runtime name as `{package}.{name}` and is saved as separate `name` and `package` frontmatter.
 - `config.aliases` accepts a comma-separated string, string array, or `false` to clear aliases. Aliases resolve to the canonical agent name for execution and are shown by `list`/`get`.
@@ -255,29 +265,33 @@ Lane evidence actions update an existing parallel handoff manifest at an explici
 ```ts
 subagent({
   action: "lane.recordMerge",
-  laneId: "<manifest-run-id>",
-  handoffPath: "/path/to/handoff.json",
-  merge: {
-    prNumber: 123,
-    reviewedHead: "<40-character-sha>",
-    mergeCommit: "<40-character-sha>",
-    treeEquivalent: true,
-    postMergeChecks: "recorded",
-    attestedBy: "operator",
-    attestedAt: "2026-08-27T16:23:00.000Z"
+  options: {
+    laneId: "<manifest-run-id>",
+    handoffPath: "/path/to/handoff.json",
+    merge: {
+      prNumber: 123,
+      reviewedHead: "<40-character-sha>",
+      mergeCommit: "<40-character-sha>",
+      treeEquivalent: true,
+      postMergeChecks: "recorded",
+      attestedBy: "operator",
+      attestedAt: "2026-08-27T16:23:00.000Z"
+    }
   }
 })
 subagent({
   action: "lane.recordSupersession",
-  laneId: "<manifest-run-id>",
-  handoffPath: "/path/to/handoff.json",
-  supersession: {
-    supersededBy: "<replacement-lane-id>",
-    attestedBy: "operator",
-    attestedAt: "2026-08-27T16:23:00.000Z"
+  options: {
+    laneId: "<manifest-run-id>",
+    handoffPath: "/path/to/handoff.json",
+    supersession: {
+      supersededBy: "<replacement-lane-id>",
+      attestedBy: "operator",
+      attestedAt: "2026-08-27T16:23:00.000Z"
+    }
   }
 })
-subagent({ action: "lane.status", laneId: "<manifest-run-id>", handoffPath: "/path/to/handoff.json" })
+subagent({ action: "lane.status", options: { laneId: "<manifest-run-id>", handoffPath: "/path/to/handoff.json" } })
 ```
 
 The manifest stores one of these fail-closed eligibility states: `active` (an owning child is still running), `terminal-eligible` (complete merge evidence and recorded post-merge checks), `terminal-blocked` with a reason, `superseded-eligible` (an explicit replacement attestation), or `unknown` (missing or malformed evidence/manifest). Each attestation stores a digest of the manifest facts it covered; later group, worktree, or patch changes downgrade that evidence to `terminal-blocked` until it is recorded again. A terminal update recomputes a previously stored `active` state from the current child statuses and evidence. Conflicting reviewed heads and mismatched lane ids are rejected as stale. Existing workflow receipts remain immutable.
@@ -294,19 +308,19 @@ For backlog lanes and other subagent-governed workflows, external/foreground/CLI
 
 ```ts
 subagent({ action: "status" })
-subagent({ action: "status", view: "fleet" })
+subagent({ action: "status", options: { view: "fleet" } })
 subagent({ action: "status", id: "<run-id>" })
-subagent({ action: "status", id: "<run-id>", view: "transcript", index: 0, lines: 80 })
+subagent({ action: "status", id: "<run-id>", options: { view: "transcript", index: 0, lines: 80 } })
 subagent({ action: "status", id: "<nested-run-id>" })
 subagent({ action: "interrupt", id: "<run-id>" })
 subagent({ action: "interrupt", id: "<nested-run-id>" })
 subagent({ action: "stop", id: "<run-id>" })
 subagent({ action: "resume", id: "<run-id>", message: "follow-up question after it pauses or finishes" })
-subagent({ action: "resume", id: "<run-id>", index: 1, message: "follow-up for child 2" })
+subagent({ action: "resume", id: "<run-id>", message: "follow-up for child 2", options: { index: 1 } })
 subagent({ action: "resume", id: "<nested-run-id>", message: "follow-up for a nested child" })
 subagent({ action: "steer", id: "<run-id>", message: "guidance for the running child" })
-subagent({ action: "steer", id: "<run-id>", mode: "follow_up", message: "check this after the current turn" })
-subagent({ action: "steer", id: "<run-id>", index: 1, mode: "auto", message: "guidance for child 2" })
+subagent({ action: "steer", id: "<run-id>", message: "check this after the current turn", options: { mode: "follow_up" } })
+subagent({ action: "steer", id: "<run-id>", message: "guidance for child 2", options: { index: 1, mode: "auto" } })
 subagent({ action: "doctor" })
 ```
 
@@ -325,10 +339,10 @@ subagent({ action: "doctor" })
 Command controls target direct local native Pi children that explicitly select both `bash` and `subagent_command`, in foreground or async runs. They require the owning parent session, a run `id`, an explicit `index` for multi-child runs, and the exact `toolCallId` for mutations. Nested, external, and custom shell backends do not expose this controller. Custom bash extensions keep their own registered `subagent_command` tool. If a custom bash backend does not provide that tool, an explicitly required `subagent_command` remains available and reports an unsupported-backend error. Native supervisor command controls are unavailable for custom backends.
 
 ```ts
-subagent({ action: "command.status", id: "<run-id>", index: 0 })
-subagent({ action: "command.yield", id: "<run-id>", index: 0, toolCallId: "<call-id>" })
-subagent({ action: "command.cancel", id: "<run-id>", index: 0, toolCallId: "<call-id>" })
-subagent({ action: "command.status", id: "<run-id>", index: 0, toolCallId: "<call-id>" })
+subagent({ action: "command.status", id: "<run-id>", options: { index: 0 } })
+subagent({ action: "command.yield", id: "<run-id>", options: { index: 0, toolCallId: "<call-id>" } })
+subagent({ action: "command.cancel", id: "<run-id>", options: { index: 0, toolCallId: "<call-id>" } })
+subagent({ action: "command.status", id: "<run-id>", options: { index: 0, toolCallId: "<call-id>" } })
 ```
 
 `command.yield` releases the selected blocking tool call without restarting the process. `command.cancel` aborts only that command through Pi's native bash cancellation; the child receives a tool error and can continue. `cancel_requested` acknowledges the request, while `cancelled` confirms the backend settled. A stale id never targets a later command. Run-scoped `interrupt` remains separate.
@@ -391,14 +405,18 @@ Prefer an inline JSON object. JSON-encoded object strings are tolerated only dur
 {
   agent: "worker",
   task: "Implement the fix",
-  acceptance: {
-    level: "verified",
-    criteria: ["Patch the bug without widening scope"],
-    evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
-    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }]
+  options: {
+    acceptance: {
+      level: "verified",
+      criteria: ["Patch the bug without widening scope"],
+      evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
+      verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }]
+    }
   }
 }
 ```
+
+A direct tool call passes `acceptance` inside `options`; a workflow `runs.run` item passes it as a plain field.
 
 ### One-command gates
 
@@ -519,7 +537,7 @@ return runs.run("main", { agent: "scout", task: "..." });
 ```
 
 ```js
-subagent({ workflow: true, share: true });
+subagent({ workflow: true, options: { share: true } });
 ```
 
 This is disabled by default. Session data may contain source code, paths, environment variables, credentials, or other sensitive output. You need `gh` installed and authenticated.
@@ -529,8 +547,8 @@ This is disabled by default. Session data may contain source code, paths, enviro
 `worktree.cleanup` first saves a plan without removing anything:
 
 ```ts
-subagent({ action: "worktree.cleanup", repo: "/path/to/repo", mode: "plan" })
-subagent({ action: "worktree.cleanup", repo: "/path/to/repo", mode: "apply", planId: "<reviewed-plan-id>" })
+subagent({ action: "worktree.cleanup", options: { repo: "/path/to/repo", mode: "plan" } })
+subagent({ action: "worktree.cleanup", options: { repo: "/path/to/repo", mode: "apply", planId: "<reviewed-plan-id>" } })
 ```
 
 Apply uses the existing `authorityPolicy.discardWorktree` (`confirm` by default). It checks the saved plan's repository, hash and 30-minute expiry, then rechecks only reviewed candidates under a repository lock shared with retained resume admission. Only a clean, contained, provably owned terminal worktree with durable evidence can be removed. Dirty or untracked files, ignored files, Git locks, active ownership, recorded native session dependencies, retained resume admission, changed heads and missing artifacts keep the tree. Every local branch is retained; apply never forces removal or prunes unrelated Git metadata.

@@ -12,6 +12,7 @@ import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/neste
 import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { TEMP_ROOT_DIR, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
+import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 
 function errno(code: string): NodeJS.ErrnoException {
 	const error = new Error(code) as NodeJS.ErrnoException;
@@ -351,7 +352,7 @@ describe("async run status inspection", () => {
 
 			const text = textContent(result);
 			assert.equal(result.isError, undefined);
-			assert.match(text, /Follow-up: subagent\(\{ action: "resume", id: "run-external-follow-up", index: 0, message: "\.\.\." \}\)/);
+			assert.match(text, /Follow-up: subagent\(\{ action: "resume", id: "run-external-follow-up", message: "\.\.\.", options: \{ index: 0 \} \}\)/);
 			assert.match(text, /Resume: use the external-job follow-up hint above\./);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -870,8 +871,8 @@ describe("async run status inspection", () => {
 			assert.match(text, /0\. worker: Inspect fleet \| running/);
 			assert.match(text, /external-cli · 150ms/);
 			assert.match(text, /run-fleet \| running .*\| parallel \| 1 agent running · 0\/2 done/);
-			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", view: "transcript" \}\)/);
-			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", index: 0, view: "transcript" \}\)/);
+			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", options: \{ view: "transcript" \} \}\)/);
+			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", options: \{ index: 0, view: "transcript" \} \}\)/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -1441,7 +1442,7 @@ describe("async run status inspection", () => {
 			});
 
 			const text = textContent(result);
-			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-multi", index: 0, message: "\.\.\." \}\)/);
+			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-multi", message: "\.\.\.", options: \{ index: 0 \} \}\)/);
 			assert.doesNotMatch(text, /unsupported for multi-child/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -1589,7 +1590,7 @@ describe("async run status inspection", () => {
 			const result = inspectSubagentStatus({ id: "run-result-index" }, { asyncDirRoot: asyncRoot, resultsDir });
 
 			const text = textContent(result);
-			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-result-index", index: 1, message: "\.\.\." \}\)/);
+			assert.match(text, /Revive child: subagent\(\{ action: "resume", id: "run-result-index", message: "\.\.\.", options: \{ index: 1 \} \}\)/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -1922,6 +1923,65 @@ describe("async run status inspection", () => {
 			assert.match(text, /changed tracked files: input\.md/);
 			assert.match(text, /Structured output: \{"payload":\{"ok":true\}\}/);
 			assert.match(text, /Structured output path: \/runs\/structured-output\/output\.json/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("shows the head of a long completed result summary and the file that holds all of it", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-result-head-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(path.join(asyncRoot, "run-long-result"), { recursive: true });
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const output = Array.from({ length: 200 }, (_, index) => `result line ${index} ${"x".repeat(40)}`).join("\n");
+			const artifact = path.join(root, "worker_output.md");
+			fs.writeFileSync(artifact, output);
+			fs.writeFileSync(path.join(resultsDir, "run-long-result.json"), JSON.stringify({
+				id: "run-long-result",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				summary: `worker:\n${output}`,
+				results: [{ agent: "worker", success: true, output, artifactPaths: { outputPath: artifact } }],
+			}), "utf-8");
+
+			const text = textContent(inspectSubagentStatus({ id: "run-long-result" }, { asyncDirRoot: asyncRoot, resultsDir }));
+			assert.ok(text.includes(output.slice(0, 1_500)));
+			assert.ok(!text.includes("result line 199"));
+			assert.match(text, /Full output: .*worker_output\.md \(\d+\.\d KB, 200 lines\)\. Read it if needed\./);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("caps a long completed result saved to an explicit output file and keeps the saved-file line", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-result-saved-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(path.join(asyncRoot, "run-saved-result"), { recursive: true });
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const output = Array.from({ length: 200 }, (_, index) => `saved line ${index} ${"x".repeat(40)}`).join("\n");
+			const savedPath = path.join(root, "report.md");
+			const artifact = path.join(root, "worker_output.md");
+			fs.writeFileSync(savedPath, output);
+			fs.writeFileSync(artifact, output);
+			const { displayOutput } = finalizeSingleOutput({ fullOutput: output, outputPath: savedPath, exitCode: 0, savedPath });
+			fs.writeFileSync(path.join(resultsDir, "run-saved-result.json"), JSON.stringify({
+				id: "run-saved-result",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				summary: `worker:\n${displayOutput}`,
+				results: [{ agent: "worker", success: true, output: displayOutput, savedOutputPath: savedPath, artifactPaths: { outputPath: artifact } }],
+			}), "utf-8");
+
+			const text = textContent(inspectSubagentStatus({ id: "run-saved-result" }, { asyncDirRoot: asyncRoot, resultsDir }));
+			assert.ok(text.includes(output.slice(0, 1_500)));
+			assert.ok(!text.includes("saved line 199"), `expected a capped status, got ${text.length} chars`);
+			assert.match(text, /\nOutput saved to: .*report\.md \(\d+\.\d KB, 200 lines\)\. Read this file if needed\./);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

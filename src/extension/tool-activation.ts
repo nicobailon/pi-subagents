@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-w
 import { Type } from "typebox";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 import type { ToolActivationMode } from "../shared/types.ts";
+import { registerPinnedTool } from "./declaration-pinning.ts";
 
 interface ActivationDetails {
 	enabled?: string[];
@@ -124,12 +125,12 @@ export function registerSubagentToolActivation(
 			};
 			const advertised = await options.advertisedPrompt();
 			return {
-				content: [{ type: "text", text: `Enabled: subagent. If your tool list includes subagent (possibly prefixed), call subagent({action:\"list\",capabilities:true}). Otherwise, wait for the next user prompt; do not retry now. Start Pi with --exclude-tools subagents_enable to keep subagent always available.${advertised ? `\n\n${advertised}` : ""}` }],
+				content: [{ type: "text", text: `Enabled: subagent. If your tool list includes subagent (possibly prefixed), call it now. Otherwise, wait for the next user prompt; do not retry now. Start Pi with --exclude-tools subagents_enable to keep subagent always available.${advertised ? `\n\n${advertised}` : ""}` }],
 				details: { enabled: [SUBAGENT_NAME] },
 			};
 		},
 	};
-	pi.registerTool(loader);
+	registerPinnedTool(pi, loader);
 
 	// Decided at session start and tree navigation only; switching models keeps the session's tools.
 	let loaderSelected = true;

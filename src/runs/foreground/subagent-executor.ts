@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
+import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatAvailableAgentLines, formatUnknownAgentError, resolveAgentName, suggestAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
@@ -75,7 +75,7 @@ import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeili
 import { isAgentContract } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { assertRequiredChildExtensionsAdmitted, hasMandatoryRequiredChildExtensions, readRetainedRequiredChildExtensions, resolveRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
-import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { capInlineOutput, finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, PROMPT_REDACTED, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
 import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, protectRetainedWorktreeForResume, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
@@ -222,37 +222,13 @@ import {
 	type SteeringTargetState,
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
+import { editDistance, hasSingleAdjacentTransposition } from "../../shared/edit-distance.ts";
 
 const MUTATING_MANAGEMENT_ACTIONS = new Set(["command.yield", "command.cancel", "create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.rollback", "dismiss", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
 const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["command.cancel", "delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "schedule.delete"]);
 
 function resolveSteerDeliveryMode(mode: SubagentParamsLike["mode"]): SteerDeliveryMode | undefined {
 	return mode === "steer" || mode === "follow_up" || mode === "auto" ? mode : undefined;
-}
-
-function editDistance(left: string, right: string): number {
-	const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-	for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
-		let diagonal = previous[0]!;
-		previous[0] = leftIndex;
-		for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
-			const above = previous[rightIndex]!;
-			previous[rightIndex] = left[leftIndex - 1] === right[rightIndex - 1]
-				? diagonal
-				: Math.min(diagonal, above, previous[rightIndex - 1]!) + 1;
-			diagonal = above;
-		}
-	}
-	return previous[right.length]!;
-}
-
-function hasSingleAdjacentTransposition(left: string, right: string): boolean {
-	if (left.length !== right.length) return false;
-	const mismatch = [...left].findIndex((character, index) => character !== right[index]);
-	return mismatch >= 0
-		&& left[mismatch] === right[mismatch + 1]
-		&& left[mismatch + 1] === right[mismatch]
-		&& left.slice(mismatch + 2) === right.slice(mismatch + 2);
 }
 
 export function unknownSubagentActionMessage(action: string, disabled?: DisabledFeatureSurface): string {
@@ -472,7 +448,7 @@ interface ExecutorDeps {
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
-	discoverAgents: (cwd: string, scope: AgentScope, preferredModelProvider?: string) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
+	discoverAgents: (cwd: string, scope: AgentScope, preferredModelProvider?: string) => { agents: AgentConfig[]; disabledAgents?: string[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
 	discoverAgentsAll?: typeof discoverAgentsAll;
 	onAgentsChanged?: () => void;
 	allowMutatingManagementActions?: boolean;
@@ -1965,7 +1941,7 @@ async function resumeAsyncRun(input: {
 				type: "text",
 				text: [
 					`Async child '${target.runId}' index ${target.index} is still running. action='resume' only revives paused, completed, or failed children.`,
-					`Send live input with subagent({ action: "steer", id: "${target.runId}", index: ${target.index}, message: "..." }).`,
+					`Send live input with subagent({ action: "steer", id: "${target.runId}", message: "...", options: { index: ${target.index} } }).`,
 				].join("\n"),
 			}],
 			isError: true,
@@ -2408,10 +2384,12 @@ function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string
 	const error = result.error || "Failed";
 	const output = displayOutput.trim();
 	const lines = [error];
+	let cappedOutput = output;
 	if (output && output !== error.trim()) {
-		lines.push("", "Output:", output);
+		cappedOutput = capInlineOutput(output, { artifactPath: result.artifactPaths?.outputPath, savedPath: result.savedOutputPath });
+		lines.push("", "Output:", cappedOutput);
 	}
-	if (result.artifactPaths?.outputPath && fs.existsSync(result.artifactPaths.outputPath)) {
+	if (cappedOutput === output && result.artifactPaths?.outputPath && fs.existsSync(result.artifactPaths.outputPath)) {
 		lines.push("", `Output artifact: ${result.artifactPaths.outputPath}`);
 	}
 	return lines.join("\n");
@@ -2534,7 +2512,7 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 }
 
 function diagnosticContextFromDiscovery(
-	discovered: { agents: AgentConfig[]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] },
+	discovered: { agents: AgentConfig[]; disabledAgents?: string[]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] },
 	cwd: string,
 	scope: AgentScope,
 ): UnknownAgentDiagnosticContext {
@@ -2557,6 +2535,8 @@ function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLik
 	const cwd = resolveRequestedCwd(runtimeCwd, params.cwd);
 	const scope = resolveExecutionAgentScope(params.agentScope);
 	let discovered: ReturnType<ExecutorDeps["discoverAgents"]> | undefined;
+	// Validation reports every bad agent name; only the first one carries the agent list.
+	let listedAgents = false;
 	return {
 		maxSubagentSpawnsPerRun: params.maxSubagentSpawnsPerRun ?? resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun),
 		agentNameError: (name) => {
@@ -2564,12 +2544,12 @@ function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLik
 			const { agents } = discovered;
 			const resolved = resolveAgentName(name, agents);
 			if (resolved.agent || resolved.error) return canonicalizeAgentName(name, agents, discovered.agentDiagnostics, diagnosticContextFromDiscovery(discovered, cwd, scope)).error;
-			const requested = name.trim().toLowerCase();
-			const suggestion = [...new Set(agents.flatMap((agent) => [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])]))]
-				.map((candidate) => ({ candidate, distance: editDistance(requested, candidate.toLowerCase()) }))
-				.filter(({ candidate, distance }) => distance <= Math.max(1, Math.floor(candidate.length / 4)) || hasSingleAdjacentTransposition(requested, candidate.toLowerCase()))
-				.sort((left, right) => left.distance - right.distance || left.candidate.localeCompare(right.candidate))[0]?.candidate;
-			return `Unknown agent '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""} Use subagent({ action: "list" }) to inspect agents.`;
+			const disabled = discovered.disabledAgents?.includes(name.trim()) === true;
+			const suggestion = disabled ? undefined : suggestAgentName(name, agents);
+			const problem = disabled ? `Agent '${name}' is disabled by a settings override.` : `Unknown agent '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`;
+			if (listedAgents) return problem;
+			listedAgents = true;
+			return [`${problem} Available agents:`, ...formatAvailableAgentLines(agents)].join("\n");
 		},
 	};
 }
@@ -4526,7 +4506,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			isError: true,
 		};
 	return {
-		content: [{ type: "text", text: `${finalizedOutput.displayOutput || "(no output)"}${worktreeSuffix}` }],
+		content: [{ type: "text", text: `${capInlineOutput(finalizedOutput.displayOutput, { artifactPath: r.artifactPaths?.outputPath, savedPath: finalizedOutput.savedPath }) || "(no output)"}${worktreeSuffix}` }],
 		details,
 	};
 }
@@ -4744,7 +4724,7 @@ function workflowRunningChildrenSummary(children: WorkflowScriptChildResult[]): 
 function workflowResultChildren(children: WorkflowScriptChildResult[], status: AsyncStatus, includeFailureFields: boolean) {
 	return withWorkflowRevivals(DIRS.async, status.runId, children).map((child) => {
 		const sessionName = status.steps?.find((step) => step.workflowKey === child.key)?.sessionName;
-		return { workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(child.revival ? { revival: formatWorkflowKeyRevival(child.revival) } : {}), ...(sessionName ? { sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, ...(child.state === "running" ? { state: "running" } : { success: child.ok }), ...(child.asyncDir ? { asyncDir: child.asyncDir } : {}), ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(includeFailureFields && child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(includeFailureFields && child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.outputArtifactPath || child.outputReference ? { artifactPaths: { outputPath: child.outputArtifactPath ?? child.outputReference } } : {}) };
+		return { workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), ...(child.revival ? { revival: formatWorkflowKeyRevival(child.revival) } : {}), ...(sessionName ? { sessionName } : {}), ...workflowChildAccountingFields(child), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, ...(child.state === "running" ? { state: "running" } : { success: child.ok }), ...(!child.ok && child.error ? { error: child.error } : {}), ...(child.asyncDir ? { asyncDir: child.asyncDir } : {}), ...(child.outputReference ? { outputReference: child.outputReference } : {}), ...(includeFailureFields && child.terminalOutcome ? { terminalOutcome: child.terminalOutcome } : {}), ...(child.outputPathMapping ? { outputPathMapping: child.outputPathMapping } : {}), ...(child.stopped ? { stopped: true } : {}), ...(child.interrupted ? { interrupted: true } : {}), ...(includeFailureFields && child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.outputArtifactPath || child.outputReference ? { artifactPaths: { outputPath: child.outputArtifactPath ?? child.outputReference } } : {}) };
 	});
 }
 
@@ -6960,7 +6940,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (action === "guide") {
 				try {
 					const guide = readSubagentGuide(paramsWithResolvedCwd.topic);
-					const notice = paramsWithResolvedCwd.topic === "tool-reference" ? disabledFeatureNotice(disabledFeatures) : undefined;
+					const [topic, section] = paramsWithResolvedCwd.topic?.split("/") ?? [];
+					const fullNotice = topic === "tool-reference" ? disabledFeatureNotice(disabledFeatures) : undefined;
+					// Sections are capped at 8,000 chars, so they get a one-line pointer instead of the full list.
+					const notice = fullNotice && section !== undefined ? "Some options and actions documented here are disabled by config in this session; guide topic tool-reference lists them." : fullNotice;
 					return {
 						content: [{ type: "text", text: notice ? `${notice}\n\n${guide}` : guide }],
 						details: { mode: "management", results: [] },

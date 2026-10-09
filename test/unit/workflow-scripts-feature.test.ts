@@ -50,12 +50,11 @@ function declarationLength(config: ExtensionConfig, toolDescriptionMode?: "full"
 }
 
 describe("workflow-scripts tool surface", () => {
-	it("is smaller than the default declaration", () => {
-		for (const mode of [undefined, "full"] as const) {
-			const enabled = declarationLength({}, mode);
-			const disabled = declarationLength(DISABLED, mode);
-			assert.ok(disabled < enabled, `${mode ?? "default"} mode: disabled ${disabled} is not smaller than enabled ${enabled}`);
-		}
+	// The default description is short enough that the chain/tasks schema outweighs the script guidance it replaces.
+	it("is smaller than the full-mode declaration", () => {
+		const enabled = declarationLength({}, "full");
+		const disabled = declarationLength(DISABLED, "full");
+		assert.ok(disabled < enabled, `full mode: disabled ${disabled} is not smaller than enabled ${enabled}`);
 	});
 
 	it("accepts chain and tasks shapes with a small schema", () => {
@@ -80,7 +79,7 @@ describe("workflow-scripts tool surface", () => {
 				assert.ok(description.includes(text), `${toolDescriptionMode ?? "default"} description lacks ${text}`);
 			}
 		}
-		assert.equal(buildSubagentToolPromptMetadata({}, surface).promptSnippet, "For operator-requested delegation, use subagents; compose multi-child work in one chain or tasks call.");
+		assert.equal(buildSubagentToolPromptMetadata({}, surface).promptSnippet, "Delegate focused work to child agents; compose multi-child work in one chain or tasks call.");
 	});
 });
 

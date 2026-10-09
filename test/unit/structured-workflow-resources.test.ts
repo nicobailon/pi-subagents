@@ -230,7 +230,7 @@ describe("structured workflow resources", () => {
 		for (const name of ["chain", "tasks"]) {
 			const result = resolveWorkflowResource(name, { steps: [{ agent: "a", task: "t" }] });
 			assert.equal(result.ok, false);
-			if (!result.ok) assert.equal(result.error, `Unknown workflow resource '${name}'. Available resources: review, run-ci.`);
+			if (!result.ok) assert.equal(result.error, `Unknown workflow resource '${name}'. Available resources: review, run-ci, parallel.`);
 			assert.throws(
 				() => registerWorkflowResource({ sessionId: "structured", definition: { name, version: 1, resolve: () => ({ script: "return true;" }) } }),
 				/protected builtin/,
