@@ -1246,7 +1246,7 @@ Drive the failing test first.
 	});
 
 	for (const action of ["model", "thinking"]) {
-		it(`awaits an offline registry refresh before opening the ${action} picker`, async () => {
+		it(`awaits an offline registry refresh before opening the ${action} picker over RPC`, async () => {
 			const agentPath = path.join(tempDir, ".pi", "agents", "refresh-worker.md");
 			fs.mkdirSync(path.dirname(agentPath), { recursive: true });
 			fs.writeFileSync(agentPath, "---\nname: refresh-worker\ndescription: Refresh test\nmodel: custom/fresh\n---\nPrompt.\n");
@@ -1254,7 +1254,7 @@ Drive the failing test first.
 			let choices: string[] = [];
 			const warnings: string[] = [];
 			await openSubagentsAdmin({ sendMessage: () => assert.fail("cancel must not save") } as never, {
-				cwd: tempDir, hasUI: true,
+				cwd: tempDir, hasUI: true, mode: "rpc",
 				modelRegistry: {
 					refresh: async (options: { allowNetwork: boolean; signal: AbortSignal }) => {
 						assert.equal(options.allowNetwork, false);
@@ -1268,6 +1268,8 @@ Drive the failing test first.
 						: [],
 				},
 				ui: {
+					// RPC mode defines ui.custom as a no-op that resolves undefined.
+					custom: async () => undefined,
 					select: async (_title: string, items: string[]) => { choices = items; return undefined; },
 					notify: (message: string) => warnings.push(message),
 				},
