@@ -107,6 +107,7 @@ export interface CompletionNotification {
 		structuredOutputPath?: string;
 		outputState?: "present" | "absent" | "unknown";
 		outputReference?: string | { path?: string };
+		savedOutputPath?: string;
 		artifactPaths?: { outputPath?: string };
 		outputSaveError?: string;
 		artifactOutputSaveFailed?: true;

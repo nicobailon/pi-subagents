@@ -1975,7 +1975,7 @@ describe("async run status inspection", () => {
 				success: true,
 				state: "complete",
 				summary: `worker:\n${displayOutput}`,
-				results: [{ agent: "worker", success: true, output: displayOutput, artifactPaths: { outputPath: artifact } }],
+				results: [{ agent: "worker", success: true, output: displayOutput, savedOutputPath: savedPath, artifactPaths: { outputPath: artifact } }],
 			}), "utf-8");
 
 			const text = textContent(inspectSubagentStatus({ id: "run-saved-result" }, { asyncDirRoot: asyncRoot, resultsDir }));

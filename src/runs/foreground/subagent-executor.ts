@@ -2410,7 +2410,7 @@ function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string
 	const lines = [error];
 	let cappedOutput = output;
 	if (output && output !== error.trim()) {
-		cappedOutput = capInlineOutput(output, result.artifactPaths?.outputPath);
+		cappedOutput = capInlineOutput(output, { artifactPath: result.artifactPaths?.outputPath, savedPath: result.savedOutputPath });
 		lines.push("", "Output:", cappedOutput);
 	}
 	if (cappedOutput === output && result.artifactPaths?.outputPath && fs.existsSync(result.artifactPaths.outputPath)) {
@@ -4528,7 +4528,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			isError: true,
 		};
 	return {
-		content: [{ type: "text", text: `${capInlineOutput(finalizedOutput.displayOutput, r.artifactPaths?.outputPath) || "(no output)"}${worktreeSuffix}` }],
+		content: [{ type: "text", text: `${capInlineOutput(finalizedOutput.displayOutput, { artifactPath: r.artifactPaths?.outputPath, savedPath: finalizedOutput.savedPath }) || "(no output)"}${worktreeSuffix}` }],
 		details,
 	};
 }
