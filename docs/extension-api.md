@@ -597,6 +597,16 @@ A host that embeds this extension owns whether completion wakes can be delivered
 
 Ordinary async and foreground completion wakes use `registerSubagentNotify` and `sendCompletion`. They listen for completion events and deliver through `pi.sendMessage(..., { triggerTurn })`. When the parent is idle, every pi-subagents notice that should start a turn (completions, supervisor asks, control and steering notices, wait subscriptions) is instead appended without a turn, followed by one short user message, `Subagent updates above.`, sent with `pi.sendUserMessage`. Pi runs `before_agent_start` only for prompts, so this keeps extension-set system prompt sections in the woken run. A busy parent still gets the notice as a steering message. Session shutdown stops the result watcher and disposes this completion notifier. `createWaitSubscriptionManager` is separate: it is the explicit non-blocking `bg_wait` subscription path for work without native notification, not the ordinary completion wake path.
 
+Each completion notice is a custom message with `customType: "subagent-notify"`. Its `content` is the text the model reads. Pi does not send `details` to the model, so hosts can use it to match a notice to its runs by id without parsing the text. `details.runs` has one entry per finished run, in the order of the notice. A grouped notice has several entries. Each entry has `agent` and `status` (`completed`, `failed`, `paused` or `stopped`). When known, an entry also has these fields:
+
+- `runId`: the finished run's id. For a workflow it equals `workflowRunId`.
+- `workflowRunId`: set only for workflows.
+- `childRuns`: `{ runId, workflowKey?, agent?, status }` for each workflow, chain or parallel child.
+- `childOutputs`: the per-child saved output paths of a workflow.
+- `source`, `durationMs`, `asyncDir`, `workflowReceiptPath`, `handoffPath`, and `sessionLabel` with `sessionValue` (a session file, share URL or share error).
+
+Entries can also carry other values the notice text is built from, such as `scheduleOrigin` and `watchdogBlockers`. The output previews are only in `content`.
+
 Detached children do not stop when the session does. They are the host process's children, not the session's, so the run keeps going, completes, and notifies nobody. What is lost is the notification, not the work.
 
 This matters because "is the parent busy?" is the wrong idle signal. A parent that launches a detached run and hands control back — which is what the async launch output tells it to do — is not prompting, streaming, compacting, or running a shell command. A host that reaps sessions on those signals alone will dispose exactly the session that was waiting to be woken.
