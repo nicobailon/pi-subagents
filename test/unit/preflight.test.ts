@@ -124,6 +124,30 @@ describe("public launch contract preflight", () => {
 		assert.match(unnamed.message, /cannot be checked against an enforced subagent model scope/u);
 	});
 
+	it("resolves models from user settings when the session declined project trust", async () => {
+		const cwd = path.join(tempDir, "untrusted-repo");
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		writeAgent(path.join(agentDir, "agents", "probe.md"), "---\nname: probe\ndescription: Probe\n---\nUser body.\n");
+		writeJson(path.join(agentDir, "settings.json"), { subagents: { agentOverrides: { probe: { model: "openai/luna" } }, modelScope: { enforce: true, allow: ["openai/luna"] } } });
+		writeJson(path.join(cwd, ".pi", "settings.json"), { subagents: { agentOverrides: { probe: { model: "openai/astra" } }, modelScope: { enforce: true, allow: ["openai/astra"] } } });
+		const availableModels = [{ provider: "openai", id: "luna" }, { provider: "openai", id: "astra" }];
+
+		const untrusted = await resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels, projectTrusted: false });
+		assert.equal(untrusted.ok && untrusted.contract.model, "openai/luna");
+		const explicitUser = await resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels, projectTrusted: false, model: "openai/luna" });
+		assert.equal(explicitUser.ok && explicitUser.contract.model, "openai/luna");
+		await assert.rejects(resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels, projectTrusted: false, model: "openai/astra" }), /outside the configured subagent model scope/u);
+		const projectScope = await resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels, projectTrusted: false, agentScope: "project" });
+		assert.equal(projectScope.ok, false);
+		if (projectScope.ok) return;
+		assert.equal(projectScope.code, "restricted_agent");
+		assert.match(projectScope.message, /agentScope: "project" requires project trust/u);
+
+		// Omitted trust keeps the project's settings, as before.
+		const trusted = await resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels });
+		assert.equal(trusted.ok && trusted.contract.model, "openai/astra");
+	});
+
 	it("resolves an ordinary single-agent contract without creating launch directories", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });

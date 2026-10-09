@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgentSnapshot, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryAllResult, type AgentScope, type AgentSource } from "../agents/agents.ts";
-import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
+import { projectScopeRequiresTrustMessage, resolveExecutionAgentScope } from "../agents/agent-scope.ts";
 import { normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
 import { inheritsParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, resolveModelSelection, type AvailableModelInfo, type ParentModel } from "../runs/shared/model-resolution.ts";
 import { resolveModelScopesForAgent } from "../runs/shared/model-scope.ts";
@@ -63,6 +63,8 @@ export interface SubagentLaunchContractInput {
 	cwd: string;
 	task?: string;
 	agentScope?: AgentScope;
+	/** False when the parent session declined project trust; project agents and project subagent settings are then ignored. Defaults to true. */
+	projectTrusted?: boolean;
 	context?: "fresh" | "fork";
 	model?: string;
 	fast?: boolean;
@@ -308,8 +310,12 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		return { ok: false, code: "invalid_intercom_bridge", message: "orchestratorTarget must be a non-empty string when provided.", diagnostics };
 	}
 	const scope = resolveExecutionAgentScope(input.agentScope);
+	if (input.projectTrusted === false && scope === "project") {
+		const message = projectScopeRequiresTrustMessage(effectiveCwd);
+		return { ok: false, code: "restricted_agent", message, diagnostics: [...diagnostics, { code: "restricted_agent", severity: "error", message }] };
+	}
 	const parentProvider = input.preferredProvider ?? input.parentModel?.provider;
-	const discovery = discoverAgentSnapshot(effectiveCwd, scope, parentProvider, { includeChains: false });
+	const discovery = discoverAgentSnapshot(effectiveCwd, scope, parentProvider, { includeChains: false, projectTrusted: input.projectTrusted });
 	const discovered = discovery.effective;
 	const resolvedAgent = resolveAgentName(input.agent, discovered.agents);
 	const ambiguousCandidates = resolvedAgent.error

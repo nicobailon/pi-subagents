@@ -31,6 +31,7 @@ Discovery notes:
 - Use `subagents.agentExcludeDirs` to prune literal directory subtrees without disabling legacy agents. See [configuration.md](configuration.md#excluded-agent-directories-settings) for path resolution, scope, and exemptions.
 - Installed Pi packages can expose agent directories from either `{"pi-subagents":{"agents":["./agents"]}}` or `{"pi":{"subagents":{"agents":["./agents"]}}}` in their package manifest. Package agents load above builtins and below user/project agents.
 - Use `agentScope: "user" | "project" | "both"` to control discovery. `both` is the default, and project definitions win runtime-name collisions.
+- When the session declined Pi project trust, discovery ignores project agents and chains, packages installed for the project or declared in its `package.json`, and project subagent settings, so `both` behaves as `user` and an explicit `project` scope is rejected.
 
 ## Builtin agents
 

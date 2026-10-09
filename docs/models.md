@@ -220,7 +220,7 @@ Model scope is policy only. It rejects or warns; it does not select a cheaper mo
 
 `inherit` and `scoped` expand in the parent process at each launch. They are never sent to the child as model ids. A nested child therefore inherits its immediate parent's current model, not the original top-level model. `scoped` uses the scoped-model set at launch, so a mid-session `/scoped-models` change applies to the next child; background runs keep the set captured when the run started. Pi reports an empty set when the session is unscoped, either because nothing is configured or because no configured pattern matches an available model, and then lets the parent use every model. In that case `scoped` behaves exactly as `inherit`, which is narrower. If no parent model is available, an enforced `inherit` or `scoped` entry does not match and fails closed.
 
-Project `modelScope` settings replace the complete user `modelScope`, as with the existing project-over-user settings precedence. Project settings are trusted and can therefore replace user restrictions.
+Project `modelScope` settings replace the complete user `modelScope`, as with the existing project-over-user settings precedence. This applies only when the session trusts the project: when project trust is declined, project subagent settings are ignored and the user `modelScope` applies.
 
 ## Profiles and provider model catalogs
 

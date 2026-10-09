@@ -18,7 +18,7 @@ import {
 } from "./foreground-control.ts";
 import { getLivePromptAudit, rewritePromptWithGuidance, updateLiveEffectivePrompt } from "./prompt-audit.ts";
 import { persistForegroundRunHistory, MAX_REMEMBERED_FOREGROUND_RUNS } from "./foreground-history.ts";
-import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
+import { projectScopeRequiresTrustMessage, resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
@@ -448,7 +448,7 @@ interface ExecutorDeps {
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
-	discoverAgents: (cwd: string, scope: AgentScope, preferredModelProvider?: string) => { agents: AgentConfig[]; disabledAgents?: string[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
+	discoverAgents: (cwd: string, scope: AgentScope, preferredModelProvider?: string, options?: { projectTrusted?: boolean }) => { agents: AgentConfig[]; disabledAgents?: string[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
 	discoverAgentsAll?: typeof discoverAgentsAll;
 	onAgentsChanged?: () => void;
 	allowMutatingManagementActions?: boolean;
@@ -629,6 +629,20 @@ function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps)
 /** Children follow the launching session's trust; hosts older than Pi's trust concept keep Pi's default. */
 function sessionProjectTrust(ctx: ExtensionContext): boolean | undefined {
 	return typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;
+}
+
+/** Agent and settings discovery follows the launching session's trust, like the child itself. */
+function withSessionProjectTrust(deps: ExecutorDeps, ctx: ExtensionContext): ExecutorDeps {
+	if (sessionProjectTrust(ctx) !== false) return deps;
+	return { ...deps, discoverAgents: (cwd, scope, preferredModelProvider) => deps.discoverAgents(cwd, scope, preferredModelProvider, { projectTrusted: false }) };
+}
+
+function projectScopeTrustError(params: SubagentParamsLike, ctx: ExtensionContext): AgentToolResult<Details> | undefined {
+	if (sessionProjectTrust(ctx) !== false || resolveExecutionAgentScope(params.agentScope) !== "project") return undefined;
+	const action = typeof params.action === "string" ? params.action.trim() : undefined;
+	// These actions resolve agents in the requested scope; management actions are left to their own handlers.
+	if (action !== undefined && action !== "resume" && action !== "validate" && action !== "append-step") return undefined;
+	return buildRequestedModeError(params, projectScopeRequiresTrustMessage(resolveRequestedCwd(ctx.cwd, params.cwd)));
 }
 
 function spawnBudgetErrorResult(message: string, mode: "single" | "parallel" | "chain"): AgentToolResult<Details> {
@@ -5305,6 +5319,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	/** Scheduled state visible to the current runtime supervisor owner only. */
 	getCurrentSupervisorOwnerStates: () => Iterable<SubagentState>;
 } {
+	const executorDeps = deps;
 	const delegatedThinkingOverrides = new WeakMap<object, AgentConfig["thinking"]>();
 	const delegatedZeroToolBudgets = new WeakSet<object>();
 	const delegatedExecutions = new WeakSet<object>();
@@ -5334,6 +5349,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		preserveActiveSession = false,
 		parentModelOverride?: ParentModel | null,
 	): Promise<AgentToolResult<Details>> => {
+		const projectScopeError = projectScopeTrustError(params, ctx);
+		if (projectScopeError) return projectScopeError;
+		const deps = withSessionProjectTrust(executorDeps, ctx);
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
 		const retainedRequiredExtensions = workflowRetainedRequiredExtensions.get(params);

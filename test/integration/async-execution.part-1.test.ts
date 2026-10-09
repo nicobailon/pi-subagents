@@ -1062,6 +1062,64 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(trust, [false, false]);
 	});
 
+	it("resolves role models and model scope from user settings when the parent session declined project trust", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const home = path.join(tempDir, "trust-home");
+		const agentDir = path.join(home, ".pi", "agent");
+		const project = path.join(tempDir, "trust-project");
+		const writeJson = (filePath: string, value: unknown) => { fs.mkdirSync(path.dirname(filePath), { recursive: true }); fs.writeFileSync(filePath, JSON.stringify(value), "utf-8"); };
+		fs.mkdirSync(path.join(agentDir, "agents"), { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "agents", "trust-probe.md"), "---\nname: trust-probe\ndescription: Trust probe\n---\nUser body.\n", "utf-8");
+		writeJson(path.join(agentDir, "settings.json"), { subagents: { agentOverrides: { "trust-probe": { model: "openai/luna" } }, modelScope: { enforce: true, allow: ["openai/luna"] } } });
+		writeJson(path.join(project, ".pi", "settings.json"), { subagents: { agentOverrides: { "trust-probe": { model: "openai/astra" } }, modelScope: { enforce: true, allow: ["openai/astra"] } } });
+		const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };
+		process.env.HOME = home;
+		process.env.USERPROFILE = home;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		try {
+			const executor = createSubagentExecutor!({
+				pi: { events: createEventBus(), getSessionName: () => undefined },
+				state: { baseCwd: project, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+				config: {},
+				asyncByDefault: false,
+				tempArtifactsDir: tempDir,
+				getSubagentSessionRoot: () => tempDir,
+				expandTilde: (p: string) => p,
+				discoverAgents: (cwd, scope, provider, options) => discoverAgents(cwd, scope, provider, { globalNpmRoot: null, ...options }),
+			});
+			const ctx = { ...makeMinimalCtx(project), isProjectTrusted: () => false };
+			const callFiles = () => fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-") && name.endsWith(".json"));
+			const before = new Set(callFiles());
+			mockPi.onCall({ output: "foreground done" });
+			const foreground = await executor.execute("untrusted-foreground", { agent: "trust-probe", task: "Inspect", acceptance: false }, new AbortController().signal, undefined, ctx);
+			assert.equal(foreground.isError, undefined, foreground.content[0]?.text);
+			mockPi.onCall({ output: "background done" });
+			const background = await executor.execute("untrusted-background", { agent: "trust-probe", task: "Inspect", async: true, acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+			assert.equal(background.isError, undefined, background.content[0]?.text);
+			await readAsyncPayload(background.details.asyncId!);
+			mockPi.onCall({ output: "workflow child done" });
+			const workflow = await executor.execute("untrusted-workflow", { workflowScript: `return await runs.run("child", { agent: "trust-probe", task: "Inspect" });`, async: false, mission: false }, new AbortController().signal, undefined, ctx);
+			assert.equal(workflow.isError, undefined, workflow.content[0]?.text);
+			const models = callFiles().filter((name) => !before.has(name))
+				.map((name) => JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")).launch.model);
+			assert.deepEqual(models, ["openai/luna", "openai/luna", "openai/luna"]);
+
+			for (const params of [
+				{ agent: "trust-probe", task: "Inspect", agentScope: "project" as const, acceptance: false },
+				{ action: "append-step", id: "untrusted-chain", agentScope: "project" as const, step: { agent: "trust-probe", task: "Inspect" } },
+			]) {
+				const projectScope = await executor.execute("untrusted-project-scope", params, new AbortController().signal, undefined, ctx);
+				assert.equal(projectScope.isError, true);
+				assert.match(projectScope.content[0]?.text ?? "", /agentScope: "project" requires project trust/);
+			}
+			assert.equal(callFiles().length, before.size + 3, "a rejected project-scope launch starts no child");
+		} finally {
+			for (const [name, value] of Object.entries(previous)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+		}
+	});
+
 	it("persists async capability ceiling audit to status, results, events, and metadata", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "restricted async done" });
 		const sessionId = `session-capability-${Date.now().toString(36)}`;

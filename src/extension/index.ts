@@ -396,7 +396,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 	let refreshResultDelivery = () => {};
 	let advertisedAgents: AgentConfig[] = [];
-	let advertisedContext: Pick<ExtensionContext, "cwd" | "model"> | undefined;
+	let advertisedContext: Pick<ExtensionContext, "cwd" | "model"> & { projectTrusted?: boolean } | undefined;
 	let advertisementGeneration = 0;
 	let globalRoot: string | null = null;
 	let advertisementReady: Promise<void | { error: unknown }> = Promise.resolve();
@@ -414,7 +414,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		advertisedAgents = [];
 		if (!advertisedContext) return;
 		clearAgentDiscoveryCache();
-		advertisedAgents = discoverAgents(advertisedContext.cwd, "both", advertisedContext.model?.provider, { globalNpmRoot: globalRoot }).agents
+		advertisedAgents = discoverAgents(advertisedContext.cwd, "both", advertisedContext.model?.provider, { globalNpmRoot: globalRoot, projectTrusted: advertisedContext.projectTrusted }).agents
 			.filter((agent) => agent.advertise === true);
 	};
 	const beginAdvertisement = (ctx: ExtensionContext) => {
@@ -422,7 +422,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		notifySessionChange();
 		sessionChanged = new Promise<void>((resolve) => { notifySessionChange = resolve; });
 		advertisedAgents = [];
-		advertisedContext = { cwd: ctx.cwd, model: ctx.model };
+		advertisedContext = { cwd: ctx.cwd, model: ctx.model, projectTrusted: typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined };
 		globalRoot = null;
 		advertisementReady = resolveGlobalNpmRoot().then((root) => {
 			if (generation !== advertisementGeneration) return;
@@ -442,9 +442,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (scheduledRunManager.observedCompletionRunIds().size > 0) return true;
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
 	};
-	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string) => {
-		if (listRuntimeAgentConfigs(pi).length === 0) return discoverAgents(cwd, scope, preferredModelProvider, { globalNpmRoot: globalRoot });
-		const snapshot = discoverAgentSnapshot(cwd, scope, preferredModelProvider, { includeChains: false, globalNpmRoot: globalRoot });
+	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string, options: { projectTrusted?: boolean } = {}) => {
+		if (listRuntimeAgentConfigs(pi).length === 0) return discoverAgents(cwd, scope, preferredModelProvider, { globalNpmRoot: globalRoot, projectTrusted: options.projectTrusted });
+		const snapshot = discoverAgentSnapshot(cwd, scope, preferredModelProvider, { includeChains: false, globalNpmRoot: globalRoot, projectTrusted: options.projectTrusted });
 		const discovered = snapshot.effective;
 		const all = snapshot.all;
 		const configuredAgents: AgentConfig[] = [
@@ -453,7 +453,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			...all.user,
 			...all.project,
 		];
-		const merged = mergeRuntimeAgents(pi, discovered, configuredAgents, { cwd, scope, preferredModelProvider });
+		// Runtime agents take model settings from the scope discovery actually used.
+		const merged = mergeRuntimeAgents(pi, discovered, configuredAgents, { cwd, scope: discovered.scope, preferredModelProvider });
 		if (discovered.maxThinking === undefined) return merged;
 		return {
 			...merged,
