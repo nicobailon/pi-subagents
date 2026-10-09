@@ -153,7 +153,7 @@ Lookup uses the existing run indexes and retained artifacts. Terminal indexing
 keeps the alias after result delivery while the run's status is retained.
 Correlation is not idempotent spawn: multiple runs with one alias are ambiguous, and missing or
 expired evidence never proves that execution did not start. Do not redispatch
-on that basis. Existing ownership checks remain unchanged.
+on that basis.
 
 ### Fleet status DTO
 
