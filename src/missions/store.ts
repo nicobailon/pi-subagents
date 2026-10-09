@@ -306,13 +306,12 @@ export function resolveMissionStoreLocation(input: {
 	agentDir?: string;
 }): MissionStoreLocation {
 	const givenRoot = path.resolve(input.projectRoot);
+	const configuredDir = input.config?.directory;
 	// The default store is keyed by a hash of the root, so two paths to one directory
 	// must hash the same. Configured paths keep expanding against the root as given.
-	const projectRoot = input.config?.directory ? givenRoot : canonicalProjectRoot(givenRoot);
+	const projectRoot = configuredDir ? givenRoot : canonicalProjectRoot(givenRoot);
 	const agentDir = input.agentDir ?? getAgentDir();
-	const missionDir = input.config?.directory
-		? expandConfiguredPath(input.config.directory, projectRoot)
-		: projectMissionDirectory(agentDir, projectRoot);
+	const missionDir = configuredDir ? expandConfiguredPath(configuredDir, givenRoot) : projectMissionDirectory(agentDir, projectRoot);
 	const globalIndexDir = input.config?.globalIndexDir
 		? expandConfiguredPath(input.config.globalIndexDir, givenRoot)
 		: path.join(agentDir, "missions", "index");

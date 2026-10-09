@@ -638,7 +638,7 @@ function collectSettingsPackageRoots(settingsFile: string, baseDir: string): str
 	return roots;
 }
 
-function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolean; includeProject: boolean; globalNpmRoot?: string | null; projectTrusted?: boolean } = { includeUser: true, includeProject: true }): PackageSubagentPaths {
+function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolean; includeProject: boolean; globalNpmRoot?: string | null; projectTrusted?: boolean }): PackageSubagentPaths {
 	const agentDir = getAgentDir();
 	const packageRoots: Array<{ root: string; scope: PackageScope }> = [];
 	const watchPaths: string[] = [];
@@ -2723,9 +2723,7 @@ function projectDiscoveryWatchPaths(cwd: string): string[] {
 	return paths;
 }
 
-// Root (the project's own package.json) and project packages are repository content, like `.pi/agents`.
-function packageEntryIncluded(scope: AgentScope, packageScopes: PackageSubagentPath["scope"], projectTrusted = true): boolean {
-	if (!projectTrusted) return packageScopes.has("user");
+function packageEntryIncluded(scope: AgentScope, packageScopes: PackageSubagentPath["scope"]): boolean {
 	if (scope === "both" || packageScopes.has("root")) return true;
 	return packageScopes.has(scope);
 }
@@ -2875,7 +2873,7 @@ function settingsForScope(sources: AgentDiscoverySources, scope: AgentScope): { 
 	};
 }
 
-function configuredAgentsForScope(sources: AgentDiscoverySources, scope: AgentScope, settingsScope = scope, projectTrusted = true): {
+function configuredAgentsForScope(sources: AgentDiscoverySources, scope: AgentScope, settingsScope = scope): {
 	builtin: AgentConfig[];
 	package: AgentConfig[];
 	user: AgentConfig[];
@@ -2906,7 +2904,7 @@ function configuredAgentsForScope(sources: AgentDiscoverySources, scope: AgentSc
 	const project = applyCustomAgentOverrides(applyDefaults(Array.from(projectMap.values())), userSettings, projectSettings, sources.userSettingsPath, sources.projectSettingsPath);
 	const packageMap = new Map<string, AgentConfig>();
 	for (const loaded of sources.packageLoaded) {
-		if (!loaded.packageEntry || !packageEntryIncluded(scope, loaded.packageEntry.scope, projectTrusted)) continue;
+		if (!loaded.packageEntry || !packageEntryIncluded(scope, loaded.packageEntry.scope)) continue;
 		for (const agent of loaded.loaded.agents) if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);
 	}
 	const packageAgents = applyCustomAgentOverrides(applyDefaults(Array.from(packageMap.values())), userSettings, projectSettings, sources.userSettingsPath, sources.projectSettingsPath);
@@ -2922,7 +2920,7 @@ function configuredAgentsForScope(sources: AgentDiscoverySources, scope: AgentSc
 	};
 }
 
-function discoveryDirectories(sources: AgentDiscoverySources, scope: AgentScope, projectTrusted = true): AgentDefinitionDirectoryReport[] {
+function discoveryDirectories(sources: AgentDiscoverySources, scope: AgentScope): AgentDefinitionDirectoryReport[] {
 	const directories: AgentDefinitionDirectoryReport[] = [reportAgentDefinitionDirectory("builtin", BUILTIN_AGENTS_DIR, BUILTIN_AGENT_DEFINITION_INSPECTION)];
 	if (scope !== "project") for (const directory of sources.userLoaded) directories.push(reportAgentDefinitionDirectory("user", directory.dir, directory.inspection));
 	if (scope !== "user") {
@@ -2936,54 +2934,52 @@ function discoveryDirectories(sources: AgentDiscoverySources, scope: AgentScope,
 		}
 	}
 	for (const directory of sources.packageLoaded) {
-		if (directory.packageEntry && packageEntryIncluded(scope, directory.packageEntry.scope, projectTrusted)) directories.push(reportAgentDefinitionDirectory("package", directory.dir, directory.inspection));
+		if (directory.packageEntry && packageEntryIncluded(scope, directory.packageEntry.scope)) directories.push(reportAgentDefinitionDirectory("package", directory.dir, directory.inspection));
 	}
 	return directories;
 }
 
-function discoveryDiagnostics(sources: AgentDiscoverySources, scope: AgentScope, projectTrusted = true): AgentDiscoveryDiagnostic[] {
+function discoveryDiagnostics(sources: AgentDiscoverySources, scope: AgentScope): AgentDiscoveryDiagnostic[] {
 	return [
 		...sources.builtinLoaded.diagnostics,
 		...(scope === "project" ? [] : sources.userLoaded.flatMap((loaded) => loaded.loaded.diagnostics)),
 		...(scope === "user" ? [] : sources.projectLoaded.flatMap((loaded) => loaded.loaded.diagnostics)),
 		...sources.packageLoaded
-			.filter((loaded) => loaded.packageEntry && packageEntryIncluded(scope, loaded.packageEntry.scope, projectTrusted))
+			.filter((loaded) => loaded.packageEntry && packageEntryIncluded(scope, loaded.packageEntry.scope))
 			.flatMap((loaded) => loaded.loaded.diagnostics),
 	];
 }
 
-function buildEffectiveDiscovery(sources: AgentDiscoverySources, scope: AgentScope, projectTrusted = true): AgentDiscoveryResult {
-	const configured = configuredAgentsForScope(sources, scope, scope, projectTrusted);
+function buildEffectiveDiscovery(sources: AgentDiscoverySources, scope: AgentScope): AgentDiscoveryResult {
+	const configured = configuredAgentsForScope(sources, scope);
 	const merged = mergeAgentsForScope(scope, configured.user, configured.project, configured.builtin, configured.package);
 	const agents = applySubagentMaxThinking(merged.filter((agent) => agent.disabled !== true), configured.maxThinking);
 	const disabledAgents = merged.filter((agent) => agent.disabled === true).map((agent) => agent.name);
 	return {
 		agents,
 		...(disabledAgents.length ? { disabledAgents } : {}),
-		agentDiagnostics: discoveryDiagnostics(sources, scope, projectTrusted),
+		agentDiagnostics: discoveryDiagnostics(sources, scope),
 		projectAgentsDir: sources.projectAgentsDir,
 		cwd: sources.cwd,
 		scope,
-		directories: discoveryDirectories(sources, scope, projectTrusted),
+		directories: discoveryDirectories(sources, scope),
 		...(configured.modelScope !== undefined ? { modelScope: configured.modelScope } : {}),
 		...(configured.maxThinking !== undefined ? { maxThinking: configured.maxThinking } : {}),
 	};
 }
 
-// An untrusted project contributes no definitions, even to the all-source view.
-function buildAllDiscovery(sources: AgentDiscoverySources, includeChains: boolean, settingsScope: AgentScope, projectTrusted: boolean): AgentDiscoveryAllResult {
+function buildAllDiscovery(sources: AgentDiscoverySources, includeChains: boolean, settingsScope: AgentScope): AgentDiscoveryAllResult {
 	if (includeChains) ensureDiscoveryChains(sources);
-	const configured = configuredAgentsForScope(sources, projectTrusted ? "both" : "user", settingsScope, projectTrusted);
+	const configured = configuredAgentsForScope(sources, "both", settingsScope);
 	const packageChainMap = new Map<string, ChainConfig>();
 	const packageChainDiagnostics: ChainDiscoveryDiagnostic[] = [];
 	for (const chain of sources.packageChainLoaded ?? []) {
-		if (!packageEntryIncluded("both", chain.entry.scope, projectTrusted)) continue;
 		packageChainDiagnostics.push(...chain.loaded.diagnostics);
 		for (const definition of chain.loaded.chains) if (!packageChainMap.has(definition.name)) packageChainMap.set(definition.name, definition);
 	}
 	const projectChainMap = new Map<string, ChainConfig>();
 	const projectChainDiagnostics: ChainDiscoveryDiagnostic[] = [];
-	if (projectTrusted) for (const chain of sources.projectChainLoaded ?? []) {
+	for (const chain of sources.projectChainLoaded ?? []) {
 		projectChainDiagnostics.push(...chain.loaded.diagnostics);
 		for (const definition of chain.loaded.chains) projectChainMap.set(definition.name, definition);
 	}
@@ -2997,12 +2993,12 @@ function buildAllDiscovery(sources: AgentDiscoverySources, includeChains: boolea
 		package: applySubagentMaxThinking(configured.package, configured.maxThinking),
 		user: applySubagentMaxThinking(configured.user, configured.maxThinking),
 		project: applySubagentMaxThinking(configured.project, configured.maxThinking),
-		agentDiagnostics: projectTrusted ? [
+		agentDiagnostics: [
 			...sources.builtinLoaded.diagnostics,
 			...sources.userLoaded.flatMap((loaded) => loaded.loaded.diagnostics),
 			...sources.packageLoaded.flatMap((loaded) => loaded.loaded.diagnostics),
 			...sources.projectLoaded.flatMap((loaded) => loaded.loaded.diagnostics),
-		] : discoveryDiagnostics(sources, "user", false),
+		],
 		chains,
 		chainDiagnostics: [...packageChainDiagnostics, ...(sources.userChains?.diagnostics ?? []), ...projectChainDiagnostics],
 		cwd: sources.cwd,
@@ -3022,17 +3018,17 @@ export function discoverAgentSnapshot(
 	preferredModelProvider?: string,
 	options: AgentDiscoveryOptions & { includeChains?: boolean } = {},
 ): AgentDiscoverySnapshot {
-	const trustedScope = trustedDiscoveryScope(cwd, scope, options.projectTrusted);
 	const includeChains = options.includeChains !== false;
 	const projectTrusted = options.projectTrusted !== false;
+	const trustedScope = trustedDiscoveryScope(cwd, scope, projectTrusted);
 	const sources = getAgentDiscoverySources(cwd, preferredModelProvider, includeChains, options.globalNpmRoot, projectTrusted);
-	return { effective: buildEffectiveDiscovery(sources, trustedScope, projectTrusted), all: buildAllDiscovery(sources, includeChains, trustedScope, projectTrusted) };
+	return { effective: buildEffectiveDiscovery(sources, trustedScope), all: buildAllDiscovery(sources, includeChains, trustedScope) };
 }
 
 // Pi loads nothing from an untrusted project's `.pi` directory, so declined trust leaves user scope.
 // A trusted lookup keeps its scope as given, including an omitted one from untyped callers.
-function trustedDiscoveryScope(cwd: string, scope: AgentScope, projectTrusted: boolean | undefined): AgentScope {
-	if (projectTrusted !== false) return scope;
+function trustedDiscoveryScope(cwd: string, scope: AgentScope, projectTrusted: boolean): AgentScope {
+	if (projectTrusted) return scope;
 	if (scope === "project") throw new Error(projectScopeRequiresTrustMessage(path.resolve(cwd)));
 	return "user";
 }
@@ -3091,12 +3087,12 @@ function discoverAgentsUncached(cwd: string, scope: AgentScope, preferredModelPr
 }
 
 export function discoverAgents(cwd: string, scope: AgentScope, preferredModelProvider?: string, options: AgentDiscoveryOptions = {}): AgentDiscoveryResult {
-	const trustedScope = trustedDiscoveryScope(cwd, scope, options.projectTrusted);
 	const projectTrusted = options.projectTrusted !== false;
+	const trustedScope = trustedDiscoveryScope(cwd, scope, projectTrusted);
 	// The uncached path always loads the project's own package.json entries.
 	if (projectTrusted && trustedScope !== "both") return discoverAgentsUncached(cwd, trustedScope, preferredModelProvider, options);
 	const sources = getAgentDiscoverySources(cwd, preferredModelProvider, false, options.globalNpmRoot, projectTrusted);
-	return buildEffectiveDiscovery(sources, trustedScope, projectTrusted);
+	return buildEffectiveDiscovery(sources, trustedScope);
 }
 
 export function discoverAgentsAll(cwd: string, preferredModelProvider?: string, options: AgentDiscoveryOptions = {}): AgentDiscoveryAllResult {

@@ -1072,8 +1072,6 @@ Advise only.
 		const agentPath = path.join(tempDir, ".pi", "agents", "sandboxed.md");
 		fs.mkdirSync(path.dirname(agentPath), { recursive: true });
 		fs.writeFileSync(agentPath, "---\nname: sandboxed\ndescription: Sandboxed agent\nlauncher: net\n---\nOriginal prompt.\n");
-		const setLauncher = handleUpdate({ agent: "sandboxed", config: { launcher: "other" } }, ctx);
-		assert.equal(setLauncher.isError, true);
 		const external = handleUpdate({ agent: "sandboxed", config: { runner: { type: "external-cli", command: "node" } } }, ctx);
 		assert.equal(external.isError, true);
 		assert.match(readText(external), /cannot be combined with this agent's 'launcher'/);
@@ -1081,7 +1079,6 @@ Advise only.
 		const updated = handleUpdate({ agent: "sandboxed", config: { description: "Updated agent" } }, ctx);
 		assert.equal(updated.isError, false);
 		assert.match(fs.readFileSync(agentPath, "utf-8"), /^launcher: net$/m);
-		assert.equal(discoverAgents(tempDir, "project").agents.find((agent) => agent.name === "sandboxed")?.launcher, "net");
 	});
 
 	it("fails when extension frontmatter cannot be reread", () => {

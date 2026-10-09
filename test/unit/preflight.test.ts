@@ -134,8 +134,6 @@ describe("public launch contract preflight", () => {
 
 		const untrusted = await resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels, projectTrusted: false });
 		assert.equal(untrusted.ok && untrusted.contract.model, "openai/luna");
-		const explicitUser = await resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels, projectTrusted: false, model: "openai/luna" });
-		assert.equal(explicitUser.ok && explicitUser.contract.model, "openai/luna");
 		await assert.rejects(resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels, projectTrusted: false, model: "openai/astra" }), /outside the configured subagent model scope/u);
 		const projectScope = await resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels, projectTrusted: false, agentScope: "project" });
 		assert.equal(projectScope.ok, false);

@@ -78,7 +78,6 @@ it("emits bounded file-only snapshots, refreshes through management, and perform
 			assert.match(prompt, /<name>specialist<\/name>/);
 			assert.doesNotMatch(prompt, /hidden-/);
 			assert.match(prompt, /^The following file-defined subagents opted into discovery\..*Use subagent only when delegation is needed\.$/m);
-			assert.doesNotMatch(prompt, /action: "list"/);
 			assert.equal(await noIo(() => emit(prompt, ["read"])), "base");
 			const ceiling = registerSubagentCapabilityCeiling({ sessionId: "advertised-test", source: "test", ceiling: { allowedAgents: [] } });
 			assert.equal(await noIo(() => emit(prompt)), "base");

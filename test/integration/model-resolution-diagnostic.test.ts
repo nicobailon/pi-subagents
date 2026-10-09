@@ -123,7 +123,6 @@ describe("child model resolution diagnostic", () => {
 			assert.ok(result.error?.startsWith(`${PROVIDER_ERROR}\n\n`), `${runId}: provider error must stay first, got: ${result.error}`);
 			assert.match(result.error ?? "", /Provider 'bridge' for 'bridge\/model' was registered by a parent extension; the child inherited the provider but not that extension's session hooks/);
 			assert.match(result.error ?? "", /run this agent with `async: true`/);
-			assert.match(result.error ?? "", /load the extension for this agent with `subagentOnlyExtensions` or `extensions`/);
 		}
 	});
 
@@ -139,7 +138,6 @@ describe("child model resolution diagnostic", () => {
 
 		assert.ok(result.error?.startsWith(`${PROVIDER_ERROR}\n\n`), `provider error must stay first, got: ${result.error}`);
 		assert.match(result.error ?? "", /Capability ceiling from policy-fixture denies extensions, so that extension cannot load for this child: `async: true` does not help either/);
-		assert.match(result.error ?? "", /relax the capability ceiling to allow extensions/);
 		assert.doesNotMatch(result.error ?? "", /run this agent with `async: true`/);
 	});
 

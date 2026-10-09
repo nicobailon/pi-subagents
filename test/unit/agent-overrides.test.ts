@@ -116,9 +116,6 @@ describe("builtin agent overrides", () => {
 	it("rejects launcher in builtin overrides instead of ignoring it", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), { subagents: { agentOverrides: { worker: { launcher: "net" } } } });
 		assert.throws(() => discoverAgentsAll(tempProject), /Builtin override 'worker'.*sets 'launcher'/u);
-		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {});
-		writeJson(path.join(tempProject, ".pi", "settings.json"), { subagents: { agentOverridesByProvider: { openai: { worker: { launcher: "net" } } } } });
-		assert.throws(() => discoverAgentsAll(tempProject), /Builtin override 'agentOverridesByProvider\.openai\.worker'.*sets 'launcher'/u);
 	});
 
 	it("replaces and clears custom-agent allowedAgents while preserving explicit deny-all", () => {

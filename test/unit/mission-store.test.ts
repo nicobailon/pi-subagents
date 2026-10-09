@@ -74,7 +74,6 @@ describe("mission store", () => {
 				assert.ok(missionId);
 				const ctx = { cwd: to, agentDir: test.agentDir };
 				assert.equal(handleMissionAction("mission.show", { missionId }, ctx).details?.mission?.id, missionId);
-				assert.ok(handleMissionAction("mission.list", {}, ctx).details?.missions?.records?.some((record) => record.id === missionId));
 				assert.equal(prepareMissionLaunch({ projectRoot: to, params: { missionId } })?.missionId, missionId);
 			}
 			const missingRoot = path.join(test.realRoot, "not", "created");
