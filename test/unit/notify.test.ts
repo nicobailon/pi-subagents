@@ -398,10 +398,44 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Background task completed: **worker**\n\n(no output)"),
 				display: false,
-				details: { runs: [{ agent: "worker", status: "completed" }] },
+				details: { runs: [{ agent: "worker", status: "completed", runId: "notify-empty-1" }] },
 			},
 			options: { triggerTurn: true },
 		});
+	});
+
+	it("attaches run ids and paths to subagent-notify details without the text previews", async () => {
+		const { notifier, sent } = createPi("session-a");
+		assert.equal(await notifier.deliver(completionResult({ id: "single-run", asyncDir: "/tmp/async/single-run", durationMs: 1200, summary: "Single done" })), true);
+		assert.equal(await notifier.deliver(completionResult({
+			id: "wf-run",
+			runId: "wf-run",
+			mode: "workflow",
+			agent: "workflow",
+			summary: "Workflow done",
+			results: [
+				{ workflowKey: "scan", agent: "scout", runId: "child-a", status: "completed", success: true, output: "scan output", outputReference: "/tmp/out/scan.md" },
+				{ workflowKey: "fix", agent: "worker", runId: "child-b", status: "completed", success: true, output: "fix output" },
+			],
+		})), true);
+		const details = sent.map((call) => (call.message as { details?: unknown }).details);
+		assert.deepEqual(details[0], { runs: [{ agent: "worker", status: "completed", runId: "single-run", asyncDir: "/tmp/async/single-run", durationMs: 1200 }] });
+		assert.deepEqual(details[1], { runs: [{
+			agent: "workflow",
+			status: "completed",
+			runId: "wf-run",
+			workflowRunId: "wf-run",
+			childRuns: [
+				{ runId: "child-a", workflowKey: "scan", agent: "scout", status: "completed" },
+				{ runId: "child-b", workflowKey: "fix", agent: "worker", status: "completed" },
+			],
+			childOutputs: [
+				{ workflowKey: "scan", runId: "child-a", agent: "scout", status: "completed", savedOutputPath: "/tmp/out/scan.md" },
+				{ workflowKey: "fix", runId: "child-b", agent: "worker", status: "completed" },
+			],
+		}] });
+		// The model reads content; details must not change it.
+		assert.match((sent[1]!.message as { content: string }).content, /Workflow run: wf-run\nChild runs: scan=child-a \(completed\), fix=child-b \(completed\)/);
 	});
 
 	it("does not attach async status snapshots to subagent-notify details", async () => {
@@ -513,7 +547,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Detached foreground task completed: **reviewer**\n\nRecovered final review"),
 				display: true,
-				details: { runs: [{ agent: "reviewer", status: "completed" }] },
+				details: { runs: [{ agent: "reviewer", status: "completed", source: "foreground", runId: "foreground-run" }] },
 			},
 			options: { triggerTurn: true },
 		});
@@ -556,7 +590,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent(`Background task completed: **worker** (2/3)\n\n${summary}`),
 				display: false,
-				details: { runs: [{ agent: "worker", status: "completed" }] },
+				details: { runs: [{ agent: "worker", status: "completed", taskInfo: " (2/3)", runId: "notify-summary-1" }] },
 			},
 			options: { triggerTurn: true },
 		});
@@ -582,7 +616,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Background task completed: **worker**\n\nDone\n\nSession file: /tmp/session.jsonl"),
 				display: false,
-				details: { runs: [{ agent: "worker", status: "completed" }] },
+				details: { runs: [{ agent: "worker", status: "completed", runId: "notify-path-1", sessionLabel: "Session file", sessionValue: "/tmp/session.jsonl" }] },
 			},
 			options: { triggerTurn: true },
 		}]);
@@ -608,7 +642,7 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Background task paused: **worker**\n\nPaused after interrupt. Waiting for explicit next action."),
 				display: true,
-				details: { runs: [{ agent: "worker", status: "paused" }] },
+				details: { runs: [{ agent: "worker", status: "paused", runId: "notify-paused-1" }] },
 			},
 			options: { triggerTurn: true },
 		});
@@ -637,7 +671,14 @@ describe("registerSubagentNotify", () => {
 				customType: "subagent-notify",
 				content: completionContent("Background task paused: **workflow**\n\nRun 'detaches' detached for intercom coordination.\n\nChild outputs:\n- key=detaches run=child-1 status=paused\n  Saved output: unavailable\n  Preview: unavailable (no safe inline output)\n\nWorkflow run: workflow-1\nChild runs: detaches=child-1 (paused)"),
 				display: true,
-				details: { runs: [{ agent: "workflow", status: "paused" }] },
+				details: { runs: [{
+					agent: "workflow",
+					status: "paused",
+					runId: "workflow-1",
+					workflowRunId: "workflow-1",
+					childRuns: [{ runId: "child-1", workflowKey: "detaches", agent: "worker", status: "paused" }],
+					childOutputs: [{ workflowKey: "detaches", runId: "child-1", agent: "worker", status: "paused" }],
+				}] },
 			},
 			options: { triggerTurn: true },
 		});
@@ -703,7 +744,7 @@ describe("registerSubagentNotify", () => {
 			customType: "subagent-notify",
 			content,
 			display: false,
-			details: { runs: [{ agent: "alpha", status: "completed" }, { agent: "beta", status: "completed" }, { agent: "gamma", status: "completed" }] },
+			details: { runs: [{ agent: "alpha", status: "completed", runId: "g-1" }, { agent: "beta", status: "completed", runId: "g-2" }, { agent: "gamma", status: "completed", runId: "g-3" }] },
 		});
 		assert.deepEqual(sent[0]!.options, { triggerTurn: true });
 	});

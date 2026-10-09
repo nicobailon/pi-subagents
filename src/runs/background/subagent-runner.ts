@@ -901,7 +901,7 @@ export async function runSingleStepInner(
 				const resolvedOutput = step.outputPath ? resolveSingleOutput(step.outputPath, output, outputSnapshot, step.outputClaimPath) : { fullOutput: output };
 				const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
 				const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({ fullOutput: resolvedOutput.fullOutput, outputPath: step.outputPath, outputMode: step.outputMode, exitCode: 1, preserveSavedOutput: true, savedPath: resolvedOutput.savedPath, outputReference, saveError: resolvedOutput.saveError }));
-				const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false ? persistStepArtifacts({ artifactPaths, artifactConfig: ctx.artifactConfig, output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })), metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, placement: session.owner.identity, settlement: settled.settlement, outcome: settled.outcome, timestamp: Date.now() } }) : {};
+				const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false ? persistStepArtifacts({ artifactPaths, artifactConfig: ctx.artifactConfig, output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })), metadata: { runId: ctx.id, parentSessionId: step.parentSessionId, agent: step.agent, task: PROMPT_REDACTED, runner, placement: session.owner.identity, settlement: settled.settlement, outcome: settled.outcome, timestamp: Date.now() } }) : {};
 				return omitUndefinedProperties({ agent: step.agent, ...(childSessionName ? { sessionName: childSessionName } : {}), context: step.context, output: finalizedOutput.displayOutput, outputState: output.trim() ? "present" : "absent", exitCode: 1, error: resolvedOutput.fatalError ? resolvedOutput.saveError : undefined, timedOut, stopped, artifactPaths, outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined, metadataSaveError: artifactErrors.metadataSaveError, runner, execution: { status: "partial", success: false, exitCode: 1 } });
 			} catch (error) {
 				// Any post-allocation uncertainty retains the pane; only explicit stop
@@ -974,7 +974,7 @@ export async function runSingleStepInner(
 				artifactPaths,
 				artifactConfig: ctx.artifactConfig,
 				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
-				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalProcess: externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
+				metadata: { runId: ctx.id, parentSessionId: step.parentSessionId, agent: step.agent, task: PROMPT_REDACTED, runner, externalProcess: externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
 			})
 			: {};
 		return omitUndefinedProperties({
@@ -1045,7 +1045,7 @@ export async function runSingleStepInner(
 				artifactPaths,
 				artifactConfig: ctx.artifactConfig,
 				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
-				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalJob: external.externalJob, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
+				metadata: { runId: ctx.id, parentSessionId: step.parentSessionId, agent: step.agent, task: PROMPT_REDACTED, runner, externalJob: external.externalJob, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
 			})
 			: {};
 		return omitUndefinedProperties({
@@ -1503,6 +1503,7 @@ export async function runSingleStepInner(
 			})),
 			metadata: {
 				runId: ctx.id,
+				parentSessionId: step.parentSessionId,
 				agent: step.agent,
 				task: PROMPT_REDACTED,
 				exitCode: effectiveFinalExitCode,

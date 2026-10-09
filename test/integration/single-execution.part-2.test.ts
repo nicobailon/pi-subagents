@@ -68,6 +68,7 @@ import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../sr
 import { toSubagentDelegationExecutionParams, toSubagentDelegationUpdate } from "../../src/slash/delegation-adapters.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
+import { ensureSupervisorChannelDir, resolveSupervisorChannelDir } from "../../src/intercom/native-supervisor-channel.ts";
 
 describe("single sync execution", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installSingleExecutionHooks();
@@ -823,6 +824,129 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(second.isError, undefined);
 		assert.equal(mockPi.callCount(), 2);
 	});
+
+	for (const mode of ["single", "workflow"] as const) {
+		it(`stops a detached ${mode} foreground child when its runtime is replaced and reports it as stopped`, { timeout: 30_000 }, async () => {
+			const agentDir = process.env.PI_CODING_AGENT_DIR!;
+			fs.mkdirSync(path.join(agentDir, "agents"), { recursive: true });
+			fs.writeFileSync(path.join(agentDir, "agents", "asker.md"), "---\nname: asker\ndescription: Asks its supervisor\n---\nIntercom orchestration channel: ask the supervisor before deciding.\n");
+			if (mode === "workflow") {
+				// Workflow children then run in the parent process, like the reported foreground child.
+				fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
+				fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ asyncByDefault: false }));
+			}
+			const release = path.join(tempDir, "release-child");
+			mockPi.onCall({
+				steps: [
+					{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Which path?" })] },
+					{ waitForPath: release, jsonl: [events.assistantMessage("finished after replacement")] },
+				],
+			});
+			type Handler = (event: unknown, ctx: unknown) => unknown;
+			type Tool = { execute(id: string, params: unknown, signal: AbortSignal, onUpdate: ((update: ExecutorToolResult) => void) | undefined, ctx: unknown): Promise<ExecutorToolResult> };
+			const ctx = {
+				...makeMinimalCtx(tempDir),
+				isIdle: () => false,
+				sessionManager: {
+					getSessionId: () => "replaced-runtime-session",
+					getSessionFile: () => path.join(tempDir, "replaced-runtime-session.jsonl"),
+					getEntries: () => [],
+				},
+			};
+			const startRuntime = async (reason: string) => {
+				const bus = createEventBus();
+				const handlers = new Map<string, Handler[]>();
+				let tool: Tool | undefined;
+				const pi = new Proxy({
+					events: bus,
+					on(event: string, handler: Handler) { handlers.set(event, [...(handlers.get(event) ?? []), handler]); },
+					registerTool(definition: Tool & { name: string }) { if (definition.name === "subagent") tool = definition; },
+					sendMessage() {},
+					getSessionName() { return undefined; },
+				}, { get: (target, prop) => prop in target ? target[prop as keyof typeof target] : () => undefined });
+				const previousChildEnv = process.env[SUBAGENT_CHILD_ENV];
+				delete process.env[SUBAGENT_CHILD_ENV];
+				try {
+					registerSubagentExtension(pi as never);
+				} finally {
+					if (previousChildEnv !== undefined) process.env[SUBAGENT_CHILD_ENV] = previousChildEnv;
+				}
+				for (const handler of handlers.get("session_start") ?? []) await handler({ reason }, ctx);
+				assert.ok(tool, "subagent tool registered");
+				return { bus, tool, shutDown: async (shutdownReason: string) => { for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: shutdownReason }, ctx); } };
+			};
+
+			const first = await startRuntime("startup");
+			let detachAccepted = false;
+			first.bus.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => { detachAccepted ||= (payload as { accepted?: unknown }).accepted === true; });
+			const detachTimer = setInterval(() => { if (!detachAccepted) first.bus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "replace-detach" }); }, 10);
+			let runId: string | undefined;
+			try {
+				if (mode === "single") {
+					const launched = await first.tool.execute("detach-before-replace", { agent: "asker", task: "Ask, then finish", async: false }, new AbortController().signal, undefined, ctx);
+					assert.equal(launched.details.results[0]?.detached, true, launched.content[0]?.text);
+					runId = launched.details.runId;
+				} else {
+					const started = await first.tool.execute("workflow-before-replace", { workflow: "parallel", args: { tasks: [{ agent: "asker", task: "Ask, then finish" }] }, async: true }, new AbortController().signal, undefined, ctx);
+					assert.ok(started.details.asyncDir, started.content[0]?.text);
+					const deadline = Date.now() + 10_000;
+					while ((!detachAccepted || !runId) && Date.now() < deadline) {
+						await new Promise((resolve) => setTimeout(resolve, 20));
+						runId = (JSON.parse(fs.readFileSync(path.join(started.details.asyncDir, "status.json"), "utf-8")) as AsyncStatus).steps?.[0]?.runId;
+					}
+					assert.equal(detachAccepted, true, "the workflow child detached");
+				}
+			} finally {
+				clearInterval(detachTimer);
+			}
+			assert.ok(runId);
+
+			// The child's pending question to its supervisor, as contact_supervisor writes it.
+			const channelDir = resolveSupervisorChannelDir(runId, "asker", 0);
+			ensureSupervisorChannelDir(channelDir);
+			const requestFile = path.join(channelDir, "requests", "replace-question.json");
+			fs.writeFileSync(requestFile, JSON.stringify({
+				type: "subagent.supervisor.request", id: "replace-question", createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+				reason: "need_decision", message: "Which path?", expectsReply: true,
+				orchestratorSessionId: "replaced-runtime-session", runId, agent: "asker", childIndex: 0,
+			}));
+			await first.shutDown("reload");
+			const second = await startRuntime("reload");
+			try {
+				const status = await second.tool.execute("status-after-replace", { action: "status", id: runId }, new AbortController().signal, undefined, ctx);
+				const statusText = status.content[0]?.text ?? "";
+				assert.doesNotMatch(statusText, /Async run not found/);
+				assert.match(statusText, /asker: Ask, then finish stopped/);
+				assert.match(statusText, /runtime that ran it was replaced/);
+				assert.equal(fs.existsSync(requestFile), false, "the stopped child's pending supervisor request is inactive");
+
+				fs.writeFileSync(release, "release");
+				const child = mockPi.sessions[0];
+				assert.equal(child?.aborted, true, "the detached child was aborted");
+				// The aborted child's own result replaces the record after it settles; it must still say stopped.
+				const settleDeadline = Date.now() + 10_000;
+				while (!child?.settled && Date.now() < settleDeadline) await new Promise((resolve) => setTimeout(resolve, 20));
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				const history = JSON.parse(fs.readFileSync(path.join(DIRS.results, "foreground-history.json"), "utf-8")) as { runs: Array<{ runId: string; children: Array<{ status: string; error?: string }> }> };
+				const recorded = history.runs.find((run) => run.runId === runId)?.children[0];
+				assert.equal(recorded?.status, "stopped");
+				assert.match(recorded?.error ?? "", /runtime that ran it was replaced/);
+				assert.doesNotMatch(JSON.stringify(child?.session?.messages ?? []), /finished after replacement/);
+
+				mockPi.onCall({ output: "resumed after replacement" });
+				const resumed = await second.tool.execute("resume-after-replace", { action: "resume", id: runId, message: "Continue from where you stopped.", async: true }, new AbortController().signal, undefined, ctx);
+				assert.equal(resumed.isError, undefined, resumed.content[0]?.text);
+				assert.match(resumed.content[0]?.text ?? "", new RegExp(`Revived foreground subagent from ${runId}`));
+				const resultFile = path.join(DIRS.results, `${resumed.details.asyncId}.json`);
+				const deadline = Date.now() + 20_000;
+				while (!fs.existsSync(resultFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+				assert.ok(fs.existsSync(resultFile), "the revived run finished");
+			} finally {
+				await second.shutDown("quit");
+				fs.rmSync(channelDir, { recursive: true, force: true });
+			}
+		});
+	}
 
 	it("routes registered structured text delegation through the concurrent executor", async () => {
 		const literalJsonText = '{"looks":"json"}';

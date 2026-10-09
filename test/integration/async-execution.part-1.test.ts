@@ -519,6 +519,27 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(metadata.usage, expectedUsage);
 	});
 
+	it("records the parent session id in background run metadata", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "linked output" });
+		const id = `async-parent-link-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Record the parent",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: path.join(tempDir, "parent.jsonl"), parentSessionId: "parent-session-id", parentSessionFile: path.join(tempDir, "parent.jsonl") },
+			artifactConfig: { enabled: true, includeInput: false, includeOutput: true, includeJsonl: false, includeMetadata: true, cleanupDays: 7 },
+			artifactsDir: path.join(tempDir, ".pi", "subagents", "artifacts"),
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		const payload = await readAsyncPayload(id);
+		const metadataPath = payload.results[0]?.artifactPaths?.metadataPath;
+		assert.ok(metadataPath);
+		assert.equal((JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { parentSessionId?: string }).parentSessionId, "parent-session-id");
+	});
+
 	it("makes a launched async run immediately visible to exact status lookup", { skip: !isAsyncAvailable() || !resolveTargetedAsyncRun ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ delay: 500, output: "visible async done" });
 		const id = `async-initial-status-${Date.now().toString(36)}`;

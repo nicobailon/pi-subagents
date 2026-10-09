@@ -177,6 +177,11 @@ export function inheritedNestedParentAddressOf(runtime: { nestedParent?: { paren
 	};
 }
 
+/** The owner's reply when its foreground map has no route for a nested run; interrupt matches it exactly. */
+export function nestedRunNotActiveMessage(runId: string): string {
+	return `Nested run ${runId} is not active in this fanout child.`;
+}
+
 export function resolveNestedAsyncDir(rootRunId: string, run: NestedRunSummary): string | undefined {
 	if (!run.asyncDir) return undefined;
 	const resolved = path.resolve(run.asyncDir);

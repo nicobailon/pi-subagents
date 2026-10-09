@@ -139,6 +139,7 @@ function persistSingleResultMetadata(input: {
 	metadataPath?: string;
 	enabled: boolean;
 	runId?: string;
+	parentSessionId?: string;
 	agent: string;
 	task: string;
 	result: SingleResult;
@@ -147,6 +148,7 @@ function persistSingleResultMetadata(input: {
 	const target = input.result;
 	writeMetadata(input.metadataPath, {
 		runId: input.runId,
+		parentSessionId: input.parentSessionId,
 		agent: input.agent,
 		task: PROMPT_REDACTED,
 		exitCode: target.exitCode,
@@ -413,6 +415,7 @@ async function runSingleAttempt(
 		nestedRoute: options.nestedRoute,
 		runFanoutBudget: options.runFanoutBudget,
 		parentSessionId: options.parentSessionId,
+		parentSessionFile: options.parentSessionFile,
 		forkCacheKey: options.context === "fork" ? deriveForkPromptCacheKey(options.parentSessionId) : undefined,
 		structuredOutput: options.structuredOutput,
 		fast: options.fast ?? agent.fast,
@@ -573,6 +576,7 @@ async function runSingleAttempt(
 		let sessionSettled = false;
 		let lifecycleFinished = false;
 		let detached = false;
+		let hostStopReason: string | undefined;
 		let intercomStarted = false;
 		let assistantError: string | undefined;
 		let removeAbortListener: (() => void) | undefined;
@@ -1334,9 +1338,10 @@ async function runSingleAttempt(
 			}
 			const forcedDrainAfterFinalSuccess = (forced || forcedTermination) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(result.messages ?? []);
-			if (!closeError && (abortedBySignal || session?.shutDown) && !result.interrupted && !result.timedOut) {
-				closeError = session?.shutDown ? "Subagent stopped because the parent session shut down." : STOPPED_BEFORE_COMPLETION_ERROR;
+			if (!closeError && (abortedBySignal || session?.shutDown || hostStopReason) && !result.interrupted && !result.timedOut) {
+				closeError = hostStopReason ?? (session?.shutDown ? "Subagent stopped because the parent session shut down." : STOPPED_BEFORE_COMPLETION_ERROR);
 			}
+			if (hostStopReason && !result.interrupted && !result.timedOut) result.stopped = true;
 			// A workflow child ended by the workflow's abort signal was stopped, not failed.
 			if (options.abortedAsStopped && abortedBySignal && !session?.shutDown && !result.interrupted && !result.timedOut) result.stopped = true;
 			if (!closeError && forced && !forcedDrainAfterFinalSuccess) {
@@ -1432,9 +1437,18 @@ async function runSingleAttempt(
 				if (abortedBySignal || interruptedByControl || result.timedOut) {
 					abortChild();
 				}
-				options.onChildSession?.({ steer: (text) => created.steer(text), followUp: (text) => created.followUp(text) });
+				options.onChildSession?.({
+					steer: (text) => created.steer(text),
+					followUp: (text) => created.followUp(text),
+					stop: (reason) => {
+						if (sessionSettled || lifecycleFinished) return;
+						hostStopReason = reason;
+						abortChild();
+					},
+				});
 				messageBaseline = created.messages.length;
-				await created.prompt(`Task: ${task}`);
+				// A runtime replacement can stop a child that detached while it was still being created.
+				if (!hostStopReason) await created.prompt(`Task: ${task}`);
 				settle(undefined);
 			} catch (error) {
 				settle(error ?? new Error("Child session failed."));
@@ -1847,6 +1861,7 @@ async function runSyncCompletionInner(
 			metadataPath: artifactPathsResult?.metadataPath,
 			enabled: options.artifactConfig?.enabled !== false && options.artifactConfig?.includeMetadata !== false,
 			runId: options.runId,
+			parentSessionId: options.parentSessionId,
 			agent: agentName,
 			task,
 			result: target,
@@ -2205,6 +2220,7 @@ export async function runSync(
 				metadataPath: failedResult.artifactPaths?.metadataPath,
 				enabled: options.artifactConfig?.enabled !== false && options.artifactConfig?.includeMetadata !== false,
 				runId: options.runId,
+				parentSessionId: options.parentSessionId,
 				agent: failedResult.agent,
 				task: failedResult.task,
 				result: failedResult,

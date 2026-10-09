@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
 import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
-import { consumeSteerRequests, consumeStopRequestPayload } from "../../src/runs/background/control-channel.ts";
+import { consumeSteerRequests, consumeStopRequestPayload, interruptRequestPath } from "../../src/runs/background/control-channel.ts";
 import { removeResultIndex, resultFilePath, writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { TERMINAL_RUN_INDEX_DIR } from "../../src/runs/background/terminal-run-index.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
@@ -186,6 +186,23 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 }
 
 describe("async interrupt action", () => {
+	it("does not interrupt another running job when an explicit id cannot be resolved", async () => {
+		const state = createState();
+		const runId = `unrelated-coordinator-${Date.now().toString(36)}`;
+		const asyncDir = createRunningAsync(state, runId);
+		try {
+			for (const extra of [{}, { dir: asyncDir }]) {
+				const result = await executorWithKill(state, () => true)
+					.execute("interrupt", { action: "interrupt", id: "missing-exact-worker", ...extra }, new AbortController().signal, undefined, ctx());
+				assert.equal(result.isError, true);
+				assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
+				assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")).state, "running");
+			}
+		} finally {
+			cleanup(runId, asyncDir);
+		}
+	});
+
 	it("routes debug.run to async lifecycle debug, not live foreground status", async () => {
 		const state = createState();
 		state.currentSessionId = "session";

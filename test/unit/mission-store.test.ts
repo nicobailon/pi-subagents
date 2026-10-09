@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { handleMissionAction } from "../../src/missions/actions.ts";
+import { prepareMissionLaunch } from "../../src/missions/lifecycle.ts";
 import {
 	createMission,
 	listGlobalMissions,
@@ -22,6 +23,19 @@ function fixture() {
 	fs.mkdirSync(projectRoot, { recursive: true });
 	const location = resolveMissionStoreLocation({ projectRoot, agentDir });
 	return { root, projectRoot, agentDir, location };
+}
+
+// The real project sits one level deeper than the link, so "../x" names different
+// directories when resolved from each path.
+function symlinkedFixture() {
+	// .native also expands Windows 8.3 short names (RUNNER~1), matching the store's canonical root.
+	const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-missions-")));
+	const realRoot = path.join(root, "physical", "project");
+	const linkRoot = path.join(root, "link");
+	const agentDir = path.join(root, "agent");
+	fs.mkdirSync(realRoot, { recursive: true });
+	fs.symlinkSync(realRoot, linkRoot, process.platform === "win32" ? "junction" : "dir");
+	return { root, realRoot, linkRoot, agentDir };
 }
 
 async function waitForFile(filePath: string, timeoutMs = 10_000): Promise<void> {
@@ -45,6 +59,84 @@ describe("mission store", () => {
 			);
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("finds a mission through a symlinked project root and its real path", () => {
+		const test = symlinkedFixture();
+		// prepareMissionLaunch takes no agentDir, so point the default at the fixture.
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = test.agentDir;
+		try {
+			for (const [from, to] of [[test.realRoot, test.linkRoot], [test.linkRoot, test.realRoot]]) {
+				const created = handleMissionAction("mission.create", { mission: { title: "Linked", objective: "Find me" } }, { cwd: from, agentDir: test.agentDir });
+				const missionId = created.details?.missionId;
+				assert.ok(missionId);
+				const ctx = { cwd: to, agentDir: test.agentDir };
+				assert.equal(handleMissionAction("mission.show", { missionId }, ctx).details?.mission?.id, missionId);
+				assert.ok(handleMissionAction("mission.list", {}, ctx).details?.missions?.records?.some((record) => record.id === missionId));
+				assert.equal(prepareMissionLaunch({ projectRoot: to, params: { missionId } })?.missionId, missionId);
+			}
+			const missingRoot = path.join(test.realRoot, "not", "created");
+			const beforeCreate = resolveMissionStoreLocation({ projectRoot: path.join(test.linkRoot, "not", "created"), agentDir: test.agentDir });
+			assert.equal(beforeCreate.projectRoot, missingRoot);
+			fs.mkdirSync(missingRoot, { recursive: true });
+			assert.equal(resolveMissionStoreLocation({ projectRoot: missingRoot, agentDir: test.agentDir }).missionDir, beforeCreate.missionDir);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("reports a project root it cannot resolve instead of guessing a store", { skip: process.platform === "win32" ? "symlink loops need privileges on Windows" : undefined }, () => {
+		const test = symlinkedFixture();
+		try {
+			const loop = path.join(test.root, "loop");
+			fs.symlinkSync(loop, loop);
+			assert.throws(() => resolveMissionStoreLocation({ projectRoot: path.join(loop, "project"), agentDir: test.agentDir }), { code: "ELOOP" });
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("expands configured relative paths against the project root as given", () => {
+		const test = symlinkedFixture();
+		try {
+			const configured = resolveMissionStoreLocation({
+				projectRoot: test.linkRoot,
+				agentDir: test.agentDir,
+				config: { directory: "../missions", globalIndexDir: "../index" },
+			});
+			assert.equal(configured.projectRoot, test.linkRoot);
+			assert.equal(configured.missionDir, path.join(test.root, "missions"));
+			assert.equal(configured.globalIndexDir, path.join(test.root, "index"));
+			const indexOnly = resolveMissionStoreLocation({ projectRoot: test.linkRoot, agentDir: test.agentDir, config: { globalIndexDir: "../index" } });
+			assert.equal(indexOnly.globalIndexDir, path.join(test.root, "index"));
+			assert.equal(indexOnly.missionDir, resolveMissionStoreLocation({ projectRoot: test.realRoot, agentDir: test.agentDir }).missionDir);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("finds a mission through a differently cased project root on a case-insensitive filesystem", (t) => {
+		const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-missions-")));
+		try {
+			const upper = path.join(root, "Project");
+			const lower = path.join(root, "project");
+			fs.mkdirSync(upper);
+			if (!fs.existsSync(lower)) {
+				t.skip("case-sensitive filesystem");
+				return;
+			}
+			const agentDir = path.join(root, "agent");
+			const created = handleMissionAction("mission.create", { mission: { title: "Cased", objective: "Find me" } }, { cwd: upper, agentDir });
+			const missionId = created.details?.missionId;
+			assert.ok(missionId);
+			assert.equal(handleMissionAction("mission.show", { missionId }, { cwd: lower, agentDir }).details?.mission?.id, missionId);
+			assert.equal(resolveMissionStoreLocation({ projectRoot: lower, agentDir }).missionDir, resolveMissionStoreLocation({ projectRoot: upper, agentDir }).missionDir);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 

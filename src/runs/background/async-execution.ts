@@ -182,6 +182,8 @@ interface AsyncExecutionContext {
 	completionOwnerId?: string;
 	/** Parent session id used by permission-system ask forwarding. */
 	parentSessionId?: string;
+	/** Parent session file, recorded as each new child session's `parentSession` header. */
+	parentSessionFile?: string;
 	permissions?: PermissionConfig;
 	currentModelProvider?: string;
 	currentModel?: ParentModel;
@@ -1254,6 +1256,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		}
 		return {
 			parentSessionId: launchParentSessionId,
+			...(ctx.parentSessionFile ? { parentSessionFile: ctx.parentSessionFile } : {}),
 			permissionRules,
 			...(params.capabilityCeiling ? { capabilityCeiling: params.capabilityCeiling } : {}),
 			...(runFanoutPath ? { runFanoutPath } : {}),
@@ -1426,6 +1429,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const steps = params.attachRoot
 			? [{
 					parentSessionId: launchParentSessionId,
+					...(ctx.parentSessionFile ? { parentSessionFile: ctx.parentSessionFile } : {}),
 					agent: params.attachRoot.agent,
 					task: "",
 					label: params.attachRoot.label ?? `Attached root ${params.attachRoot.runId}`,
@@ -2198,6 +2202,7 @@ export function executeAsyncSingle(
 				steps: [
 					{
 						parentSessionId: launchParentSessionId,
+						...(ctx.parentSessionFile ? { parentSessionFile: ctx.parentSessionFile } : {}),
 						permissionRules,
 						...(capabilityCeiling ? { capabilityCeiling } : {}),
 						agent,

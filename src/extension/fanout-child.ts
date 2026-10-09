@@ -7,7 +7,7 @@ import { getArtifactsDir } from "../shared/artifacts.ts";
 import { createSubagentExecutor } from "../runs/foreground/subagent-executor.ts";
 import { resolveWaitToolConfig } from "../runs/background/wait-config.ts";
 import type { ChildRuntimeConfig } from "../runs/shared/child-runtime-config.ts";
-import { readNestedControlRequests, resolveInheritedNestedRoute, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
+import { nestedRunNotActiveMessage, readNestedControlRequests, resolveInheritedNestedRoute, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
 import { createNativeSupervisorChannel, NATIVE_SUPERVISOR_TOOL_NAME, resolveSupervisorChannelDir } from "../intercom/native-supervisor-channel.ts";
 import { readStatus } from "../shared/utils.ts";
@@ -96,7 +96,7 @@ function startNestedControlInboxListener(pi: ExtensionAPI, state: SubagentState,
 							try {
 								const control = state.foregroundControls.get(request.targetRunId);
 								if (!control) {
-									message = `Nested run ${request.targetRunId} is not active in this fanout child.`;
+									message = nestedRunNotActiveMessage(request.targetRunId);
 								} else if (request.action === "interrupt") {
 									ok = control.interrupt?.() === true;
 									message = ok

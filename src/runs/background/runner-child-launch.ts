@@ -39,6 +39,7 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		remoteSkillNames: step.skills,
 		remoteReads: step.remoteReads,
 		parentSessionId: step.parentSessionId,
+		parentSessionFile: step.parentSessionFile,
 		forkCacheKey: step.context === "fork" ? deriveForkPromptCacheKey(step.parentSessionId) : undefined,
 		sessionEnabled: attempt.sessionEnabled,
 		sessionDir: attempt.sessionDir,

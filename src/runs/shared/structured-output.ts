@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
+import { resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "./pi-spawn.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
 import type { ResolvedAcceptanceReportMode } from "./acceptance.ts";
 
@@ -175,17 +176,23 @@ async function importCompile(): Promise<CompileJsonSchema> {
 	} catch (error) {
 		failures.push(`direct import failed: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	const packageRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
-	if (packageRoot) {
+	// Pi's extension loader imports this compiled file natively, so the lazy import above misses
+	// Pi's host-package aliases when TypeBox is installed only in Pi's own tree (#2765).
+	const envRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
+	if (!envRoot) failures.push(`${PI_CODING_AGENT_PACKAGE_ROOT_ENV} is not set`);
+	const roots = new Map<string, string>();
+	for (const [label, root] of [[PI_CODING_AGENT_PACKAGE_ROOT_ENV, envRoot], ["running Pi package root", resolvePiPackageRoot()], ["installed Pi package root", resolveInstalledPiPackageRoot()]] as const) {
+		if (root && !roots.has(root)) roots.set(root, label);
+	}
+	if (roots.size === 0) failures.push("no Pi package root found");
+	for (const [root, label] of roots) {
 		try {
-			const compile = await resolveCompileFromPackageRoot(packageRoot);
+			const compile = await resolveCompileFromPackageRoot(root);
 			if (compile) return compile;
-			failures.push("Pi package root typebox/compile did not export a Compile function");
+			failures.push(`${label} ${root}: typebox/compile did not export a Compile function`);
 		} catch (error) {
-			failures.push(`Pi package root import failed: ${error instanceof Error ? error.message : String(error)}`);
+			failures.push(`${label} ${root}: ${error instanceof Error ? error.message : String(error)}`);
 		}
-	} else {
-		failures.push(`${PI_CODING_AGENT_PACKAGE_ROOT_ENV} is not set`);
 	}
 	throw new Error(`Cannot load typebox/compile for structured output validation (${failures.join("; ")})`);
 }

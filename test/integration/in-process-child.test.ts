@@ -12,6 +12,7 @@ import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
 import { createMockPi, createTempDir, events, makeAgent, makeAgentConfigs, removeTempDir } from "../support/helpers.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
+import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
 import { childSessionFactory, createDefaultChildSessionFactory, disposeChildSessions, type ChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
@@ -69,6 +70,35 @@ describe("in-process foreground child", () => {
 		} finally {
 			delete process.env.PI_SUBAGENT_CHILD_AGENT;
 		}
+	});
+
+	it("records the parent session in the run metadata and passes its file to the child session", async () => {
+		mockPi.onCall({ output: "done" });
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "parent-link",
+			parentSessionId: "parent-session-id",
+			parentSessionFile,
+			artifactsDir: path.join(tempDir, "artifacts"),
+			artifactConfig: { enabled: true, includeInput: false, includeOutput: false, includeMetadata: true },
+		});
+		assert.equal(result.exitCode, 0);
+		assert.ok(result.artifactPaths?.metadataPath);
+		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as { parentSessionId?: string };
+		assert.equal(metadata.parentSessionId, "parent-session-id");
+		assert.equal(mockPi.sessions[0]?.launch.parentSessionFile, parentSessionFile);
+	});
+
+	it("passes a detached runner step's parent session file to the child session", () => {
+		const launch = buildRunnerChildLaunch({
+			agent: "worker",
+			task: "Work",
+			inheritProjectContext: false,
+			inheritGlobalContext: false,
+			inheritSkills: false,
+			parentSessionFile: "/sessions/parent.jsonl",
+		}, { cwd: tempDir, id: "parent-file-runner", flatIndex: 0 }, { sessionEnabled: true, sessionDir: path.join(tempDir, "run-0"), watchdogStatus() {} });
+		assert.equal(launch.session.parentSessionFile, "/sessions/parent.jsonl");
 	});
 
 	it("projects authoritative native-machine Git evidence into the public foreground result", async () => {
@@ -560,6 +590,42 @@ describe("default child session factory", () => {
 			}
 		} finally {
 			removeTempDir(projectDir);
+		}
+	});
+
+	it("records the launching session as the parent of a new child session", async () => {
+		const host = await import("@earendil-works/pi-coding-agent");
+		const dir = createTempDir("pi-subagents-parent-session-");
+		try {
+			const parentSessionFile = path.join(dir, "parent.jsonl");
+			const forkedFile = path.join(dir, "forks", "forked.jsonl");
+			fs.mkdirSync(path.join(dir, "run-0"));
+			fs.mkdirSync(path.dirname(forkedFile));
+			fs.writeFileSync(forkedFile, `${JSON.stringify({ type: "session", version: 3, id: "forked", timestamp: new Date().toISOString(), cwd: dir, parentSession: "/sessions/source.jsonl" })}\n`);
+			const managers: InstanceType<typeof host.SessionManager>[] = [];
+			const pi = stubPi();
+			pi.SessionManager = host.SessionManager;
+			const createAgentSession = pi.createAgentSession;
+			pi.createAgentSession = (async (options: { sessionManager: InstanceType<typeof host.SessionManager> }) => {
+				managers.push(options.sessionManager);
+				return createAgentSession(options as Parameters<typeof createAgentSession>[0]);
+			}) as typeof createAgentSession;
+			const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+			const storages: ChildSessionLaunch["storage"][] = [
+				{ kind: "file", sessionFile: path.join(dir, "run-0", "session.jsonl") },
+				{ kind: "dir", sessionDir: path.join(dir, "run-1") },
+				{ kind: "file", sessionFile: forkedFile },
+			];
+			for (const storage of storages) await factory.create({ ...stubLaunch, cwd: dir, storage, parentSessionFile });
+			const headers = managers.map((manager) => {
+				manager.appendMessage({ role: "user", content: "Task", timestamp: Date.now() });
+				manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "Done" }], api: "test", provider: "test", model: "test", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now() });
+				return JSON.parse(fs.readFileSync(manager.getSessionFile()!, "utf-8").split("\n")[0]!) as { parentSession?: string };
+			});
+			// Pi records a fork's parent as the parent's session file; a forked child keeps the parent its fork recorded.
+			assert.deepEqual(headers.map((header) => header.parentSession), [parentSessionFile, parentSessionFile, "/sessions/source.jsonl"]);
+		} finally {
+			removeTempDir(dir);
 		}
 	});
 

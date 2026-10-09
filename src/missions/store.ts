@@ -282,18 +282,39 @@ export function validateMissionStoreConfig(value: unknown, label = "config.missi
 	};
 }
 
+// Resolve the existing prefix and keep the missing components in the store key.
+function canonicalProjectRoot(root: string): string {
+	const missing: string[] = [];
+	let current = root;
+	for (;;) {
+		try {
+			return path.join(fs.realpathSync.native(current), ...missing.reverse());
+		} catch (error) {
+			// Only a missing component walks upward; EACCES, ELOOP and the rest must surface.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			const parent = path.dirname(current);
+			if (parent === current) return root;
+			missing.push(path.basename(current));
+			current = parent;
+		}
+	}
+}
+
 export function resolveMissionStoreLocation(input: {
 	projectRoot: string;
 	config?: MissionStoreConfig;
 	agentDir?: string;
 }): MissionStoreLocation {
-	const projectRoot = path.resolve(input.projectRoot);
+	const givenRoot = path.resolve(input.projectRoot);
+	// The default store is keyed by a hash of the root, so two paths to one directory
+	// must hash the same. Configured paths keep expanding against the root as given.
+	const projectRoot = input.config?.directory ? givenRoot : canonicalProjectRoot(givenRoot);
 	const agentDir = input.agentDir ?? getAgentDir();
 	const missionDir = input.config?.directory
 		? expandConfiguredPath(input.config.directory, projectRoot)
 		: projectMissionDirectory(agentDir, projectRoot);
 	const globalIndexDir = input.config?.globalIndexDir
-		? expandConfiguredPath(input.config.globalIndexDir, projectRoot)
+		? expandConfiguredPath(input.config.globalIndexDir, givenRoot)
 		: path.join(agentDir, "missions", "index");
 	return {
 		projectRoot,
