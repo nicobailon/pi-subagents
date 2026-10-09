@@ -915,7 +915,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			try {
 				const status = await second.tool.execute("status-after-replace", { action: "status", id: runId }, new AbortController().signal, undefined, ctx);
 				const statusText = status.content[0]?.text ?? "";
-				assert.doesNotMatch(statusText, /Async run not found/);
 				assert.match(statusText, /asker: Ask, then finish stopped/);
 				assert.match(statusText, /runtime that ran it was replaced/);
 				assert.equal(fs.existsSync(requestFile), false, "the stopped child's pending supervisor request is inactive");

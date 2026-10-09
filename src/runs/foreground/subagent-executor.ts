@@ -6172,9 +6172,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								const journalFingerprint = workflowJournalFingerprints.get(notification.childKey);
 								if (journalFingerprint) appendWorkflowChildJournal(asyncDir, { type: "settle", key: notification.childKey, fingerprint: journalFingerprint, result: notification.result });
 								// Fresh, journal-reused and re-attached children all settle here, so their rows take usage from the same result.
-								const settledResults = notification.result.results;
-								const settledStep = settledResults?.length ? status.steps?.find((candidate) => candidate.workflowKey === notification.childKey) : undefined;
-								if (settledResults?.length && settledStep) {
+								const settledResults = notification.result.results ?? [];
+								const settledStep = settledResults.length ? status.steps?.find((candidate) => candidate.workflowKey === notification.childKey) : undefined;
+								if (settledStep) {
 									const usage = sumResultsUsage(settledResults);
 									settledStep.tokens = { input: usage.input, output: usage.output, total: usage.input + usage.output };
 									if (usage.turns > 0) settledStep.turnCount = usage.turns;

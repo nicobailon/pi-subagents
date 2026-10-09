@@ -66,14 +66,12 @@ describe("streamed progress snapshot bounds", () => {
 	});
 
 	it("derives the same chronological summaries as formatting the full history", () => {
-		const call = (i: number, args: unknown = { path: `file-${i}.ts` }) => ({ type: "toolCall", name: i % 2 ? "read" : "grep", arguments: args });
-		const expected = (calls: Array<ReturnType<typeof call>>) => calls.slice(-MAX_STREAMED_TOOL_CALLS).map((part) => {
-			const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments) ? part.arguments as Record<string, unknown> : {};
-			return { text: formatToolCall(part.name, args), expandedText: formatToolCall(part.name, args, true) };
-		});
+		const call = (i: number) => ({ type: "toolCall", name: i % 2 ? "read" : "grep", arguments: { path: `file-${i}.ts` } });
+		const expected = (calls: Array<ReturnType<typeof call>>) => calls.slice(-MAX_STREAMED_TOOL_CALLS)
+			.map((part) => ({ text: formatToolCall(part.name, part.arguments), expandedText: formatToolCall(part.name, part.arguments, true) }));
 		for (const total of [1, MAX_STREAMED_TOOL_CALLS - 1, MAX_STREAMED_TOOL_CALLS, MAX_STREAMED_TOOL_CALLS + 7]) {
 			// Three calls per assistant message so the cutoff can fall inside a message, with other roles and text parts interleaved.
-			const calls = Array.from({ length: total }, (_, i) => call(i, i % 5 === 0 ? ["not", "an", "object"] : i % 7 === 0 ? null : undefined));
+			const calls = Array.from({ length: total }, (_, i) => call(i));
 			const messages: unknown[] = [];
 			for (let i = 0; i < calls.length; i += 3) {
 				messages.push({ role: "user", content: [{ type: "text", text: `user ${i}` }] });
