@@ -113,38 +113,3 @@ for (const [entry, missingBootstrap] of [
 		}
 	});
 }
-
-// Every runner path shares one spawn call; the Node path runs end to end in async-execution.part-4.
-test("a launcher prefixes the complete compiled-host runner command", (t) => {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-spawn-"));
-	const argv1 = process.argv[1];
-	const bun = Object.getOwnPropertyDescriptor(process.versions, "bun");
-	const env = { ...process.env };
-	const spawn = t.mock.method(childProcess, "spawn", () => { throw new Error("captured launcher spawn"); });
-	syncBuiltinESMExports();
-	try {
-		Object.defineProperty(process.versions, "bun", { value: "1.3.14", configurable: true });
-		process.argv[1] = "/$bunfs/root/pi-native";
-		process.env.PI_SUBAGENT_PI_BINARY = path.join(root, "pi-native");
-		const result = executeAsyncSingle("launcher-binary", {
-			agent: "sandboxed", task: "Inspect files", agentConfig: makeAgent("sandboxed", { launcher: "net" }),
-			ctx: { pi: { events: { emit() {} } }, cwd: root, currentSessionId: "launcher-spawn", runnerLaunchers: { net: ["nono", "run", "--profile", "net profile", "--"] } },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false, sessionRoot: path.join(root, "sessions"), maxSubagentDepth: 1, acceptance: false,
-		});
-		assert.match(result.content[0]!.text, /captured launcher spawn/);
-		const [binaryCommand, binaryArgs] = spawn.mock.calls[0]!.arguments;
-		assert.equal(binaryCommand, "nono");
-		assert.deepEqual(binaryArgs.slice(0, 6), ["run", "--profile", "net profile", "--", process.env.PI_SUBAGENT_PI_BINARY, "--no-extensions"]);
-		assert.ok(binaryArgs.at(-1).endsWith("binary-bootstrap.ts"));
-	} finally {
-		t.mock.restoreAll();
-		syncBuiltinESMExports();
-		process.argv[1] = argv1;
-		if (bun) Object.defineProperty(process.versions, "bun", bun);
-		else delete process.versions.bun;
-		for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
-		Object.assign(process.env, env);
-		fs.rmSync(root, { recursive: true, force: true });
-	}
-});

@@ -22,7 +22,7 @@ import {
 } from "../../shared/types.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
 import { getAgentDir } from "../../shared/utils.ts";
-import { resolveRuntimeModulePath, runtimeModuleExtensions } from "../../shared/runtime-module-path.ts";
+import { resolveRuntimeModulePath, RUNTIME_MODULE_EXTENSIONS } from "../../shared/runtime-module-path.ts";
 import type { PermissionRules } from "./permissions.ts";
 import { snapshotRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 import {
@@ -37,32 +37,15 @@ const MAX_LAUNCH_RESOLVED_EXTENSION_IDS = 32;
 const RUNTIME_EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FANOUT_CHILD_EXTENSION_DIR = path.join(RUNTIME_EXTENSION_DIR, "..", "..", "extension");
 
-// Resolved lazily (per launch, not once at module load): the installed package
-// may be replaced in place while a Pi process is running, so the sibling files
-// on disk — not the running module's own extension — decide the paths.
-function promptRuntimeExtensionPath(): string {
-	return resolveRuntimeModulePath(RUNTIME_EXTENSION_DIR, "subagent-prompt-runtime");
-}
-function fanoutChildExtensionPath(): string {
-	return resolveRuntimeModulePath(FANOUT_CHILD_EXTENSION_DIR, "fanout-child");
-}
-function fastModeExtensionPath(): string {
-	return resolveRuntimeModulePath(RUNTIME_EXTENSION_DIR, "fast-mode-extension");
-}
+const SUBAGENT_RUNTIME_EXTENSION_PATHS = new Set([
+	path.join(RUNTIME_EXTENSION_DIR, "subagent-prompt-runtime"),
+	path.join(RUNTIME_EXTENSION_DIR, "fast-mode-extension"),
+	path.join(FANOUT_CHILD_EXTENSION_DIR, "fanout-child"),
+].flatMap((base) => RUNTIME_MODULE_EXTENSIONS.map((extension) => path.normalize(`${base}${extension}`))));
 
 /** True for the extension files pi-subagents itself installs in child sessions. */
 export function isSubagentRuntimeExtensionPath(extensionPath: string): boolean {
-	const normalized = path.normalize(extensionPath);
-	for (const [dir, basename] of [
-		[RUNTIME_EXTENSION_DIR, "subagent-prompt-runtime"],
-		[RUNTIME_EXTENSION_DIR, "fast-mode-extension"],
-		[FANOUT_CHILD_EXTENSION_DIR, "fanout-child"],
-	] as const) {
-		for (const extension of runtimeModuleExtensions()) {
-			if (normalized === path.normalize(path.join(dir, `${basename}${extension}`))) return true;
-		}
-	}
-	return false;
+	return SUBAGENT_RUNTIME_EXTENSION_PATHS.has(path.normalize(extensionPath));
 }
 // Priority tier is an OpenAI-Codex request field; other providers reject or ignore it.
 const FAST_MODE_PROVIDER_PREFIX = "openai-codex/";
@@ -130,7 +113,7 @@ function resolveFastModeExtension(input: Pick<ResolvePiLaunchToolPlanInput, "fas
 	if (unsupported.length > 0) {
 		throw new Error(`fast mode supports only native ${FAST_MODE_PROVIDER_PREFIX}* models; unsupported model${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}.`);
 	}
-	return [fastModeExtensionPath()];
+	return [resolveRuntimeModulePath(RUNTIME_EXTENSION_DIR, "fast-mode-extension")];
 }
 
 export interface ResolvePiLaunchToolPlanInput {
@@ -421,10 +404,11 @@ export function resolvePiLaunchToolPlan(
 			: undefined;
 	if (input.fast && capabilityCeiling?.denyExtensions) throw new Error("fast mode requires a child runtime extension, but this launch denies extensions.");
 	const fastModeExtensions = resolveFastModeExtension({ fast: input.fast, model: input.model, agentName: input.agentName });
+	// Resolved per launch: an in-place package update can swap a sibling's .ts for .js.
 	const runtimeExtensions = [
-		promptRuntimeExtensionPath(),
+		resolveRuntimeModulePath(RUNTIME_EXTENSION_DIR, "subagent-prompt-runtime"),
 		...fastModeExtensions,
-		...(fanoutAuthorized ? [fanoutChildExtensionPath()] : []),
+		...(fanoutAuthorized ? [resolveRuntimeModulePath(FANOUT_CHILD_EXTENSION_DIR, "fanout-child")] : []),
 		...(permSystemExt ? [permSystemExt] : []),
 	];
 	const disableAmbientExtensions =

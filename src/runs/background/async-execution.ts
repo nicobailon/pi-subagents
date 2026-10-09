@@ -159,9 +159,7 @@ function resolveJitiCliPath(): string | undefined {
 
 const jitiCliPath = resolveJitiCliPath();
 const asyncRunnerModuleDir = path.dirname(fileURLToPath(import.meta.url));
-// Resolved lazily so an in-place package update (a TypeScript source layout
-// replaced by the compiled JavaScript one) cannot leave a running process
-// pointing at a sibling file that has been removed.
+// Resolved per launch: an in-place package update can swap a sibling's .ts for .js.
 function asyncRunnerSourcePath(): string {
 	return resolveRuntimeModulePath(asyncRunnerModuleDir, "subagent-runner-bootstrap");
 }
@@ -1573,7 +1571,7 @@ export function executeAsyncChain(
 		return formatAsyncStartError(resultMode, built.error);
 	}
 	const { steps, runnerCwd, workflowGraph, eventChain } = built;
-	const launcher = built.launcher === undefined ? undefined : lookupRunnerLauncher(ctx.runnerLaunchers, built.launcher)!;
+	const launcher = built.launcher === undefined ? undefined : lookupRunnerLauncher(ctx.runnerLaunchers, built.launcher);
 	const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
 	const initialUsageBudget = usageBudgetState(params.usageBudget, undefined);
 	let childTargetIndex = 0;

@@ -328,7 +328,7 @@ Package skill content.
 		assert.throws(() => loadConfig(), /config\.disabledFeatures entry "watchdogs" is not one of:/);
 	});
 
-	it("loads runnerLaunchers and fails closed on malformed launchers or other invalid values", () => {
+	it("loads runnerLaunchers and fails closed on malformed launchers", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		const runnerLaunchers = { net: ["nono", "run", "--profile", " net ", "--"], "subagent-net": ["subagent-net"], "net.v2_x-1": ["wrap"] };
 		writeFile(configPath, JSON.stringify({ runnerLaunchers }));
@@ -337,8 +337,6 @@ Package skill content.
 			writeFile(configPath, JSON.stringify({ runnerLaunchers: invalid }));
 			assert.throws(() => loadConfig(), /config\.runnerLaunchers.*(?:letters, digits|argv array|JSON object)/);
 		}
-		writeFile(configPath, JSON.stringify({ resultScanLogging: "bogus", runnerLaunchers }));
-		assert.throws(() => loadConfig(), /config\.resultScanLogging must be/);
 	});
 
 	it("fails config load for invalid scheduledRuns because it controls the tool schema", () => {
@@ -389,7 +387,7 @@ Package skill content.
 
 	it("fails closed instead of dropping restrictions when another config value is invalid", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-		for (const restriction of [{ authorityPolicy: { stopRun: "forbid" } }, { permissions: { rules: { write: "deny" } } }, { toolBudget: { hard: 5 } }]) {
+		for (const restriction of [{ authorityPolicy: { stopRun: "forbid" } }, { permissions: { rules: { write: "deny" } } }, { toolBudget: { hard: 5 } }, { runnerLaunchers: { net: ["nono"] } }]) {
 			writeFile(configPath, JSON.stringify({ resultScanLogging: "bogus", ...restriction }));
 			assert.throws(() => loadConfig(), /config\.resultScanLogging must be/);
 		}
