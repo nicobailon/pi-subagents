@@ -100,6 +100,19 @@ it("holds a pending wake until its run starts, and abandons it only once an idle
 	setIdle(false);
 	assert.equal(wake.isPending(), true, "a busy parent may still be in the wake's preflight");
 	setIdle(true);
+
+it("shares one idle wake per session with other extensions, such as pi-intercom", () => {
+	const manager = SessionManager.inMemory();
+	const reservations = (globalThis as Record<symbol, WeakMap<object, { sessionId: string; sentAt?: number }>>)[Symbol.for("pi.idle-wake.v1")];
+	const { wake, wakes } = createHarness(manager);
+	reservations.set(manager, { sessionId: manager.getSessionId(), sentAt: 0 });
+	wake.sendMessage(notice("during the other wake's preflight"), { triggerTurn: true });
+	assert.equal(wakes(), 0, "a second wake prompt in that preflight throws in Pi");
+	wake.agentStarted();
+	wake.sendMessage(notice("after start"), { triggerTurn: true });
+	assert.equal(wakes(), 1);
+	assert.equal(reservations.get(manager)?.sentAt, 0, "other extensions see this wake");
+});
 	assert.equal(wake.isPending(), false, "an idle parent past the deadline has abandoned the wake");
 });
 

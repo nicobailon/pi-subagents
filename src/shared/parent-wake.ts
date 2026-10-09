@@ -6,8 +6,10 @@ export const PARENT_WAKE_TEXT = "Inspect subagent updates above. Answer pending 
 const WAKE_PENDING_MS = 10_000;
 
 // Reload replaces extension instances, not Pi's session manager or a wake prompt in preflight.
+// The key and shape are shared with pi-intercom's idle wake: Pi marks a run active only after the
+// prompt's async preflight, so a second extension's wake sent in that gap throws in agent.prompt().
 type WakeReservation = { sessionId: string; sentAt?: number };
-const reservationsSymbol = Symbol.for("pi-subagents.parent-wake-reservations.v1");
+const reservationsSymbol = Symbol.for("pi.idle-wake.v1");
 const wakeGlobal = globalThis as typeof globalThis & { [reservationsSymbol]?: WeakMap<object, WakeReservation> };
 const reservations = wakeGlobal[reservationsSymbol] ?? (wakeGlobal[reservationsSymbol] = new WeakMap<object, WakeReservation>());
 
@@ -27,9 +29,20 @@ export interface ParentWake {
 }
 
 export function createParentWake(pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">, now: () => number = Date.now): ParentWake {
-	let ctx!: Pick<ExtensionContext, "isIdle">;
-	let reservation: WakeReservation = { sessionId: "" };
-	const reserved = () => reservation.sentAt !== undefined && now() - reservation.sentAt < WAKE_PENDING_MS;
+	let ctx!: Pick<ExtensionContext, "isIdle" | "sessionManager">;
+	// Look the reservation up on every access: another extension may have created this session's entry.
+	const reservation = (): WakeReservation => {
+		const sessionId = ctx.sessionManager.getSessionId();
+		const current = reservations.get(ctx.sessionManager);
+		if (current?.sessionId === sessionId) return current;
+		const next = { sessionId };
+		reservations.set(ctx.sessionManager, next);
+		return next;
+	};
+	const reserved = () => {
+		const { sentAt } = reservation();
+		return sentAt !== undefined && now() - sentAt < WAKE_PENDING_MS;
+	};
 	return {
 		sendMessage(message, options) {
 			if (options?.triggerTurn !== true) {
@@ -42,25 +55,21 @@ export function createParentWake(pi: Pick<ExtensionAPI, "sendMessage" | "sendUse
 			}
 			pi.sendMessage(message, { triggerTurn: false });
 			if (!reserved()) {
-				reservation.sentAt = now();
+				reservation().sentAt = now();
 				// Steer queues the wake if another prompt starts the run first.
 				pi.sendUserMessage(PARENT_WAKE_TEXT, { deliverAs: "steer" });
 			}
 			return true;
 		},
-		isPending: () => reservation.sentAt !== undefined && (reserved() || !ctx.isIdle()),
+		isPending: () => reservation().sentAt !== undefined && (reserved() || !ctx.isIdle()),
 		bindSession(context) {
 			ctx = context;
-			const sessionId = context.sessionManager.getSessionId();
-			const retained = reservations.get(context.sessionManager);
-			reservation = retained?.sessionId === sessionId ? retained : { sessionId };
-			reservations.set(context.sessionManager, reservation);
 		},
 		agentStarted() {
-			reservation.sentAt = undefined;
+			reservation().sentAt = undefined;
 		},
 		sessionShutdown(reason) {
-			if (reason !== "reload") reservation.sentAt = undefined;
+			if (reason !== "reload") reservation().sentAt = undefined;
 		},
 	};
 }
