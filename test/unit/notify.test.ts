@@ -22,6 +22,7 @@ import registerSubagentNotify, {
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
 import { createParentWake } from "../../src/shared/parent-wake.ts";
+import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 const completionContent = (content: string) => `${content}\n\nParent action: Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.`;
@@ -1340,6 +1341,28 @@ describe("completion notice output size", () => {
 			assert.match(short, /worker:\nshort output/);
 			assert.doesNotMatch(short, /Full output:/);
 			assert.ok(notice(output, join(root, "missing.md")).includes(output), "without a full-output file the output stays inline");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("caps a long output saved to an explicit output file and keeps the saved-file line", () => {
+		const root = mkdtempSync(join(tmpdir(), "notify-output-saved-"));
+		try {
+			const output = longOutput("saved");
+			const savedPath = join(root, "report.md");
+			const artifact = join(root, "worker_output.md");
+			writeFileSync(savedPath, output);
+			writeFileSync(artifact, output);
+			const { displayOutput } = finalizeSingleOutput({ fullOutput: output, outputPath: savedPath, exitCode: 0, savedPath });
+			const content = formatSingleCompletion(buildCompletionDetails({
+				agent: "worker", success: true, summary: `worker:\n${displayOutput}`,
+				results: [{ agent: "worker", success: true, output: displayOutput, artifactPaths: { outputPath: artifact } }],
+			}));
+			assert.ok(content.includes(output.slice(0, 1_500)));
+			assert.ok(!content.includes("saved line 199"), `expected a capped notice, got ${content.length} chars`);
+			assert.match(content, /\nOutput saved to: .*report\.md \(\d+\.\d KB, 200 lines\)\. Read this file if needed\./);
+			assert.doesNotMatch(content, /Full output:/);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

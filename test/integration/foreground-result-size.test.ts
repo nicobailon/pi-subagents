@@ -206,4 +206,24 @@ describe("foreground result payload compaction", { skip: !available ? "subagent 
 		assert.ok(fullOutputPath, text.slice(-300));
 		assert.ok(fs.readFileSync(fullOutputPath, "utf-8").includes(output));
 	});
+
+	it("caps a long foreground output saved to an explicit output file and keeps the saved-file line", async () => {
+		const output = Array.from({ length: 200 }, (_, index) => `saved line ${index} ${"x".repeat(40)}`).join("\n");
+		mockPi.onCall({ jsonl: [events.assistantMessage(output)] });
+
+		const result = await makeExecutor(tempDir).execute(
+			"id",
+			{ agent: "tester", task: "Write a long report", output: "report.md" },
+			new AbortController().signal,
+			undefined,
+			makeCtx(tempDir),
+		);
+
+		const text = result.content[0]?.text ?? "";
+		assert.ok(text.includes(output.slice(0, 1_500)));
+		assert.ok(!text.includes("saved line 199"), `expected a capped result, got ${text.length} chars`);
+		const savedPath = text.match(/\nOutput saved to: (.+) \(\d+\.\d KB, 200 lines\)\. Read this file if needed\./)?.[1];
+		assert.ok(savedPath, text.slice(-300));
+		assert.ok(fs.readFileSync(savedPath, "utf-8").includes(output));
+	});
 });

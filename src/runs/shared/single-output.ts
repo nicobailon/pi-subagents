@@ -175,25 +175,32 @@ export function formatSavedOutputReference(savedPath: string, fullOutput: string
 }
 
 export const INLINE_OUTPUT_HEAD_CHARS = 2_000;
+/** The line finalizeSingleOutput appends when inline output was also saved to an explicit output file. */
+const SAVED_OUTPUT_LINE = /\n\nOutput saved to: (.+) \([^()\n]*\)\. Read this file if needed\.$/;
 
 /**
  * Keeps at most INLINE_OUTPUT_HEAD_CHARS of a child's output inline and points to the file holding all of it.
+ * Output that ends with an `Output saved to:` line keeps that line as the pointer, checked against the saved file.
  * Output stays whole when it is short or no readable file contains it, so no text is lost.
  */
 export function capInlineOutput(output: string, fullOutputPath: string | undefined): string {
-	if (output.length <= INLINE_OUTPUT_HEAD_CHARS || !fullOutputPath) return output;
+	const savedLine = output.match(SAVED_OUTPUT_LINE);
+	const body = savedLine ? output.slice(0, savedLine.index) : output;
+	const filePath = savedLine ? savedLine[1] : fullOutputPath;
+	if (body.length <= INLINE_OUTPUT_HEAD_CHARS || !filePath) return output;
 	let fullOutput: string;
 	try {
-		fullOutput = fs.readFileSync(fullOutputPath, "utf-8");
+		fullOutput = fs.readFileSync(filePath, "utf-8");
 	} catch {
 		return output;
 	}
-	if (!fullOutput.includes(output)) return output;
-	const lineEnd = output.lastIndexOf("\n", INLINE_OUTPUT_HEAD_CHARS);
+	if (!fullOutput.includes(body)) return output;
+	const lineEnd = body.lastIndexOf("\n", INLINE_OUTPUT_HEAD_CHARS);
 	let end = lineEnd >= INLINE_OUTPUT_HEAD_CHARS - 200 ? lineEnd : INLINE_OUTPUT_HEAD_CHARS;
-	if (/[\uD800-\uDBFF]/.test(output[end - 1] ?? "")) end -= 1;
-	const reference = formatSavedOutputReference(fullOutputPath, fullOutput);
-	return `${output.slice(0, end)}\n…\nFull output: ${reference.path} (${formatByteSize(reference.bytes)}, ${reference.lines} ${reference.lines === 1 ? "line" : "lines"}). Read it if needed.`;
+	if (/[\uD800-\uDBFF]/.test(body[end - 1] ?? "")) end -= 1;
+	if (savedLine) return `${body.slice(0, end)}\n…${output.slice(body.length)}`;
+	const reference = formatSavedOutputReference(filePath, fullOutput);
+	return `${body.slice(0, end)}\n…\nFull output: ${reference.path} (${formatByteSize(reference.bytes)}, ${reference.lines} ${reference.lines === 1 ? "line" : "lines"}). Read it if needed.`;
 }
 
 /** Applies capInlineOutput to each `agent:\noutput` section of a run summary whose child output is long. */
