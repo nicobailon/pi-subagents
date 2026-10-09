@@ -1444,7 +1444,8 @@ async function runSingleAttempt(
 					},
 				});
 				messageBaseline = created.messages.length;
-				await created.prompt(`Task: ${task}`);
+				// A runtime replacement can stop a child that detached while it was still being created.
+				if (!hostStopReason) await created.prompt(`Task: ${task}`);
 				settle(undefined);
 			} catch (error) {
 				settle(error ?? new Error("Child session failed."));

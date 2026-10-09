@@ -4217,6 +4217,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const interruptController = new AbortController();
 	let detachForeground: ((reason?: string) => boolean) | undefined;
 	let childSessionControls: ForegroundChildSessionControls | undefined;
+	let pendingRuntimeStop: string | undefined;
 	const foregroundControl = deps.state.foregroundControls.get(runId);
 	const syncHerdrForegroundChild = () => {
 		if (!foregroundControl?.parentWorkflowRunId) return;
@@ -4296,7 +4297,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
 			requiredExtensions,
 			childRuntime: deps.childRuntime,
-			onChildSession: (controls) => { childSessionControls = controls; },
+			onChildSession: (controls) => {
+				childSessionControls = controls;
+				if (pendingRuntimeStop) controls.stop(pendingRuntimeStop);
+			},
 			context: data.contextPolicy.contextForAgent(params.agent!),
 			unknownAgentDiagnosticContext: data.unknownAgentDiagnosticContext,
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
@@ -4404,7 +4408,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				const sessionFile = childSessionFile && fs.existsSync(childSessionFile) ? childSessionFile : undefined;
 				const stopped = { ...launched, detached: undefined, stopped: true, exitCode: 1, error: RUNTIME_REPLACED_STOP_ERROR, finalOutput: RUNTIME_REPLACED_STOP_ERROR, sessionFile };
 				rememberForegroundRun(deps.state, { modelResponseAliases, runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: [stopped], params, effectiveOutput, effectiveOutputMode, extensionBindings: params.extensionBindings, requiredExtensions });
-				childSessionControls?.stop(RUNTIME_REPLACED_STOP_ERROR);
+				// A child detached during creation has no controls yet; stop it as soon as they arrive.
+				if (childSessionControls) childSessionControls.stop(RUNTIME_REPLACED_STOP_ERROR);
+				else pendingRuntimeStop = RUNTIME_REPLACED_STOP_ERROR;
 			};
 		}
 		r = launched.detached && detachedWorkflowChild ? await detachedWorkflowChild : launched;
