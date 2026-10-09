@@ -1071,7 +1071,7 @@ export default function registerSubagentNotify(
 			batchers.clear();
 			// Retained state belongs to the session manager; disposal must not erase it on reload.
 			unansweredCompletions = new Map();
-			for (const unsubscribe of [unsubscribeAsync, unsubscribeForeground, unsubscribeSettle]) {
+			for (const unsubscribe of [unsubscribeAsync, unsubscribeForeground]) {
 				try {
 					unsubscribe?.();
 				} catch {

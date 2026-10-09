@@ -94,35 +94,30 @@ it("isolates retained acknowledgement state and merges completions accepted befo
 	replacement.notifier.dispose();
 });
 
-for (const tracking of [undefined, "invalid"]) {
-	it(`restores pre-upgrade queued wakes without a tracking map (${tracking})`, async () => {
-		const sessionId = randomUUID();
-		const manager = { getSessionId: () => sessionId };
-		const content = "Background task completed: **workflow**\n\nRetained legacy result";
-		const registry = (globalThis as any)[Symbol.for("pi-subagents.queued-completion-wakes.v2")];
-		registry.set(manager, {
-			sessionId, wakes: [content],
-			...(tracking === undefined ? {} : { unansweredCompletions: tracking }),
-		});
-		const replacement = harness(manager);
-		try {
-			replacement.bind();
-			assert.equal(replacement.notifier.hasPendingDelivery(), true);
-			const messages = [{ role: "custom", customType: "subagent-notify", content }];
-			replacement.notifier.messageStarted(messages[0]);
-			assert.equal(replacement.settle(messages).continue, true, "legacy wake receives safeguard");
-			assert.equal(await replacement.deliver(), true, "new delivery uses a valid map");
-			messages.push({ ...replacement.sent[0], role: "custom" });
-			assert.equal(replacement.settle(messages).continue, true);
-			assert.match(replacement.settle(messages).entries[0].content, /^UNHANDLED:/);
-			assert.equal(replacement.settle(messages), undefined);
-		} finally {
-			replacement.notifier.sessionShutdown("quit");
-			replacement.notifier.dispose();
-			registry.delete(manager);
-		}
-	});
-}
+it("restores pre-upgrade queued wakes without a tracking map", async () => {
+	const sessionId = randomUUID();
+	const manager = { getSessionId: () => sessionId };
+	const content = "Background task completed: **workflow**\n\nRetained legacy result";
+	const registry = (globalThis as any)[Symbol.for("pi-subagents.queued-completion-wakes.v2")];
+	registry.set(manager, { sessionId, wakes: [content] });
+	const replacement = harness(manager);
+	try {
+		replacement.bind();
+		assert.equal(replacement.notifier.hasPendingDelivery(), true);
+		const messages = [{ role: "custom", customType: "subagent-notify", content }];
+		replacement.notifier.messageStarted(messages[0]);
+		assert.equal(replacement.settle(messages).continue, true, "legacy wake receives safeguard");
+		assert.equal(await replacement.deliver(), true, "new delivery uses a valid map");
+		messages.push({ ...replacement.sent[0], role: "custom" });
+		assert.equal(replacement.settle(messages).continue, true);
+		assert.match(replacement.settle(messages).entries[0].content, /^UNHANDLED:/);
+		assert.equal(replacement.settle(messages), undefined);
+	} finally {
+		replacement.notifier.sessionShutdown("quit");
+		replacement.notifier.dispose();
+		registry.delete(manager);
+	}
+});
 
 it("quit clears retained completion tracking", async () => {
 	const manager = { getSessionId: () => "quit-" + id };

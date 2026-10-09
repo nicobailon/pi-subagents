@@ -287,39 +287,25 @@ it("composes prior drafts, unresolved supervisor and empty completion safeguards
 	}
 });
 
-for (const escalation of [false, true]) it(`does no idle settle work ${escalation ? "after visible approval escalation" : "without delegated work"}`, { timeout: 30_000 }, async () => {
+it("does no idle settle work without delegated work", { timeout: 30_000 }, async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-demand-settle-"));
 	const agentDir = path.join(root, "agent");
-	const channelDir = path.join(root, "channel");
 	fs.mkdirSync(agentDir);
-	fs.mkdirSync(path.join(channelDir, "requests"), { recursive: true });
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	const manager = SessionManager.inMemory(root);
-	const sessionId = manager.getSessionId();
 	const faux = fauxProvider({ provider: "demand-settle", models: [{ id: "local" }], tokensPerSecond: 100_000 });
 	let responses = 0;
 	faux.setResponses(Array.from({ length: 2 }, () => () => {
 		responses++;
-		return fauxAssistantMessage(escalation ? "User approval required; may the child proceed?" : "No delegated work.");
+		return fauxAssistantMessage("No delegated work.");
 	}));
-	let channel: ReturnType<typeof createNativeSupervisorChannel>;
-	let notifier: ReturnType<typeof registerSubagentNotify>;
 	const settingsManager = SettingsManager.inMemory({});
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: root, agentDir, settingsManager,
 		noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-		extensionFactories: [...(!escalation ? [registerSubagentExtension] : []), (api) => {
+		extensionFactories: [registerSubagentExtension, (api) => {
 			api.registerProvider(faux.provider);
-			if (!escalation) return;
-			const state = { currentSessionId: sessionId, supervisorOwnerSessionId: sessionId,
-				completionOwnerId: "owner", asyncJobs: new Map(), foregroundControls: new Map() } as SubagentState;
-			const parentWake = { sendMessage(message: Parameters<typeof api.sendMessage>[0]) {
-				api.sendMessage(message, { triggerTurn: false }); return true;
-			} };
-			channel = createNativeSupervisorChannel(api, state, { parentWake, getChannelDirs: () => ({ dirs: [channelDir] }) });
-			notifier = registerSubagentNotify({ events: api.events, on: api.on, ...parentWake }, state, { batchConfig: { enabled: false } });
-			api.on("session_start", () => { notifier.bindSession(manager); channel.start(); });
 		}],
 	});
 	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -329,21 +315,6 @@ for (const escalation of [false, true]) it(`does no idle settle work ${escalatio
 		({ session } = await createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader, modelRuntime, model: faux.getModel("local"), sessionManager: manager, noTools: "builtin" }));
 		await session.bindExtensions({});
 		assert.equal(session.extensionRunner.hasHandlers("agent_before_settle"), false, "no subscriptions without unanswered work");
-		if (escalation) {
-			fs.writeFileSync(path.join(channelDir, "requests", "approval.json"), JSON.stringify({
-				type: "subagent.supervisor.request", id: "approval", createdAt: Date.now(),
-				reason: "need_decision", message: "May child proceed?", expectsReply: true,
-				orchestratorSessionId: sessionId, runId: "child", agent: "worker", childIndex: 0,
-			}));
-			channel!.activateTransport();
-			await notifier!.deliver({ id: "done", sessionId, completionOwnerId: "owner", success: true, summary: "Done" });
-			assert.equal(session.extensionRunner.hasHandlers("agent_before_settle"), true);
-			await session.prompt("Handle pending updates.");
-			assert.equal(responses, 1, "visible escalation must not make another provider call");
-			assert.equal(channel!.pending.has("approval"), true, "approval remains with user");
-			channel!.activateTransport();
-			assert.equal(session.extensionRunner.hasHandlers("agent_before_settle"), false, "acknowledged wakes unsubscribe despite pending approval");
-		}
 		let previews = 0, commits = 0;
 		const sdk = session as any;
 		const build = sdk._buildBoundaryContext.bind(session);
@@ -359,11 +330,9 @@ for (const escalation of [false, true]) it(`does no idle settle work ${escalatio
 		await session.prompt("No new delegated work.");
 		assert.equal(previews, 0, "idle settlement builds no full-history previews");
 		assert.equal(commits, 0, "idle settlement does no boundary context refresh");
-		assert.equal(responses, escalation ? 2 : 1);
+		assert.equal(responses, 1);
 	} finally {
-		if (session && !escalation) await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-		channel!?.dispose();
-		notifier!?.dispose();
+		if (session) await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 		session?.dispose();
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;

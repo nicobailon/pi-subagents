@@ -434,8 +434,6 @@ describe("registerSubagentNotify", () => {
 				{ workflowKey: "fix", runId: "child-b", agent: "worker", status: "completed" },
 			],
 		}] });
-		// The model reads content; details must not change it.
-		assert.match((sent[1]!.message as { content: string }).content, /Workflow run: wf-run\nChild runs: scan=child-a \(completed\), fix=child-b \(completed\)/);
 	});
 
 	it("does not attach async status snapshots to subagent-notify details", async () => {

@@ -174,7 +174,7 @@ export function formatSavedOutputReference(savedPath: string, fullOutput: string
 	};
 }
 
-export const INLINE_OUTPUT_HEAD_CHARS = 2_000;
+const INLINE_OUTPUT_HEAD_CHARS = 2_000;
 /** Larger files are not read to check a cap; the output then stays whole. */
 const MAX_FULL_OUTPUT_FILE_BYTES = 50 * 1024 * 1024;
 /** The line finalizeSingleOutput appends when inline output was also saved to an explicit output file. */

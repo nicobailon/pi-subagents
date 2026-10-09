@@ -472,11 +472,9 @@ export function resultPayloadPathForIndexedRun(resultsDir: string, runId: string
 			fs.rmSync(entryPath, { force: true });
 			return undefined;
 		}
-		const location = resultPayloadLocationFromIndex(resultsDir, entry);
-		if (location) return location.path;
 		// A valid index can precede its payload while the writer is publishing it, so a lookup
 		// must not delete it. Payload-less indexes are swept by age in cleanupResultIndexes.
-		return undefined;
+		return resultPayloadLocationFromIndex(resultsDir, entry)?.path;
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
 		if (isUnaddressableResultCandidate(error)) return undefined;

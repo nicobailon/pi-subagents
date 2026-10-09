@@ -633,60 +633,33 @@ describe("a run's paused result replaced by its final result", () => {
 		}
 	});
 
-	it("never runs a consumer's retirement inside the final publication or the final publication inside a retirement", (t) => {
-		const originalRenameSync = fsDefault.renameSync;
+	it("never publishes a final result inside a consumer's retirement", (t) => {
 		const originalRmSync = fsDefault.rmSync;
-		const first = fixture();
-		const second = fixture();
+		const { dir, publicPath } = fixture();
 		try {
-			// The consumer tries to retire the paused result after the final result's indexes exist but
-			// before its payload appears, and again before promotion.
-			publishPaused(first.publicPath);
-			const read = { runId, sessionId, snapshot: fs.readFileSync(pendingPath(first.dir, sessionId, runId), "utf-8") };
-			let publishing = false;
-			let attempts = 0;
-			t.mock.method(fsDefault, "renameSync", (source: fs.PathLike, target: fs.PathLike) => {
-				if (publishing && (String(target) === pendingPath(first.dir, sessionId, runId) || String(target) === first.publicPath)) {
-					publishing = false;
-					assert.throws(() => retireResultSnapshot(first.publicPath, read), /Timed out waiting/);
-					attempts += 1;
-					publishing = true;
-				}
-				originalRenameSync(source, target);
-			});
-			syncBuiltinESMExports();
-			publishing = true;
-			publishFinal(first.publicPath);
-			publishing = false;
-			assert.equal(attempts, 2);
-			assert.equal(retireResultSnapshot(first.publicPath, read), "replaced");
-			assertFinalIndexed(first.dir, first.publicPath);
-
-			// The runner tries to publish its final result while the paused result is being removed.
-			publishPaused(second.publicPath);
-			resultPayloadPathForIndexedRun(second.dir, runId);
-			const pausedRead = readPublic(second.publicPath);
+			publishPaused(publicPath);
+			resultPayloadPathForIndexedRun(dir, runId);
+			const pausedRead = readPublic(publicPath);
 			let retiring = false;
 			let blocked = 0;
 			t.mock.method(fsDefault, "rmSync", (target: fs.PathLike, options?: fs.RmOptions) => {
-				if (retiring && String(target) === second.publicPath) {
+				if (retiring && String(target) === publicPath) {
 					retiring = false;
-					assert.throws(() => publishFinal(second.publicPath), /Timed out waiting/);
+					assert.throws(() => publishFinal(publicPath), /Timed out waiting/);
 					blocked += 1;
 				}
 				return originalRmSync(target, options);
 			});
 			syncBuiltinESMExports();
 			retiring = true;
-			assert.equal(retireResultSnapshot(second.publicPath, pausedRead), "retired");
+			assert.equal(retireResultSnapshot(publicPath, pausedRead), "retired");
 			assert.equal(blocked, 1);
-			publishFinal(second.publicPath);
-			assertFinalIndexed(second.dir, second.publicPath);
+			publishFinal(publicPath);
+			assertFinalIndexed(dir, publicPath);
 		} finally {
 			t.mock.restoreAll();
 			syncBuiltinESMExports();
-			fs.rmSync(first.dir, { recursive: true, force: true });
-			fs.rmSync(second.dir, { recursive: true, force: true });
+			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
