@@ -154,6 +154,7 @@ async function withIsolatedHome<T>(fn: () => Promise<T>): Promise<T> {
 function createCommandContext(
 	overrides: Partial<{
 		cwd: string;
+		mode: "tui" | "rpc" | "print";
 		hasUI: boolean;
 		custom: (...args: unknown[]) => Promise<unknown>;
 		notify: (message: string, type?: string) => void;
@@ -175,6 +176,7 @@ function createCommandContext(
 ) {
 	return {
 		cwd: overrides.cwd ?? process.cwd(),
+		mode: overrides.mode ?? (overrides.hasUI ? "tui" : "print"),
 		hasUI: overrides.hasUI ?? false,
 		ui: {
 			notify: overrides.notify ?? ((_message: string) => {}),
@@ -746,6 +748,28 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		let opened = 0;
 		await commands.get("subagents-fleet")!.handler("", createCommandContext({ hasUI: true, custom: async () => { opened += 1; return undefined; } }));
 		assert.equal(opened, 1);
+	});
+
+	it("/subagents-fleet answers with the fleet status over RPC, where ui.custom is a no-op", async () => {
+		const commands = new Map<string, RegisteredSlashCommand>();
+		const events = createEventBus();
+		const requested: unknown[] = [];
+		events.on(SLASH_SUBAGENT_REQUEST_EVENT, (data) => {
+			const payload = data as { requestId: string; params?: unknown };
+			requested.push(payload.params);
+			events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId: payload.requestId });
+			events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, { requestId: payload.requestId, result: { content: [{ type: "text", text: "fleet" }], details: { mode: "management", results: [] } }, isError: false });
+		});
+		registerSlashCommands!({
+			events,
+			registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+			registerShortcut() {},
+			sendMessage() {},
+		}, createState(process.cwd()));
+		let opened = 0;
+		await commands.get("subagents-fleet")!.handler("", createCommandContext({ mode: "rpc", hasUI: true, custom: async () => { opened += 1; return undefined; } }));
+		assert.equal(opened, 0);
+		assert.deepEqual(requested, [{ action: "status", view: "fleet" }]);
 	});
 
 	it("/subagents-stop keeps the selector within its allocated width", async () => {

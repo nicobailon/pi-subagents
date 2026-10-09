@@ -61,7 +61,7 @@ import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDet
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { registerSubagentToolActivation } from "./tool-activation.ts";
-import { registerPinnedTool } from "./declaration-pinning.ts";
+import { recordedPromptSection, registerPinnedTool } from "./declaration-pinning.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
 import { drainOutstandingWork } from "../runs/background/auto-drain.ts";
 import registerSubagentNotify from "../runs/background/notify.ts";
@@ -714,7 +714,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		// Structured sections let Pi append a transcript delta instead of replacing the
 		// cached system prompt. Set the section on every turn it applies: Pi rebuilds the
 		// options each turn, and an unset turn records a removal.
-		const catalog = buildAdvertisedAgentCatalog(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(sessionId));
+		const catalog = buildAdvertisedAgentCatalog(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(sessionId), recordedPromptSection(pi, "advertised_subagents"));
 		if (catalog) event.systemPromptOptions.sections.advertised_subagents = catalog;
 	});
 

@@ -1,4 +1,4 @@
-import { declarationsEqual, getCurrentSystemMessage, toToolDeclaration, type Message, type Tool } from "@earendil-works/pi-ai";
+import { declarationsEqual, getCurrentSystemMessage, toToolDeclaration, type Message, type SystemMessage, type Tool } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 
@@ -21,6 +21,8 @@ interface Pins {
 	current: Map<string, PinnableTool>;
 	declared: Map<string, DeclaredPin>;
 	registered: Map<string, string>;
+	/** The prompt sections the session transcript recorded, read on session events only. */
+	sections: Record<string, string | null>;
 }
 
 const pinsByApi = new WeakMap<ExtensionAPI, Pins>();
@@ -99,15 +101,19 @@ function recordedGuidelines(pi: ExtensionAPI, ctx: ExtensionContext, recorded: s
 	return recovered;
 }
 
-function declaredPins(pi: ExtensionAPI, pins: Pins, ctx: ExtensionContext | undefined): Map<string, DeclaredPin> {
+function recordedSystemMessage(ctx: ExtensionContext | undefined): SystemMessage | undefined {
 	// SAFETY: Pi's session manager exposes buildSessionContext, but its read-only extension type omits it.
 	const sessionManager = ctx?.sessionManager as (ExtensionContext["sessionManager"] & { buildSessionContext?(): { messages: Message[] } }) | undefined;
 	// A host without a readable transcript, such as a test double, declares nothing to keep.
-	if (!ctx || typeof sessionManager?.buildSessionContext !== "function") return new Map();
-	const system = getCurrentSystemMessage(sessionManager.buildSessionContext().messages);
-	const declarations = system?.toolsAdded ?? [];
-	const snippets = sectionLines(system?.sections?.tools ?? undefined, "tools");
-	const rules = sectionLines(system?.sections?.rules ?? undefined, "rules");
+	if (typeof sessionManager?.buildSessionContext !== "function") return undefined;
+	return getCurrentSystemMessage(sessionManager.buildSessionContext().messages);
+}
+
+function declaredPins(pi: ExtensionAPI, pins: Pins, ctx: ExtensionContext | undefined, system: SystemMessage | undefined): Map<string, DeclaredPin> {
+	if (!ctx || !system) return new Map();
+	const declarations = system.toolsAdded ?? [];
+	const snippets = sectionLines(system.sections?.tools ?? undefined, "tools");
+	const rules = sectionLines(system.sections?.rules ?? undefined, "rules");
 	const guidelines = rules ? recordedGuidelines(pi, ctx, rules, declarations.map((tool) => tool.name).filter((name) => pins.current.has(name))) : new Map<string, string[]>();
 	return new Map(declarations.map((declaration) => {
 		const pin: DeclaredPin = { declaration };
@@ -122,16 +128,27 @@ function declaredPins(pi: ExtensionAPI, pins: Pins, ctx: ExtensionContext | unde
 function pinsFor(pi: ExtensionAPI): Pins {
 	const existing = pinsByApi.get(pi);
 	if (existing) return existing;
-	const pins: Pins = { current: new Map(), declared: new Map(), registered: new Map() };
+	const pins: Pins = { current: new Map(), declared: new Map(), registered: new Map(), sections: {} };
 	pinsByApi.set(pi, pins);
 	// Pi restores the transcript's active tools before both events, so handler order does not matter.
 	const refresh = (ctx: ExtensionContext | undefined) => {
-		pins.declared = declaredPins(pi, pins, ctx);
+		const system = recordedSystemMessage(ctx);
+		pins.sections = system?.sections ?? {};
+		pins.declared = declaredPins(pi, pins, ctx, system);
 		for (const name of pins.current.keys()) register(pi, pins, name);
 	};
 	pi.on("session_start", (_event, ctx) => refresh(ctx));
 	pi.on("session_tree", (_event, ctx) => refresh(ctx));
 	return pins;
+}
+
+/**
+ * The text, without its tags, that the session transcript recorded for one of the prompt sections
+ * pi-subagents adds, so that section can keep the wording the session already sent.
+ * A session that never recorded the section gets undefined.
+ */
+export function recordedPromptSection(pi: ExtensionAPI, name: string): string | undefined {
+	return sectionLines(pinsFor(pi).sections[name] ?? undefined, name)?.join("\n");
 }
 
 /**

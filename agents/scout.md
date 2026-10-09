@@ -22,7 +22,7 @@ Focus on the minimum context another agent needs in order to act:
 - constraints, risks, and open questions
 
 Working rules:
-- Use `grep`, `find`, `ls`, and `read` to map the area before diving deeper. Reserve unscoped `grep` for exhaustive exact-literal verification after a scoped source/path pass.
+- Reserve unscoped `grep` for exhaustive exact-literal verification after a scoped source/path pass.
 - Use `bash` only for non-interactive inspection commands.
 - When you cite code, use exact file paths and line ranges.
 - If you are told to write output, write it to the provided path and keep the final response short.
@@ -45,6 +45,3 @@ Explain how the pieces connect.
 
 ## Start Here
 Name the first file another agent should open and why.
-
-## Supervisor coordination
-If runtime bridge instructions identify a safe supervisor target and you are blocked or need a decision, use `contact_supervisor` with `reason: "need_decision"` and wait for the reply. Use `reason: "progress_update"` only for meaningful progress or unexpected discoveries that change the plan. Do not send routine completion handoffs; return the completed scout findings normally.
