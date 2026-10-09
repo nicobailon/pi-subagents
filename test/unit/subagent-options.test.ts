@@ -26,7 +26,7 @@ const OPTION_SAMPLES: Record<string, unknown> = {
 	context: "fresh", timeoutMs: 1000, checkpointBeforeDeadlineMs: 100, toolTimeoutMs: 100, toolBudget: { hard: 3 },
 	usageBudget: { tokens: { hard: 10 } }, agentScope: "user", machine: "box", artifacts: false, includeProgress: true,
 	share: false, sessionDir: "/tmp/sessions", control: { enabled: false }, outputMode: "file-only", skill: "review",
-	fast: false, outputSchema: { type: "object" }, agentContract: { version: 1 }, acceptance: "checked", gate: "npm test",
+	fast: false, outputSchema: { type: "object" }, agentContract: { version: 1 }, acceptance: "checked", gate: "npm test", maxOutput: { bytes: 1000 },
 };
 
 describe("subagent tool options", () => {
