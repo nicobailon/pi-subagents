@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { registerAgent } from "../../src/api/agents.ts";
 import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
+import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { mergeRuntimeAgents, clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -271,5 +272,31 @@ describe("agent discovery snapshots", () => {
 		assert.deepEqual(trusted.effective.modelScope?.allow, ["openai/astra"]);
 		assert.equal(trusted.all.chains.some((chain) => chain.name === "project-chain"), true);
 		assert.equal(discoverAgents(project, "both", undefined, untrusted).agents.find((agent) => agent.name === "probe")?.model, "openai/luna");
+	});
+
+	it("reads nothing from project settings when the session declined project trust", async () => {
+		const userAgents = path.join(home, ".pi", "agent", "agents");
+		writeAgent(path.join(userAgents, "probe.md"), "probe", "User probe");
+		writeJson(path.join(home, ".pi", "agent", "settings.json"), { subagents: { agentOverrides: { probe: { model: "openai/luna" } } } });
+		const projectSettings = path.join(project, ".pi", "settings.json");
+		const untrusted = { projectTrusted: false };
+		const availableModels = [{ provider: "openai", id: "luna" }];
+
+		for (const content of ["{ not json", JSON.stringify({ subagents: { projectRootResolution: "bogus" } })]) {
+			fs.mkdirSync(path.dirname(projectSettings), { recursive: true });
+			fs.writeFileSync(projectSettings, content, "utf-8");
+			clearAgentDiscoveryCache();
+			assert.throws(() => discoverAgents(project, "both"), /settings/u, "a trusted lookup still reports the broken file");
+			assert.equal(discoverAgents(project, "both", undefined, untrusted).agents.find((agent) => agent.name === "probe")?.model, "openai/luna");
+			assert.equal(discoverAgentSnapshot(project, "both", undefined, untrusted).effective.agents.some((agent) => agent.name === "probe"), true);
+			const launch = await resolveSubagentLaunchContract({ agent: "probe", cwd: project, availableModels, projectTrusted: false });
+			assert.equal(launch.ok && launch.contract.model, "openai/luna");
+		}
+
+		// A project's agentExcludeDirs cannot hide user agents either.
+		writeJson(projectSettings, { subagents: { agentExcludeDirs: [userAgents] } });
+		assert.equal(discoverAgents(project, "both").agents.some((agent) => agent.name === "probe"), false);
+		assert.equal(discoverAgents(project, "both", undefined, untrusted).agents.some((agent) => agent.name === "probe"), true);
+		assert.equal(discoverAgents(project, "both").agents.some((agent) => agent.name === "probe"), false);
 	});
 });

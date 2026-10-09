@@ -638,13 +638,10 @@ function collectSettingsPackageRoots(settingsFile: string, baseDir: string): str
 	return roots;
 }
 
-function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolean; includeProject: boolean; globalNpmRoot?: string | null } = { includeUser: true, includeProject: true }): PackageSubagentPaths {
+function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolean; includeProject: boolean; globalNpmRoot?: string | null; projectTrusted?: boolean } = { includeUser: true, includeProject: true }): PackageSubagentPaths {
 	const agentDir = getAgentDir();
-	const projectRoot = findConfiguredProjectRoot(cwd) ?? cwd;
-	const packageRoots: Array<{ root: string; scope: PackageScope }> = [
-		{ root: projectRoot, scope: "root" },
-	];
-	const watchPaths: string[] = [path.join(projectRoot, "package.json")];
+	const packageRoots: Array<{ root: string; scope: PackageScope }> = [];
+	const watchPaths: string[] = [];
 	const settingsErrors: Partial<Record<PackageSettingsScope, Error>> = {};
 	const collectScopedSettingsRoots = (scope: PackageSettingsScope, settingsFile: string, baseDir: string): string[] => {
 		try {
@@ -659,11 +656,17 @@ function collectPackageSubagentPaths(cwd: string, options: { includeUser: boolea
 			return [];
 		}
 	};
-	if (options.includeProject) {
-		const projectConfigDir = getProjectConfigDir(projectRoot);
-		const nodeModulesDir = path.join(projectConfigDir, "npm", "node_modules");
-		packageRoots.push(...collectPackageRootsFromNodeModules(nodeModulesDir, watchPaths).map((root) => ({ root, scope: "project" as const })));
-		packageRoots.push(...collectScopedSettingsRoots("project", path.join(projectConfigDir, "settings.json"), projectConfigDir).map((root) => ({ root, scope: "project" as const })));
+	// Resolving the project root reads project settings, which an untrusted project does not supply.
+	if (options.projectTrusted !== false) {
+		const projectRoot = findConfiguredProjectRoot(cwd) ?? cwd;
+		packageRoots.push({ root: projectRoot, scope: "root" });
+		watchPaths.push(path.join(projectRoot, "package.json"));
+		if (options.includeProject) {
+			const projectConfigDir = getProjectConfigDir(projectRoot);
+			const nodeModulesDir = path.join(projectConfigDir, "npm", "node_modules");
+			packageRoots.push(...collectPackageRootsFromNodeModules(nodeModulesDir, watchPaths).map((root) => ({ root, scope: "project" as const })));
+			packageRoots.push(...collectScopedSettingsRoots("project", path.join(projectConfigDir, "settings.json"), projectConfigDir).map((root) => ({ root, scope: "project" as const })));
+		}
 	}
 
 	if (options.includeUser) {
@@ -2690,11 +2693,12 @@ function discoveryFingerprint(sources: AgentDiscoverySources): string {
 		.join("\n");
 }
 
-function discoveryCacheKey(cwd: string, preferredModelProvider: string | undefined, globalNpmRoot?: string | null): string {
+function discoveryCacheKey(cwd: string, preferredModelProvider: string | undefined, globalNpmRoot: string | null | undefined, projectTrusted: boolean): string {
 	return JSON.stringify([
 		path.resolve(cwd),
 		preferredModelProvider ?? null,
 		globalNpmRoot === undefined ? ["default"] : ["override", globalNpmRoot],
+		projectTrusted,
 		getProjectConfigDir(path.resolve(cwd)),
 		getAgentDir(),
 		os.homedir(),
@@ -2725,16 +2729,19 @@ function packageEntryIncluded(scope: AgentScope, packageScopes: PackageSubagentP
 	return packageScopes.has(scope);
 }
 
-function buildAgentDiscoverySources(cwd: string, preferredModelProvider?: string, globalNpmRoot?: string | null): AgentDiscoverySources {
+function buildAgentDiscoverySources(cwd: string, preferredModelProvider: string | undefined, globalNpmRoot: string | null | undefined, projectTrusted: boolean): AgentDiscoverySources {
 	const effectiveCwd = path.resolve(cwd);
 	const userDirOld = path.join(getAgentDir(), "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
 	const userChainDir = getUserChainDir();
-	const { readDirs: projectAgentDirs, candidateDirs: projectCandidateDirs, preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(effectiveCwd);
-	const { readDirs: projectChainDirs, preferredDir: projectChainDir } = resolveNearestProjectChainDirs(effectiveCwd);
+	// The project's settings choose its root, so an untrusted project contributes no directories or settings at all.
+	const { readDirs: projectAgentDirs, candidateDirs: projectCandidateDirs, preferredDir: projectAgentsDir } = projectTrusted
+		? resolveNearestProjectAgentDirs(effectiveCwd)
+		: { readDirs: [], candidateDirs: [], preferredDir: null };
+	const { readDirs: projectChainDirs, preferredDir: projectChainDir } = projectTrusted ? resolveNearestProjectChainDirs(effectiveCwd) : { readDirs: [], preferredDir: null };
 	const userSettingsPath = getUserAgentSettingsPath();
-	const projectSettingsPath = getProjectAgentSettingsPath(effectiveCwd);
-	const packageSubagentPaths = collectPackageSubagentPaths(effectiveCwd, { includeUser: true, includeProject: true, globalNpmRoot });
+	const projectSettingsPath = projectTrusted ? getProjectAgentSettingsPath(effectiveCwd) : null;
+	const packageSubagentPaths = collectPackageSubagentPaths(effectiveCwd, { includeUser: true, includeProject: true, globalNpmRoot, projectTrusted });
 	const exclusionRoots = agentExclusionRoots(userSettingsPath, projectSettingsPath);
 	const isExcluded = agentExclusions(exclusionRoots);
 	const userScanDirs = settingsAgentScanDirs(readConfiguredAgentScanDirs(userSettingsPath), isExcluded);
@@ -2820,8 +2827,8 @@ function ensureDiscoveryChains(sources: AgentDiscoverySources): void {
 	sources.watchPaths = [...new Set([...sources.watchPaths, ...watchPaths])];
 }
 
-function getAgentDiscoverySources(cwd: string, preferredModelProvider?: string, includeChains = false, globalNpmRoot?: string | null): AgentDiscoverySources {
-	const key = discoveryCacheKey(cwd, preferredModelProvider, globalNpmRoot);
+function getAgentDiscoverySources(cwd: string, preferredModelProvider?: string, includeChains = false, globalNpmRoot?: string | null, projectTrusted = true): AgentDiscoverySources {
+	const key = discoveryCacheKey(cwd, preferredModelProvider, globalNpmRoot, projectTrusted);
 	const cached = agentDiscoveryCache.get(key);
 	if (cached && cached.fingerprint === discoveryFingerprint(cached.sources)) {
 		if (includeChains) {
@@ -2830,7 +2837,7 @@ function getAgentDiscoverySources(cwd: string, preferredModelProvider?: string, 
 		}
 		return cached.sources;
 	}
-	const sources = buildAgentDiscoverySources(cwd, preferredModelProvider, globalNpmRoot);
+	const sources = buildAgentDiscoverySources(cwd, preferredModelProvider, globalNpmRoot, projectTrusted);
 	const entry = { sources, fingerprint: discoveryFingerprint(sources) };
 	agentDiscoveryCache.set(key, entry);
 	if (includeChains) {
@@ -3016,8 +3023,8 @@ export function discoverAgentSnapshot(
 ): AgentDiscoverySnapshot {
 	const trustedScope = trustedDiscoveryScope(cwd, scope, options.projectTrusted);
 	const includeChains = options.includeChains !== false;
-	const sources = getAgentDiscoverySources(cwd, preferredModelProvider, includeChains, options.globalNpmRoot);
 	const projectTrusted = options.projectTrusted !== false;
+	const sources = getAgentDiscoverySources(cwd, preferredModelProvider, includeChains, options.globalNpmRoot, projectTrusted);
 	return { effective: buildEffectiveDiscovery(sources, trustedScope, projectTrusted), all: buildAllDiscovery(sources, includeChains, trustedScope, projectTrusted) };
 }
 
@@ -3087,7 +3094,7 @@ export function discoverAgents(cwd: string, scope: AgentScope, preferredModelPro
 	const projectTrusted = options.projectTrusted !== false;
 	// The uncached path always loads the project's own package.json entries.
 	if (projectTrusted && trustedScope !== "both") return discoverAgentsUncached(cwd, trustedScope, preferredModelProvider, options);
-	const sources = getAgentDiscoverySources(cwd, preferredModelProvider, false, options.globalNpmRoot);
+	const sources = getAgentDiscoverySources(cwd, preferredModelProvider, false, options.globalNpmRoot, projectTrusted);
 	return buildEffectiveDiscovery(sources, trustedScope, projectTrusted);
 }
 
