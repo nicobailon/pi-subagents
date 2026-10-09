@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-w
 import { Type } from "typebox";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 import type { ToolActivationMode } from "../shared/types.ts";
+import { registerPinnedTool } from "./declaration-pinning.ts";
 
 interface ActivationDetails {
 	enabled?: string[];
@@ -129,7 +130,7 @@ export function registerSubagentToolActivation(
 			};
 		},
 	};
-	pi.registerTool(loader);
+	registerPinnedTool(pi, loader);
 
 	// Decided at session start and tree navigation only; switching models keeps the session's tools.
 	let loaderSelected = true;

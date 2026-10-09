@@ -4,6 +4,7 @@ import type { Details, SubagentState } from "../../shared/types.ts";
 import { resolveWaitToolConfig, waitForSubagents } from "./subagent-wait.ts";
 import type { WaitSubscriptionManager } from "./wait-subscriptions.ts";
 import { finalizeToolResult } from "../../extension/tool-result.ts";
+import { registerPinnedTool } from "../../extension/declaration-pinning.ts";
 
 export function registerWaitTool(
 	pi: ExtensionAPI,
@@ -59,5 +60,5 @@ Non-blocking subscriptions are visible in subagent status and differ from disabl
 		parameters: SubagentWaitParams,
 		execute,
 	};
-	pi.registerTool(primaryTool);
+	registerPinnedTool(pi, primaryTool);
 }

@@ -13,6 +13,7 @@ import { createNativeSupervisorChannel, NATIVE_SUPERVISOR_TOOL_NAME, resolveSupe
 import { readStatus } from "../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
+import { registerPinnedTool } from "./declaration-pinning.ts";
 import { resolveDisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { removedModelWorkflowFieldError } from "./public-execution.ts";
@@ -234,7 +235,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		},
 	};
 
-	pi.registerTool(tool);
+	registerPinnedTool(pi, tool);
 	const bridgeSweeper = createChildExternalJobBridgeSweeper();
 	const unsubscribeBridgeStarted = pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload: unknown) => {
 		const info = payload as AsyncStartedEvent;

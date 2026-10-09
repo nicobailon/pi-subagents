@@ -61,6 +61,7 @@ import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDet
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { registerSubagentToolActivation } from "./tool-activation.ts";
+import { registerPinnedTool } from "./declaration-pinning.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
 import { drainOutstandingWork } from "../runs/background/auto-drain.ts";
 import registerSubagentNotify from "../runs/background/notify.ts";
@@ -705,7 +706,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	};
 
-	pi.registerTool(tool);
+	registerPinnedTool(pi, tool);
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		await waitForAdvertisement();
