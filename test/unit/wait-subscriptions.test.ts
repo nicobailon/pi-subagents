@@ -137,7 +137,6 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
-	it("ends a blocking bg_wait when the user sends a message while the agent is busy", async () => {
 	it("tells the root session that async runs wake it natively and a child to collect its descendants", () => {
 		const descriptions: string[] = [];
 		const pi = { events: new TestBus(), on() {}, registerTool(value: { description: string }) { descriptions.push(value.description); } } as never;
