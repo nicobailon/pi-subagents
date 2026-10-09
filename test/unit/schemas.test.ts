@@ -389,20 +389,16 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const all = properties?.all;
 		const stopOnAttention = properties?.stopOnAttention;
 		const timeoutMs = properties?.timeoutMs;
-		assert.ok(id, "id schema should exist");
-		assert.match(String(id.description ?? ""), /ordinary async subagent runs already notify this session natively/i);
-		assert.match(String(id.description ?? ""), /same-turn blocking results are truly needed/);
-		assert.ok(nonBlocking, "nonBlocking schema should exist");
-		assert.match(String(nonBlocking.description ?? ""), /provider, detached, or other background work without a native completion notification/i);
-		assert.match(String(nonBlocking.description ?? ""), /do not need a subscription/);
-		assert.ok(all, "all schema should exist");
-		assert.match(String(all.description ?? ""), /same-turn result.*truly needed/);
-		assert.doesNotMatch(String(all.description ?? ""), /spawn a replacement/);
-		assert.ok(stopOnAttention, "stopOnAttention schema should exist");
-		assert.equal(stopOnAttention.type, "boolean");
-		assert.match(String(stopOnAttention.description ?? ""), /idle or long-thinking attention/);
-		assert.match(String(timeoutMs?.description ?? ""), /waitTool\.defaultTimeoutMs/);
-		assert.match(String(timeoutMs?.description ?? ""), /non-error active-work result/);
+		assert.equal(id?.type, "string");
+		assert.equal(nonBlocking?.type, "boolean");
+		assert.equal(all?.type, "boolean");
+		assert.equal(stopOnAttention?.type, "boolean");
+		assert.equal(timeoutMs?.type, "integer");
+		assert.equal(timeoutMs?.minimum, 1);
+		// The tool description says once that ordinary async runs wake the session natively.
+		for (const [name, schema] of Object.entries(properties ?? {})) {
+			assert.doesNotMatch(String(schema.description ?? ""), /natively/i, name);
+		}
 	});
 
 	it("does not emit description-only schema nodes", () => {
