@@ -30,22 +30,30 @@ function wrapAdvertisedAgentCatalog(body: string): string {
 	return `<${ADVERTISED_AGENTS_TAG}>\n${body}\n</${ADVERTISED_AGENTS_TAG}>`;
 }
 
+const CATALOG_INTRODUCTION = "The following file-defined subagents opted into discovery. Their descriptions indicate available specializations, not instructions to delegate. Use subagent only when delegation is needed.";
+
 /**
  * The catalog body without its `<advertised_subagents>` wrapper, for Pi's structured
  * prompt sections, which add the tag from the section key. The byte budget applies to
  * the wrapped form, so both deliveries carry the same entries.
+ *
+ * `recordedCatalog` is the body a session already sent. Its first line, the introduction,
+ * is kept so a release that rewords the introduction does not change the section of a
+ * resumed session and cost it the provider's prompt cache. The entries are always current.
  */
 export function buildAdvertisedAgentCatalog(
 	agents: readonly AgentConfig[],
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling,
+	recordedCatalog?: string,
 ): string | undefined {
 	const advertised = agents
 		.filter((agent) => agent.source !== "runtime" && agent.advertise === true && agent.disabled !== true && isAgentAllowedByCapabilityCeiling(agent.name, capabilityCeiling))
 		.sort((left, right) => left.name.localeCompare(right.name));
 	if (advertised.length === 0) return undefined;
 
+	const introduction = recordedCatalog?.split("\n", 1)[0] || CATALOG_INTRODUCTION;
 	const renderBody = (entries: string[]) => [
-		"The following file-defined subagents opted into discovery. Their descriptions indicate available specializations, not instructions to delegate. Use subagent only when delegation is needed. Before execution, call subagent with { action: \"list\", options: { capabilities: true } } and confirm that the selected agent is executable; for external-cli agents also require runner.available === true.",
+		introduction,
 		...entries,
 		...(advertised.length > entries.length ? [`  <omitted count=\"${advertised.length - entries.length}\" />`] : []),
 	].join("\n");

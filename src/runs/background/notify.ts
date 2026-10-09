@@ -54,6 +54,8 @@ export interface SubagentNotifyDetails {
 	taskInfo?: string;
 	resultPreview: string;
 	durationMs?: number;
+	/** The finished run's id; for a workflow it equals workflowRunId. */
+	runId?: string;
 	workflowRunId?: string;
 	childRuns?: Array<{ runId: string; workflowKey?: string; agent?: string; status?: string }>;
 	childOutputs?: SubagentNotifyChildOutput[];
@@ -624,6 +626,17 @@ const queuedWakesSymbol = Symbol.for("pi-subagents.queued-completion-wakes.v2");
 const wakeGlobal = globalThis as typeof globalThis & { [queuedWakesSymbol]?: WeakMap<object, QueuedWakes> };
 const queuedWakes = wakeGlobal[queuedWakesSymbol] ?? (wakeGlobal[queuedWakesSymbol] = new WeakMap<object, QueuedWakes>());
 
+type NotifyRunDetails = Omit<SubagentNotifyDetails, "resultPreview" | "childOutputs"> & {
+	childOutputs?: Array<Omit<SubagentNotifyChildOutput, "preview" | "previewTruncated" | "previewUnavailableReason">>;
+};
+
+function notifyRunDetails({ resultPreview: _preview, childOutputs, ...run }: SubagentNotifyDetails): NotifyRunDetails {
+	return {
+		...run,
+		...(childOutputs ? { childOutputs: childOutputs.map(({ preview: _childPreview, previewTruncated: _truncated, previewUnavailableReason: _reason, ...child }) => child) } : {}),
+	};
+}
+
 const COMPLETION_ACTION = "Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";
 function sendCompletion(pi: Pick<ParentWake, "sendMessage">, items: PendingCompletion[], unstartedWakes: string[], unansweredCompletions: Map<string, { reminded: boolean }>, updateSettleSubscription: () => void): boolean {
 	if (items.length === 0) return true;
@@ -645,8 +658,8 @@ function sendCompletion(pi: Pick<ParentWake, "sendMessage">, items: PendingCompl
 				customType: "subagent-notify",
 				content,
 				display,
-				// Render-only: Pi does not send details to the model.
-				details: { runs: details.map(({ agent, status }) => ({ agent, status })) },
+				// Pi does not send details to the model. Hosts match runs by id; the text previews stay in content only.
+				details: { runs: details.map(notifyRunDetails) },
 			},
 			{ triggerTurn },
 		);
@@ -810,6 +823,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		resultPreview: watchdogConcerns.length ? `${resultPreview}\n\nHigh-importance watchdog concerns:\n${watchdogConcerns.map((warning) => `- ${warning}`).join("\n")}` : resultPreview,
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
 		...(handoffPath ? { handoffPath } : {}),
+		...(rawRunId ? { runId: rawRunId } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),
 		...(childRuns.length ? { childRuns } : {}),
 		...(childOutputs?.length ? { childOutputs } : {}),
