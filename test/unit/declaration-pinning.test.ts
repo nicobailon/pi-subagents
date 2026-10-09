@@ -70,7 +70,8 @@ it("keeps a resumed session on the pi-subagents tools and prompt text it declare
 		// SAFETY: bg_wait declares an object schema with properties.
 		delete (bgWait.parameters as { properties: Record<string, unknown> }).properties.stopOnAttention;
 		const tools = system.sections!.tools!.replace(/^- subagent: .*$/m, "- subagent: Older subagent snippet.");
-		const rules = system.sections!.rules!.replace(/^- .*delegation.*$/m, "- Older subagent guideline.");
+		// Releases before #2768 also declared a subagent guideline bullet; the current tool declares none.
+		const rules = system.sections!.rules!.replace(/^- Be concise in your responses$/m, "- Older subagent guideline.\n- Be concise in your responses");
 		assert.ok(tools !== system.sections!.tools && rules !== system.sections!.rules);
 		system.sections = { ...system.sections, tools, rules };
 
