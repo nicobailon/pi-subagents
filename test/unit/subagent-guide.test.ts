@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { readSubagentGuide, SUBAGENT_GUIDE_TOPICS } from "../../src/extension/subagent-guide.ts";
@@ -102,6 +103,17 @@ describe("subagent guide", () => {
 
 		assert.match(guide, /Unknown section 'workflows\/no-such-section'/);
 		assert.match(guide, /^workflows\/scripted-workflows — Scripted workflows$/m);
+	});
+
+	it("reads sections the same way from a CRLF checkout", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-guide-crlf-"));
+		try {
+			fs.mkdirSync(path.join(root, "docs"));
+			fs.writeFileSync(path.join(root, "docs", "workflows.md"), "# Workflows\r\n\r\nIntro.\r\n\r\n## First\r\n\r\nOne.\r\n\r\n## Second\r\n\r\nTwo.\r\n");
+			assert.equal(readSubagentGuide("workflows/first", root), "## First\n\nOne.");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("resolves every guide pointer in shipped prompts, skills and source", () => {

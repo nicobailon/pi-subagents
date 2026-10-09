@@ -94,7 +94,8 @@ function sectionText(lines: string[], section: GuideSection): string {
 
 function readGuideFiles(topic: string, files: string[], root: string): string[] {
 	try {
-		return files.map((file) => fs.readFileSync(path.join(root, file), "utf-8"));
+		// Windows checkouts can convert docs to CRLF; sections and their boundaries are defined on LF lines.
+		return files.map((file) => fs.readFileSync(path.join(root, file), "utf-8").replace(/\r\n/g, "\n"));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Failed to read packaged subagents guide '${topic}': ${message}`, { cause: error instanceof Error ? error : undefined });
