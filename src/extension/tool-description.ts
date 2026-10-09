@@ -25,7 +25,7 @@ const structuredCalls = "One child: {agent,task}. Parallel: tasks:[{agent,task},
 
 const essentials = (on: FeatureText) => `${on("workflow-scripts", scriptCalls, structuredCalls)}
 Management: {action,id?,options:{...}}; fields not in this schema go in options.
-First call {action:"list",options:{capabilities:true}} and use an executable agent. Before a model override, call {action:"models"} and copy an exact provider/id.
+Launch agents by name and pass models as exact provider/id; an unknown agent or model returns the valid choices.
 Details: guide workflows/recommended-orchestration-pattern (async, review, failure recovery), ${on("workflow-scripts", "guide workflows/scripted-workflows, ")}guide tool-reference/retained-children, guide tool-reference/external-cli-agent-profiles.
 
 ${SUBAGENT_SAFETY_GUIDANCE}`;
@@ -50,7 +50,7 @@ ${on("workflow-scripts", scriptDetails)}• ${on("workflow-scripts", "Workflow c
 • Bind durable output ${on("workflow-scripts", "on runs.run/runs.all", "with output")}, not task filename prose; return actual outputReference/outputPathMapping/artifactPaths, evidence and residual risks.
 • Ordinary child subagents are not orchestrators; only configured fanout within depth/session limits. Use fresh-context read-only reviewers when independent review was requested. Oracle/advisor unknowns use supervisor dialogue; one-shot only when requested.
 • children.list is workflow-only, not an exhaustive list of direct native children: resume only resumable rows. When an intended child's exact run id is known, inspect it with {action:"status",id}; if status identifies the candidate, attempt {action:"resume",id,message}. Resume authoritatively checks eligibility and may reject it. Use a labeled same-role fallback only when no known candidate exists or resume rejects eligibility.${on("workflow-scripts", " Scripts await runs.run(newKey,{resume:runId,task}); continue from the latest returned runId. Each distinct resume pass needs a new stable key; same-key reuse requires identical launch parameters.")}
-• External CLI agents need runner.available === true; passive PATH/PATHEXT/X_OK is not authentication/version/launch proof, preflight is. They support native options only when their runner declares them: model, structured output, acceptance/agentContract, ${on("tool-budgets", "tool budget, ")}fast, fork context or skills/tools.
+• External CLI agents need an installed, authenticated CLI; preflight at launch decides, and passive PATH/PATHEXT/X_OK is not authentication/version/launch proof. They support native options only when their runner declares them: model, structured output, acceptance/agentContract, ${on("tool-budgets", "tool budget, ")}fast, fork context or skills/tools.
 • Model override: copy exact provider/id, not agent names. Thinking uses model suffix${on("watchdog", ", not watchdog-only thinking")}.
 • Missions auto-attach${on("missions", " unless options.mission:false")}; ${on("workflow-scripts", "await state.get(key)/state.set(key,JSONValue) requires a mission. ")}See guide topic missions. Omit acceptance for reviewer/read-only calls; acceptance.review.required requests independent writer review.
 • Inspect asyncId/asyncDir (status.json, events.jsonl, logs) with status/debug.run; control with interrupt/stop/resume/steer. For local Pi children explicitly granted subagent_command, command.status/yield/cancel targets one exact toolCallId without interrupting the child.

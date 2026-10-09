@@ -604,7 +604,7 @@ Project prompt.
 		assert.match(missingAgent.message, /^Unknown agent: missing\nEffective cwd: /);
 		assert.match(missingAgent.message, /Consulted agent-definition directories:/);
 		assert.match(missingAgent.message, /project: .*\.pi[\\/]agents \(1 candidate\)/);
-		assert.match(missingAgent.message, /Discovered agents:\n[\s\S]*worker \(project\)/);
+		assert.match(missingAgent.message, /Available agents:\n[\s\S]*worker \(project\)/);
 		writeAgent(path.join(cwd, ".pi", "agents", "broken.md"), `---
 name: broken
 description: Broken worker

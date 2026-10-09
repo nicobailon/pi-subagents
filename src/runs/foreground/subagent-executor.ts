@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
+import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatAvailableAgentLines, formatUnknownAgentError, resolveAgentName, suggestAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
@@ -222,7 +222,7 @@ import {
 	type SteeringTargetState,
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
-import { closestMatch, editDistance, hasSingleAdjacentTransposition } from "../../shared/edit-distance.ts";
+import { editDistance, hasSingleAdjacentTransposition } from "../../shared/edit-distance.ts";
 
 const MUTATING_MANAGEMENT_ACTIONS = new Set(["command.yield", "command.cancel", "create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.rollback", "dismiss", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
 const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["command.cancel", "delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "schedule.delete"]);
@@ -448,7 +448,7 @@ interface ExecutorDeps {
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
-	discoverAgents: (cwd: string, scope: AgentScope, preferredModelProvider?: string) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
+	discoverAgents: (cwd: string, scope: AgentScope, preferredModelProvider?: string) => { agents: AgentConfig[]; disabledAgents?: string[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; maxThinking?: AgentConfig["maxThinking"]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] };
 	discoverAgentsAll?: typeof discoverAgentsAll;
 	onAgentsChanged?: () => void;
 	allowMutatingManagementActions?: boolean;
@@ -2512,7 +2512,7 @@ async function maybeBuildForegroundIntercomReceipt(input: {
 }
 
 function diagnosticContextFromDiscovery(
-	discovered: { agents: AgentConfig[]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] },
+	discovered: { agents: AgentConfig[]; disabledAgents?: string[]; cwd?: string; scope?: AgentScope; directories?: UnknownAgentDiagnosticContext["directories"] },
 	cwd: string,
 	scope: AgentScope,
 ): UnknownAgentDiagnosticContext {
@@ -2535,6 +2535,8 @@ function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLik
 	const cwd = resolveRequestedCwd(runtimeCwd, params.cwd);
 	const scope = resolveExecutionAgentScope(params.agentScope);
 	let discovered: ReturnType<ExecutorDeps["discoverAgents"]> | undefined;
+	// Validation reports every bad agent name; only the first one carries the agent list.
+	let listedAgents = false;
 	return {
 		maxSubagentSpawnsPerRun: params.maxSubagentSpawnsPerRun ?? resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun),
 		agentNameError: (name) => {
@@ -2542,8 +2544,12 @@ function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLik
 			const { agents } = discovered;
 			const resolved = resolveAgentName(name, agents);
 			if (resolved.agent || resolved.error) return canonicalizeAgentName(name, agents, discovered.agentDiagnostics, diagnosticContextFromDiscovery(discovered, cwd, scope)).error;
-			const suggestion = closestMatch(name.trim(), new Set(agents.flatMap((agent) => [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])])));
-			return `Unknown agent '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""} Use subagent({ action: "list" }) to inspect agents.`;
+			const disabled = discovered.disabledAgents?.includes(name.trim()) === true;
+			const suggestion = disabled ? undefined : suggestAgentName(name, agents);
+			const problem = disabled ? `Agent '${name}' is disabled by a settings override.` : `Unknown agent '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`;
+			if (listedAgents) return problem;
+			listedAgents = true;
+			return [`${problem} Available agents:`, ...formatAvailableAgentLines(agents)].join("\n");
 		},
 	};
 }

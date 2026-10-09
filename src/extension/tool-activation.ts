@@ -125,7 +125,7 @@ export function registerSubagentToolActivation(
 			};
 			const advertised = await options.advertisedPrompt();
 			return {
-				content: [{ type: "text", text: `Enabled: subagent. If your tool list includes subagent (possibly prefixed), call subagent({action:\"list\",options:{capabilities:true}}). Otherwise, wait for the next user prompt; do not retry now. Start Pi with --exclude-tools subagents_enable to keep subagent always available.${advertised ? `\n\n${advertised}` : ""}` }],
+				content: [{ type: "text", text: `Enabled: subagent. If your tool list includes subagent (possibly prefixed), call it now. Otherwise, wait for the next user prompt; do not retry now. Start Pi with --exclude-tools subagents_enable to keep subagent always available.${advertised ? `\n\n${advertised}` : ""}` }],
 				details: { enabled: [SUBAGENT_NAME] },
 			};
 		},

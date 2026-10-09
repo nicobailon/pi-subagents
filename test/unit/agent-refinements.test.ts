@@ -82,7 +82,7 @@ describe("agent refinements", () => {
 		assert.equal(result.isError, true);
 		assert.equal(launched, false);
 		assert.match(firstText(result), /^Unknown agent: missing\nEffective cwd: /);
-		assert.match(firstText(result), /Consulted agent-definition directories:[\s\S]*Discovered agents:/);
+		assert.match(firstText(result), /Consulted agent-definition directories:[\s\S]*Available agents:/);
 		assert.equal(fs.existsSync(getAgentRefinementPath(tempDir, "missing")), false);
 	});
 

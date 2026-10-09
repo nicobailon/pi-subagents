@@ -15,6 +15,7 @@ import {
 	SUBAGENT_TOOL_PROMPT_SNIPPET,
 } from "../../src/extension/tool-description.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
+import { resolveDisabledFeatureSurface } from "../../src/shared/disabled-features.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -73,14 +74,20 @@ describe("registered subagent tool description", () => {
 				/One child: \{agent,task\}/,
 				/exactly one top-level subagent workflow call with async:true; write one ```js workflow block in this reply, then call subagent\(\{workflow:true\}\)/,
 				/\{action,id\?,options:\{\.\.\.\}\}; fields not in this schema go in options/,
-				/First call \{action:"list",options:\{capabilities:true\}\} and use an executable agent/,
-				/call \{action:"models"\} and copy an exact provider\/id/,
+				/Launch agents by name and pass models as exact provider\/id; an unknown agent or model returns the valid choices/,
 				/Native async completion wakes this session: return control; do not sleep, poll or call bg_wait for it/,
 				/One writer per cwd\/worktree/,
 				/After a launch or runtime failure, stop and report it; never silently switch to interactive_shell, pi -ne or another CLI/,
 				/guide workflows\/recommended-orchestration-pattern.*guide workflows\/scripted-workflows.*guide tool-reference\/retained-children.*guide tool-reference\/external-cli-agent-profiles/,
 			]) assert.match(description, contract);
 			assert.ok(description.endsWith(SUBAGENT_SAFETY_GUIDANCE) || description.includes(`${SUBAGENT_SAFETY_GUIDANCE}\n\nDETAILS:`));
+		}
+	});
+
+	it("does not send the parent to list or models before every launch", () => {
+		const structured = buildSubagentToolDescription({}, { disabledFeatures: resolveDisabledFeatureSurface({ disabledFeatures: ["workflow-scripts"] }) });
+		for (const description of [DEFAULT_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION, FULL_SUBAGENT_TOOL_DESCRIPTION, structured]) {
+			assert.doesNotMatch(description, /first call|before a model override|call \{action:"(list|models)"|runner\.available/i);
 		}
 	});
 
@@ -98,7 +105,7 @@ describe("registered subagent tool description", () => {
 			/async:false only to block the parent, not for final reviews\/gates\. Consume results at dependency barriers/,
 			/children.list is workflow-only.*authoritatively checks eligibility.*labeled same-role fallback/,
 			/distinct resume pass needs a new stable key; same-key reuse requires identical launch parameters/,
-			/runner.available === true; passive PATH\/PATHEXT\/X_OK is not authentication\/version\/launch proof/,
+			/preflight at launch decides, and passive PATH\/PATHEXT\/X_OK is not authentication\/version\/launch proof/,
 			/Oracle\/advisor unknowns use supervisor dialogue/,
 			/Governed-workflow fallback to foreground\/CLI needs explicit owner approval, not Pi core's generic pi -ne hint/,
 		]) assert.match(FULL_SUBAGENT_TOOL_DESCRIPTION, detail);
