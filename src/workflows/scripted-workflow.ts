@@ -1038,7 +1038,9 @@ parentPort.on("message", async (message) => {
     let stopWorkflowPromiseHook;
     let value;
     try {
-      Object.defineProperty(nativePromisePrototype, "then", {
+      // Some hosts freeze built-ins in every realm, which makes then read-only. The promise hooks
+      // below still track observation, so skip the wrapper rather than fail every workflow.
+      if (nativeThenDescriptor.configurable) Object.defineProperty(nativePromisePrototype, "then", {
         ...nativeThenDescriptor,
         value: function workflowPromiseThen(...args) {
           if (isDirectWorkflowScriptPromiseHandlerCall() || suppressNativePromiseConsumption > 0) {
@@ -1078,7 +1080,7 @@ parentPort.on("message", async (message) => {
         stopWorkflowPromiseHook?.();
       } finally {
         try {
-          Object.defineProperty(nativePromisePrototype, "then", nativeThenDescriptor);
+          if (nativeThenDescriptor.configurable) Object.defineProperty(nativePromisePrototype, "then", nativeThenDescriptor);
         } finally {
           topLevelWorkflowPromise = undefined;
           activeNativePromises.length = 0;

@@ -130,7 +130,7 @@ describe("runner dispatcher honours the resolved idle timeout", () => {
 		});
 	});
 
-	it("keeps the proxy-aware shape the runner relied on", () => {
-		assert.deepEqual(runnerHttpDispatcherOptions(42), { allowH2: false, proxyTunnel: true, headersTimeout: 42, bodyTimeout: 42 });
+	it("keeps the proxy-aware shape and connection attempt timeout of Pi's dispatcher", () => {
+		assert.deepEqual(runnerHttpDispatcherOptions(42), { allowH2: false, proxyTunnel: true, headersTimeout: 42, bodyTimeout: 42, connect: { autoSelectFamilyAttemptTimeout: 2_000 } });
 	});
 });

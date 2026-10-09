@@ -35,7 +35,7 @@ function readRecovery(sessionFile: string): PrunedForkRecoveryPayload {
 }
 
 describe("pruned fork sessions", () => {
-	it("routes summaries through the Pi model registry with provider-neutral request options", async () => {
+	it("routes summaries through the Pi model registry with the parent session id OpenCode requires", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pruned-registry-"));
 		try {
 			const parentSession = path.join(tempDir, "parent.jsonl");
@@ -46,11 +46,11 @@ describe("pruned fork sessions", () => {
 			type RegistryStreamArgs = Parameters<ExtensionContext["modelRegistry"]["streamSimple"]>;
 			type RegistryCall = { model: RegistryStreamArgs[0]; context: RegistryStreamArgs[1]; options: RegistryStreamArgs[2] };
 			const model: RegistryStreamArgs[0] = {
-				provider: "extension-provider",
+				provider: "opencode",
 				id: "summary-model",
 				name: "Summary model",
 				api: "pi-registry-only",
-				baseUrl: "https://summary.invalid",
+				baseUrl: "https://opencode.ai/zen/v1",
 				reasoning: false,
 				input: ["text"],
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -75,9 +75,10 @@ describe("pruned fork sessions", () => {
 					return stream;
 				},
 			};
-			const writer = await createPrunedForkSessionWriter({ modelRegistry }, {
+			const sessionManager = { getSessionId: () => "parent-session" } as ExtensionContext["sessionManager"];
+			const writer = await createPrunedForkSessionWriter({ modelRegistry, sessionManager }, {
 				mode: "pruned",
-				model: "extension-provider/summary-model",
+				model: "opencode/summary-model",
 			}, controller.signal);
 
 			await Promise.all([writer(firstSession), writer(secondSession)]);
@@ -87,7 +88,9 @@ describe("pruned fork sessions", () => {
 			assert.ok(call);
 			assert.equal(call.model, model);
 			assert.ok(call.options);
-			assert.deepEqual(Object.keys(call.options).sort(), ["maxTokens", "signal"]);
+			assert.deepEqual(Object.keys(call.options).sort(), ["headers", "maxTokens", "sessionId", "signal"]);
+			assert.equal(call.options.sessionId, "parent-session");
+			assert.equal(call.options.headers?.["x-opencode-session"], "parent-session");
 			assert.equal(call.options.maxTokens, 4_096);
 			assert.equal(call.options.signal, controller.signal);
 			assert.match(call.context.systemPrompt ?? "", /Return strict JSON only/);
