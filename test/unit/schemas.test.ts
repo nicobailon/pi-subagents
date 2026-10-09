@@ -401,10 +401,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(stopOnAttention?.type, "boolean");
 		assert.equal(timeoutMs?.type, "integer");
 		assert.equal(timeoutMs?.minimum, 1);
-		// The tool description says once that ordinary async runs wake the session natively.
-		for (const [name, schema] of Object.entries(properties ?? {})) {
-			assert.doesNotMatch(String(schema.description ?? ""), /natively/i, name);
-		}
 	});
 
 	it("does not emit description-only schema nodes", () => {

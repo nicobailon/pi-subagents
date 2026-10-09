@@ -872,37 +872,6 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
-	it("stops a queued async run without claiming terminal state", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-stop-queued-"));
-		const asyncDir = path.join(root, "runs", "queued-run");
-		fs.mkdirSync(asyncDir, { recursive: true });
-		const statusPath = path.join(asyncDir, "status.json");
-		fs.writeFileSync(statusPath, JSON.stringify({
-			runId: "queued-run", sessionId: "/sessions/parent.jsonl", mode: "single",
-			state: "queued", startedAt: 100, lastUpdate: 100,
-			steps: [{ agent: "worker", status: "pending" }],
-		}));
-		const before = fs.readFileSync(statusPath, "utf-8");
-		const events = new FakeEvents();
-		const bridge = registerSubagentRpcBridge({
-			events, getContext: () => ctx(),
-			execute: async () => assert.fail("stop should not call executor"),
-			asyncDirRoot: path.join(root, "runs"), resultsDir: path.join(root, "results"),
-			kill: () => assert.fail("queued stop must not signal a PID"), now: () => 150,
-		});
-		try {
-			assert.deepEqual(await request(events, "stop-queued", "stop", { id: "queued-run" }), {
-				version: 1, requestId: "stop-queued", method: "stop", success: true,
-				data: { runId: "queued-run", asyncDir, previousState: "queued", state: "stopping", message: "Stop requested for async run queued-run." },
-			});
-			assert.deepEqual(consumeStopRequestPayload(asyncDir), { type: "stop", ts: 150, source: "rpc-stop" });
-			assert.equal(fs.readFileSync(statusPath, "utf-8"), before);
-		} finally {
-			bridge.dispose();
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
 	for (const inboxClosed of [false, true]) {
 		for (const proof of ["observed", "missing", "unknown", "foreign-run", "foreign-runner", "missing-identity"] as const) {
 			it(`handles paused RPC stop with ${proof} proof and ${inboxClosed ? "closed" : "open"} inbox`, async (t) => {
@@ -1023,7 +992,7 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(fs.existsSync(stopRequestsDir(asyncDir)), false);
 	});
 
-	for (const scenario of ["missing", "complete", "failed", "partial", "stopped", "rejected", "paused-child", "queued-child", "running-closed"] as const) {
+	for (const scenario of ["missing", "complete", "failed", "partial", "stopped", "rejected", "queued", "paused-child", "queued-child", "running-closed"] as const) {
 		it(`enforces RPC stop target restrictions: ${scenario}`, async (t) => {
 			const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-stop-target-"));
 			t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -1048,11 +1017,13 @@ describe("subagent extension RPC bridge", () => {
 			});
 			t.after(() => bridge.dispose());
 			const reply = await request(events, "stop-target", "stop", { id: runId, ...(scenario.endsWith("-child") ? { childId: "worker" } : {}) });
-			assert.equal(reply.success, scenario === "queued-child");
+			assert.equal(reply.success, scenario === "queued" || scenario === "queued-child");
 			if (!reply.success) assert.equal(reply.error.code, scenario === "missing" ? "not_found" : scenario === "running-closed" ? "execution_failed" : "invalid_state");
 			if (scenario === "queued-child") {
 				assert.deepEqual(consumeStopRequestPayload(asyncDir), { type: "stop", ts: 150, source: "rpc-stop", targetIndex: 0, childId: "worker" });
 				assert.deepEqual(events.emitted.filter(({ event }) => event === SUBAGENT_CHILD_STATUS_EVENT).map(({ data }) => (data as SubagentChildStatusEvent).childId), ["worker"]);
+			} else if (scenario === "queued") {
+				assert.deepEqual(consumeStopRequestPayload(asyncDir), { type: "stop", ts: 150, source: "rpc-stop" });
 			} else {
 				assert.equal(fs.existsSync(stopRequestsDir(asyncDir)), false);
 				assert.equal(events.emitted.some(({ event }) => event === SUBAGENT_CHILD_STATUS_EVENT), false);

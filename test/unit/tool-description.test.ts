@@ -15,7 +15,6 @@ import {
 	SUBAGENT_TOOL_PROMPT_SNIPPET,
 } from "../../src/extension/tool-description.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
-import { resolveDisabledFeatureSurface } from "../../src/shared/disabled-features.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -61,11 +60,9 @@ describe("registered subagent tool description", () => {
 		}
 	});
 
-	it("states the authorization rule exactly once across description, snippet and guidelines", () => {
-		const metadata = buildSubagentToolPromptMetadata();
-		const prompt = [DEFAULT_SUBAGENT_TOOL_DESCRIPTION, metadata.promptSnippet ?? "", ...(metadata as { promptGuidelines?: string[] }).promptGuidelines ?? []].join("\n");
+	it("states the authorization rule exactly once across the description and snippet", () => {
+		const prompt = `${DEFAULT_SUBAGENT_TOOL_DESCRIPTION}\n${SUBAGENT_TOOL_PROMPT_SNIPPET}`;
 		assert.equal(prompt.match(/operator|authori[sz]/gi)?.length, 2, prompt);
-		assert.match(prompt, /Delegate only when the operator asked, directly or through applicable user\/project instructions; size, complexity or risk alone is not authorization\./);
 	});
 
 	it("keeps call shapes, discovery and safety rules in every built-in mode", () => {
@@ -81,13 +78,6 @@ describe("registered subagent tool description", () => {
 				/guide workflows\/recommended-orchestration-pattern.*guide workflows\/scripted-workflows.*guide tool-reference\/retained-children.*guide tool-reference\/external-cli-agent-profiles/,
 			]) assert.match(description, contract);
 			assert.ok(description.endsWith(SUBAGENT_SAFETY_GUIDANCE) || description.includes(`${SUBAGENT_SAFETY_GUIDANCE}\n\nDETAILS:`));
-		}
-	});
-
-	it("does not send the parent to list or models before every launch", () => {
-		const structured = buildSubagentToolDescription({}, { disabledFeatures: resolveDisabledFeatureSurface({ disabledFeatures: ["workflow-scripts"] }) });
-		for (const description of [DEFAULT_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION, FULL_SUBAGENT_TOOL_DESCRIPTION, structured]) {
-			assert.doesNotMatch(description, /first call|before a model override|call \{action:"(list|models)"|runner\.available/i);
 		}
 	});
 

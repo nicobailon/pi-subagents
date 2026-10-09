@@ -86,12 +86,8 @@ export interface ToolDescriptionOptions {
 	disabledFeatures?: DisabledFeatureSurface;
 }
 
-export interface SubagentToolPromptMetadata {
-	promptSnippet?: string;
-}
-
 // No promptGuidelines: the description carries the authorization rule, so it is stated once.
-export function buildSubagentToolPromptMetadata(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, disabledFeatures?: DisabledFeatureSurface): SubagentToolPromptMetadata {
+export function buildSubagentToolPromptMetadata(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, disabledFeatures?: DisabledFeatureSurface): { promptSnippet?: string } {
 	if (config.toolDescriptionMode !== undefined) return {};
 	return { promptSnippet: disabledFeatures?.features.has("workflow-scripts") ? STRUCTURED_SUBAGENT_TOOL_PROMPT_SNIPPET : SUBAGENT_TOOL_PROMPT_SNIPPET };
 }

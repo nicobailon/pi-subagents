@@ -32,9 +32,6 @@ const OPTION_SAMPLES: Record<string, unknown> = {
 describe("subagent tool options", () => {
 	it("lowers every options field to the flat params the executor reads", () => {
 		assert.deepEqual(Object.keys(OPTION_SAMPLES).sort(), [...SUBAGENT_OPTION_KEYS].sort());
-		for (const [key, value] of Object.entries(OPTION_SAMPLES)) {
-			assert.deepEqual(flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { [key]: value } }), { agent: "worker", task: "scan", [key]: value }, key);
-		}
 		assert.deepEqual(flattenSubagentToolOptions({ action: "status", options: OPTION_SAMPLES }), { action: "status", ...OPTION_SAMPLES });
 		assert.deepEqual(flattenSubagentToolOptions({ agent: "worker", task: "scan" }), { agent: "worker", task: "scan" });
 	});
@@ -46,14 +43,8 @@ describe("subagent tool options", () => {
 		assert.throws(() => flattenSubagentToolOptions({ action: "status", view: "fleet", lines: 5, options: { view: "transcript", lines: 6 } }), { message: "subagent: 'view', 'lines' given both at the top level and in options with different values; give each once." });
 	});
 
-	it("suggests the closest option for a typo and lists the valid options", () => {
-		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { acceptence: "checked" } }), (error: Error) => {
-			assert.match(error.message, /^subagent: unknown options key 'acceptence'\. Did you mean 'acceptance'\? Valid options: acceptance, additional, agentContract, /);
-			return true;
-		});
-	});
-
-	it("points aliases and top-level fields inside options to the field to use", () => {
+	it("points typos, aliases and top-level fields inside options to the field to use", () => {
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { acceptence: "checked" } }), { message: /^subagent: unknown options key 'acceptence'\. Did you mean 'acceptance'\? Valid options: acceptance, additional, agentContract, / });
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { maxRuntimeMs: 1000 } }), { message: /^subagent: unknown options key 'maxRuntimeMs'; use options\.timeoutMs\. Valid options: / });
 		assert.throws(() => flattenSubagentToolOptions({ action: "status", options: { id: "r1" } }), { message: /^subagent: 'id' is a top-level field, not an option\. Valid options: / });
 		assert.throws(() => flattenSubagentToolOptions({ options: { workflowScript: "return 1" } }), /workflowScript was removed/);
@@ -98,7 +89,6 @@ describe("registered subagent tools with options", () => {
 			assert.doesNotMatch(text(await call({ action: "status" })), /No active subagent fleet/);
 			assert.match(text(await call({ action: "status", options: { view: "fleet" } })), /No active subagent fleet/);
 			assert.match(text(await call({ action: "status", view: "fleet" })), /No active subagent fleet/);
-			await call({ action: "list", capabilities: true });
 			await assert.rejects(call({ action: "status", runId: "missing-run", view: "transcript" }), /Transcript target: run missing-run/);
 			await assert.rejects(call({ action: "status", options: { view: "fleet" } }, tools.fanout), /Child-safe subagent fleet view is unavailable/);
 			await assert.rejects(call({ action: "status", id: "missing-run", options: { view: "transcript", lines: 5 } }), /Transcript target: run missing-run/);

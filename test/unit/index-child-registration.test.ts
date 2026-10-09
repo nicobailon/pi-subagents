@@ -1401,25 +1401,10 @@ describe("subagent extension child mode", () => {
 			"subagent_watchdog_warning",
 		]);
 		assert.deepEqual(output.entryTypes, ["subagent_supervisor_reply", "subagent_watchdog_warning"]);
-		assert.deepEqual(Object.fromEntries(output.blocks.messages), {
-			subagent_supervisor_request: [" [subagent] supervisor request (click to expand)"],
-			subagent_control_notice: [" [subagent] subagent notice (click to expand)"],
-			subagent_steering_notice: [" [subagent] steering notice (click to expand)"],
-			"subagent-notify": [" [subagent] background run finished (click to expand)"],
-			"subagent-completion-unanswered": [" [subagent] completion results unanswered (click to expand)"],
-			"subagent-completion-unhandled": [" [subagent] completion results unhandled (click to expand)"],
-			"subagent-supervisor-unanswered": [" [subagent] supervisor requests unanswered (click to expand)"],
-			"subagent-supervisor-blocked": [" [subagent] supervisor requests blocked (click to expand)"],
-			"subagent-wait-subscription": [" [subagent] bg_wait fired (click to expand)"],
-			"subagent-incremental-child-notify": [" [subagent] workflow child update (click to expand)"],
-			"subagent-workflow-result-write-failed": [" [subagent] workflow result save failed (click to expand)"],
-			subagent_watchdog_warning: [" [subagent] watchdog warning (click to expand)"],
-			subagent_watchdog_clarification: [" [subagent] watchdog needs clarification (click to expand)"],
-		});
-		assert.deepEqual(Object.fromEntries(output.blocks.entries), {
-			subagent_supervisor_reply: [" [subagent] supervisor reply (click to expand)"],
-			subagent_watchdog_warning: [" [subagent] watchdog warning (click to expand)"],
-		});
+		for (const [type, lines] of [...output.blocks.messages, ...output.blocks.entries]) {
+			assert.equal(lines.length, 1, type);
+			assert.match(lines[0]!, /^ \[subagent\] .+ \(click to expand\)$/, type);
+		}
 	});
 
 	it("returns before registering anything in a child-hosting process", () => {

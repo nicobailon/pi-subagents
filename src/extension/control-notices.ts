@@ -14,16 +14,12 @@ export interface SubagentControlMessageDetails {
 	noticeDeferred?: boolean;
 }
 
-export function controlNoticeTarget(details: SubagentControlMessageDetails): string | undefined {
-	return details.childIntercomTarget;
-}
-
 function deliverControlNotice(input: {
 	pi: Pick<ExtensionAPI, "sendMessage">;
 	visibleControlNotices: Set<string>;
 	details: SubagentControlMessageDetails;
 }): void {
-	const childIntercomTarget = controlNoticeTarget(input.details);
+	const childIntercomTarget = input.details.childIntercomTarget;
 	const key = controlNotificationKey(input.details.event, childIntercomTarget);
 	if (input.visibleControlNotices.has(key)) return;
 	input.visibleControlNotices.add(key);

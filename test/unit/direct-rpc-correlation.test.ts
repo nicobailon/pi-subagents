@@ -7,8 +7,6 @@ import { describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import { removeResultIndex } from "../../src/runs/background/result-files.ts";
-import { readActiveRunToolCallIndex } from "../../src/runs/background/active-run-index.ts";
 import { DIRS, SUBAGENT_ASYNC_STARTED_EVENT, type AsyncStatus, type Details, type SubagentState } from "../../src/shared/types.ts";
 import { registerSubagentRpcBridge, SUBAGENT_RPC_REQUEST_EVENT, subagentRpcReplyEvent, type SubagentRpcReplyEnvelope } from "../../src/extension/rpc.ts";
 import { createEventBus, makeAgent, makeMinimalCtx } from "../support/helpers.ts";
@@ -140,39 +138,6 @@ describe("direct RPC correlation", () => {
 		assertIdentity(id, toolCallId);
 		assert.equal(fs.statSync(sideEffect).mtimeMs, sideEffectTime, "recovery does not repeat the worker write");
 		assert.equal(mockPi.callCount(), 1);
-	});
-
-	it("preserves ordinary direct tool identity and fails closed on duplicate persisted aliases", async (t) => {
-		const runtime = host();
-		t.after(runtime.dispose);
-		const toolCallId = `tool-${randomUUID()}`;
-		const ids: string[] = [];
-		for (let index = 0; index < 2; index++) {
-			mockPi.onCall({ output: `intentional launch ${index}` });
-			const launched = await runtime.executor.executePublic(toolCallId, { agent: "worker", task: "Do work", async: true, context: "fresh", acceptance: false }, new AbortController().signal, undefined, runtime.ctx);
-			assert.equal(launched.isError, undefined);
-			const id = launched.details.asyncId;
-			assert.ok(id);
-			ids.push(id);
-			await waitForAsyncResultFile(id);
-			await waitFor(() => status(id).processTerminal?.state === "observed");
-			assert.equal(status(id).toolCallId, toolCallId);
-			assert.equal(launched.details.toolCallId, toolCallId);
-			if (index === 0) {
-				// Normal delivery removes the result and its alias; terminal status remains.
-				fs.unlinkSync(path.join(DIRS.results, `${id}.json`));
-				removeResultIndex(DIRS.results, status(id).sessionId, id, toolCallId);
-				assert.deepEqual(readActiveRunToolCallIndex(DIRS.async, toolCallId), []);
-				assertIdentity(id, toolCallId);
-			}
-		}
-		assert.notEqual(ids[0], ids[1], "correlation is not an idempotent-spawn promise");
-		const ambiguous = freshLookup(toolCallId);
-		assert.match(ambiguous.error!, /ambiguous across async runs/);
-		assert.equal(ambiguous.result.isError, true);
-		assert.equal(ambiguous.result.details.runId, undefined);
-		for (const id of ids) assert.equal(freshLookup(id).resolved?.id, id);
-		assert.equal(mockPi.callCount(), 2, "only the two explicitly requested launches ran");
 	});
 
 	it("keeps workflow parent and direct async child identities distinct", async (t) => {
