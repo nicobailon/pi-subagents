@@ -139,6 +139,7 @@ function persistSingleResultMetadata(input: {
 	metadataPath?: string;
 	enabled: boolean;
 	runId?: string;
+	parentSessionId?: string;
 	agent: string;
 	task: string;
 	result: SingleResult;
@@ -147,6 +148,7 @@ function persistSingleResultMetadata(input: {
 	const target = input.result;
 	writeMetadata(input.metadataPath, {
 		runId: input.runId,
+		parentSessionId: input.parentSessionId,
 		agent: input.agent,
 		task: PROMPT_REDACTED,
 		exitCode: target.exitCode,
@@ -413,6 +415,7 @@ async function runSingleAttempt(
 		nestedRoute: options.nestedRoute,
 		runFanoutBudget: options.runFanoutBudget,
 		parentSessionId: options.parentSessionId,
+		parentSessionFile: options.parentSessionFile,
 		forkCacheKey: options.context === "fork" ? deriveForkPromptCacheKey(options.parentSessionId) : undefined,
 		structuredOutput: options.structuredOutput,
 		fast: options.fast ?? agent.fast,
@@ -1847,6 +1850,7 @@ async function runSyncCompletionInner(
 			metadataPath: artifactPathsResult?.metadataPath,
 			enabled: options.artifactConfig?.enabled !== false && options.artifactConfig?.includeMetadata !== false,
 			runId: options.runId,
+			parentSessionId: options.parentSessionId,
 			agent: agentName,
 			task,
 			result: target,
@@ -2205,6 +2209,7 @@ export async function runSync(
 				metadataPath: failedResult.artifactPaths?.metadataPath,
 				enabled: options.artifactConfig?.enabled !== false && options.artifactConfig?.includeMetadata !== false,
 				runId: options.runId,
+				parentSessionId: options.parentSessionId,
 				agent: failedResult.agent,
 				task: failedResult.task,
 				result: failedResult,
