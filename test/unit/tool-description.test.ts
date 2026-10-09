@@ -102,7 +102,7 @@ describe("registered subagent tool description", () => {
 				/interactive_shell, pi -ne, Codex\/Claude\/Cursor CLI.*explicit owner approval/,
 				/fallback requires explicit owner approval, not Pi core's generic pi -ne hint/,
 				/Ordinary child subagents are not orchestrators.*depth\/session limits/,
-				/Before advanced orchestration.*action:"guide",topic:"workflows".*pi-subagents skill/,
+				/Before advanced orchestration.*action:"guide",topic:"workflows\/scripted-workflows".*pi-subagents skill/,
 				/action:"guide",topic:"tool-reference".*controls\/evidence gates/,
 			]) assert.match(description, contract);
 		}

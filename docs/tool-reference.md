@@ -67,6 +67,8 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 
 ## Parameter reference
 
+### Target and management parameters
+
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `agent` | string | - | One direct child or agent-management target. Workflow child agents are set inside `runs.run` or `runs.all`. |
@@ -90,6 +92,11 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `lines` | number | `80` | Maximum transcript lines for `action: "status", view: "transcript"`; capped at 500. |
 | `agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
 | `capabilities` | boolean | `false` | With `action: "list"`, return compact prompt-free rows and `details.agentCapabilities` machine-readable records for each agent's declared/default routing capabilities. External CLI rows also include their command and passive local availability. |
+
+### Execution parameters
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
 | `async` | boolean | default-on | Background execution. Workflows default to background. `async:false` blocks the parent until completion. A local foreground child runs inside the parent Pi process and never loads the parent's ambient extensions, but it does inherit the providers those extensions registered. A pane-native remote foreground child instead uses the remote machine's provider discovery and configuration. Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) must run as background children, which load them inside the detached runner process. |
 | `chatProgress` | `auto \| off \| live-card` | `auto` | Workflow chat projection. `auto` renders a live in-chat card only for watched foreground workflows in the same Git repository, including managed worktrees; it is off otherwise. Explicit `live-card` requires `async:false` and the same Git repository. Async workflows have no inline live card, so omit `chatProgress` or use `auto`/`off`; use `async:false` only when the parent must block. |
 | `isolation` | `none \| worktree` | - | Workflow child isolation. `none` runs in the shared cwd and does not need Git. `worktree` requires a managed Git worktree. Do not combine it with a contradictory `worktree` value. |

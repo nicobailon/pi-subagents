@@ -6962,7 +6962,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (action === "guide") {
 				try {
 					const guide = readSubagentGuide(paramsWithResolvedCwd.topic);
-					const notice = paramsWithResolvedCwd.topic === "tool-reference" ? disabledFeatureNotice(disabledFeatures) : undefined;
+					const notice = paramsWithResolvedCwd.topic?.split("/")[0] === "tool-reference" ? disabledFeatureNotice(disabledFeatures) : undefined;
 					return {
 						content: [{ type: "text", text: notice ? `${notice}\n\n${guide}` : guide }],
 						details: { mode: "management", results: [] },
