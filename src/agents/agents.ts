@@ -1660,6 +1660,7 @@ export interface RuntimeAgentSettingsContext {
 	cwd: string;
 	scope: AgentScope;
 	preferredModelProvider?: string;
+	projectTrusted?: boolean;
 }
 
 function runtimeAgentOverrides(settings: SubagentSettings): SubagentSettings {
@@ -1686,7 +1687,7 @@ function runtimeAgentOverrides(settings: SubagentSettings): SubagentSettings {
  */
 export function applyRuntimeAgentSettings(agents: AgentConfig[], context: RuntimeAgentSettingsContext): AgentConfig[] {
 	if (agents.length === 0) return agents;
-	const sources = getAgentDiscoverySources(context.cwd, context.preferredModelProvider);
+	const sources = getAgentDiscoverySources(context.cwd, context.preferredModelProvider, false, undefined, context.projectTrusted !== false);
 	const { user, project } = settingsForScope(sources, context.scope);
 	const defaultProvider = resolveSubagentDefaultProvider(user, project, sources.projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(user, project, sources.userSettingsPath, sources.projectSettingsPath, defaultProvider);

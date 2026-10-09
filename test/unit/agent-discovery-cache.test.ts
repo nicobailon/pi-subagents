@@ -291,6 +291,15 @@ describe("agent discovery snapshots", () => {
 			assert.equal(discoverAgentSnapshot(project, "both", undefined, untrusted).effective.agents.some((agent) => agent.name === "probe"), true);
 			const launch = await resolveSubagentLaunchContract({ agent: "probe", cwd: project, availableModels, projectTrusted: false });
 			assert.equal(launch.ok && launch.contract.model, "openai/luna");
+			// Runtime-registered agents take their model settings from the same untrusted view.
+			const registration = registerAgent({ pi, name: "runtime-probe", definition: { description: "Runtime probe", systemPrompt: "Runtime." } });
+			try {
+				const snapshot = discoverAgentSnapshot(project, "both", undefined, { includeChains: false, projectTrusted: false });
+				const merged = mergeRuntimeAgents(pi, snapshot.effective, snapshot.effective.agents, { cwd: project, scope: snapshot.effective.scope, projectTrusted: false });
+				assert.equal(merged.agents.some((agent) => agent.name === "runtime-probe"), true);
+			} finally {
+				registration.dispose();
+			}
 		}
 
 		// A project's agentExcludeDirs cannot hide user agents either.

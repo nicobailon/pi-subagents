@@ -454,7 +454,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			...all.project,
 		];
 		// Runtime agents take model settings from the scope discovery actually used.
-		const merged = mergeRuntimeAgents(pi, discovered, configuredAgents, { cwd, scope: discovered.scope, preferredModelProvider });
+		const merged = mergeRuntimeAgents(pi, discovered, configuredAgents, { cwd, scope: discovered.scope, preferredModelProvider, projectTrusted: options.projectTrusted });
 		if (discovered.maxThinking === undefined) return merged;
 		return {
 			...merged,
