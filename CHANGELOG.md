@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A child whose structured output used a value outside a schema's `enum` or `const` got only "must be equal to one of the allowed values", so it had to guess or reread the schema, which fails once its read budget is spent. The error now lists the permitted values, up to 20. Thanks to [@rtbe](https://github.com/rtbe) for the report. ([#2813](https://github.com/nicobailon/pi-subagents/issues/2813))
+
 ## [0.77.0] - 2026-10-09
 
 ### Highlights
