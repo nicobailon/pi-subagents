@@ -21,6 +21,7 @@ import { deepFreezeWorkflowArgs, normalizeWorkflowArgs } from "../../workflows/w
 import { readMission, resolveMissionStoreLocation, validateMissionId } from "../../missions/store.ts";
 
 import { calendarDateAfter, latestCalendarOccurrence, nextCalendarOccurrence, normalizeCalendarRule, restoreCalendarTrigger, type CalendarTrigger } from "./calendar-schedule.ts";
+import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 
 export const SCHEDULED_RUN_ACTIONS = [
 	"schedule.create",
@@ -93,6 +94,7 @@ type ScheduledRunManagerDeps = {
 	randomId?: () => string;
 	resolveCapabilityCeiling?: (sessionId: string) => ResolvedSubagentCapabilityCeiling | undefined;
 	timers?: ScheduledRunTimers;
+	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 };
 
 export function isScheduledRunAction(action: unknown): action is ScheduledRunAction {
@@ -838,14 +840,8 @@ export class ScheduledRunManager {
 			const run = this.activeRun(store, schedule);
 			if (run?.state === "running" && run.asyncId) this.observedAsyncIds.add(run.asyncId);
 			const startedAt = run?.startedAt ? Date.parse(run.startedAt) : Number.NaN;
-			if (run?.state === "running" && run.asyncDir) {
-				try {
-					const status = readJson(path.join(run.asyncDir, "status.json"), "async status") as Partial<AsyncStatus>;
-					if (["complete", "failed", "stopped", "rejected"].includes(String(status.state))) this.finishRun(store, schedule, run, status.state === "complete", typeof status.error === "string" ? status.error : undefined);
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !(error instanceof Error && /ENOENT/.test(error.message))) throw error;
-				}
-			}
+			const outcome = this.terminalAsyncOutcome(run);
+			if (run && outcome) this.finishRun(store, schedule, run, outcome.success, outcome.error);
 			if (schedule.activeRunId && (!run || run.state !== "running" || (!run.asyncId && Number.isFinite(startedAt) && startedAt + STALE_LAUNCH_CLAIM_MS <= this.now()))) {
 				if (run?.state === "running") {
 					run.state = "failed_launch";
@@ -924,6 +920,18 @@ export class ScheduledRunManager {
 		const nextRunAtBeforeClaim = schedule.trigger.nextRunAt;
 		const nextLocalDateBeforeClaim = schedule.trigger.kind === "calendar" ? schedule.trigger.nextLocalDate : undefined;
 		const run: ScheduleRunRecord = { schemaVersion: 1, id: this.randomId(), scheduleId: schedule.id, plannedAt: timestamp(planned), dueReason, state: "running", startedAt: timestamp(now) };
+		if (schedule.activeRunId) {
+			let active: ScheduleRunRecord | undefined;
+			let outcome: { success: boolean; error?: string } | undefined;
+			try {
+				active = this.activeRun(store, schedule);
+				outcome = this.terminalAsyncOutcome(active);
+			} catch (error) {
+				console.warn(`[pi-subagents] Could not reconcile active run '${schedule.activeRunId}' of schedule '${schedule.id}': ${error instanceof Error ? error.message : String(error)}`);
+			}
+			// A dead runner's completion never reaches this schedule, so its claim would skip every later fire.
+			if (active && outcome) this.finishRun(store, schedule, active, outcome.success, outcome.error, true);
+		}
 		if (schedule.activeRunId) {
 			run.state = "skipped";
 			run.completedAt = timestamp(now);
@@ -1042,11 +1050,12 @@ export class ScheduledRunManager {
 		}
 	}
 
-	private finishRun(store: ScheduleStore, schedule: ScheduleRecord, run: ScheduleRunRecord, success: boolean, error?: string): void {
+	/** `relaunch` releases the claim for a fire that launches the due occurrence itself, so it neither skips nor re-arms it. */
+	private finishRun(store: ScheduleStore, schedule: ScheduleRecord, run: ScheduleRunRecord, success: boolean, error?: string, relaunch = false): void {
 		const now = this.now();
 		const next = nextRunAt(schedule);
 		let skipped: ScheduleRunRecord | undefined;
-		if (next !== undefined && next <= now) {
+		if (!relaunch && next !== undefined && next <= now) {
 			const planned = duePlannedAt(schedule, now)!;
 			skipped = {
 				schemaVersion: 1,
@@ -1066,13 +1075,17 @@ export class ScheduledRunManager {
 		schedule.activeRunId = undefined;
 		schedule.updatedAt = timestamp(now);
 		store.write(schedule);
-		fs.rmSync(path.join(store.directory(schedule.id), "active.lock"), { force: true });
+		const lockPath = path.join(store.directory(schedule.id), "active.lock");
+		// Another session's fire may already have released this claim and taken the lock for its own run.
+		let holder: string | undefined;
+		if (relaunch) try { holder = fs.readFileSync(lockPath, "utf-8"); } catch { /* No readable lock names this run. */ }
+		if (!relaunch || holder === run.id) fs.rmSync(lockPath, { force: true });
 		// The schedule is already released; a history.json timeout must not leave it unarmed.
 		try {
 			store.writeRun(schedule, run, success ? "schedule.run.completed" : "schedule.run.failed");
 			if (skipped) store.writeRun(schedule, skipped, "schedule.skipped_overlap");
 		} finally {
-			this.arm(schedule, store);
+			if (!relaunch) this.arm(schedule, store);
 		}
 	}
 
@@ -1134,6 +1147,16 @@ export class ScheduledRunManager {
 	private activeRun(store: ScheduleStore, schedule: ScheduleRecord): ScheduleRunRecord | undefined {
 		if (!schedule.activeRunId) return undefined;
 		return store.getRun(schedule.id, schedule.activeRunId) ?? store.history(schedule.id).find((run) => run.id === schedule.activeRunId);
+	}
+
+	/** Reconciles an attached running run (a dead runner PID becomes failed) and returns its outcome once terminal. */
+	private terminalAsyncOutcome(run: ScheduleRunRecord | undefined): { success: boolean; error?: string } | undefined {
+		if (run?.state !== "running" || !run.asyncDir) return undefined;
+		const status = reconcileAsyncRun(run.asyncDir, { now: this.now, kill: this.deps.kill }).status;
+		if (!status || !["complete", "failed", "stopped", "rejected"].includes(status.state)) return undefined;
+		// Stale-run repair records its reason on the failed steps, not the root status.
+		const error = [status.error, ...(status.steps ?? []).map((step) => step.error)].find((value): value is string => typeof value === "string");
+		return { success: status.state === "complete", error };
 	}
 
 	private timerKey(store: ScheduleStore, id: string): string {
