@@ -35,6 +35,7 @@ function writeJsonToExistingDir(filePath: string, payload: object): void {
 }
 export type ControlChannelTimers = { setInterval: typeof setInterval; clearInterval: typeof clearInterval };
 const CONTROL_SAFETY_POLL_INTERVAL_MS = 5000;
+const REPEATED_SCAN_ERROR_SUMMARY_MS = 60_000;
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => unknown;
 
 export interface InterruptRequest {
@@ -564,6 +565,7 @@ export function watchAsyncControlInbox(
 		platform?: NodeJS.Platform;
 		fs?: ControlChannelFs;
 		timers?: ControlChannelTimers;
+		now?: () => number;
 	},
 ): () => void {
 	const fsImpl = opts.fs ?? fs;
@@ -576,6 +578,27 @@ export function watchAsyncControlInbox(
 		} catch (reportError) {
 			console.error("Control inbox error reporter failed:", reportError);
 		}
+	};
+	// A scan that keeps failing the same way (a Windows EPERM wrote gigabytes of identical stack traces)
+	// is reported once, then as one count per interval, until a check scans cleanly.
+	const repeatedScanErrors = new Map<string, { suppressed: number; since: number }>();
+	let scanFailed = false;
+	const reportScan = (error: unknown): void => {
+		scanFailed = true;
+		const text = error instanceof Error ? error.message : String(error);
+		const key = `${(error as NodeJS.ErrnoException | undefined)?.code ?? ""}\0${text}`;
+		const now = (opts.now ?? Date.now)();
+		const repeated = repeatedScanErrors.get(key);
+		if (!repeated) {
+			repeatedScanErrors.set(key, { suppressed: 0, since: now });
+			report(error, "scan");
+			return;
+		}
+		repeated.suppressed++;
+		if (now - repeated.since < REPEATED_SCAN_ERROR_SUMMARY_MS) return;
+		report(`${repeated.suppressed} more identical failures in the last ${Math.round((now - repeated.since) / 1000)}s: ${text}`, "scan");
+		repeated.suppressed = 0;
+		repeated.since = now;
 	};
 	const dirs = [
 		...(opts.onInterrupt || opts.onTimeout || opts.onStop ? [dir] : []),
@@ -593,11 +616,12 @@ export function watchAsyncControlInbox(
 	let disposed = false;
 	const check = (): void => {
 		if (disposed) return;
+		scanFailed = false;
 		try {
 			if (opts.onCommand) for (const request of consumeCommandRequests(asyncDir, fsImpl)) {
 				try { opts.onCommand(request); } catch (error) { report(error, "callback"); }
 			}
-			if (opts.onStop) for (const request of consumeStopRequestPayloads(asyncDir, fsImpl, (error) => report(error, "scan"))) {
+			if (opts.onStop) for (const request of consumeStopRequestPayloads(asyncDir, fsImpl, reportScan)) {
 				try { opts.onStop(request); } catch (error) { report(error, "callback"); }
 			}
 			if (opts.onTimeout && consumeTimeoutRequest(asyncDir, fsImpl)) {
@@ -606,12 +630,13 @@ export function watchAsyncControlInbox(
 			if (opts.onInterrupt && consumeInterruptRequest(asyncDir, fsImpl)) {
 				try { opts.onInterrupt(); } catch (error) { report(error, "callback"); }
 			}
-			if (opts.onSteer) for (const request of consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl, (error) => report(error, "scan"))) {
+			if (opts.onSteer) for (const request of consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl, reportScan)) {
 				try { opts.onSteer(request); } catch (error) { report(error, "callback", request); }
 			}
 		} catch (error) {
-			report(error, "scan");
+			reportScan(error);
 		}
+		if (!scanFailed) repeatedScanErrors.clear();
 	};
 
 	// Handle a request that may have arrived before the watcher started.

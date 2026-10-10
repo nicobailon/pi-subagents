@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- When a background run kept failing to read its control inbox, such as the `EPERM` errors seen on Windows, the runner wrote the same stack trace to `runner.stderr.log` on every retry and filled gigabytes in minutes. A repeating failure is now logged once, then as one line per minute with the number of repeats, and logged in full again if it recurs after the inbox becomes readable. Retries continue, so queued requests are still delivered once the inbox is readable. Thanks to [@infectiousstupidity](https://github.com/infectiousstupidity) for the report. ([#2811](https://github.com/nicobailon/pi-subagents/issues/2811))
+
 ## [0.77.0] - 2026-10-09
 
 ### Highlights

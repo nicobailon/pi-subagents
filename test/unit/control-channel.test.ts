@@ -725,6 +725,7 @@ describe("control inbox diagnostics and active-owner cost", () => {
 		let tick: () => void = () => {};
 		let fault: "scan" | "read" | "none" = "scan";
 		const denied = Object.assign(new Error("denied"), { code: "EACCES" });
+		const readDenied = Object.assign(new Error("read denied"), { code: "EACCES" });
 		const dispose = watchAsyncControlInbox(asyncDir, {
 			onSteer: (request) => seen.push(request.id),
 			onError: (_error, phase) => failures.push(phase),
@@ -733,7 +734,7 @@ describe("control inbox diagnostics and active-owner cost", () => {
 				...fs,
 				mkdirSync: (() => { throw denied; }) as typeof fs.mkdirSync,
 				readdirSync: ((...args: Parameters<typeof fs.readdirSync>) => { if (fault === "scan") throw denied; return fs.readdirSync(...args); }) as typeof fs.readdirSync,
-				readFileSync: ((...args: Parameters<typeof fs.readFileSync>) => { if (fault === "read") throw denied; return fs.readFileSync(...args); }) as typeof fs.readFileSync,
+				readFileSync: ((...args: Parameters<typeof fs.readFileSync>) => { if (fault === "read") throw readDenied; return fs.readFileSync(...args); }) as typeof fs.readFileSync,
 				watch: (() => { throw new Error("native watch unavailable"); }) as typeof fs.watch,
 			},
 			timers: {
@@ -744,17 +745,55 @@ describe("control inbox diagnostics and active-owner cost", () => {
 		try {
 			requestAsyncSteer(asyncDir, { id: "retry", message: "retry" });
 			tick();
-			assert.deepEqual(failures, ["install", "scan", "scan"]);
+			assert.deepEqual(failures, ["install", "scan"], "an identical repeated scan failure is not reported again");
 			assert.equal(fs.readdirSync(steerRequestsDir(asyncDir)).length, 1);
 			fault = "read";
 			tick();
-			assert.equal(failures.at(-1), "scan");
+			assert.deepEqual(failures, ["install", "scan", "scan"], "a different scan failure is reported");
 			assert.equal(fs.readdirSync(steerRequestsDir(asyncDir)).length, 1);
 			fault = "none";
 			tick();
 			assert.deepEqual(seen, ["retry"]);
 			assert.deepEqual(fs.readdirSync(steerRequestsDir(asyncDir)), []);
-			assert.equal(failures.length, 4, "healthy fallback does not report consumption failure");
+			assert.equal(failures.length, 3, "healthy fallback does not report consumption failure");
+		} finally { dispose(); cleanup(asyncDir); }
+	});
+
+	it("reports a repeating scan failure once, then one count per minute, and again after a clean scan", () => {
+		const asyncDir = tmpAsyncDir("pi-steer-repeated-eperm-");
+		const reports: unknown[] = [];
+		const seen: string[] = [];
+		let failing = true, clock = 0, tick = () => {};
+		const eperm = () => Object.assign(new Error(`EPERM: operation not permitted, scandir '${steerRequestsDir(asyncDir)}'`), { code: "EPERM" });
+		const dispose = watchAsyncControlInbox(asyncDir, {
+			onSteer: (request) => seen.push(request.id),
+			onError: (error, phase) => { assert.equal(phase, "scan"); reports.push(error); },
+			platform: "darwin",
+			now: () => clock,
+			fs: { ...fs, readdirSync: ((...args: Parameters<typeof fs.readdirSync>) => {
+				if (failing) throw eperm();
+				return fs.readdirSync(...args);
+			}) as typeof fs.readdirSync },
+			timers: { setInterval: ((handler: () => void) => { tick = handler; return { unref() {} }; }) as unknown as typeof setInterval, clearInterval() {} },
+		});
+		try {
+			requestAsyncSteer(asyncDir, { id: "kept", message: "kept" });
+			assert.equal(reports.length, 1);
+			assert.equal((reports[0] as NodeJS.ErrnoException).code, "EPERM");
+			for (let index = 0; index < 1_000; index++) { clock += 10; tick(); }
+			assert.equal(reports.length, 1, "identical failures inside the interval are not reported");
+			clock = 60_000;
+			tick();
+			assert.equal(reports.length, 2);
+			assert.equal(reports[1], `1001 more identical failures in the last 60s: ${eperm().message}`);
+			failing = false;
+			tick();
+			assert.deepEqual(seen, ["kept"], "the request survives the failures and is delivered on recovery");
+			assert.equal(reports.length, 2);
+			failing = true;
+			tick();
+			assert.equal(reports.length, 3, "a failure after a clean scan is reported in full");
+			assert.equal((reports[2] as NodeJS.ErrnoException).code, "EPERM");
 		} finally { dispose(); cleanup(asyncDir); }
 	});
 
