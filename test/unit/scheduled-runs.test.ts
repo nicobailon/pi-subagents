@@ -1511,6 +1511,30 @@ describe("active runs whose async runner died", () => {
 		assert.equal(launched, 1, "the overdue occurrence fires after the restore");
 	});
 
+	it("arms a restored schedule when recording its released dead run fails", async () => {
+		const h = harness({ kill });
+		await attach(h, "locked", DEAD_PID);
+		h.manager.stop();
+		h.clock.now += 60_000;
+		// Another process holds the history.json lease, so recording the released run times out.
+		const lease = path.join(fs.realpathSync(scheduleDir(h, "locked")), "history.json.write-lock");
+		fs.mkdirSync(lease);
+		fs.writeFileSync(path.join(lease, "owner.json"), JSON.stringify({ token: "other-session", pid: process.pid, hostname: os.hostname() }));
+		const timers = new FakeTimers();
+		const next = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(h.root, "stores"),
+			now: () => h.clock.now,
+			timers,
+			kill,
+			launch: () => new Promise(() => {}),
+		});
+
+		assert.throws(() => next.bindSession(context(h.ctx.cwd, "session-b")), /Timed out waiting for another process/);
+		assert.equal(JSON.parse(fs.readFileSync(path.join(scheduleDir(h, "locked"), "schedule.json"), "utf-8")).activeRunId, undefined);
+		assert.equal(timers.values.size, 1, "the released schedule is armed despite the failed history write");
+	});
+
 	it("leaves another session's newer claim alone when it released the dead run first", async () => {
 		let h: Harness;
 		const otherSessionClaims = (pid: number) => {

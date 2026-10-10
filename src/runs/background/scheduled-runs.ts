@@ -843,8 +843,14 @@ export class ScheduledRunManager {
 			const outcome = this.terminalAsyncOutcome(run);
 			if (run && outcome) {
 				// Release without consuming the pending occurrence, then apply the restore policy below to the latest record.
-				const latest = this.finishRun(store, schedule, run, outcome.success, outcome.error, true) ?? store.find(schedule.id);
-				if (latest) this.restoreOne(store, latest, notBefore, rearm);
+				// A failed run-record write must not leave the released schedule unarmed; its error still propagates.
+				let latest: ScheduleRecord | undefined;
+				try {
+					latest = this.finishRun(store, schedule, run, outcome.success, outcome.error, true);
+				} finally {
+					latest ??= store.find(schedule.id);
+					if (latest) this.restoreOne(store, latest, notBefore, rearm);
+				}
 				return;
 			}
 			if (schedule.activeRunId && (!run || run.state !== "running" || (!run.asyncId && Number.isFinite(startedAt) && startedAt + STALE_LAUNCH_CLAIM_MS <= this.now()))) {
