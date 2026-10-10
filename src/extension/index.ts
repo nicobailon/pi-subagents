@@ -108,6 +108,8 @@ export { loadConfig, resolveAsyncByDefault } from "./config.ts";
 const SLOW_RELOAD_PHASE_MS = 250;
 // Long enough for Pi to finish starting; loading the executor blocks the event loop for tens of ms.
 const MODULE_PRELOAD_DELAY_MS = 1_000;
+const COMPACTION_RESUME_POLL_MS = 50;
+const COMPACTION_RESUME_DEADLINE_MS = 10_000;
 const RUNTIME_REGISTRY_STORE_KEY = "__piSubagentRuntimeRegistry";
 
 type SubagentExecutorModule = typeof import("../runs/foreground/subagent-executor.ts");
@@ -1040,7 +1042,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	};
 
+	let compactionResumeTimer: ReturnType<typeof setTimeout> | undefined;
+	const hasActiveAsyncWork = () => [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
+	const cancelCompactionResume = () => {
+		if (compactionResumeTimer) clearTimeout(compactionResumeTimer);
+		compactionResumeTimer = undefined;
+	};
+
 	pi.on("agent_start", () => {
+		cancelCompactionResume();
 		parentWake.agentStarted();
 		resumeWidgetsAfterCompaction();
 		herdrStatusBridge.agentStarted();
@@ -1058,18 +1068,34 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (event.reason !== "manual") suspendWidgetsForCompaction();
 	});
 
+	// Pi emits session_compact before it clears its compaction state, and a parent that is still
+	// compacting can only be woken without before_agent_start (earendil-works/pi#5581). Wait for the
+	// parent to go idle so the resume takes parentWake's prompt() path. A run that starts first resumes it.
 	pi.on("session_compact", (event) => {
 		if (event.reason !== "manual") return;
-		const hasActiveAsyncWork = [...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running");
-		if (!hasActiveAsyncWork || !withLastUiContext(() => true)) return;
-		parentWake.sendMessage(
-			{
-				customType: "subagent-compaction-resume",
-				content: "Compaction is complete. Resume the parent task now; background subagent results will arrive separately when ready.",
-				display: false,
-			},
-			{ triggerTurn: true },
-		);
+		if (!hasActiveAsyncWork() || !withLastUiContext(() => true)) return;
+		cancelCompactionResume();
+		const sessionId = state.currentSessionId;
+		const deadline = Date.now() + COMPACTION_RESUME_DEADLINE_MS;
+		const resumeWhenIdle = () => {
+			compactionResumeTimer = undefined;
+			if (state.currentSessionId !== sessionId || !hasActiveAsyncWork()) return;
+			const idle = withLastUiContext((ctx) => ctx.isIdle());
+			if (idle === undefined) return;
+			if (!idle) {
+				if (Date.now() < deadline) compactionResumeTimer = setTimeout(resumeWhenIdle, COMPACTION_RESUME_POLL_MS);
+				return;
+			}
+			parentWake.sendMessage(
+				{
+					customType: "subagent-compaction-resume",
+					content: "Compaction is complete. Resume the parent task now; background subagent results will arrive separately when ready.",
+					display: false,
+				},
+				{ triggerTurn: true },
+			);
+		};
+		compactionResumeTimer = setTimeout(resumeWhenIdle, COMPACTION_RESUME_POLL_MS);
 	});
 
 	pi.on("session_start", (event, ctx) => {
@@ -1106,6 +1132,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (event) => {
+		cancelCompactionResume();
 		completionNotifier.sessionShutdown(event?.reason);
 		parentWake.sessionShutdown(event?.reason);
 		runtimeEntry.cleanup(event?.reason);
