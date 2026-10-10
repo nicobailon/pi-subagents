@@ -15,6 +15,7 @@ export const STRUCTURED_OUTPUT_REJECTION_ERROR = "structured_output was invoked 
 export const INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR = "Structured output invocation was rejected: invalid outputSchema.";
 export const STRUCTURED_OUTPUT_VALIDATOR_UNAVAILABLE_ERROR = "Structured output invocation was rejected: validator unavailable.";
 export const MAX_STRUCTURED_OUTPUT_REJECTION_ERROR_BYTES = 4096;
+const MAX_LISTED_ALLOWED_VALUES = 20;
 
 function utf8Prefix(value: string, maxBytes: number): string {
 	if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
@@ -152,7 +153,7 @@ interface JsonSchemaValidationError {
 	keyword?: string;
 	schemaPath?: string;
 	instancePath?: string;
-	params?: { failingKeyword?: string; requiredProperties?: string[] };
+	params?: { failingKeyword?: string; requiredProperties?: string[]; allowedValues?: unknown[]; allowedValue?: unknown };
 	message?: string;
 }
 
@@ -324,6 +325,15 @@ function formatValidationError(error: JsonSchemaValidationError): string[] {
 	const pathText = error.instancePath ? error.instancePath.replace(/^\//, "").replace(/\//g, ".") : "root";
 	if (error.keyword === "required" && error.params?.requiredProperties?.length) {
 		return error.params.requiredProperties.map((property) => `${pathText === "root" ? property : `${pathText}.${property}`}: is required`);
+	}
+	if (error.keyword === "enum" && Array.isArray(error.params?.allowedValues)) {
+		const values = error.params.allowedValues;
+		const listed = values.slice(0, MAX_LISTED_ALLOWED_VALUES).map((value) => JSON.stringify(value)).join(", ");
+		const more = values.length > MAX_LISTED_ALLOWED_VALUES ? `, and ${values.length - MAX_LISTED_ALLOWED_VALUES} more` : "";
+		return [`${pathText}: must be one of ${listed}${more}`];
+	}
+	if (error.keyword === "const" && error.params && "allowedValue" in error.params) {
+		return [`${pathText}: must be ${JSON.stringify(error.params.allowedValue)}`];
 	}
 	return [`${pathText}: ${error.message}`];
 }

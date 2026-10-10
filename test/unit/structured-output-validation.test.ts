@@ -197,3 +197,22 @@ test("keeps selected-branch diagnostics deterministic and bounded to eight", asy
 
 	assert.equal(message, required.slice(0, 8).map((field) => `${field}: is required`).join("; "));
 });
+
+test("names the permitted values for an invalid enum or const field", async () => {
+	const message = await invalidMessage({
+		type: "object",
+		properties: {
+			outcome: { type: "string", enum: ["applied", "blocked"] },
+			level: { enum: Array.from({ length: 25 }, (_, index) => index) },
+			kind: { const: "report" },
+		},
+		required: ["outcome"],
+		additionalProperties: false,
+	}, { outcome: "fixed", level: 99, kind: "note" });
+
+	assert.equal(message, [
+		`outcome: must be one of "applied", "blocked"`,
+		`level: must be one of ${Array.from({ length: 20 }, (_, index) => index).join(", ")}, and 5 more`,
+		`kind: must be "report"`,
+	].join("; "));
+});

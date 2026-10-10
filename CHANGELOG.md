@@ -5,6 +5,8 @@
 ### Fixed
 
 - When a background run kept failing to read its control inbox, such as the `EPERM` errors seen on Windows, the runner wrote the same stack trace to `runner.stderr.log` on every retry and filled gigabytes in minutes. A repeating failure is now logged once, then as one line per minute with the number of repeats, and logged in full again if it recurs after the inbox becomes readable. Retries continue, so queued requests are still delivered once the inbox is readable. Thanks to [@infectiousstupidity](https://github.com/infectiousstupidity) for the report. ([#2811](https://github.com/nicobailon/pi-subagents/issues/2811))
+- A child whose structured output used a value outside a schema's `enum` or `const` got only "must be equal to one of the allowed values", so it had to guess or reread the schema, which fails once its read budget is spent. The error now lists the permitted values, up to 20. Thanks to [@rtbe](https://github.com/rtbe) for the report. ([#2813](https://github.com/nicobailon/pi-subagents/issues/2813))
+- After a manual `/compact` with background subagents still running, the parent's resume run went out without the prompt sections extensions set in `before_agent_start`, so the provider re-read the whole conversation without its prompt cache. Pi emits `session_compact` before it clears its compaction state, so the resume was sent while the parent still counted as busy and started through `sendMessage` (earendil-works/pi#5581). The resume now waits until the parent is idle and starts through a prompt, and it is dropped if another run starts first or the session ends. Thanks to [@rnavarro](https://github.com/rnavarro) for [#2812](https://github.com/nicobailon/pi-subagents/pull/2812).
 
 ## [0.77.0] - 2026-10-09
 
