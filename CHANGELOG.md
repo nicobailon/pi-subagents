@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- After a manual `/compact` with background subagents still running, the parent's resume run went out without the prompt sections extensions set in `before_agent_start`, so the provider re-read the whole conversation without its prompt cache. Pi emits `session_compact` before it clears its compaction state, so the resume was sent while the parent still counted as busy and started through `sendMessage` (earendil-works/pi#5581). The resume now waits until the parent is idle and starts through a prompt, and it is dropped if another run starts first or the session ends.
+
 ## [0.77.0] - 2026-10-09
 
 ### Highlights
