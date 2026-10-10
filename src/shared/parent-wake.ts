@@ -29,14 +29,17 @@ export interface ParentWake {
 }
 
 export function createParentWake(pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">, now: () => number = Date.now): ParentWake {
-	let ctx!: Pick<ExtensionContext, "isIdle" | "sessionManager">;
+	let ctx!: Pick<ExtensionContext, "isIdle">;
+	// Captured at bind: Pi's ctx throws once stale, which it can be by session_shutdown.
+	let session: { manager: object; id: string } | undefined;
 	// Look the reservation up on every access: another extension may have created this session's entry.
 	const reservation = (): WakeReservation => {
-		const sessionId = ctx.sessionManager.getSessionId();
-		const current = reservations.get(ctx.sessionManager);
-		if (current?.sessionId === sessionId) return current;
-		const next = { sessionId };
-		reservations.set(ctx.sessionManager, next);
+		// Pi can shut an extension down before session_start binds it; an unbound wake reserved nothing.
+		if (!session) return { sessionId: "" };
+		const current = reservations.get(session.manager);
+		if (current?.sessionId === session.id) return current;
+		const next = { sessionId: session.id };
+		reservations.set(session.manager, next);
 		return next;
 	};
 	const reserved = () => {
@@ -64,6 +67,7 @@ export function createParentWake(pi: Pick<ExtensionAPI, "sendMessage" | "sendUse
 		isPending: () => reservation().sentAt !== undefined && (reserved() || !ctx.isIdle()),
 		bindSession(context) {
 			ctx = context;
+			session = { manager: context.sessionManager, id: context.sessionManager.getSessionId() };
 		},
 		agentStarted() {
 			reservation().sentAt = undefined;
