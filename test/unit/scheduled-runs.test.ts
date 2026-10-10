@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import nodeFs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -1533,6 +1535,44 @@ describe("active runs whose async runner died", () => {
 		assert.throws(() => next.bindSession(context(h.ctx.cwd, "session-b")), /Timed out waiting for another process/);
 		assert.equal(JSON.parse(fs.readFileSync(path.join(scheduleDir(h, "locked"), "schedule.json"), "utf-8")).activeRunId, undefined);
 		assert.equal(timers.values.size, 1, "the released schedule is armed despite the failed history write");
+	});
+
+	it("arms a restored schedule from disk and keeps the error when releasing its dead run cannot write the schedule", async () => {
+		const h = harness({ kill });
+		const { runId } = await attach(h, "full", DEAD_PID);
+		h.manager.stop();
+		h.clock.now += 60_000;
+		const scheduleFile = path.join(fs.realpathSync(scheduleDir(h, "full")), "schedule.json");
+		const originalRename = nodeFs.renameSync;
+		nodeFs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+			if (path.join(fs.realpathSync(path.dirname(String(to))), path.basename(String(to))) === scheduleFile) throw Object.assign(new Error("schedule write ENOSPC"), { code: "ENOSPC" });
+			return originalRename(from, to);
+		}) as typeof fs.renameSync;
+		syncBuiltinESMExports();
+		const timers = new FakeTimers();
+		let launched = 0;
+		const next = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(h.root, "stores"),
+			now: () => h.clock.now,
+			timers,
+			kill,
+			launch: () => { launched++; return new Promise(() => {}); },
+		});
+		try {
+			assert.throws(() => next.bindSession(context(h.ctx.cwd, "session-b")), (error: NodeJS.ErrnoException) => error.code === "ENOSPC");
+		} finally {
+			nodeFs.renameSync = originalRename;
+			syncBuiltinESMExports();
+		}
+		assert.equal(JSON.parse(fs.readFileSync(scheduleFile, "utf-8")).activeRunId, runId);
+		assert.equal(timers.values.size, 1, "the still-claimed schedule is armed so its next fire retries the release");
+
+		h.clock.now = nextRun(h, "full");
+		timers.fireAll();
+		await flush();
+		assert.equal(receipt(h, "full", runId).state, "failed_run");
+		assert.equal(launched, 1);
 	});
 
 	it("leaves another session's newer claim alone when it released the dead run first", async () => {

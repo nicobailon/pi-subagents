@@ -842,16 +842,26 @@ export class ScheduledRunManager {
 			const startedAt = run?.startedAt ? Date.parse(run.startedAt) : Number.NaN;
 			const outcome = this.terminalAsyncOutcome(run);
 			if (run && outcome) {
-				// Release without consuming the pending occurrence, then apply the restore policy below to the latest record.
-				// A failed run-record write must not leave the released schedule unarmed; its error still propagates.
+				// Restore releases a dead or terminal claim at most once and never re-enters itself. On success it continues
+				// to the existing policy code below with the latest record. On failure it arms the schedule from disk, so the
+				// next fire retries the release, and the original error propagates unchanged.
 				let latest: ScheduleRecord | undefined;
 				try {
-					latest = this.finishRun(store, schedule, run, outcome.success, outcome.error, true);
-				} finally {
-					latest ??= store.find(schedule.id);
-					if (latest) this.restoreOne(store, latest, notBefore, rearm);
+					latest = this.finishRun(store, schedule, run, outcome.success, outcome.error, true) ?? store.find(schedule.id);
+				} catch (error) {
+					if (rearm) {
+						try {
+							const current = store.find(schedule.id);
+							if (current) this.arm(current, store, notBefore);
+						} catch { /* Keep the release error. */ }
+					}
+					throw error;
 				}
-				return;
+				if (!latest) {
+					this.clearTimer(store, schedule.id);
+					return;
+				}
+				schedule = latest;
 			}
 			if (schedule.activeRunId && (!run || run.state !== "running" || (!run.asyncId && Number.isFinite(startedAt) && startedAt + STALE_LAUNCH_CLAIM_MS <= this.now()))) {
 				if (run?.state === "running") {
