@@ -1487,6 +1487,52 @@ describe("active runs whose async runner died", () => {
 		assert.equal(fs.readFileSync(path.join(scheduleDir(h, "raced"), "active.lock"), "utf-8"), "other-run");
 	});
 
+	it("keeps an overdue occurrence when a restore releases a dead runner's claim", async () => {
+		const h = harness({ kill });
+		const { runId } = await attach(h, "overdue", DEAD_PID, { every: "1h", catchUp: "latest" });
+		h.manager.stop();
+		h.clock.now = nextRun(h, "overdue") + 60_000;
+		const timers = new FakeTimers();
+		let launched = 0;
+		const next = createScheduledRunManager({
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot: path.join(h.root, "stores"),
+			now: () => h.clock.now,
+			timers,
+			kill,
+			launch: () => { launched++; return new Promise(() => {}); },
+		});
+		next.bindSession(context(h.ctx.cwd, "session-b"));
+
+		assert.equal(receipt(h, "overdue", runId).state, "failed_run");
+		assert.deepEqual(events(h, "overdue").filter((event) => event.event === "schedule.skipped_overlap"), []);
+		timers.fireAll();
+		await flush();
+		assert.equal(launched, 1, "the overdue occurrence fires after the restore");
+	});
+
+	it("leaves another session's newer claim alone when it released the dead run first", async () => {
+		let h: Harness;
+		const otherSessionClaims = (pid: number) => {
+			// Session A releases the dead run and claims this occurrence while this fire reconciles it.
+			const file = path.join(scheduleDir(h, "shared"), "schedule.json");
+			fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf-8")), activeRunId: "run-a" }), "utf-8");
+			fs.writeFileSync(path.join(scheduleDir(h, "shared"), "active.lock"), "run-a", "utf-8");
+			return kill(pid);
+		};
+		h = harness({ kill: otherSessionClaims });
+		const { runId } = await attach(h, "shared", DEAD_PID);
+		h.clock.now = nextRun(h, "shared");
+		h.timers.fireAll();
+		await flush();
+
+		assert.equal(h.launches.length, 1, "this session launches nothing");
+		assert.equal(JSON.parse(fs.readFileSync(path.join(scheduleDir(h, "shared"), "schedule.json"), "utf-8")).activeRunId, "run-a");
+		assert.equal(fs.readFileSync(path.join(scheduleDir(h, "shared"), "active.lock"), "utf-8"), "run-a");
+		assert.equal(receipt(h, "shared", runId).state, "running", "the session that released the run records its failure");
+		assert.equal(h.timers.values.size, 1, "the schedule stays armed");
+	});
+
 	it("advances a calendar schedule once when the recovered fire launches", async () => {
 		const h = harness({ kill });
 		const { runId } = await attach(h, "calendar", DEAD_PID, { every: "day", at: "09:00", timezone: "Asia/Taipei" });

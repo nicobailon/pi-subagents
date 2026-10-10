@@ -841,7 +841,12 @@ export class ScheduledRunManager {
 			if (run?.state === "running" && run.asyncId) this.observedAsyncIds.add(run.asyncId);
 			const startedAt = run?.startedAt ? Date.parse(run.startedAt) : Number.NaN;
 			const outcome = this.terminalAsyncOutcome(run);
-			if (run && outcome) this.finishRun(store, schedule, run, outcome.success, outcome.error);
+			if (run && outcome) {
+				// Release without consuming the pending occurrence, then apply the restore policy below to the latest record.
+				const latest = this.finishRun(store, schedule, run, outcome.success, outcome.error, true) ?? store.find(schedule.id);
+				if (latest) this.restoreOne(store, latest, notBefore, rearm);
+				return;
+			}
 			if (schedule.activeRunId && (!run || run.state !== "running" || (!run.asyncId && Number.isFinite(startedAt) && startedAt + STALE_LAUNCH_CLAIM_MS <= this.now()))) {
 				if (run?.state === "running") {
 					run.state = "failed_launch";
@@ -930,7 +935,12 @@ export class ScheduledRunManager {
 				console.warn(`[pi-subagents] Could not reconcile active run '${schedule.activeRunId}' of schedule '${schedule.id}': ${error instanceof Error ? error.message : String(error)}`);
 			}
 			// A dead runner's completion never reaches this schedule, so its claim would skip every later fire.
-			if (active && outcome) this.finishRun(store, schedule, active, outcome.success, outcome.error, true);
+			if (active && outcome) {
+				const released = this.finishRun(store, schedule, active, outcome.success, outcome.error, true);
+				// Another session already released or re-claimed that run for this occurrence.
+				if (!released) return this.skipLostClaim(store, schedule.id, run, planned, now);
+				schedule = released;
+			}
 		}
 		if (schedule.activeRunId) {
 			run.state = "skipped";
@@ -965,27 +975,7 @@ export class ScheduledRunManager {
 				throw error;
 			}
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			run.state = "skipped";
-			run.completedAt = timestamp(now);
-			// Losing the claim gives this snapshot no authority to change the owner.
-			const latest = store.find(schedule.id);
-			if (!latest) {
-				this.clearTimer(store, schedule.id);
-				return run;
-			}
-			store.writeRun(latest, run, "schedule.skipped_overlap");
-			if (latest.trigger.kind === "once") {
-				this.clearTimer(store, latest.id);
-			} else {
-				// The owner may hold the lock before persisting its cursor. Back off
-				// locally without consuming that pending occurrence on disk.
-				const next = nextRunAt(latest);
-				const notBefore = next !== undefined && next <= now
-					? Date.parse(nextAfter(latest.trigger, duePlannedAt(latest, now) ?? planned, now).nextRunAt!)
-					: undefined;
-				this.arm(latest, store, notBefore);
-			}
-			return run;
+			return this.skipLostClaim(store, schedule.id, run, planned, now);
 		}
 		schedule.activeRunId = run.id;
 		schedule.lastRunId = run.id;
@@ -1050,12 +1040,22 @@ export class ScheduledRunManager {
 		}
 	}
 
-	/** `relaunch` releases the claim for a fire that launches the due occurrence itself, so it neither skips nor re-arms it. */
-	private finishRun(store: ScheduleStore, schedule: ScheduleRecord, run: ScheduleRunRecord, success: boolean, error?: string, relaunch = false): void {
+	/**
+	 * `releaseOnly` releases a dead run's claim and leaves the pending occurrence to the caller: it neither skips nor re-arms it.
+	 * It acts only while the schedule on disk still names that run, and returns the record it wrote, or undefined when another
+	 * session already released or re-claimed it.
+	 */
+	private finishRun(store: ScheduleStore, schedule: ScheduleRecord, run: ScheduleRunRecord, success: boolean, error?: string, releaseOnly = false): ScheduleRecord | undefined {
 		const now = this.now();
+		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
+		if (releaseOnly) {
+			const latest = store.find(schedule.id);
+			if (latest?.activeRunId !== run.id) return undefined;
+			schedule = latest;
+		}
 		const next = nextRunAt(schedule);
 		let skipped: ScheduleRunRecord | undefined;
-		if (!relaunch && next !== undefined && next <= now) {
+		if (!releaseOnly && next !== undefined && next <= now) {
 			const planned = duePlannedAt(schedule, now)!;
 			skipped = {
 				schemaVersion: 1,
@@ -1068,7 +1068,6 @@ export class ScheduledRunManager {
 			};
 			schedule.trigger = nextAfter(schedule.trigger, planned, now);
 		}
-		if (run.asyncId) this.observedAsyncIds.delete(run.asyncId);
 		run.state = success ? "completed" : "failed_run";
 		run.completedAt = timestamp(now);
 		if (!success && error) run.error = error;
@@ -1076,17 +1075,42 @@ export class ScheduledRunManager {
 		schedule.updatedAt = timestamp(now);
 		store.write(schedule);
 		const lockPath = path.join(store.directory(schedule.id), "active.lock");
-		// Another session's fire may already have released this claim and taken the lock for its own run.
+		// A released dead run's lock may already belong to another session's newer claim.
 		let holder: string | undefined;
-		if (relaunch) try { holder = fs.readFileSync(lockPath, "utf-8"); } catch { /* No readable lock names this run. */ }
-		if (!relaunch || holder === run.id) fs.rmSync(lockPath, { force: true });
+		if (releaseOnly) try { holder = fs.readFileSync(lockPath, "utf-8"); } catch { /* No readable lock names this run. */ }
+		if (!releaseOnly || holder === run.id) fs.rmSync(lockPath, { force: true });
 		// The schedule is already released; a history.json timeout must not leave it unarmed.
 		try {
 			store.writeRun(schedule, run, success ? "schedule.run.completed" : "schedule.run.failed");
 			if (skipped) store.writeRun(schedule, skipped, "schedule.skipped_overlap");
 		} finally {
-			if (!relaunch) this.arm(schedule, store);
+			if (!releaseOnly) this.arm(schedule, store);
 		}
+		return schedule;
+	}
+
+	private skipLostClaim(store: ScheduleStore, scheduleId: string, run: ScheduleRunRecord, planned: number, now: number): ScheduleRunRecord {
+		run.state = "skipped";
+		run.completedAt = timestamp(now);
+		// Losing the claim gives this snapshot no authority to change the owner.
+		const latest = store.find(scheduleId);
+		if (!latest) {
+			this.clearTimer(store, scheduleId);
+			return run;
+		}
+		store.writeRun(latest, run, "schedule.skipped_overlap");
+		if (latest.trigger.kind === "once") {
+			this.clearTimer(store, latest.id);
+		} else {
+			// The owner may hold the lock before persisting its cursor. Back off
+			// locally without consuming that pending occurrence on disk.
+			const next = nextRunAt(latest);
+			const notBefore = next !== undefined && next <= now
+				? Date.parse(nextAfter(latest.trigger, duePlannedAt(latest, now) ?? planned, now).nextRunAt!)
+				: undefined;
+			this.arm(latest, store, notBefore);
+		}
+		return run;
 	}
 
 	private recordMissed(store: ScheduleStore, schedule: ScheduleRecord, planned: number, dueReason: ScheduleRunRecord["dueReason"]): ScheduleRunRecord {
