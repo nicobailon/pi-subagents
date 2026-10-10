@@ -53,7 +53,8 @@ describe("async compaction resume", () => {
 			for (const handler of handlers.get("session_before_compact")) await handler({ reason: "manual", signal: new AbortController().signal });
 			if (widgets.length !== 0) throw new Error("manual compaction changed widget state");
 			for (const handler of handlers.get("session_compact")) await handler({ reason: "manual" });
-			if (sent.length !== 0) throw new Error("woke the parent while it was still compacting: " + JSON.stringify(sent));
+			await sleep(150);
+			if (sent.length !== 0 || userMessages.length !== 0) throw new Error("woke the parent while it was still compacting: " + JSON.stringify({ sent, userMessages }));
 			idle = true;
 			await sleep(150);
 			if (sent.length !== 1 || sent[0].options?.triggerTurn !== false || sent[0].message?.customType !== "subagent-compaction-resume") throw new Error(JSON.stringify(sent));
