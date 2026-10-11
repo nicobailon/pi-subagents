@@ -2985,6 +2985,7 @@ export async function runSubagent(
 		const step = statusPayload.steps[flatIndex];
 		if (!step) return;
 		setOptionalProperty(step, "model", model);
+		setOptionalProperty(step, "launchModel", undefined);
 		setOptionalProperty(step, "thinking", thinking);
 		setOptionalProperty(step, "contextLimit", contextLimit);
 		statusPayload.lastUpdate = now;
@@ -3132,7 +3133,11 @@ export async function runSubagent(
 			// model each assistant message actually ran on. Mirrors the foreground
 			// path's `progress.model = observedModel`.
 			if (event.message.model) {
-				step.model = qualifyModelWithProvider(event.message.model, event.message.provider, undefined) ?? event.message.model;
+				const observedModel = qualifyModelWithProvider(event.message.model, event.message.provider, flatSteps[flatIndex]?.modelVerificationRegistry) ?? event.message.model;
+				if (observedModel !== step.model) {
+					step.launchModel ??= step.model;
+					step.model = observedModel;
+				}
 			}
 			const usage = event.message.usage;
 			if (config.usageBudget) {

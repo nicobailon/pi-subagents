@@ -1047,6 +1047,33 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("revives on the launch model when status reports a model a host extension switched to and no result exists yet", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-routed-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "a.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncRoot, "run-routed", "status.json"), {
+				runId: "run-routed",
+				mode: "parallel",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [
+					{ agent: "worker", status: "complete", sessionFile, model: "openai-codex/gpt-6-sol", launchModel: "llama-swap/qwen3.5:9b", thinking: "high" },
+					{ agent: "worker", status: "running" },
+				],
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-routed", index: 0 }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(target.kind, "revive");
+			assert.equal(target.model, "llama-swap/qwen3.5:9b");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("frames the revived follow-up with original run context", () => {
 		const task = buildRevivedAsyncTask({
 			kind: "revive",

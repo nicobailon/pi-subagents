@@ -2025,6 +2025,8 @@ export interface AsyncStatus {
 		tokens?: TokenUsage;
 		skills?: string[];
 		model?: string;
+		/** Model the child was launched on, recorded when its replies reported a different `model`; revival uses it. */
+		launchModel?: string;
 		thinking?: string;
 		contextLimit?: number;
 		thinkingCeiling?: ThinkingLevel;

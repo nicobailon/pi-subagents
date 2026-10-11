@@ -52,9 +52,9 @@ function readStatus(config: SubagentRunConfig): Record<string, unknown> {
 	return JSON.parse(fs.readFileSync(statusPath, "utf-8")) as Record<string, unknown>;
 }
 
-function stepModels(status: Record<string, unknown>): Array<string | undefined> {
-	const steps = (status.steps ?? []) as Array<{ model?: string }>;
-	return steps.map((step) => step.model);
+function stepModels(status: Record<string, unknown>): Array<{ model?: string; launchModel?: string }> {
+	const steps = (status.steps ?? []) as Array<{ model?: string; launchModel?: string }>;
+	return steps.map((step) => ({ model: step.model, launchModel: step.launchModel }));
 }
 
 describe("async step reports the observed child model", () => {
@@ -78,8 +78,8 @@ describe("async step reports the observed child model", () => {
 			const models = stepModels(readStatus(config));
 			assert.deepEqual(
 				models,
-				["openai-codex/gpt-6-sol"],
-				"the step must report the observed model, not the launch candidate",
+				[{ model: "openai-codex/gpt-6-sol", launchModel: "llama-swap/qwen3.5:9b" }],
+				"the step must report the observed model and keep the launch model for revival",
 			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -101,7 +101,7 @@ describe("async step reports the observed child model", () => {
 		try {
 			await runSubagent(config, fake.factory);
 			const models = stepModels(readStatus(config));
-			assert.deepEqual(models, ["llama-swap/qwen3.5:9b"], "a stable model must be reported unchanged");
+			assert.deepEqual(models, [{ model: "llama-swap/qwen3.5:9b", launchModel: undefined }], "a stable model must be reported unchanged");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

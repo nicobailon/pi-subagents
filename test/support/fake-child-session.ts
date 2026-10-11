@@ -391,9 +391,9 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 				} else if (response.stdoutRaw !== undefined) {
 					await emitEntries(parseRawStdout(response), task, false);
 				} else if (Array.isArray(response.echoEnv) && response.echoEnv.length > 0) {
-					await emitEntries([defaultAssistantMessage(JSON.stringify(Object.fromEntries(response.echoEnv.map((key) => [key, null]))), response.reportedModel ?? model)], task);
+					await emitEntries([defaultAssistantMessage(JSON.stringify(Object.fromEntries(response.echoEnv.map((key) => [key, null]))), reportedModel(response.reportedModel) ?? model)], task);
 				} else if (typeof response.output === "string") {
-					await emitEntries([defaultAssistantMessage(response.output, response.reportedModel ?? model)], task);
+					await emitEntries([defaultAssistantMessage(response.output, reportedModel(response.reportedModel) ?? model)], task);
 				}
 				if (Object.prototype.hasOwnProperty.call(response, "structuredOutput")) {
 					launch.runtime.structuredOutput?.capture(response.structuredOutput, undefined);
