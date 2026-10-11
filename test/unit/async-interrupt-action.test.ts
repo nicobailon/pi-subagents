@@ -887,6 +887,7 @@ describe("async interrupt action", () => {
 			assert.equal(payload.state, "stopped");
 			assert.equal(payload.results[0].output, "done");
 			assert.equal(payload.results[1].stopped, true);
+			assert.equal(payload.results[1].error, "Subagent stopped.");
 			assert.equal(fs.readFileSync(path.join(asyncDir, "process-terminal.json"), "utf-8"), proofBefore);
 			const repeated = await executorWithKill(state, () => true)
 				.execute("stop-paused-again", { action: "stop", id: runId }, new AbortController().signal, undefined, ctx());
