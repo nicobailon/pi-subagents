@@ -25,6 +25,8 @@ export interface FakeChildResponse {
 	jsonl?: unknown[];
 	/** Leaves terminal lifecycle events to the scripted JSONL, for ordering-sensitive tests. */
 	omitImplicitFinalEvents?: boolean;
+	/** Simulates a host extension (e.g. a model router) switching the child off its launch model: every assistant message reports this model instead. */
+	reportedModel?: string;
 	/** Raw JSON lines; parsed into events for the in-process child without acceptance-report injection. */
 	stdoutRaw?: string;
 	steps?: Array<{ delay?: number; waitForPath?: string; jsonl?: unknown[]; stdoutRaw?: string }>;
@@ -389,9 +391,9 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 				} else if (response.stdoutRaw !== undefined) {
 					await emitEntries(parseRawStdout(response), task, false);
 				} else if (Array.isArray(response.echoEnv) && response.echoEnv.length > 0) {
-					await emitEntries([defaultAssistantMessage(JSON.stringify(Object.fromEntries(response.echoEnv.map((key) => [key, null]))), model)], task);
+					await emitEntries([defaultAssistantMessage(JSON.stringify(Object.fromEntries(response.echoEnv.map((key) => [key, null]))), response.reportedModel ?? model)], task);
 				} else if (typeof response.output === "string") {
-					await emitEntries([defaultAssistantMessage(response.output, model)], task);
+					await emitEntries([defaultAssistantMessage(response.output, response.reportedModel ?? model)], task);
 				}
 				if (Object.prototype.hasOwnProperty.call(response, "structuredOutput")) {
 					launch.runtime.structuredOutput?.capture(response.structuredOutput, undefined);
