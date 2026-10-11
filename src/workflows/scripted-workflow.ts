@@ -2210,7 +2210,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const recordAcceptanceRecoveryBarrier = (key: string, result: WorkflowScriptChildResult): void => {
 		if (isAcceptanceMetadataRecovery(result)) acceptanceRecoveryBarrier = { key };
 	};
-	const stopChild = (key: string, message = `Workflow child '${key}' stopped by user.`): boolean => {
+	const stopChild = (key: string, message = `Workflow child '${key}' stopped.`): boolean => {
 		if (!launches.has(key) || children.has(key)) return false;
 		stoppedLaunches.add(key);
 		children.set(key, stoppedChildResult(key, message));

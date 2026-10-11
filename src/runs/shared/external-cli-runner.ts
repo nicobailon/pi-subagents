@@ -407,7 +407,7 @@ export function runExternalCli(input: {
 					? `Process-tree cleanup failed: ${treeProof.reason}.`
 					: undefined;
 				const error = stopped
-					? input.stopMessage ?? "Subagent stopped by user."
+					? input.stopMessage ?? "Subagent stopped."
 					: timedOut
 						? input.timeoutMessage ?? "Subagent timed out."
 						: spawnError?.message ?? parserFailure ?? treeFailure ?? (exitCode === 0 ? undefined : stderr || `External CLI exited with code ${exitCode}.`);

@@ -1827,7 +1827,7 @@ describe("async run status inspection", () => {
 				state: "stopped",
 				stopped: true,
 				sessionFile,
-				summary: "Subagent stopped by user.",
+				summary: "Subagent stopped.",
 			}, null, 2), "utf-8");
 
 			const result = inspectSubagentStatus({ id: "run-stopped-result" }, {

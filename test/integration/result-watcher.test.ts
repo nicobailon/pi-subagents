@@ -1674,7 +1674,7 @@ describe("result watcher", () => {
 					summary: "Stopped by user",
 					results: [
 						{ agent: "a", output: "Result from a", outputState: "present", success: true },
-						{ agent: "b", output: "Subagent stopped by user.", outputState: "absent", success: false, stopped: true, state: "stopped" },
+						{ agent: "b", output: "Subagent stopped.", outputState: "absent", success: false, stopped: true, state: "stopped" },
 					],
 					sessionId: "session-1",
 					intercomTarget: "subagent-chat-main",

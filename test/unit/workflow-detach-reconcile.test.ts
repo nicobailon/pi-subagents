@@ -352,12 +352,12 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			state,
 			workflowRunId,
 			childRunId: "child-stopped",
-			result: { index: 0, agent: "worker", task: "t", exitCode: 1, stopped: true, error: "Subagent stopped by user.", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+			result: { index: 0, agent: "worker", task: "t", exitCode: 1, stopped: true, error: "Subagent stopped.", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
 		}), true);
 		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { workflowResolution?: string; error?: string; results?: Array<{ workflowKey?: string; error?: string; interrupted?: boolean; stopped?: boolean }> };
 		assert.equal(published.workflowResolution, "interrupted-child");
-		assert.equal(published.error, "Subagent stopped by user.");
-		assert.deepEqual(published.results, [{ workflowKey: "detaches", agent: "worker", runId: "child-stopped", success: false, output: "", outputState: "absent", interrupted: true, stopped: true, error: "Subagent stopped by user." }]);
+		assert.equal(published.error, "Subagent stopped.");
+		assert.deepEqual(published.results, [{ workflowKey: "detaches", agent: "worker", runId: "child-stopped", success: false, output: "", outputState: "absent", interrupted: true, stopped: true, error: "Subagent stopped." }]);
 	});
 
 	it("reconciles a foreground child without a persisted run id", () => {

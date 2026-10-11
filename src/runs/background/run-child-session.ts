@@ -207,7 +207,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
 		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false };
 		const timeoutMessage = () => input.timeoutMessage ?? "Subagent timed out.";
-		const stopMessage = () => input.stopMessage ?? "Subagent stopped by user.";
+		const stopMessage = () => input.stopMessage ?? "Subagent stopped.";
 
 		type ActiveToolCall = { key: string; tool: string; args?: string; path?: string };
 		let activeToolSequence = 0;

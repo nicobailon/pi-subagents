@@ -27,7 +27,7 @@ function getAsyncStopTarget(
 	return direct ? { asyncId: direct.asyncId, asyncDir: direct.asyncDir } : undefined;
 }
 
-const STOP_MESSAGE = "Subagent stopped by user.";
+const STOP_MESSAGE = "Subagent stopped.";
 
 function sealPausedRun(asyncDir: string, status: AsyncStatus, resultsDir: string): string | undefined {
 	const runnerProcessInstanceId = status.processTerminal?.runnerProcessInstanceId;

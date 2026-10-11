@@ -778,7 +778,7 @@ export async function runSingleStepInner(
 			}
 			const stopped = importStopped || imported.stopped === true || ctx.stopSignal?.aborted === true;
 			const timedOut = !stopped && (importTimedOut || imported.timedOut === true || ctx.timeoutSignal?.aborted === true || ctx.skipAcceptance?.() === true);
-			const message = stopped ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.";
+			const message = stopped ? ctx.stopMessage ?? "Subagent stopped." : ctx.timeoutMessage ?? "Subagent timed out.";
 			return omitUndefinedProperties({
 				agent: imported.agent,
 				output: timedOut || stopped ? message : imported.output,
@@ -871,7 +871,7 @@ export async function runSingleStepInner(
 		if (!step.machine && externalAbortSignal) await ctx.prepareExternalActivity?.(externalCwd, externalAbortSignal);
 		if (externalAbortSignal?.aborted) {
 			const stopped = ctx.stopSignal?.aborted === true;
-			const message = stopped ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.";
+			const message = stopped ? ctx.stopMessage ?? "Subagent stopped." : ctx.timeoutMessage ?? "Subagent timed out.";
 			return omitUndefinedProperties({ agent: step.agent, context: step.context, output: message, error: message, exitCode: 1, stopped: stopped || undefined, timedOut: stopped ? undefined : true });
 		}
 		if (step.machine) {
@@ -891,7 +891,7 @@ export async function runSingleStepInner(
 					const raced = await Promise.race([session.promptAndSettle(evidenceInput).then((value) => ({ kind: "settled" as const, value })), interruption.then((kind) => ({ kind }))]);
 					if (raced.kind === "settled") settled = raced.value;
 					else if (raced.kind === "timeout") settled = createHerdrExternalAdapter(step.runner.adapter as HerdrExternalAdapterId).normalize(evidenceInput, "Placed external run timed out; truthful pane retained for inspection.");
-					else return { agent: step.agent, context: step.context, output: "Placed external run stopped by user.", outputState: "present", exitCode: 1, stopped: true, runner, execution: { status: "stopped", success: false, exitCode: 1, stopped: true } };
+					else return { agent: step.agent, context: step.context, output: "Placed external run stopped.", outputState: "present", exitCode: 1, stopped: true, runner, execution: { status: "stopped", success: false, exitCode: 1, stopped: true } };
 				} catch (error) {
 					retain = true;
 					settled = await settleHerdrExternalRunnerError(error, step.runner.adapter as HerdrExternalAdapterId, evidenceInput, () => session.retain());
@@ -1398,7 +1398,7 @@ export async function runSingleStepInner(
 	const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, output) : undefined;
 	let outputForSummary = output;
 	if (finalResult?.stopped && !outputForSummary.trim()) {
-		outputForSummary = ctx.stopMessage ?? "Subagent stopped by user.";
+		outputForSummary = ctx.stopMessage ?? "Subagent stopped.";
 	}
 	// Unfinished streamed text never stands in for the child's completed reply.
 	const outputForAcceptance = finalResult?.outputPartial ? "" : rawOutput;
@@ -1450,7 +1450,7 @@ export async function runSingleStepInner(
 			cwd: step.cwd ?? ctx.cwd,
 			stagedIndexBaseline,
 			signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]),
-			abortMessage: ctx.stopSignal?.aborted ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.",
+			abortMessage: ctx.stopSignal?.aborted ? ctx.stopMessage ?? "Subagent stopped." : ctx.timeoutMessage ?? "Subagent timed out.",
 			reportOptional: isAgentContract(step.agentContract),
 			artifactsDir: ctx.artifactsDir,
 			runId: ctx.id,
@@ -1477,7 +1477,7 @@ export async function runSingleStepInner(
 	}
 	const intercomDetachReceipt = finalResult?.finalOutput === INTERCOM_DETACH_RECEIPT;
 	const baseFinalError = stoppedAfterAcceptance
-		? ctx.stopMessage ?? "Subagent stopped by user."
+		? ctx.stopMessage ?? "Subagent stopped."
 		: timedOutAfterAcceptance
 			? finalResult?.error ?? ctx.timeoutMessage ?? "Subagent timed out."
 			: acceptanceCanFailRun
@@ -1915,7 +1915,7 @@ export async function runSubagent(
 	let stopped = false;
 	let usageBudgetExceeded = false;
 	const timeoutMessage = config.timeoutMs !== undefined ? `Subagent timed out after ${config.timeoutMs}ms.` : undefined;
-	const stopMessage = "Subagent stopped by user.";
+	const stopMessage = "Subagent stopped.";
 	const timeoutAbortController = new AbortController();
 	const stopAbortController = new AbortController();
 	const setupInterruptController = new AbortController();
