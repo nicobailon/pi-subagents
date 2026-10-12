@@ -213,7 +213,7 @@ test("external snapshots throw on malformed cached records by default", () => {
 		};
 		assert.throws(
 			() => snapshotExternalRuns("session-a"),
-			/Malformed cached external run 'session-a\0bad': External run startedAt must be a non-negative safe timestamp/,
+			/Malformed cached external run 'bad': External run startedAt must be a non-negative safe timestamp/,
 		);
 	} finally {
 		clearRegistry();
@@ -232,7 +232,7 @@ test("external snapshots can remove malformed cached records for display-only ca
 			]),
 		};
 		assert.deepEqual(snapshotExternalRuns("session-a", { ignoreMalformed: true, onMalformedRecord: (message) => diagnostics.push(message) }).map((run) => run.id), ["good"]);
-		assert.deepEqual(diagnostics, ["Malformed cached external run 'session-a\0bad': External run startedAt must be a non-negative safe timestamp."]);
+		assert.deepEqual(diagnostics, ["Malformed cached external run 'bad': External run startedAt must be a non-negative safe timestamp."]);
 		assert.deepEqual(snapshotExternalRuns("session-a").map((run) => run.id), ["good"]);
 	} finally {
 		clearRegistry();
