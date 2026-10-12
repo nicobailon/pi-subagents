@@ -1,4 +1,4 @@
-import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
+import { safeTerminalText, sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 
 export const EXTERNAL_RUN_REGISTRY_VERSION = 2;
 export const EXTERNAL_RUN_REGISTRY_KEY = "pi-subagents.external-runs.v2";
@@ -108,8 +108,8 @@ function inputObject(value: unknown, field: string, allowed: Set<string>): Recor
 function identity(value: unknown, field: string, maxLength: number = EXTERNAL_RUN_LIMITS.maxIdentityLength): string {
 	if (typeof value !== "string" || value.length === 0 || value.trim() !== value || value.includes("\0")) throw new Error(`${field} must be a non-empty trimmed string without NUL characters.`);
 	if (value.length > maxLength) throw new Error(`${field} must be at most ${maxLength} characters.`);
-	const safe = sanitizeDisplayText(value);
-	if (!safe || safe !== value) throw new Error(`${field} must contain only display-safe text.`);
+	// Identities are often session-file paths, so Unicode spaces such as U+00A0 are valid; only terminal controls and line breaks are not.
+	if (/[\t\n\p{Zl}\p{Zp}]/u.test(value) || safeTerminalText(value) !== value) throw new Error(`${field} must contain only display-safe text.`);
 	return value;
 }
 
