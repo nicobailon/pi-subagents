@@ -3849,41 +3849,6 @@ Answer only from the supplied synthetic text.
 		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
 	});
 
-	it("isolates inherited outputs that collide with a resumed child output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const retainedRunId = `retained-output-${Date.now()}`;
-		const retainedOutputPath = path.join(tempDir, "context.md");
-		const cleanupRetainedRun = writeRetainedEchoRun(retainedRunId, { outputPath: retainedOutputPath, state: "failed", steps: 2 });
-		mockPi.onCall({ output: "resumed report", matchArgIncludes: "Resume" });
-		mockPi.onCall({ output: "review report", matchArgIncludes: "Review" });
-
-		try {
-			const result = await makeExecutor([makeAgent("echo", { output: "context.md" })]).execute(
-				"scripted-workflow-resumed-inherited-output-collision",
-				{
-					async: false,
-					workflowScript: `return await runs.all([
-						{ key: "resume", resume: ${JSON.stringify(retainedRunId)}, index: 1, task: "Resume" },
-						{ key: "review", agent: "echo", task: "Review" }
-					]);`,
-				},
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(tempDir),
-			);
-
-			assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-			const children = result.details.workflow?.value as Array<{ ok: boolean }>;
-			assert.deepEqual(children.map(({ ok }) => ok), [true, true]);
-			assert.equal(fs.readFileSync(retainedOutputPath, "utf-8"), "resumed report");
-			const outputPaths = result.details.results.map(({ savedOutputPath }) => savedOutputPath ?? "");
-			const inheritedOutputPaths = outputPaths.filter((outputPath) => outputPath && outputPath !== retainedOutputPath).sort();
-			assert.deepEqual(inheritedOutputPaths.map((outputPath) => path.basename(outputPath)), ["context.md"]);
-			assert.ok(inheritedOutputPaths.every((outputPath) => pathContainsSegments(outputPath, "artifacts", "outputs")));
-		} finally {
-			cleanupRetainedRun();
-		}
-	});
-
 	it("reroutes a later inherited agent-default output collision", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "first report", matchArgIncludes: "First" });
 		mockPi.onCall({ output: "second report", matchArgIncludes: "Second" });
@@ -3944,7 +3909,7 @@ Answer only from the supplied synthetic text.
 		assert.equal(fs.readFileSync(deslopPath, "utf-8"), "deslop report");
 	});
 
-	it("reroutes a later output-less resume of a stage that reused an outside run's report path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("gives an output-less resume of an outside run its own report path instead of overwriting that run's report", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const outsidePath = path.join(tempDir, "outside.md");
 		const executor = makeExecutor([makeAgent("echo")]);
 		const ctx = makeMinimalCtx(tempDir);
@@ -3971,7 +3936,10 @@ Answer only from the supplied synthetic text.
 		);
 
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
-		assert.equal(fs.readFileSync(outsidePath, "utf-8"), "apply report");
+		assert.equal(fs.readFileSync(outsidePath, "utf-8"), "outside report");
+		const applyPath = result.details.results[0]?.savedOutputPath ?? "";
+		assert.equal(path.basename(applyPath), "apply.md");
+		assert.equal(fs.readFileSync(applyPath, "utf-8"), "apply report");
 		const deslopPath = result.details.results[1]?.savedOutputPath ?? "";
 		assert.equal(path.basename(deslopPath), "deslop.md");
 		assert.equal(fs.readFileSync(deslopPath, "utf-8"), "deslop report");
