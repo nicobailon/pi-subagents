@@ -1812,6 +1812,27 @@ syncBuiltinESMExports();
 		assert.ok(revived.results[0]?.output?.includes(`Output saved to: ${revivedReport}`), revived.results[0]?.output);
 	});
 
+	it("writes an output-less resume of a relative-output foreground run next to its saved report", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
+		mockPi.onCall({ output: "Stage 1 report" });
+		const first = await executor.execute("foreground-relative-output", {
+			agent: "worker", task: "Initial work", async: false, acceptance: false, output: "report.md",
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(first.isError, undefined, first.content[0]?.type === "text" ? first.content[0].text : undefined);
+		const report = first.details.results[0]?.savedOutputPath ?? "";
+		assert.match(fs.readFileSync(report, "utf-8"), /Stage 1 report/);
+
+		mockPi.onCall({ output: "Stage 2 report" });
+		const result = await executor.execute("revive-relative-output", {
+			action: "resume", id: first.details.runId, message: "Continue", acceptance: false,
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir)) as AsyncExecutionResult;
+		assert.ok(!result.isError, result.content[0]?.text);
+		await readAsyncPayload(result.details.asyncId!);
+		assert.match(fs.readFileSync(report, "utf-8"), /Stage 1 report/);
+		const revivedReport = path.join(path.dirname(report), `report.${result.details.asyncId!.slice(0, 8)}.md`);
+		assert.match(fs.readFileSync(revivedReport, "utf-8"), /Stage 2 report/);
+	});
+
 	it("revives an inherited parent model outside the current registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Initial async work" });
 		const sourceId = `async-revive-parent-model-${Date.now().toString(36)}`;

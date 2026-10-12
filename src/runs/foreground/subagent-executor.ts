@@ -946,7 +946,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; resumeContract?: ForegroundResumeChild["resumeContract"]; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; resumeContract?: ForegroundResumeChild["resumeContract"]; savedOutputPath?: string; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const direct = state.foregroundRuns.get(requested);
@@ -978,6 +978,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 		...(child.thinking ? { thinking: child.thinking } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
 		...(child.resumeContract ? { resumeContract: child.resumeContract } : {}),
+		...(child.savedOutputPath ? { savedOutputPath: child.savedOutputPath } : {}),
 		...(child.extensionBindings ? { extensionBindings: normalizeExtensionBindings(child.extensionBindings)!.value } : {}),
 		...(child.requiredExtensions ? { requiredExtensions: child.requiredExtensions } : {}),
 		...(child.capabilityCeiling ? { capabilityCeiling: child.capabilityCeiling } : {}),
@@ -2247,7 +2248,7 @@ async function resumeAsyncRun(input: {
 	// The original run owns its saved output, so a resume without its own output writes next to it instead of over it.
 	// Workflow resumes are routed by the workflow's output claims instead.
 	const inheritedOutputPath = input.params.output === undefined && input.params.workflowParentRunId === undefined
-		? resolveSingleOutputPath(inheritedOutput, input.requestCwd, effectiveCwd, revivalOutputBaseDir)
+		? (target.source === "foreground" ? target.savedOutputPath : undefined) ?? resolveSingleOutputPath(inheritedOutput, input.requestCwd, effectiveCwd, revivalOutputBaseDir)
 		: undefined;
 	const result = await executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 		agent: target.agent,
