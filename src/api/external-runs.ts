@@ -1,4 +1,4 @@
-import { safeTerminalText, sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
+import { previewDisplayText, safeTerminalText, sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 
 export const EXTERNAL_RUN_REGISTRY_VERSION = 2;
 export const EXTERNAL_RUN_REGISTRY_KEY = "pi-subagents.external-runs.v2";
@@ -260,7 +260,8 @@ export function snapshotExternalRuns(sessionId: string, options: ExternalRunSnap
 			const run = trustedRecordValue(value, trusted.get(cacheKey)) ?? normalizeCachedRecord(current, cacheKey, value);
 			if (run.sessionId === safeSessionId) runs.push(run);
 		} catch (error) {
-			const message = `Malformed cached external run '${cacheKey}': ${getErrorMessage(error)}`;
+			// The cache key joins session and run id with NUL, and a malformed record's id is unvalidated.
+			const message = `Malformed cached external run '${previewDisplayText(cacheKey.slice(sessionPrefix.length), EXTERNAL_RUN_LIMITS.maxIdentityLength)}': ${getErrorMessage(error)}`;
 			if (!options.ignoreMalformed) throw new Error(message, { cause: error instanceof Error ? error : undefined });
 			current.runs.delete(cacheKey);
 			trusted.delete(cacheKey);

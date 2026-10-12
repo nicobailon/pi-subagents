@@ -16,7 +16,7 @@ import type { SteerDeliveryMode } from "../runs/background/control-channel.ts";
 import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { resolveWorkflowForegroundSteeringTarget, steerWorkflowForegroundTarget } from "../runs/foreground/workflow-foreground-steering.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
-import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
+import { FLEET_STATUS_WIDGET_KEY, reportFleetWarning } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
 import { runningTone } from "./running-tone.ts";
 import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
@@ -290,7 +290,7 @@ export function collectFleetSnapshot(
 
 	if (state.currentSessionId) {
 		try {
-			for (const run of snapshotExternalRuns(state.currentSessionId, { ignoreMalformed: true, onMalformedRecord: (message) => console.warn(`[pi-subagents] Removed ${message}`) })) {
+			for (const run of snapshotExternalRuns(state.currentSessionId, { ignoreMalformed: true, onMalformedRecord: (message) => reportFleetWarning(state, `Removed ${message}`) })) {
 				items.push({
 					key: `external:${run.id}`,
 					kind: "external",

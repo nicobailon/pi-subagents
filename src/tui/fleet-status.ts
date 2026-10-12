@@ -7,7 +7,7 @@ import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/s
 import { contextModeLabel } from "../runs/shared/context-mode.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
-import { isStaleExtensionContextError } from "../shared/extension-context.ts";
+import { isStaleExtensionContextError, withCachedUiContext } from "../shared/extension-context.ts";
 import { inlineWorkflowRenderKey } from "./render.ts";
 import { runningTone } from "./running-tone.ts";
 import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
@@ -372,6 +372,26 @@ function projectPaneEntries(state: SubagentState): FleetStatusEntry[] {
 		}));
 }
 
+const reportedFleetWarnings = new Set<string>();
+
+/**
+ * Reports a Fleet problem once per process. Fleet refreshes on a timer, and console output while the TUI owns
+ * the terminal is drawn over the editor, so an interactive session gets one TUI warning instead.
+ */
+export function reportFleetWarning(state: SubagentState, message: string): void {
+	if (reportedFleetWarnings.has(message)) return;
+	reportedFleetWarnings.add(message);
+	const text = `[pi-subagents] ${message}`;
+	const cached = state.lastUiContext;
+	const notified = withCachedUiContext(cached, () => {
+		if (state.lastUiContext === cached) state.lastUiContext = null;
+	}, (ctx) => {
+		ctx.ui.notify(text, "warning");
+		return true;
+	});
+	if (!notified) console.warn(text);
+}
+
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const now = Date.now();
 	const entries: FleetStatusEntry[] = [];
@@ -514,7 +534,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 
 	if (state.currentSessionId) {
 		try {
-			for (const run of snapshotExternalRuns(state.currentSessionId, { ignoreMalformed: true, onMalformedRecord: (message) => console.warn(`[pi-subagents] Removed ${message}`) })) {
+			for (const run of snapshotExternalRuns(state.currentSessionId, { ignoreMalformed: true, onMalformedRecord: (message) => reportFleetWarning(state, `Removed ${message}`) })) {
 				if (!isActiveState(run.state)) continue;
 				entries.push({
 					key: `external:${run.id}`,
@@ -527,7 +547,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				});
 			}
 		} catch (cause) {
-			console.warn(`[pi-subagents] Failed to inspect external jobs: ${cause instanceof Error ? cause.message : String(cause)}`);
+			reportFleetWarning(state, `Failed to inspect external jobs: ${cause instanceof Error ? cause.message : String(cause)}`);
 		}
 	}
 

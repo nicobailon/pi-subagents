@@ -288,6 +288,34 @@ describe("below-editor subagent FleetView", () => {
 		}
 	});
 
+	it("shows external-job problems once as TUI warnings instead of printing them over an interactive session", () => {
+		clearExternalRuns();
+		const notices: Array<[string, string]> = [];
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		const state = stateForTest();
+		state.lastUiContext = { hasUI: true, ui: { notify: (message: string, level: string) => notices.push([message, level]) } } as never;
+		try {
+			(globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)] = {
+				version: EXTERNAL_RUN_REGISTRY_VERSION,
+				runs: new Map<string, unknown>([["session-current\0bad", { id: "bad", sessionId: "session-current", source: "tool", label: "Bad", state: "running", startedAt: Number.NaN }]]),
+			};
+			collectFleetStatusEntries(state);
+			(globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)] = "not a registry";
+			collectFleetStatusEntries(state);
+			collectFleetStatusEntries(state);
+			assert.deepEqual(warnings, []);
+			assert.deepEqual(notices.map(([, level]) => level), ["warning", "warning"]);
+			assert.match(notices[0]![0], /^\[pi-subagents\] Removed Malformed cached external run 'bad': /);
+			assert.match(notices[1]![0], /^\[pi-subagents\] Failed to inspect external jobs: Malformed external-run registry/);
+			assert.ok(!notices.some(([message]) => message.includes("\0")));
+		} finally {
+			console.warn = originalWarn;
+			clearExternalRuns();
+		}
+	});
+
 	it("resolves configured FleetView placement with a below-editor fallback", () => {
 		assert.equal(resolveFleetViewPlacement(undefined), "belowEditor");
 		assert.equal(resolveFleetViewPlacement("belowEditor"), "belowEditor");
