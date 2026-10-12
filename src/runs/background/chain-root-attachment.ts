@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
 import type { AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, EffectsProjection, ExecutionProjection, Usage } from "../../shared/types.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, readStatus } from "../../shared/utils.ts";
 
 export interface ImportedAsyncRoot {
 	runId: string;
@@ -135,7 +135,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 	const agent = step?.agent ?? status.steps?.[root.index]?.agent ?? "subagent";
 	const timedOut = step?.timedOut === true || status.timedOut === true;
 	const stopped = step?.stopped === true || status.stopped === true || status.state === "stopped";
-	const message = step?.error ?? status.error ?? (stopped ? "Subagent stopped." : `Attached async root ${root.runId} ended without a result file at ${root.resultPath}.`);
+	const message = step?.error ?? status.error ?? (stopped ? SUBAGENT_STOPPED_MESSAGE : `Attached async root ${root.runId} ended without a result file at ${root.resultPath}.`);
 	const partialStatus = status.state === "partial" || step?.status === "partial";
 	const execution = step?.execution ?? (partialStatus
 		? { status: "partial" as const, success: false, exitCode: 1, error: message }
@@ -192,7 +192,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 	const timedOut = child?.timedOut === true || step?.timedOut === true || result.timedOut === true || status?.timedOut === true;
 	const stopped = child?.stopped === true || step?.stopped === true || result.stopped === true || status?.stopped === true || state === "stopped";
 	const success = state === "complete" && !timedOut && !stopped;
-	const error = child?.error ?? (success ? undefined : stopped ? "Subagent stopped." : result.error ?? result.summary ?? status?.error ?? `Attached async root ${root.runId} did not complete successfully.`);
+	const error = child?.error ?? (success ? undefined : stopped ? SUBAGENT_STOPPED_MESSAGE : result.error ?? result.summary ?? status?.error ?? `Attached async root ${root.runId} did not complete successfully.`);
 	const execution = state ? { status: state === "complete" ? "completed" as const : state, success, exitCode: success ? 0 : 1, ...(error ? { error } : {}) } : undefined;
 	const usage = child?.usage;
 	return {
@@ -240,7 +240,7 @@ export async function waitForImportedAsyncRoot(
 	let terminalSince: number | undefined;
 	for (;;) {
 		const status = readStatus(root.asyncDir);
-		if (options.shouldAbort?.()) return outputFromTimeout(root, status, options.timeoutMessage ?? "Subagent timed out.", options.abortedAsStopped === true);
+		if (options.shouldAbort?.()) return outputFromTimeout(root, status, options.timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE, options.abortedAsStopped === true);
 		const result = readImportedResultFile(root, status);
 		if (result) return buildImportedResult(root, status, result);
 		if (isTerminalStatus(status, root.index)) {

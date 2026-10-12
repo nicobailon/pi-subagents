@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { finished } from "node:stream/promises";
 import type { ExternalProcessStatus, ProcessTreeTerminal } from "../../shared/types.ts";
+import { SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE } from "../../shared/utils.ts";
 import { createOwnedProcessTreeController, type OwnedProcessTreeController } from "../background/owned-process-tree.ts";
 import { omitExtensionBindingsEnv } from "./extension-bindings.ts";
 import { omitGitRoutingEnv } from "./git-environment.ts";
@@ -407,9 +408,9 @@ export function runExternalCli(input: {
 					? `Process-tree cleanup failed: ${treeProof.reason}.`
 					: undefined;
 				const error = stopped
-					? input.stopMessage ?? "Subagent stopped."
+					? input.stopMessage ?? SUBAGENT_STOPPED_MESSAGE
 					: timedOut
-						? input.timeoutMessage ?? "Subagent timed out."
+						? input.timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE
 						: spawnError?.message ?? parserFailure ?? treeFailure ?? (exitCode === 0 ? undefined : stderr || `External CLI exited with code ${exitCode}.`);
 				if (error && input.preflight && !parserError) invalidateExternalCliPreflight(input.command, input.preflight, classifyInvalidation(error));
 				const result: ExternalCliRunResult = {
