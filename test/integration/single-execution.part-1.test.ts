@@ -3945,6 +3945,31 @@ Answer only from the supplied synthetic text.
 		assert.equal(fs.readFileSync(deslopPath, "utf-8"), "deslop report");
 	});
 
+	it("keeps an outside run's report when the resuming workflow's default output names the same file", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const outsidePath = path.join(tempDir, "report.apply.md");
+		const executor = makeExecutor([makeAgent("echo")]);
+		const ctx = makeMinimalCtx(tempDir);
+		mockPi.onCall({ output: "outside report" });
+		const outside = await executor.execute(
+			"outside-same-default",
+			{ async: false, workflowScript: `return runs.run("outside", { agent: "echo", task: "Outside", acceptance: false, output: ${JSON.stringify(outsidePath)} });` },
+			new AbortController().signal, undefined, ctx,
+		);
+		const outsideRunId = (outside.details.workflow?.value as { runId: string }).runId;
+		mockPi.onCall({ output: "apply report" });
+		const result = await executor.execute(
+			"scripted-workflow-resume-same-default",
+			{ async: false, output: path.join(tempDir, "report.md"), workflowScript: `return runs.run("apply", { resume: ${JSON.stringify(outsideRunId)}, task: "Apply" });` },
+			new AbortController().signal, undefined, ctx,
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(fs.readFileSync(outsidePath, "utf-8"), "outside report");
+		const applyPath = result.details.results[0]?.savedOutputPath ?? "";
+		assert.notEqual(applyPath, outsidePath);
+		assert.equal(fs.readFileSync(applyPath, "utf-8"), "apply report");
+	});
+
 	it("gives an output-less retained resume its own default output when an earlier stage owns its report path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const retainedRunId = `retained-claimed-output-${Date.now()}`;
 		const applyPath = path.join(tempDir, "apply.md");
