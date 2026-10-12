@@ -34,7 +34,8 @@ it("session startup yields to the event loop and both first advertisements await
 const fs = require("node:fs");
 const phase = process.env.TEST_NPM_PHASE;
 if (phase === "failure") { console.error("private npm failure"); process.exit(1); }
-setTimeout(() => { if (phase === "old") fs.writeFileSync(${JSON.stringify(oldDone)}, "done"); if (phase !== "timeout") console.log(phase === "latest" ? ${JSON.stringify(newerRoot)} : ${JSON.stringify(globalRoot)}); }, phase === "timeout" ? 6000 : phase === "old" ? 2500 : phase === "seed" || phase === "latest" ? 150 : 300);
+if (phase === "old") process.on("exit", () => fs.writeFileSync(${JSON.stringify(oldDone)}, "done"));
+setTimeout(() => { if (phase !== "timeout") console.log(phase === "latest" ? ${JSON.stringify(newerRoot)} : ${JSON.stringify(globalRoot)}); }, phase === "timeout" ? 6000 : phase === "old" ? 2500 : phase === "seed" || phase === "latest" ? 150 : 300);
 `);
 		const npm = path.join(bin, process.platform === "win32" ? "npm.cmd" : "npm");
 		fs.writeFileSync(npm, process.platform === "win32"
@@ -129,10 +130,12 @@ setTimeout(() => { if (phase === "old") fs.writeFileSync(${JSON.stringify(oldDon
 				.then((result) => JSON.stringify(result), (error) => error.message);
 			assert.match(runtime, /new-specialist/, "execution must resolve the advertised agent");
 			assert.doesNotMatch(runtime, /Unknown agent|not found/i);
-			// The stale npm child sleeps 2.5 s after it starts; a loaded Windows runner can start it late.
+			// The stale npm child prints its result 2.5 s after it starts and writes the marker as it exits; a loaded
+			// Windows runner can start it late. Then give the parent time to handle the closed child before checking.
 			const oldDeadline = Date.now() + 15_000;
 			while (!fs.existsSync(process.env.TEST_OLD_DONE) && Date.now() < oldDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
 			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true, "old lookup completed");
+			await new Promise((resolve) => setTimeout(resolve, 500));
 			const afterStale = await advertise();
 			assert.match(afterStale, /<name>new-specialist<\/name>/);
 			assert.doesNotMatch(afterStale, /<name>global-specialist<\/name>/);
