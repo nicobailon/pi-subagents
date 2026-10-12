@@ -4233,8 +4233,7 @@ export async function runSubagent(
 						if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
 						if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
-						// Keep the model the child was observed running on; a host extension can switch it
-						// after launch, and singleResult.model only names the launch candidate.
+						// Keep the observed model over the launch candidate (see the sequential path).
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", requiredStatusStep(statusPayload, fi).model ?? singleResult.model);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "requestedModel", singleResult.requestedModel);

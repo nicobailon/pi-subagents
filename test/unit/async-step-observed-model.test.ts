@@ -6,15 +6,6 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { runSubagent, type SubagentRunConfig } from "../../src/runs/background/subagent-runner.ts";
 import { createFakeChildSessions } from "../support/fake-child-session.ts";
 
-// A child can run on a model other than the one it was launched with: a host
-// extension (for example a model router) may switch it on the child's first
-// input. The async status must report the model each assistant message
-// actually used, not the launch candidate, or the run display and metadata
-// name a model the child never ran on.
-//
-// The foreground path already does this (`progress.model = observedModel`);
-// these tests pin the async equivalent.
-
 let previousAgentDir: string | undefined;
 let agentDir: string;
 
@@ -46,15 +37,9 @@ function baseConfig(root: string, id: string, steps: SubagentRunConfig["steps"])
 	};
 }
 
-function readStatus(config: SubagentRunConfig): Record<string, unknown> {
-	const statusPath = path.join(config.asyncDir!, "status.json");
-	assert.ok(fs.existsSync(statusPath), `status.json must exist at ${statusPath}`);
-	return JSON.parse(fs.readFileSync(statusPath, "utf-8")) as Record<string, unknown>;
-}
-
-function stepModels(status: Record<string, unknown>): Array<{ model?: string; launchModel?: string }> {
-	const steps = (status.steps ?? []) as Array<{ model?: string; launchModel?: string }>;
-	return steps.map((step) => ({ model: step.model, launchModel: step.launchModel }));
+function stepModels(config: SubagentRunConfig): Array<{ model?: string; launchModel?: string }> {
+	const status = JSON.parse(fs.readFileSync(path.join(config.asyncDir!, "status.json"), "utf-8")) as { steps: Array<{ model?: string; launchModel?: string }> };
+	return status.steps.map(({ model, launchModel }) => ({ model, launchModel }));
 }
 
 describe("async step reports the observed child model", () => {
@@ -62,8 +47,6 @@ describe("async step reports the observed child model", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-observed-model-switch-"));
 		const queue = path.join(root, "queue");
 		fs.mkdirSync(queue, { recursive: true });
-		// The child launches on llama-swap but every assistant turn reports the
-		// rerouted provider, standing in for a host model router's switch.
 		fs.writeFileSync(path.join(queue, "default-response.json"), JSON.stringify({
 			output: "done on the rerouted model",
 			reportedModel: "openai-codex/gpt-6-sol",
@@ -75,7 +58,7 @@ describe("async step reports the observed child model", () => {
 		try {
 			await runSubagent(config, fake.factory);
 			assert.equal(fake.sessions.length, 1, "the child session must launch");
-			const models = stepModels(readStatus(config));
+			const models = stepModels(config);
 			assert.deepEqual(
 				models,
 				[{ model: "openai-codex/gpt-6-sol", launchModel: "llama-swap/qwen3.5:9b" }],
@@ -100,7 +83,7 @@ describe("async step reports the observed child model", () => {
 		]);
 		try {
 			await runSubagent(config, fake.factory);
-			const models = stepModels(readStatus(config));
+			const models = stepModels(config);
 			assert.deepEqual(models, [{ model: "llama-swap/qwen3.5:9b", launchModel: undefined }], "a stable model must be reported unchanged");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

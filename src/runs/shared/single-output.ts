@@ -183,11 +183,11 @@ function readFullOutputFile(filePath: string): string | undefined {
 	}
 }
 
-/** The longest prefix of output, ending before one of its last few `\n\n` blocks, that the file holds and that is worth capping. */
-function fileBackedHead(output: string, fullOutput: string): string | undefined {
+/** The longest prefix of output, ending before at most `maxTrailingBlocks` of its last `\n\n` blocks, that the file holds and that is worth capping. */
+function fileBackedHead(output: string, fullOutput: string, maxTrailingBlocks: number): string | undefined {
 	if (fullOutput.includes(output)) return output;
 	let end = output.length;
-	for (let attempt = 0; attempt < MAX_UNFILED_TRAILING_BLOCKS; attempt++) {
+	for (let attempt = 0; attempt < maxTrailingBlocks; attempt++) {
 		end = output.lastIndexOf("\n\n", end - 1);
 		if (end <= INLINE_OUTPUT_HEAD_CHARS) return undefined;
 		const head = output.slice(0, end);
@@ -211,7 +211,7 @@ export function capInlineOutput(output: string, files: { artifactPath?: string; 
 	if (body.length <= INLINE_OUTPUT_HEAD_CHARS || !filePath) return output;
 	const fullOutput = readFullOutputFile(filePath);
 	if (fullOutput === undefined) return output;
-	const head = savedLine ? (fullOutput.includes(body) ? body : undefined) : fileBackedHead(body, fullOutput);
+	const head = fileBackedHead(body, fullOutput, savedLine ? 0 : MAX_UNFILED_TRAILING_BLOCKS);
 	if (head === undefined) return output;
 	const lineEnd = head.lastIndexOf("\n", INLINE_OUTPUT_HEAD_CHARS);
 	let end = lineEnd >= INLINE_OUTPUT_HEAD_CHARS - 200 ? lineEnd : INLINE_OUTPUT_HEAD_CHARS;
