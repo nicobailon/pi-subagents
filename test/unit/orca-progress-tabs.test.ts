@@ -32,7 +32,7 @@ afterEach(() => {
 				if (name.startsWith(`create-${key}-`) && (name.endsWith(".ready") || name.endsWith(".pending"))) fs.rmSync(path.join(progressRoot, name), { force: true });
 			}
 		}
-		fs.rmSync(dir, { recursive: true, force: true });
+		fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 	removeProgressFiles("progress-");
 	removeProgressFiles("disabled-run-");

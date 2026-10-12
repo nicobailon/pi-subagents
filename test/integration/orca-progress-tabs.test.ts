@@ -22,7 +22,7 @@ afterEach(() => {
 				if (name.startsWith(`create-${key}-`) && (name.endsWith(".ready") || name.endsWith(".pending"))) fs.rmSync(path.join(progressDir, name), { force: true });
 			}
 		}
-		fs.rmSync(dir, { recursive: true, force: true });
+		fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 	if (fs.existsSync(progressDir)) {
 		for (const name of fs.readdirSync(progressDir)) {

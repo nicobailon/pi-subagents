@@ -129,7 +129,9 @@ setTimeout(() => { if (phase === "old") fs.writeFileSync(${JSON.stringify(oldDon
 				.then((result) => JSON.stringify(result), (error) => error.message);
 			assert.match(runtime, /new-specialist/, "execution must resolve the advertised agent");
 			assert.doesNotMatch(runtime, /Unknown agent|not found/i);
-			await new Promise((resolve) => setTimeout(resolve, 2600));
+			// The stale npm child sleeps 2.5 s after it starts; a loaded Windows runner can start it late.
+			const oldDeadline = Date.now() + 15_000;
+			while (!fs.existsSync(process.env.TEST_OLD_DONE) && Date.now() < oldDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
 			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true, "old lookup completed");
 			const afterStale = await advertise();
 			assert.match(afterStale, /<name>new-specialist<\/name>/);
@@ -146,6 +148,6 @@ setTimeout(() => { if (phase === "old") fs.writeFileSync(${JSON.stringify(oldDon
 		`], { cwd: repo, env, encoding: "utf8", timeout: 30_000 });
 		assert.match(output, /responsive session_start; complete first prompt and loader/);
 	} finally {
-		fs.rmSync(temp, { recursive: true, force: true });
+		fs.rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 });
