@@ -866,6 +866,44 @@ export async function runSingleStepInner(
 	}
 	transcriptWriter?.writeInitialUserMessage(`${PROMPT_REDACTED}; live Prompt Audit only.`);
 
+	// External CLI and external job runs settle their output the same way; only their runner metadata differs.
+	const settleExternalOutput = (external: { output: string; exitCode: number | null; error?: string }, outputSnapshot: SingleOutputSnapshot | undefined, runnerMetadata: object) => {
+		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
+		const resolvedOutput = step.outputPath && external.exitCode === 0
+			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot, step.outputClaimPath)
+			: { fullOutput: external.output };
+		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
+		const exitCode = resolvedOutput.fatalError ? 1 : external.exitCode;
+		const error = resolvedOutput.fatalError && resolvedOutput.saveError
+			? external.error ? `${external.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError
+			: external.error;
+		const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
+			fullOutput: resolvedOutput.fullOutput,
+			outputPath: step.outputPath,
+			outputMode: step.outputMode,
+			exitCode: exitCode ?? 1,
+			savedPath: resolvedOutput.savedPath,
+			outputReference,
+			saveError: resolvedOutput.saveError,
+		}));
+		const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false
+			? persistStepArtifacts({
+				artifactPaths,
+				artifactConfig: ctx.artifactConfig,
+				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
+				metadata: { runId: ctx.id, parentSessionId: step.parentSessionId, agent: step.agent, task: PROMPT_REDACTED, ...runnerMetadata, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
+			})
+			: {};
+		return {
+			output: finalizedOutput.displayOutput,
+			exitCode,
+			error,
+			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
+			artifactOutputSaveFailed: artifactErrors.outputSaveError ? true as const : undefined,
+			metadataSaveError: artifactErrors.metadataSaveError,
+		};
+	};
+
 	if (step.runner?.type === "external-cli") {
 		const externalCwd = step.machine?.cwd ?? step.cwd ?? ctx.cwd;
 		const externalAbortSignal = combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]);
@@ -952,47 +990,22 @@ export async function runSingleStepInner(
 		const ran = await runExternalCli(preparedExternal.input);
 		const externalProcess = preparedExternal.decorateProcess(ran.externalProcess);
 		const external = step.machine ? decorateHerdrMachineResult(ran, step.machine, step.runner.adapter) : ran;
-		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
-		const resolvedOutput = step.outputPath && external.exitCode === 0
-			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot, step.outputClaimPath)
-			: { fullOutput: external.output };
-		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
-		const exitCode = resolvedOutput.fatalError ? 1 : external.exitCode;
-		const error = resolvedOutput.fatalError && resolvedOutput.saveError
-			? external.error ? `${external.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError
-			: external.error;
-		const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
-			fullOutput: resolvedOutput.fullOutput,
-			outputPath: step.outputPath,
-			outputMode: step.outputMode,
-			exitCode: exitCode ?? 1,
-			savedPath: resolvedOutput.savedPath,
-			outputReference,
-			saveError: resolvedOutput.saveError,
-		}));
-		const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false
-			? persistStepArtifacts({
-				artifactPaths,
-				artifactConfig: ctx.artifactConfig,
-				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
-				metadata: { runId: ctx.id, parentSessionId: step.parentSessionId, agent: step.agent, task: PROMPT_REDACTED, runner, externalProcess: externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
-			})
-			: {};
+		const settled = settleExternalOutput(external, outputSnapshot, { runner, externalProcess });
 		return omitUndefinedProperties({
 			agent: step.agent,
 			...(childSessionName ? { sessionName: childSessionName } : {}),
 			context: step.context,
-			output: finalizedOutput.displayOutput,
+			output: settled.output,
 			outputState: external.output.trim() ? "present" : "absent",
-			exitCode,
-			error,
+			exitCode: settled.exitCode,
+			error: settled.error,
 			timedOut: external.timedOut,
 			stopped: external.stopped,
 			processSignal: external.processSignal,
 			artifactPaths,
-			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
-			artifactOutputSaveFailed: artifactErrors.outputSaveError ? true : undefined,
-			metadataSaveError: artifactErrors.metadataSaveError,
+			outputSaveError: settled.outputSaveError,
+			artifactOutputSaveFailed: settled.artifactOutputSaveFailed,
+			metadataSaveError: settled.metadataSaveError,
 			runner,
 			externalProcess: externalProcess,
 		});
@@ -1023,46 +1036,21 @@ export async function runSingleStepInner(
 			onExternalJob: ctx.onExternalJob,
 			followUp: step.externalJobFollowUp,
 		}));
-		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
-		const resolvedOutput = step.outputPath && external.exitCode === 0
-			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot, step.outputClaimPath)
-			: { fullOutput: external.output };
-		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
-		const exitCode = resolvedOutput.fatalError ? 1 : external.exitCode;
-		const error = resolvedOutput.fatalError && resolvedOutput.saveError
-			? external.error ? `${external.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError
-			: external.error;
-		const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
-			fullOutput: resolvedOutput.fullOutput,
-			outputPath: step.outputPath,
-			outputMode: step.outputMode,
-			exitCode: exitCode ?? 1,
-			savedPath: resolvedOutput.savedPath,
-			outputReference,
-			saveError: resolvedOutput.saveError,
-		}));
-		const artifactErrors = artifactPaths && ctx.artifactConfig?.enabled !== false
-			? persistStepArtifacts({
-				artifactPaths,
-				artifactConfig: ctx.artifactConfig,
-				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
-				metadata: { runId: ctx.id, parentSessionId: step.parentSessionId, agent: step.agent, task: PROMPT_REDACTED, runner, externalJob: external.externalJob, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
-			})
-			: {};
+		const settled = settleExternalOutput(external, outputSnapshot, { runner, externalJob: external.externalJob });
 		return omitUndefinedProperties({
 			agent: step.agent,
 			...(childSessionName ? { sessionName: childSessionName } : {}),
 			context: step.context,
-			output: finalizedOutput.displayOutput,
+			output: settled.output,
 			outputState: external.output.trim() ? "present" : "absent",
-			exitCode,
-			error,
+			exitCode: settled.exitCode,
+			error: settled.error,
 			timedOut: external.timedOut,
 			stopped: external.stopped,
 			artifactPaths,
-			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
-			artifactOutputSaveFailed: artifactErrors.outputSaveError ? true : undefined,
-			metadataSaveError: artifactErrors.metadataSaveError,
+			outputSaveError: settled.outputSaveError,
+			artifactOutputSaveFailed: settled.artifactOutputSaveFailed,
+			metadataSaveError: settled.metadataSaveError,
 			runner,
 			externalJob: external.externalJob,
 		});
@@ -2992,6 +2980,60 @@ export async function runSubagent(
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
 	};
+	// Records a finished child's result on its status step; the sequential and both parallel paths share it.
+	const recordStepResult = (fi: number, singleResult: StepResult, startedAt: number, endedAt: number, recordLaunchContractDigest = false): void => {
+		const step = requiredStatusStep(statusPayload, fi);
+		const childStopped = singleResult.stopped === true;
+		const childInterrupted = singleResult.interrupted === true;
+		step.status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.execution?.status === "partial" ? "partial" : singleResult.exitCode === 0 ? "complete" : "failed";
+		step.endedAt = endedAt;
+		step.durationMs = endedAt - startedAt;
+		step.exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
+		setOptionalProperty(step, "timedOut", timedOut || singleResult.timedOut ? true : undefined);
+		setOptionalProperty(step, "stopped", stopped || childStopped ? true : undefined);
+		setOptionalProperty(step, "toolBudget", singleResult.toolBudget);
+		setOptionalProperty(step, "toolBudgetBlocked", singleResult.toolBudgetBlocked);
+		if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
+		if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
+		setOptionalProperty(step, "sessionName", singleResult.sessionName);
+		// Keep the model the child was observed running on; a host extension can switch it
+		// after launch, and singleResult.model only names the launch candidate.
+		setOptionalProperty(step, "model", step.model ?? singleResult.model);
+		setOptionalProperty(step, "thinking", resolveEffectiveThinking(singleResult.model, step.thinking));
+		setOptionalProperty(step, "requestedModel", singleResult.requestedModel);
+		setOptionalProperty(step, "contextOverflow", singleResult.contextOverflow);
+		setOptionalProperty(step, "totalCost", singleResult.totalCost);
+		setOptionalProperty(step, "error", stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE) : singleResult.error);
+		setOptionalProperty(step, "transcriptPath", singleResult.transcriptPath ?? step.transcriptPath);
+		setOptionalProperty(step, "transcriptError", singleResult.transcriptError);
+		setOptionalProperty(step, "agentContract", singleResult.agentContract);
+		if (recordLaunchContractDigest) setOptionalProperty(step, "launchContractDigest", singleResult.launchContractDigest);
+		setOptionalProperty(step, "launchResolvedExtensions", singleResult.launchResolvedExtensions);
+		setOptionalProperty(step, "runtimeAcknowledgedExtensions", singleResult.runtimeAcknowledgedExtensions);
+		setOptionalProperty(step, "effects", singleResult.effects);
+		setOptionalProperty(step, "execution", singleResult.execution);
+		setOptionalProperty(step, "review", singleResult.review);
+		setOptionalProperty(step, "structuredOutput", singleResult.structuredOutput);
+		setOptionalProperty(step, "structuredOutputPath", singleResult.structuredOutputPath);
+		setOptionalProperty(step, "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
+		setOptionalProperty(step, "acceptance", singleResult.acceptance);
+		setOptionalProperty(step, "timeoutRecovery", singleResult.timeoutRecovery);
+		setOptionalProperty(step, "watchdog", singleResult.watchdog);
+		setOptionalProperty(step, "capabilityCeiling", singleResult.capabilityCeiling);
+		setOptionalProperty(step, "capabilityAudit", singleResult.capabilityAudit);
+		if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
+		if (singleResult.capabilityAudit) statusPayload.capabilityAudit = singleResult.capabilityAudit;
+	};
+	// Adds a parallel child's cost to the in-flight usage ledger.
+	const addParallelUsageCost = (totalCost: StepResult["totalCost"]): void => {
+		if (!totalCost) return;
+		pendingParallelUsageCost = {
+			inputTokens: pendingParallelUsageCost.inputTokens + totalCost.inputTokens,
+			outputTokens: pendingParallelUsageCost.outputTokens + totalCost.outputTokens,
+			costUsd: pendingParallelUsageCost.costUsd + totalCost.costUsd,
+		};
+		refreshUsageBudget();
+	};
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
 		const step = statusPayload.steps[flatIndex];
 		if (!step) return;
@@ -3797,52 +3839,8 @@ export async function runSubagent(
 				const taskEndTime = Date.now();
 				const childInterrupted = singleResult.interrupted === true;
 				const childStopped = singleResult.stopped === true;
-				requiredStatusStep(statusPayload, fi).status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.execution?.status === "partial" ? "partial" : singleResult.exitCode === 0 ? "complete" : "failed";
-				requiredStatusStep(statusPayload, fi).endedAt = taskEndTime;
-				requiredStatusStep(statusPayload, fi).durationMs = taskEndTime - taskStartTime;
-				requiredStatusStep(statusPayload, fi).exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "stopped", stopped || childStopped ? true : undefined);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudget", singleResult.toolBudget);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
-				if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
-				if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
-				// Keep the model the child was observed running on; a host extension can switch it
-				// after launch, and singleResult.model only names the launch candidate.
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", requiredStatusStep(statusPayload, fi).model ?? singleResult.model);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "requestedModel", singleResult.requestedModel);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "contextOverflow", singleResult.contextOverflow);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "totalCost", singleResult.totalCost);
-				if (singleResult.totalCost) {
-					pendingParallelUsageCost = {
-						inputTokens: pendingParallelUsageCost.inputTokens + singleResult.totalCost.inputTokens,
-						outputTokens: pendingParallelUsageCost.outputTokens + singleResult.totalCost.outputTokens,
-						costUsd: pendingParallelUsageCost.costUsd + singleResult.totalCost.costUsd,
-					};
-					refreshUsageBudget();
-				}
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "error", stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE) : singleResult.error);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, fi).transcriptPath);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptError", singleResult.transcriptError);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "agentContract", singleResult.agentContract);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "launchContractDigest", singleResult.launchContractDigest);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "launchResolvedExtensions", singleResult.launchResolvedExtensions);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "runtimeAcknowledgedExtensions", singleResult.runtimeAcknowledgedExtensions);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "effects", singleResult.effects);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "execution", singleResult.execution);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "review", singleResult.review);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutput", singleResult.structuredOutput);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputPath", singleResult.structuredOutputPath);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptance", singleResult.acceptance);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "timeoutRecovery", singleResult.timeoutRecovery);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "watchdog", singleResult.watchdog);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityCeiling", singleResult.capabilityCeiling);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityAudit", singleResult.capabilityAudit);
-				if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
-				if (singleResult.capabilityAudit) statusPayload.capabilityAudit = singleResult.capabilityAudit;
+				recordStepResult(fi, singleResult, taskStartTime, taskEndTime, true);
+				addParallelUsageCost(singleResult.totalCost);
 				statusPayload.lastUpdate = taskEndTime;
 				writeStatusPayload();
 				appendCapabilityCeilingAppliedEvent(eventsPath, id, fi, task.agent, singleResult);
@@ -4222,50 +4220,8 @@ export async function runSubagent(
 						const childInterrupted = singleResult.interrupted === true;
 						const childStopped = singleResult.stopped === true;
 
-						requiredStatusStep(statusPayload, fi).status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.execution?.status === "partial" ? "partial" : singleResult.exitCode === 0 ? "complete" : "failed";
-						requiredStatusStep(statusPayload, fi).endedAt = taskEndTime;
-						requiredStatusStep(statusPayload, fi).durationMs = taskDuration;
-						requiredStatusStep(statusPayload, fi).exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "stopped", stopped || childStopped ? true : undefined);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudget", singleResult.toolBudget);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
-						if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
-						if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
-						// Keep the observed model over the launch candidate (see the sequential path).
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", requiredStatusStep(statusPayload, fi).model ?? singleResult.model);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "requestedModel", singleResult.requestedModel);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "contextOverflow", singleResult.contextOverflow);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "totalCost", singleResult.totalCost);
-						if (singleResult.totalCost) {
-							pendingParallelUsageCost = {
-								inputTokens: pendingParallelUsageCost.inputTokens + singleResult.totalCost.inputTokens,
-								outputTokens: pendingParallelUsageCost.outputTokens + singleResult.totalCost.outputTokens,
-								costUsd: pendingParallelUsageCost.costUsd + singleResult.totalCost.costUsd,
-							};
-							refreshUsageBudget();
-						}
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "error", stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE) : singleResult.error);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, fi).transcriptPath);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptError", singleResult.transcriptError);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "agentContract", singleResult.agentContract);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "launchResolvedExtensions", singleResult.launchResolvedExtensions);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "runtimeAcknowledgedExtensions", singleResult.runtimeAcknowledgedExtensions);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "effects", singleResult.effects);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "execution", singleResult.execution);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "review", singleResult.review);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutput", singleResult.structuredOutput);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputPath", singleResult.structuredOutputPath);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptance", singleResult.acceptance);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "timeoutRecovery", singleResult.timeoutRecovery);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "watchdog", singleResult.watchdog);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityCeiling", singleResult.capabilityCeiling);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityAudit", singleResult.capabilityAudit);
-						if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
-						if (singleResult.capabilityAudit) statusPayload.capabilityAudit = singleResult.capabilityAudit;
+						recordStepResult(fi, singleResult, taskStartTime, taskEndTime);
+						addParallelUsageCost(singleResult.totalCost);
 						statusPayload.lastUpdate = taskEndTime;
 						writeStatusPayload();
 						appendCapabilityCeilingAppliedEvent(eventsPath, id, fi, task.agent, singleResult);
@@ -4708,42 +4664,7 @@ export async function runSubagent(
 
 			const stepEndTime = Date.now();
 			const childInterrupted = singleResult.interrupted === true;
-			requiredStatusStep(statusPayload, flatIndex).status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.execution?.status === "partial" ? "partial" : singleResult.exitCode === 0 ? "complete" : "failed";
-			requiredStatusStep(statusPayload, flatIndex).endedAt = stepEndTime;
-			requiredStatusStep(statusPayload, flatIndex).durationMs = stepEndTime - stepStartTime;
-			requiredStatusStep(statusPayload, flatIndex).exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "stopped", stopped || childStopped ? true : undefined);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "toolBudget", singleResult.toolBudget);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
-			if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
-			if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "sessionName", singleResult.sessionName);
-			// Keep the observed model over the launch candidate (see the sequential path).
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "model", requiredStatusStep(statusPayload, flatIndex).model ?? singleResult.model);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, flatIndex).thinking));
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "requestedModel", singleResult.requestedModel);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "contextOverflow", singleResult.contextOverflow);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "totalCost", singleResult.totalCost);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "error", stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE) : singleResult.error);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, flatIndex).transcriptPath);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "transcriptError", singleResult.transcriptError);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "agentContract", singleResult.agentContract);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "launchResolvedExtensions", singleResult.launchResolvedExtensions);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "runtimeAcknowledgedExtensions", singleResult.runtimeAcknowledgedExtensions);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "effects", singleResult.effects);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "execution", singleResult.execution);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "review", singleResult.review);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutput", singleResult.structuredOutput);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutputPath", singleResult.structuredOutputPath);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptance", singleResult.acceptance);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timeoutRecovery", singleResult.timeoutRecovery);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "watchdog", singleResult.watchdog);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "capabilityCeiling", singleResult.capabilityCeiling);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "capabilityAudit", singleResult.capabilityAudit);
-			if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
-			if (singleResult.capabilityAudit) statusPayload.capabilityAudit = singleResult.capabilityAudit;
+			recordStepResult(flatIndex, singleResult, stepStartTime, stepEndTime);
 			if (stepTokens) {
 				requiredStatusStep(statusPayload, flatIndex).tokens = stepTokens;
 				statusPayload.totalTokens = { ...previousCumulativeTokens };
