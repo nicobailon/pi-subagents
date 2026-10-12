@@ -2159,8 +2159,12 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 
 		assert.equal(resumedResult.isError, undefined, resumedResult.content[0]?.text ?? "workflow failed");
 		const resumed = resumedResult.details.results[0];
-		assert.match(resumed?.finalOutput ?? "", new RegExp(`Output saved to: ${escapeRegExp(configuredOutput)}`));
-		assert.equal(fs.readFileSync(configuredOutput, "utf-8"), "resumed report");
+		// The resume keeps the recorded file-only contract but writes its own report, never over the first run's.
+		assert.ok(resumed?.savedOutputPath && resumed.savedOutputPath !== configuredOutput, resumed?.savedOutputPath);
+		assert.match(resumed?.finalOutput ?? "", new RegExp(`^Output saved to: ${escapeRegExp(resumed.savedOutputPath)} `));
+		assert.doesNotMatch(resumed?.finalOutput ?? "", /resumed report/, "file-only keeps the report out of the inline output");
+		assert.equal(fs.readFileSync(resumed.savedOutputPath, "utf-8"), "resumed report");
+		assert.equal(fs.readFileSync(configuredOutput, "utf-8"), "first report");
 	});
 
 	it("preserves successful no-edit foreground resume output and transcript metadata", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
