@@ -2242,6 +2242,13 @@ async function resumeAsyncRun(input: {
 	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const parentModel = input.parentModel;
 	const revivalAsyncDir = path.join(DIRS.async, runId);
+	const revivalOutputBaseDir = resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId);
+	const inheritedOutput = foregroundContract?.output ?? recoveryDescriptor?.outputPath;
+	// The original run owns its saved output, so a resume without its own output writes next to it instead of over it.
+	// Workflow resumes are routed by the workflow's output claims instead.
+	const inheritedOutputPath = input.params.output === undefined && input.params.workflowParentRunId === undefined
+		? resolveSingleOutputPath(inheritedOutput, input.requestCwd, effectiveCwd, revivalOutputBaseDir)
+		: undefined;
 	const result = await executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target as Parameters<typeof buildRevivedAsyncTask>[0], effectiveFollowUp),
@@ -2289,7 +2296,7 @@ async function resumeAsyncRun(input: {
 		thinkingCeiling: recoveryDescriptor?.thinkingCeiling ?? ("thinkingCeiling" in target ? target.thinkingCeiling : undefined),
 		extensionBindings: recoveryDescriptor?.extensionBindings ?? ("extensionBindings" in target ? target.extensionBindings : undefined),
 		requiredExtensions: recoveryDescriptor?.requiredExtensions ?? (target as { requiredExtensions?: SteeringRecoveryDescriptor["requiredExtensions"] }).requiredExtensions,
-		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
+		outputBaseDir: revivalOutputBaseDir,
 		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
 		waitToolEnabled: input.deps.waitToolEnabled,
 		waitToolDefaultTimeoutMs: input.deps.waitToolDefaultTimeoutMs,
@@ -2308,7 +2315,7 @@ async function resumeAsyncRun(input: {
 		controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
 		childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
 		availableModels,
-		output: input.params.output !== undefined ? input.params.output : foregroundContract?.output ?? recoveryDescriptor?.outputPath,
+		output: input.params.output !== undefined ? input.params.output : inheritedOutputPath ? suffixedOutputPath(inheritedOutputPath, runId.slice(0, 8)) : inheritedOutput,
 		outputMode: input.params.outputMode ?? foregroundContract?.outputMode ?? recoveryDescriptor?.outputMode,
 		outputClaimPath: input.params.workflowOutputClaimPath,
 		...(agentContract ? { agentContract } : {}),
@@ -3726,11 +3733,14 @@ function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string,
 	return resolveConfiguredSingleRunOutputBaseDir(deps) ?? path.join(artifactsDir, "outputs", sanitizeRunPathSegment(runId));
 }
 
+/** `<dir>/<name>.<suffix><ext>` next to outputPath, with `.md` when it has no extension. */
+function suffixedOutputPath(outputPath: string, suffix: string): string {
+	const parsed = path.parse(outputPath);
+	return path.join(parsed.dir, `${parsed.name}.${suffix}${parsed.ext || ".md"}`);
+}
+
 function workflowChildDefaultOutput(aggregateOutputPath: string | undefined, artifactsDir: string, workflowRunId: string, workflowKey: string): string {
-	if (aggregateOutputPath) {
-		const parsed = path.parse(aggregateOutputPath);
-		return path.join(parsed.dir, `${parsed.name}.${workflowKey}${parsed.ext || ".md"}`);
-	}
+	if (aggregateOutputPath) return suffixedOutputPath(aggregateOutputPath, workflowKey);
 	return path.join(artifactsDir, "outputs", sanitizeRunPathSegment(workflowRunId), `${workflowKey}.md`);
 }
 

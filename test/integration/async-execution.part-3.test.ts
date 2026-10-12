@@ -1772,6 +1772,46 @@ syncBuiltinESMExports();
 		assert.equal((await readAsyncPayload(result.details.asyncId)).success, true);
 	});
 
+	it("writes an output-less resume next to the original run's saved output instead of over it", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Stage 1 report" });
+		const sourceId = `async-revive-output-${Date.now().toString(36)}`;
+		const sessionFile = path.join(tempDir, "sessions", "output.jsonl");
+		const report = path.join(tempDir, "reports", "lane-writer-report.md");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		executeAsyncSingle(sourceId, {
+			agent: "worker",
+			task: "Initial work",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			sessionFile,
+			output: report,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+		await readAsyncPayload(sourceId);
+		assert.match(fs.readFileSync(report, "utf-8"), /Stage 1 report/);
+
+		mockPi.onCall({ output: "Stage 2 report" });
+		const result = await makeAsyncExecutor([makeAgent("worker")]).execute(
+			"revive-output",
+			{ action: "resume", id: sourceId, message: "Continue", acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		) as AsyncExecutionResult;
+		assert.ok(!result.isError, result.content[0]?.text);
+		assert.ok(result.details.asyncId);
+		const revived = await readAsyncPayload(result.details.asyncId);
+		assert.match(fs.readFileSync(report, "utf-8"), /Stage 1 report/, "the original run's report must survive the resume");
+		const revivedReport = path.join(tempDir, "reports", `lane-writer-report.${result.details.asyncId.slice(0, 8)}.md`);
+		assert.match(fs.readFileSync(revivedReport, "utf-8"), /Stage 2 report/);
+		assert.ok(revived.results[0]?.output?.includes(`Output saved to: ${revivedReport}`), revived.results[0]?.output);
+	});
+
 	it("revives an inherited parent model outside the current registry", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Initial async work" });
 		const sourceId = `async-revive-parent-model-${Date.now().toString(36)}`;
