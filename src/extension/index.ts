@@ -104,8 +104,6 @@ import {
 } from "./control-notices.ts";
 import { showUpgradeNotice } from "./upgrade-notice.ts";
 
-export { loadConfig, resolveAsyncByDefault } from "./config.ts";
-
 const SLOW_RELOAD_PHASE_MS = 250;
 // Long enough for Pi to finish starting; loading the executor blocks the event loop for tens of ms.
 const MODULE_PRELOAD_DELAY_MS = 1_000;

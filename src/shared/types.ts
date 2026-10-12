@@ -630,7 +630,6 @@ export type TimeoutRecoveryProjection = Pick<TimeoutRecoverySummary, "terminatio
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 3;
 export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
 
-export type ProcessTerminalState = "pending" | "observed" | "unknown" | "not-started";
 export type ProcessTerminalReason =
 	| "observer-unavailable"
 	| "runner-candidate-missing"
@@ -2872,7 +2871,7 @@ export function resolveTempScopeId(options?: {
 }
 
 const MAX_PARALLEL = 8;
-export const MAX_CONCURRENCY = 4;
+const MAX_CONCURRENCY = 4;
 const configuredTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT?.trim();
 export const TEMP_ROOT_DIR = configuredTempRoot
 	? path.resolve(configuredTempRoot)
@@ -2960,7 +2959,7 @@ export interface SubagentDepthContext {
 }
 
 /** Operator override for the top-level parent; children inherit their limit through their runtime config. */
-export const SUBAGENT_MAX_DEPTH_ENV = "PI_SUBAGENT_MAX_DEPTH";
+const SUBAGENT_MAX_DEPTH_ENV = "PI_SUBAGENT_MAX_DEPTH";
 
 export function resolveCurrentMaxSubagentDepth(configMaxDepth?: number, runtime?: SubagentDepthContext): number {
 	return normalizeMaxSubagentDepth(runtime ? runtime.maxDepth : process.env[SUBAGENT_MAX_DEPTH_ENV])
@@ -2975,7 +2974,7 @@ export function resolveChildMaxSubagentDepth(parentMaxDepth: number, agentMaxDep
 }
 
 /** Depth of the executor itself: 0 for a top-level parent, its own child depth otherwise. */
-export function resolveCurrentSubagentDepth(runtime?: SubagentDepthContext): number {
+function resolveCurrentSubagentDepth(runtime?: SubagentDepthContext): number {
 	const depth = runtime ? runtime.depth : 0;
 	return Number.isFinite(depth) ? depth : 0;
 }
@@ -3006,7 +3005,7 @@ export function resolveMaxSubagentSpawnsPerSession(configMaxSpawns?: number): nu
 	return configuredMaxSpawns === 0 ? undefined : configuredMaxSpawns;
 }
 
-export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN = 64;
+const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN = 64;
 
 export function normalizeMaxSubagentSpawnsPerRun(value: unknown): number | undefined {
 	const normalized = normalizeNonNegativeInteger(value);
