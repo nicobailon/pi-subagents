@@ -5464,7 +5464,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			// A package chain's per-step stop check defeats static launch counting; runtime fan-out enforcement still applies.
 			const structuredResource = workflowResource?.provenance.name === "chain" || workflowResource?.provenance.name === "tasks";
 			for (const warning of workflowValidation.warnings ?? []) {
-				if (!(structuredResource && warning.kind === "dynamic-spawn-count")) console.warn(`[pi-subagents] ${warning.message}`);
+				if (structuredResource && warning.kind === "dynamic-spawn-count") continue;
+				// Raw console output while the TUI owns the terminal is drawn over the editor.
+				if (ctx.hasUI) ctx.ui.notify(`[pi-subagents] ${warning.message}`, "warning");
+				else console.warn(`[pi-subagents] ${warning.message}`);
 			}
 			const acceptanceErrors = validateAcceptanceInput(requestParams.acceptance);
 			if (acceptanceErrors.length > 0) return buildRequestedModeError(requestParams, acceptanceErrors.join(" "));
