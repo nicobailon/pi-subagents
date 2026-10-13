@@ -5,7 +5,7 @@ import { createSubagentExecutor } from "../../src/runs/foreground/subagent-execu
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
 import { makeMinimalCtx } from "../support/helpers.ts";
 
-it("shows workflow validation warnings through the TUI instead of writing over it", async () => {
+it("does not notify a dynamic launch count when a workflow launches", async () => {
 	const executor = createSubagentExecutor({
 		pi: { events: { emit() {}, on() { return () => {}; } }, getSessionName() { return "parent"; } } as never,
 		state: createChildSafeState(),
@@ -32,7 +32,5 @@ it("shows workflow validation warnings through the TUI instead of writing over i
 		console.warn = originalWarn;
 	}
 	assert.deepEqual(consoleWarnings.filter((line) => line.includes("dynamic child launches")), []);
-	assert.equal(notices.length, 1);
-	assert.match(notices[0]![0], /^\[pi-subagents\] workflowScript contains dynamic child launches/);
-	assert.equal(notices[0]![1], "warning");
+	assert.deepEqual(notices.filter(([message]) => message.includes("dynamic child launches")), []);
 });

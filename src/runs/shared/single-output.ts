@@ -373,3 +373,16 @@ export function finalizeSingleOutput(params: {
 	}
 	return { displayOutput };
 }
+
+/**
+ * Determines whether an output resolution error represents an unrecoverable settlement failure.
+ * Returns true for fatal claim-path mismatches in any mode, or when required file-only output
+ * fails to persist without a savedPath. Inline and optional outputs remain nonfatal warnings.
+ */
+export function isSettlementFatalOutputError(
+	resolvedOutput: { savedPath?: string; saveError?: string; fatalError?: boolean },
+	outputMode?: OutputMode,
+): boolean {
+	return resolvedOutput.fatalError === true
+		|| (outputMode === "file-only" && !resolvedOutput.savedPath && Boolean(resolvedOutput.saveError));
+}

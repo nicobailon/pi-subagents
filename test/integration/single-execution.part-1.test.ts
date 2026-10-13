@@ -532,6 +532,36 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(JSON.parse(fs.readFileSync(configuredPath, "utf-8")), { ok: true });
 	});
 
+	it("fails foreground settlement when required file-only output cannot be written", { skip: !runSync ? "execution not importable" : undefined }, async () => {
+		const blockedParent = path.join(tempDir, `blocked-fg-parent-${Date.now().toString(36)}`);
+		fs.writeFileSync(blockedParent, "regular file collision", "utf-8");
+		const outputPath = path.join(blockedParent, "report.md");
+		try {
+			mockPi.onCall({ output: "review findings text" });
+			const agents = makeAgentConfigs(["echo"]);
+			const updates: Array<{ details?: { progress?: Array<{ status?: string; error?: string }> } }> = [];
+			const result = await runSync(tempDir, agents, "echo", "Write report", {
+				outputPath,
+				outputMode: "file-only",
+				onUpdate: (update) => {
+					updates.push(update as { details?: { progress?: Array<{ status?: string; error?: string }> } });
+				},
+			});
+
+			assert.equal(result.exitCode, 1);
+			assert.equal(result.savedOutputPath, undefined);
+			assert.match(result.error ?? "", /EEXIST|EISDIR|ENOTDIR|EPERM|EACCES|file already exists|not a directory|permission denied/i);
+			assert.equal(result.progress?.status, "failed");
+			assert.match(result.progress?.error ?? "", /EEXIST|EISDIR|ENOTDIR|EPERM|EACCES|file already exists|not a directory|permission denied/i);
+			const lastUpdate = updates[updates.length - 1];
+			assert.equal(lastUpdate?.details?.progress?.[0]?.status, "failed");
+			assert.match(lastUpdate?.details?.progress?.[0]?.error ?? "", /EEXIST|EISDIR|ENOTDIR|EPERM|EACCES|file already exists|not a directory|permission denied/i);
+			assert.equal(fs.existsSync(outputPath), false);
+		} finally {
+			fs.rmSync(blockedParent, { recursive: true, force: true });
+		}
+	});
+
 	it("matches preflight launch digest for structured foreground execution with a project-local refinement", { skip: !runSync ? "execution not importable" : undefined }, async () => {
 		const agentName = `digest-probe-${Date.now().toString(36)}`;
 		const task = "Answer only from the supplied synthetic text and return the requested structured result.";

@@ -624,6 +624,10 @@ If your host reclaims idle sessions, keep a session alive while it still has liv
 
 The symptom when this is missed is quiet and easy to misattribute: subagents appear never to report back, which looks like a fault in this extension rather than in the host that disposed the listener.
 
+## Component screens over RPC
+
+`/subagents-fleet`, `/subagents-stop` and the `/subagents` model and thinking pickers draw a `ctx.ui.custom()` component in the TUI. In every other mode they fall back to text or `ctx.ui.select`, because stock Pi RPC defines `custom()` as a no-op. A host that runs Pi in RPC mode and renders `custom()` components itself, such as pi-web, can set `PI_SUBAGENTS_COMPONENT_UI=1` in Pi's environment to get the component screens.
+
 ## Runtime files
 
 The main runtime files in this repository:

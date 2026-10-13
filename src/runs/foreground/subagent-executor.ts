@@ -36,7 +36,6 @@ import { normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin
 import { projectChainOutputSchemas, resolveEffectiveOutputSchema } from "../shared/child-launch-plan.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
-import { recordRun } from "../shared/run-history.ts";
 import {
 	getStepAgents,
 	isParallelStep,
@@ -4216,7 +4215,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	if (shouldForkAgent(contextPolicy, params.agent!)) {
 		task = wrapForkTask(task);
 	}
-	const cleanTask = task;
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, singleCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) {
@@ -4419,7 +4417,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 						}
 					}
 				}
-				recordRun(params.agent!, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0, result);
 			},
 			timeoutMs: data.timeoutMs,
 			deadlineAt,
@@ -4455,10 +4452,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			finishTrackedForegroundChild();
 		}
 	}
-	if (!r.detached) {
-		recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0, r);
-	}
-
 	let worktreeHandoff: Awaited<ReturnType<typeof finalizeSingleWorktreeHandoff>> | undefined;
 	if (worktreeSetup) {
 		worktreeHandoff = r.detached
@@ -5464,14 +5457,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (launchBlockingErrors.length > 0) {
 				return buildRequestedModeError(requestParams, `Workflow '${_id}' validation failed before child launch; no children launched. ${launchBlockingErrors.map((error) => error.message).join(" ")}`);
 			}
-			// A package chain's per-step stop check defeats static launch counting; runtime fan-out enforcement still applies.
-			const structuredResource = workflowResource?.provenance.name === "chain" || workflowResource?.provenance.name === "tasks";
-			for (const warning of workflowValidation.warnings ?? []) {
-				if (structuredResource && warning.kind === "dynamic-spawn-count") continue;
-				// Raw console output while the TUI owns the terminal is drawn over the editor.
-				if (ctx.hasUI) ctx.ui.notify(`[pi-subagents] ${warning.message}`, "warning");
-				else console.warn(`[pi-subagents] ${warning.message}`);
-			}
+			// Validation warnings belong to the validate action; a launch does not repeat them on every run.
 			const acceptanceErrors = validateAcceptanceInput(requestParams.acceptance);
 			if (acceptanceErrors.length > 0) return buildRequestedModeError(requestParams, acceptanceErrors.join(" "));
 			// Capture mandatory host extensions at admission: script children may launch after the host disposes its registration.

@@ -16,7 +16,15 @@ const origMkdir = fs.mkdirSync;
 let attempted = false;
 fs.mkdirSync = function(file, ...args) {
   if (role === "contender" && !attempted && typeof file === "string" && file.endsWith("history.json.write-lock")) {
-    attempted = true; process.send?.({type:"lock-attempt", role});
+    attempted = true;
+    try { return origMkdir.call(fs, file, ...args); }
+    catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      // The owner holds the lease. Its hold time here includes the test's IPC round trip, which can
+      // outlast the lease's 200 ms wait on a slow runner, so wait for the test to say the owner exited.
+      process.send?.({type:"lock-attempt", role});
+      waitFile(path.join(barrierDir, `${role}.lock`));
+    }
   }
   return origMkdir.call(fs, file, ...args);
 };
@@ -42,7 +50,8 @@ const manager = createScheduledRunManager({
 manager.bindSession(ctx);
 process.send?.({type:'ready',role});
 waitFile(path.join(barrierDir, `${role}.start`));
-await manager.handleToolCall({action:'schedule.run',id:'check'},ctx);
+const result = await manager.handleToolCall({action:'schedule.run',id:'check'},ctx);
+if (result.isError) throw new Error(`${role} schedule.run failed: ${result.content[0]?.text}`);
 process.send?.({type:'result',role});
 manager.stop();
 process.disconnect?.();

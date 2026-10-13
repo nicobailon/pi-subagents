@@ -3,6 +3,7 @@ name: oracle
 aliases: advisor
 description: High-context decision-consistency oracle that protects inherited state and prevents drift
 tools: read, grep, find, ls, bash
+acceptanceRole: read-only
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
