@@ -219,7 +219,7 @@ export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): 
 			});
 		},
 		writeChildEvent(event: ChildTranscriptEvent) {
-			if ((event.type === "message_end" || event.type === "tool_result_end") && event.message) {
+			if (event.type === "message_end" && event.message) {
 				writeMessage(event.type, event.message);
 				return;
 			}

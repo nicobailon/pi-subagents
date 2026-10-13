@@ -255,6 +255,5 @@ export function eventIndicatesRepoEdit(event: unknown): boolean {
 		return [input.message, ...(Array.isArray(input.toolResults) ? input.toolResults : [])].some(messageIndicatesRepoEdit);
 	}
 	if (input.type === "tool_result" || input.event === "tool_result") return messageIndicatesRepoEdit({ role: "toolResult", ...input });
-	if (input.type !== "tool_result_end" && input.event !== "tool_result_end") return false;
-	return messageIndicatesRepoEdit(input.message);
+	return false;
 }

@@ -477,7 +477,7 @@ export function createOrcaProgressTab(input: {
 				writeProgress(`\n› ${event.toolName}${args ? `: ${args}` : ""}\n`);
 				return;
 			}
-			if ((event.type === "message_end" || event.type === "tool_result_end") && event.message) {
+			if (event.type === "message_end" && event.message) {
 				const text = extractTextFromContent(event.message.content);
 				if (text.trim()) writeProgress(`${text}${text.endsWith("\n") ? "" : "\n"}`);
 			}

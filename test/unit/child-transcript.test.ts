@@ -61,7 +61,7 @@ describe("createChildTranscriptWriter", () => {
 		assert.equal(record.source, "async");
 	});
 
-	it("writes message records for message_end and tool_result_end events", () => {
+	it("writes message records for assistant and toolResult message_end events", () => {
 		const dir = tmpDir();
 		const transcriptPath = path.join(dir, "transcript.jsonl");
 		const writer = createChildTranscriptWriter({
@@ -83,7 +83,7 @@ describe("createChildTranscriptWriter", () => {
 			},
 		});
 		writer.writeChildEvent({
-			type: "tool_result_end",
+			type: "message_end",
 			message: { role: "toolResult", toolCallId: "call-1", toolName: "bash", content: [{ type: "text", text: "ok" }], isError: false },
 		});
 
@@ -97,7 +97,7 @@ describe("createChildTranscriptWriter", () => {
 		assert.equal(records[0]!.stopReason, "end_turn");
 		assert.deepEqual(records[0]!.usage, { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 });
 		assert.equal(records[1]!.recordType, "message");
-		assert.equal(records[1]!.sourceEventType, "tool_result_end");
+		assert.equal(records[1]!.sourceEventType, "message_end");
 		assert.equal(records[1]!.role, "toolResult");
 		assert.equal(records[1]!.toolCallId, "call-1");
 		assert.equal(records[1]!.toolName, "bash");
@@ -157,7 +157,7 @@ describe("createChildTranscriptWriter", () => {
 		});
 		writer.writeChildEvent({ type: "tool_execution_start", toolCallId: "large", toolName: "bash", args: { command: "🧪".repeat(10_000) } });
 		writer.writeChildEvent({
-			type: "tool_result_end",
+			type: "message_end",
 			message: { role: "toolResult", toolCallId: "large", toolName: "bash", content: [{ type: "text", text: "🧪".repeat(10_000) }], isError: false },
 		});
 
