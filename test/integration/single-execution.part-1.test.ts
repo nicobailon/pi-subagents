@@ -325,12 +325,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.notEqual(mockPi.sessions[0]!.launch.parentProviderRegistry, mockPi.sessions[1]!.launch.parentProviderRegistry);
 	});
 
-	it("keeps public structured children alive when tool results backfill without execution_end", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("keeps public structured children alive after a tool call completes", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [{ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "echo PROBE_OK" } }] },
 				{ delay: 25, jsonl: [
-					{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "bash-1", toolName: "bash", isError: false, content: [{ type: "text", text: "PROBE_OK" }] } },
+					{ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash", isError: false },
+					{ type: "message_end", message: { role: "toolResult", toolCallId: "bash-1", toolName: "bash", isError: false, content: [{ type: "text", text: "PROBE_OK" }] } },
 					events.assistantMessage("PROBE_OK"),
 				] },
 			],
@@ -351,15 +352,20 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.results[0]?.timedOut, undefined);
 	});
 
-	it("preserves a blocked foreground delegated tool attempt without an execution-start event", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("reports a blocked foreground delegated tool call from Pi's tool result message", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const blockedMessage = "Tool budget hard limit reached after 1 tool call (hard 0). The 'bash' tool is blocked so you can finalize from the context you already have.";
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [
-					// A still-pending earlier call must not be attributed as the blocked tool.
+					// Pi's sequence for a call blocked by a tool_call handler: start, end with isError, then the toolResult message.
+					{ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "cat canary" } },
+					// A later overlapping call must not be attributed as the blocked tool.
 					{ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "notes.md" } },
-					{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "bash-1", toolName: "bash", isError: true, content: [{ type: "text", text: blockedMessage }] } },
-					{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "read-1", toolName: "read", isError: false, content: [{ type: "text", text: "ordinary notes" }] } },
+					{ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash", isError: true },
+					{ type: "message_start", message: { role: "toolResult", toolCallId: "bash-1", toolName: "bash", isError: true, content: [{ type: "text", text: blockedMessage }] } },
+					{ type: "message_end", message: { role: "toolResult", toolCallId: "bash-1", toolName: "bash", isError: true, content: [{ type: "text", text: blockedMessage }] } },
+					{ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", isError: false },
+					{ type: "message_end", message: { role: "toolResult", toolCallId: "read-1", toolName: "read", isError: false, content: [{ type: "text", text: "ordinary notes" }] } },
 				] },
 				{ jsonl: [events.assistantMessage("I could not read the required canary because bash was blocked.")] },
 			],
@@ -408,8 +414,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			steps: [
 				{ jsonl: [
 					{ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "grep -rn 'Tool budget hard limit reached' src/" } },
-					{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "bash-1", toolName: "bash", isError: false, content: [{ type: "text", text: quoted }] } },
 					{ type: "tool_execution_end", toolName: "bash" },
+					{ type: "message_end", message: { role: "toolResult", toolCallId: "bash-1", toolName: "bash", isError: false, content: [{ type: "text", text: quoted }] } },
 				] },
 				{ jsonl: [events.assistantMessage("The phrase appears in a log; nothing was blocked.")] },
 			],
@@ -498,8 +504,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		mockPi.onCall({
 			stdoutRaw: [
 				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
-				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 				{ type: "tool_execution_end", toolName: "structured_output" },
+				{ type: "message_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
 			structuredOutputCapture: { ok: true },
 		});
@@ -662,8 +668,8 @@ When the task asks for a structured result, keep field names exactly as requeste
 		const structuredCall = {
 			stdoutRaw: [
 				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
-				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 				{ type: "tool_execution_end", toolName: "structured_output" },
+				{ type: "message_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
 			structuredOutputCapture: { ok: true },
 		};

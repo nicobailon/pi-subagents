@@ -489,18 +489,11 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				return;
 			}
 
-			if ((event.type === "message_end" || event.type === "tool_result_end") && event.message) {
-				if (event.type === "tool_result_end") {
-					clearActiveToolTimeout(event);
-					removeActiveToolCall({
-						toolCallId: (event.message as { toolCallId?: unknown }).toolCallId ?? event.toolCallId,
-						toolName: (event.message as { toolName?: unknown }).toolName ?? event.toolName,
-					});
-				}
+			if (event.type === "message_end" && event.message) {
 				messages.push(event.message);
 				const text = extractTextFromContent(event.message.content);
 				if (text) writeOutputText(text);
-				if (event.type === "message_end" && event.message.role === "user" && text) {
+				if (event.message.role === "user" && text) {
 					const matched = takeMatchingAcceptedSteer(acceptedSteers, text);
 					if (matched) {
 						input.onSteerOutcome?.(matched.request, {
@@ -511,11 +504,11 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					}
 				}
 
-				if (input.childWatchdog && event.type === "message_end") {
+				if (input.childWatchdog) {
 					const next = applyChildWatchdogMessage(childWatchdogState, event.message);
 					if (next) childWatchdogState = next;
 				}
-				if (event.type !== "message_end" || event.message.role !== "assistant") return;
+				if (event.message.role !== "assistant") return;
 				const hasToolCall = assistantStartsToolCall(event.message);
 				if (event.message.model) {
 					model = qualifyModelWithProvider(event.message.model, event.message.provider, input.modelVerificationRegistry) ?? event.message.model;

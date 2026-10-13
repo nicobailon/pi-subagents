@@ -257,8 +257,8 @@ describe("in-process foreground child", () => {
 			structuredOutputAcceptanceReport: acceptanceReport,
 			jsonl: [
 				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true }, acceptanceReport } },
-				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 				{ type: "tool_execution_end", toolName: "structured_output" },
+				{ type: "message_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 				{ type: "message_end", message: { role: "assistant", content: [], model: "mock/test-model", stopReason: "error", errorMessage: "later provider failure", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
 			],
 		});
@@ -280,8 +280,8 @@ describe("in-process foreground child", () => {
 			structuredOutputCapture: { ok: true },
 			jsonl: [
 				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
-				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 				{ type: "tool_execution_end", toolName: "structured_output" },
+				{ type: "message_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 			],
 			hangUntilAbort: true,
 		});
@@ -301,8 +301,8 @@ describe("in-process foreground child", () => {
 		const structured = createStructuredOutputRuntime({ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, tempDir);
 		mockPi.onCall({ jsonl: [
 			{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: "invalid" } } },
-			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output validation failed." }], isError: true } },
 			{ type: "tool_execution_end", toolName: "structured_output", isError: true },
+			{ type: "message_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output validation failed." }], isError: true } },
 		] });
 
 		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "structured-invalid", acceptance: false, structuredOutput: structured });

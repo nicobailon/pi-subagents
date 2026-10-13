@@ -652,7 +652,7 @@ describe("acceptance file reports", { skip: !runSync ? "pi packages not availabl
 						},
 					},
 					{
-						type: "tool_result_end",
+						type: "message_end",
 						message: { role: "toolResult", toolCallId: "w-failed", toolName: "write", isError: true, content: [{ type: "text", text: "disk full" }] },
 					},
 					events.assistantMessage(`The write failed.\n${acceptanceReport("not-satisfied", "from assistant text")}`),

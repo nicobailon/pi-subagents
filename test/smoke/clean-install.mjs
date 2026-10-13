@@ -27,8 +27,8 @@ const env = {
 for (const key of Object.keys(env)) {
 	if (/API_KEY|TOKEN|SECRET|PASSWORD/.test(key) || ["NODE_OPTIONS", "NODE_PATH", "JITI_ALIAS"].includes(key)) delete env[key];
 }
-function run(name, command, args, workdir, extra = {}, success = true) {
-	const result = spawnSync(command, args, { cwd: workdir, env: { ...env, ...extra }, encoding: "utf8", timeout: 180000, maxBuffer: 10 * 1024 * 1024 });
+function run(name, command, args, workdir, extra = {}, success = true, timeout = 180000) {
+	const result = spawnSync(command, args, { cwd: workdir, env: { ...env, ...extra }, encoding: "utf8", timeout, maxBuffer: 10 * 1024 * 1024 });
 	fs.writeFileSync(path.join(root, `${name}.log`), `${result.stdout ?? ""}${result.stderr ?? ""}`);
 	assert.ifError(result.error);
 	if (success) assert.equal(result.status, 0, `${name}: ${result.stdout}\n${result.stderr}`);
@@ -36,7 +36,8 @@ function run(name, command, args, workdir, extra = {}, success = true) {
 	return result;
 }
 fs.writeFileSync(path.join(host, "package.json"), JSON.stringify({ private: true, dependencies: { "@earendil-works/pi-coding-agent": version } }));
-run("host-install", "npm", ["install", "--no-audit", "--no-fund"], host);
+// Installing the Pi host from the registry has taken over four minutes on slow days; the job timeout still bounds it.
+run("host-install", "npm", ["install", "--no-audit", "--no-fund"], host, {}, true, 420000);
 run("build-package", process.execPath, ["scripts/build-package.mjs"], source);
 const packed = JSON.parse(run("pack", "npm", ["pack", "--json", "--pack-destination", root, path.join(source, "dist-pkg")], source).stdout)[0];
 assert.ok(packed.files.some(file => file.path === "runner-peer-preload.mjs"), "peer preload must ship");

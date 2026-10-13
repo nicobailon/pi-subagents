@@ -455,8 +455,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			stdoutRaw: [
 				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
-				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 				{ type: "tool_execution_end", toolName: "structured_output" },
+				{ type: "message_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
 			structuredOutputCapture: { ok: true },
 		});
@@ -834,8 +834,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					} else {
 						const structuredEvents = [
 							{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
-							{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 							{ type: "tool_execution_end", toolName: "structured_output" },
+							{ type: "message_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 						];
 						mockPi.onCall({
 							stdoutRaw: structuredEvents.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
