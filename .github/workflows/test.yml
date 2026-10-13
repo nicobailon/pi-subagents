@@ -168,7 +168,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pi-version: ["0.86.1", "1.0.0"]
+        pi-version: ["0.86.1", "1.0.0", "1.2.0"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
