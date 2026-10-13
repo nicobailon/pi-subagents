@@ -203,7 +203,7 @@ describe("agent management config parsing", () => {
 		assert.ok(reviewer, "reviewer builtin should be present in capability output");
 		assert.deepEqual(reviewer.tools.names, ["read", "grep", "find", "ls", "watchdog_diff", "contact_supervisor"]);
 		assert.match(readText(listed), /Tools: read, grep, find, ls, watchdog_diff, contact_supervisor/);
-		assert.equal("acceptance" in reviewer, false);
+		assert.deepEqual(reviewer.acceptance, { role: "read-only" });
 	});
 
 	it("reports bare and disabled acceptance declarations in capabilities", () => {

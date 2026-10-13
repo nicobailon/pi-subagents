@@ -73,6 +73,15 @@ describe("acceptance gates", () => {
 		const worker = builtins.find((agent) => agent.name === "worker");
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: worker?.acceptanceRole }).level, "checked");
 	});
+	it("needs no acceptance report from the builtin read-only agents unless the caller asks for one", () => {
+		const builtins = discoverAgentsAll(tempRepo()).builtin;
+		for (const name of ["reviewer", "oracle", "evidence-auditor"]) {
+			const agent = builtins.find((candidate) => candidate.name === name);
+			assert.equal(resolveEffectiveAcceptance({ agentName: name, acceptanceRole: agent?.acceptanceRole, task: "Review the diff." }).level, "none", name);
+			assert.equal(resolveEffectiveAcceptance({ agentName: name, acceptanceRole: agent?.acceptanceRole, task: "Review the diff.", explicit: { level: "checked" } }).level, "checked", name);
+		}
+	});
+
 
 	it("infers evidence levels and review requirements from declared roles", () => {
 		assert.equal(resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "read-only", task: "Implement the fix", mode: "single" }).level, "none");

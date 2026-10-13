@@ -108,7 +108,15 @@ The choice is made at session start or tree navigation, and only for a session w
 
 Controls the parent-facing `subagent` tool description registered at startup. The default registers the short execution/safety description, which states the delegation authorization rule, plus a one-line `promptSnippet`. Explicit `"compact"` uses the same description without the snippet; `"full"` adds workflow and management detail, also without the snippet. All modes retain the same flat parameter schema. Extended examples and recipes are available on demand through `action:"guide"` and the bundled pi-subagents skill; full mode is not an exhaustive manual. Count the default snippet as well as the tool definition when comparing prompt footprints.
 
-`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.pi/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file. The change applies to new sessions; a resumed session keeps the tool definition and prompt text it already declared, so its prompt cache stays valid.
+`custom` reads `subagent-tool-description.md` from the project config directory, then from `~/.pi/agent/subagent-tool-description.md`. Missing, empty, unreadable, or oversized custom files fall back to the full description. Custom templates may use `{{fullDescription}}`, `{{compactDescription}}`, `{{safetyGuidance}}`, `{{agentDir}}`, and `{{projectConfigDir}}`; the safety guidance is always present so custom prose cannot remove the runtime guardrails. Restart Pi after changing the mode or custom file. The change applies to new sessions; a resumed session keeps the tool definition and prompt text it already declared, so its prompt cache stays valid. To apply it to resumed sessions too, set [`pinToolDeclarations`](#pintooldeclarations) to `false`.
+
+## `pinToolDeclarations`
+
+```json
+{ "pinToolDeclarations": false }
+```
+
+Pi records each tool definition and prompt section a session declares, and declares any difference again before the next request; a changed definition makes the provider read the whole conversation again without its prompt cache. So by default (`true`) a resumed or reloaded session keeps the `subagent`, `bg_wait`, and `subagents_enable` definitions and the pi-subagents prompt text it already declared, and only a session that never declared a tool gets its current definition. With `false`, every parent session gets the current definitions (subagent children stay pinned): a long-lived session picks up an upgrade, a changed `toolDescriptionMode`, `disabledFeatures`, or an edited custom description on the next restart, and pays one cache miss on its next request. Restart Pi after changing it.
 
 ## `disabledFeatures`
 

@@ -6,7 +6,8 @@ import type { TSchema } from "typebox";
 // re-declares any difference before the next request. A changed tool or prompt section makes
 // the provider re-read the whole conversation without its prompt cache, so a session keeps the
 // pi-subagents definitions and prompt text it already declared. Only a session that never
-// declared a tool gets its current definition.
+// declared a tool gets its current definition. Setting `pinToolDeclarations` to false turns this
+// off, so a resumed session gets the current definitions at the cost of one prompt-cache miss. (#2852)
 
 type PinnableTool = ToolDefinition<TSchema, unknown>;
 
@@ -23,6 +24,8 @@ interface Pins {
 	registered: Map<string, string>;
 	/** The prompt sections the session transcript recorded, read on session events only. */
 	sections: Record<string, string | null>;
+	/** False when the session should get the current definitions instead of the recorded ones. */
+	pinned: boolean;
 }
 
 const pinsByApi = new WeakMap<ExtensionAPI, Pins>();
@@ -128,11 +131,11 @@ function declaredPins(pi: ExtensionAPI, pins: Pins, ctx: ExtensionContext | unde
 function pinsFor(pi: ExtensionAPI): Pins {
 	const existing = pinsByApi.get(pi);
 	if (existing) return existing;
-	const pins: Pins = { current: new Map(), declared: new Map(), registered: new Map(), sections: {} };
+	const pins: Pins = { current: new Map(), declared: new Map(), registered: new Map(), sections: {}, pinned: true };
 	pinsByApi.set(pi, pins);
 	// Pi restores the transcript's active tools before both events, so handler order does not matter.
 	const refresh = (ctx: ExtensionContext | undefined) => {
-		const system = recordedSystemMessage(ctx);
+		const system = pins.pinned ? recordedSystemMessage(ctx) : undefined;
 		pins.sections = system?.sections ?? {};
 		pins.declared = declaredPins(pi, pins, ctx, system);
 		for (const name of pins.current.keys()) register(pi, pins, name);
@@ -161,4 +164,12 @@ export function registerPinnedTool<TParams extends TSchema, TDetails>(pi: Extens
 	pins.current.set(tool.name, tool as unknown as PinnableTool);
 	pins.registered.delete(tool.name);
 	register(pi, pins, tool.name);
+}
+
+/**
+ * Choose whether this session keeps the pi-subagents definitions and prompt text its transcript
+ * declared (the default) or gets the current ones. Call before registering any pinned tool.
+ */
+export function setDeclarationPinning(pi: ExtensionAPI, pinned: boolean): void {
+	pinsFor(pi).pinned = pinned;
 }

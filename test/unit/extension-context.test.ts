@@ -1,6 +1,23 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { withCachedUiContext } from "../../src/shared/extension-context.ts";
+import { canRenderComponents, withCachedUiContext } from "../../src/shared/extension-context.ts";
+
+describe("component UI support", () => {
+	it("renders in the TUI, and over RPC only when the host sets PI_SUBAGENTS_COMPONENT_UI=1", () => {
+		const previous = process.env.PI_SUBAGENTS_COMPONENT_UI;
+		const custom = (_factory: unknown, _options?: unknown) => Promise.resolve(undefined);
+		try {
+			delete process.env.PI_SUBAGENTS_COMPONENT_UI;
+			assert.equal(canRenderComponents({ mode: "tui", ui: { custom } } as never), true);
+			assert.equal(canRenderComponents({ mode: "rpc", ui: { custom } } as never), false);
+			process.env.PI_SUBAGENTS_COMPONENT_UI = "1";
+			assert.equal(canRenderComponents({ mode: "rpc", ui: { custom } } as never), true);
+		} finally {
+			if (previous === undefined) delete process.env.PI_SUBAGENTS_COMPONENT_UI;
+			else process.env.PI_SUBAGENTS_COMPONENT_UI = previous;
+		}
+	});
+});
 
 describe("cached extension UI context", () => {
 	it("clears a context replaced by session reload and returns no UI result", () => {
