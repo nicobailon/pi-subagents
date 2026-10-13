@@ -279,7 +279,7 @@ export interface ResolvedToolBudget {
 	block: string[] | "*";
 }
 
-export type ToolBudgetOutcome = "within-budget" | "soft-reached" | "hard-blocked";
+export type ToolBudgetOutcome = "within-budget" | "soft-reached" | "hard-reached" | "hard-blocked";
 
 export interface ToolBudgetState extends ResolvedToolBudget {
 	outcome: ToolBudgetOutcome;

@@ -45,6 +45,7 @@ describe("tool-budget module", () => {
 		assert.deepEqual(initialToolBudgetState(budget), { soft: 2, hard: 3, block: ["read"], toolCount: 0, outcome: "within-budget" });
 		assert.equal(toolBudgetState(budget, 2).outcome, "soft-reached");
 		assert.equal(toolBudgetState(budget, 4, "read").outcome, "hard-blocked");
+		assert.equal(toolBudgetState(budget, 4).outcome, "hard-reached", "past the hard limit with no blocked call");
 		assert.equal(shouldBlockToolForBudget(budget, "read", 4), true);
 		assert.equal(shouldBlockToolForBudget(budget, "write", 4), false);
 		assert.equal(shouldBlockToolForBudget({ hard: 0, block: "*" }, "read", 1), true);
