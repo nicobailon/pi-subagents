@@ -254,17 +254,40 @@ function hasTool(pi: ExtensionAPI, name: string): boolean {
 }
 
 /**
+ * What the model sees of `contact_supervisor`, shared by a child's working tool and the
+ * top-level session's refusing one: a forked child's tool list then equals its parent's, so its
+ * first request can reuse the parent's prompt cache.
+ */
+export const CONTACT_SUPERVISOR_TOOL_NAME = "contact_supervisor";
+
+const CONTACT_SUPERVISOR_DECLARATION = {
+	name: CONTACT_SUPERVISOR_TOOL_NAME,
+	...MODEL_ONLY_TOOL,
+	label: "Contact Supervisor",
+	description: "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update.",
+	parameters: ContactSupervisorParamsSchema,
+};
+
+export const TOP_LEVEL_SUPERVISOR_REFUSAL = "contact_supervisor works only inside a subagent; this session has no supervisor.";
+
+/** `contact_supervisor` for a session that is not a subagent: every call is an error. */
+export function topLevelSupervisorTool(): ToolDefinition<typeof ContactSupervisorParamsSchema, Record<string, unknown>> {
+	return {
+		...CONTACT_SUPERVISOR_DECLARATION,
+		async execute() {
+			return { isError: true, content: [{ type: "text", text: TOP_LEVEL_SUPERVISOR_REFUSAL }], details: {} };
+		},
+	};
+}
+
+/**
  * Register the child-side `contact_supervisor` tool. The host passes the
  * channel metadata in the child runtime config.
  */
 export function registerNativeSupervisorClient(pi: ExtensionAPI, metadata: ChildSupervisorMetadata | undefined): void {
-	if (!metadata || hasTool(pi, "contact_supervisor")) return;
+	if (!metadata || hasTool(pi, CONTACT_SUPERVISOR_TOOL_NAME)) return;
 	const tool: ToolDefinition<typeof ContactSupervisorParamsSchema, Record<string, unknown>> = {
-		name: "contact_supervisor",
-		...MODEL_ONLY_TOOL,
-		label: "Contact Supervisor",
-		description: "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update.",
-		parameters: ContactSupervisorParamsSchema,
+		...CONTACT_SUPERVISOR_DECLARATION,
 		execute(id, params, signal) {
 			return sendSupervisorRequest(params as ContactSupervisorParams, metadata, signal, id);
 		},

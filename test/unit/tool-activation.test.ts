@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { toToolDeclaration, validateToolArguments } from "@earendil-works/pi-ai";
+import { registerNativeSupervisorClient, TOP_LEVEL_SUPERVISOR_REFUSAL } from "../../src/intercom/native-supervisor-channel.ts";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
@@ -305,5 +306,41 @@ describe("toolActivation modes", () => {
 
 	it("rejects an unknown toolActivation value instead of falling back", () => {
 		assert.throws(() => createRuntime([], [], [], { config: { toolActivation: "lazy" } }), /config\.toolActivation must be "auto", "dynamic", or "eager"/);
+	});
+});
+
+describe("contact_supervisor in a top-level session", () => {
+	it("is declared exactly when subagent is, right after it", async () => {
+		const lazy = createRuntime([], [], [], DYNAMIC);
+		await lazy.emit("session_start", { type: "session_start", reason: "startup" });
+		assert.equal(lazy.active().includes("contact_supervisor"), false);
+		await lazy.tools.get("subagents_enable")!.execute?.("enable", {}, new AbortController().signal, undefined, lazy.context);
+		assert.equal(lazy.active().indexOf("contact_supervisor"), lazy.active().indexOf("subagent") + 1);
+
+		const eager = createRuntime([], [], [], { config: { toolActivation: "eager" } });
+		await eager.emit("session_start", { type: "session_start", reason: "startup" });
+		assert.ok((await startAgent(eager)).includes("contact_supervisor"));
+
+		for (const [messages, expected] of [[[declared(["read", "subagents_enable"])], false], [[declared(["read", "subagent"])], true]] as const) {
+			const recorded = createRuntime([...messages], [], [], { model: COMPATIBLE });
+			await recorded.emit("session_start", { type: "session_start", reason: "resume" });
+			assert.equal(recorded.active().includes("contact_supervisor"), expected);
+		}
+	});
+
+	it("has the declaration a child's working tool has, and a call is an error", async () => {
+		const runtime = createRuntime([], [], [], { config: { toolActivation: "eager" } });
+		let child: Tool | undefined;
+		registerNativeSupervisorClient({ registerTool(tool: Tool) { child = tool; }, getAllTools: () => [] } as never, {
+			channelDir: fs.mkdtempSync(path.join(os.tmpdir(), "supervisor-channel-")), runId: "run", agent: "worker", childIndex: 0, orchestratorSessionId: "parent",
+		} as never);
+		const parent = runtime.tools.get("contact_supervisor");
+
+		assert.ok(parent && child);
+		assert.deepEqual(toToolDeclaration(parent as never), toToolDeclaration(child as never));
+		assert.equal((parent as { exposure?: string }).exposure, (child as { exposure?: string }).exposure);
+		const result = await parent.execute?.("call-1", { reason: "need_decision", message: "?" }, new AbortController().signal, undefined, runtime.context);
+		assert.equal(result?.isError, true);
+		assert.equal(result?.content[0]?.text, TOP_LEVEL_SUPERVISOR_REFUSAL);
 	});
 });

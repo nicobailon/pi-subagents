@@ -494,7 +494,7 @@ Inspect the handoff before reconciliation; cleanup still requires fresh checks.
 
 ## Supervisor coordination (child asks parent)
 
-Child agents can talk back to the parent Pi session without installing `pi-intercom`. `pi-subagents` provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. Generic `intercom` remains available only when an explicitly loaded external provider supplies it.
+Child agents can talk back to the parent Pi session without installing `pi-intercom`. `pi-subagents` provides the child-facing `contact_supervisor` tool and the parent-facing `subagent_supervisor({ action: "reply" })` path natively. A session that has `subagent` also declares `contact_supervisor`, so a forked child's tools match its parent's; there it only returns an error saying the session has no supervisor. Generic `intercom` remains available only when an explicitly loaded external provider supplies it.
 
 Use it for work where the child might need a decision instead of guessing:
 

@@ -49,7 +49,7 @@ import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerMainWatchdog } from "../watchdog/register-main.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
-import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
+import { createNativeSupervisorChannel, topLevelSupervisorTool } from "../intercom/native-supervisor-channel.ts";
 import { renderSubagentEntry, renderSubagentMessage, SUBAGENT_ENTRY_TYPES, SUBAGENT_MESSAGE_TYPES } from "../tui/subagent-messages.ts";
 import { registerHerdrStatusBridge, type HerdrStatusRun } from "../integrations/herdr-status.ts";
 import { registerProgramStatusReporter } from "../integrations/program-status.ts";
@@ -709,6 +709,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	registerPinnedTool(pi, tool);
+	// Declared with the same definition children use, so a fork's tool list equals this session's.
+	registerPinnedTool(pi, topLevelSupervisorTool());
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		await waitForAdvertisement();
