@@ -791,7 +791,7 @@ describe("subagent prompt runtime", () => {
 		assert.ok(rewritten.includes("<skill name=\"safe-bash\">"));
 	});
 
-	it("strips parent-only subagent custom messages from forked child context", () => {
+	it("strips parent-only subagent custom messages from a child's context outside inherited fork history", () => {
 		const user = { role: "user", content: "Task" };
 		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "Subagent orchestration is enabled." };
 		const slashResult = { role: "custom", customType: "subagent-slash-result", content: "## Orchestration" };
@@ -805,7 +805,7 @@ describe("subagent prompt runtime", () => {
 		assert.deepEqual(stripParentOnlySubagentMessages([user, instruction, slashResult, slashTextResult, notify, control, watchdogWarning, childWatchdogWarning, otherCustom]), [user, otherCustom]);
 	});
 
-	it("strips prior parent subagent tool calls and results from forked child context", () => {
+	it("strips subagent tool calls and results from a child's context outside inherited fork history", () => {
 		const user = { role: "user", content: "Task" };
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "subagent results" };
 		const readResult = { role: "toolResult", toolName: "read", content: "file contents" };

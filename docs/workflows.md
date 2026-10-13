@@ -17,7 +17,7 @@ Launch children in the background (`async` follows `asyncByDefault`, normally tr
 Child-safety boundaries are enforced at runtime:
 
 - Child sessions do not receive the bundled `pi-subagents` skill.
-- Forked child context filtering removes parent-only subagent artifacts (including old hidden orchestration-instruction messages, slash/status/control messages, and prior parent `subagent` tool-call/tool-result history) while preserving ordinary prose and unrelated tool calls/results.
+- Child context filtering removes parent-only subagent artifacts (hidden orchestration-instruction messages, slash/status/control messages, and `subagent` tool-call/tool-result history) while preserving ordinary prose and unrelated tool calls/results. A forked child sends the history it inherited exactly as the parent sent it, so its first request can reuse the parent's prompt cache; it still cannot run `subagent`.
 - By default, children do not register the `subagent` tool and receive boundary instructions that they are not the parent orchestrator and must not propose or run subagents.
 - The explicit exception is an agent whose resolved builtin `tools` includes `subagent`; that child gets a child-safe `subagent` tool for the fanout work the parent assigned, still bounded by `maxSubagentDepth`.
 

@@ -389,17 +389,27 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
 	return { ...m, content: filteredContent };
 }
 
-export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean; preserveBoundedCompositeToolIds?: boolean; preserveFanoutToolHistory?: boolean } = {}): unknown[] {
+/**
+ * `inheritedBefore`, set in a forked child to the fork's time, keeps the history the child
+ * inherited as the parent sent it, so its requests can reuse the parent's prompt cache; only tool
+ * ids are still made portable there. The child cannot run `subagent` either way.
+ */
+export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean; preserveBoundedCompositeToolIds?: boolean; preserveFanoutToolHistory?: boolean; inheritedBefore?: number } = {}): unknown[] {
 	const preserveCurrentFanoutToolHistory = options.preserveFanoutToolHistory === true;
 	const sanitizeToolIds = options.sanitizeToolIds ?? true;
+	const inheritedBefore = options.inheritedBefore;
+	// Every message Pi projects from a session has a timestamp, so one without it was added at
+	// request time and is treated as the child's own.
+	const inherited = (message: unknown) => inheritedBefore !== undefined && typeof (message as { timestamp?: unknown })?.timestamp === "number" && (message as { timestamp: number }).timestamp < inheritedBefore;
 	let changed = false;
 	const filtered: unknown[] = [];
 	for (const message of messages) {
-		if (isParentOnlySubagentMessage(message) || (!preserveCurrentFanoutToolHistory && isSubagentToolResultMessage(message))) {
+		const keep = inherited(message);
+		if (!keep && (isParentOnlySubagentMessage(message) || (!preserveCurrentFanoutToolHistory && isSubagentToolResultMessage(message)))) {
 			changed = true;
 			continue;
 		}
-		const stripped = preserveCurrentFanoutToolHistory ? message : stripAssistantSubagentToolCallBlocks(message);
+		const stripped = keep || preserveCurrentFanoutToolHistory ? message : stripAssistantSubagentToolCallBlocks(message);
 		if (stripped === undefined) {
 			changed = true;
 			continue;
@@ -627,10 +637,12 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 
 	onRuntimeEvent("context", (event: unknown, ctx?: ExtensionContext) => {
 		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
+		const forkedAt = config.forkCacheKey ? Date.parse(ctx?.sessionManager?.getHeader()?.timestamp ?? "") : Number.NaN;
 		const messages = stripParentOnlySubagentMessages(event.messages, {
 			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
 			preserveBoundedCompositeToolIds: ctx?.model?.api === "openai-codex-responses",
 			preserveFanoutToolHistory: config.fanoutChild,
+			...(Number.isFinite(forkedAt) ? { inheritedBefore: forkedAt } : {}),
 		});
 		if (messages === event.messages) return undefined;
 		return { messages };

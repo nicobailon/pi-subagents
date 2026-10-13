@@ -7,7 +7,8 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools, type
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { createDefaultChildSessionFactory } from "../../src/runs/shared/child-session.ts";
-import { keepInheritedToolDeclarations as keepInherited, toolsDeclaredBefore } from "../../src/runs/shared/subagent-prompt-runtime.ts";
+import registerSubagentPromptRuntime, { keepInheritedToolDeclarations as keepInherited, stripParentOnlySubagentMessages, toolsDeclaredBefore } from "../../src/runs/shared/subagent-prompt-runtime.ts";
+import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 
 const FORKED_AT = 1_000;
 const tool = (name: string, description = `${name} tool`): Tool => ({ name, description, parameters: { type: "object", properties: {} } as never });
@@ -20,6 +21,7 @@ const system = (timestamp: number, change: { added?: Tool[]; removed?: string[] 
 } as SystemMessage);
 const user = (timestamp: number): Message => ({ role: "user", content: "task", timestamp });
 const declared = (messages: Message[]) => getCurrentTools(messages).map((entry) => entry.name);
+const subagentCalls = (messages: Message[]) => messages.flatMap((entry) => entry.role === "assistant" ? entry.content.filter((block) => block.type === "toolCall" && block.name === "subagent").map((block) => (block as { id: string }).id) : []);
 /** What a request sends when the session holds `messages`, which also stand for the session. */
 const keepInheritedToolDeclarations = (messages: Message[], forkedAt: number, session = messages) => keepInherited(messages, toolsDeclaredBefore(session, forkedAt), forkedAt);
 
@@ -85,14 +87,15 @@ describe("a forked child session", () => {
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
-	type Request = { tools: string[]; results: Message[] };
+	type Request = { tools: string[]; results: Message[]; messages: Message[] };
 
 	/** Runs a real SDK session on `sessionFile` and returns what each provider request declared. */
 	async function run(options: { sessionFile: string; tools: string[]; replies: Array<ReturnType<typeof fauxAssistantMessage>>; forkCacheKey?: string }): Promise<Request[]> {
 		const faux = fauxProvider({ provider: "probe", models: [{ id: "local" }], tokensPerSecond: 100_000 });
 		const requests: Request[] = [];
 		faux.setResponses(options.replies.map((message): FauxResponseFactory => (context) => {
-			requests.push({ tools: declared(context.messages as Message[]), results: (context.messages as Message[]).filter((entry) => entry.role === "toolResult") });
+			const messages = context.messages as Message[];
+			requests.push({ tools: declared(messages), results: messages.filter((entry) => entry.role === "toolResult"), messages });
 			return message;
 		}));
 		const { session } = buildInProcessChildLaunch({
@@ -116,12 +119,19 @@ describe("a forked child session", () => {
 		const [parentRequest] = await run({ sessionFile: parentFile, tools: ["read", "bash", "ls"], replies: [fauxAssistantMessage("done")] });
 		const { SessionManager } = await import("@earendil-works/pi-coding-agent");
 		const manager = SessionManager.open(parentFile, path.join(root, `${name}-forks`));
+		// The parent launched this fork through `subagent` and got a notice from an earlier run.
+		manager.appendMessage({ role: "custom", customType: "subagent-notify", content: "PARENT-NOTICE", display: false, timestamp: Date.now() } as never);
+		manager.appendMessage({ ...fauxAssistantMessage(fauxToolCall("subagent", { agent: "worker", task: "earlier" }, { id: "call_subagent_1" }), { stopReason: "toolUse" }), timestamp: Date.now() });
+		manager.appendMessage({ role: "toolResult", toolCallId: "call_subagent_1", toolName: "subagent", content: [{ type: "text", text: "PARENT-SUBAGENT-RESULT" }], isError: false, timestamp: Date.now() } as never);
+		manager.appendMessage({ ...fauxAssistantMessage(fauxToolCall("subagent", { agent: "worker", task: "this fork" }, { id: "call_subagent_2" }), { stopReason: "toolUse" }), timestamp: Date.now() });
+		// A real fork comes after its parent's messages; keep them apart by more than a millisecond here.
+		await new Promise((resolve) => setTimeout(resolve, 5));
 		const forkFile = manager.createBranchedSession(manager.getLeafId()!)!;
 		return { forkFile, parentTools: parentRequest!.tools };
 	}
 
 	const callBash = (marker: string) => [
-		fauxAssistantMessage(fauxToolCall("bash", { command: `touch ${JSON.stringify(marker)}` }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("bash", { command: `touch ${JSON.stringify(marker)}` }, { id: "call_bash_1" }), { stopReason: "toolUse" }),
 		fauxAssistantMessage("done"),
 	];
 
@@ -134,7 +144,7 @@ describe("a forked child session", () => {
 		assert.ok(parentTools.includes("bash") && parentTools.includes("ls"));
 		assert.equal(requests.length, 2);
 		for (const request of requests) assert.deepEqual(request.tools.slice(0, parentTools.length), parentTools, "every request starts with the parent's tools, in its order");
-		const [result] = requests[1]!.results as Array<Message & { isError?: boolean; content: Array<{ text?: string }> }>;
+		const result = (requests[1]!.results as Array<Message & { toolName?: string; isError?: boolean; content: Array<{ text?: string }> }>).find((entry) => entry.toolName === "bash");
 		assert.equal(result!.isError, true);
 		assert.match(result!.content[0]!.text ?? "", /Tool bash not found/);
 		assert.equal(fs.existsSync(marker), false, "the parent-only tool never ran");
@@ -143,11 +153,60 @@ describe("a forked child session", () => {
 		assert.ok(recorded.at(-1)!.toolsRemoved?.some((entry) => entry.name === "bash"), "the session keeps Pi's own record of the child's tools");
 	});
 
+	it("sends the history it inherited as the parent sent it, its system messages uncollapsed", async () => {
+		const { forkFile } = await forkOfParent("history");
+
+		const requests = await run({ sessionFile: forkFile, tools: ["read"], replies: callBash(path.join(root, "history-ran")), forkCacheKey: "pi-fork:test" });
+
+		for (const { messages } of requests) {
+			assert.deepEqual(subagentCalls(messages), ["call_subagent_1", "call_subagent_2"], "the parent's subagent calls, the pending one included");
+			assert.ok(messages.some((entry) => entry.role === "toolResult" && entry.toolName === "subagent"), "the parent's subagent result");
+			assert.match(JSON.stringify(messages), /PARENT-NOTICE/);
+			assert.equal(messages.filter((entry) => entry.role === "system").length, 2, "the parent's leading system message and the child's own");
+		}
+	});
+
 	it("without a fork launch, declares only its own tools as before", async () => {
 		const { forkFile } = await forkOfParent("plain");
 
 		const requests = await run({ sessionFile: forkFile, tools: ["read"], replies: callBash(path.join(root, "plain-ran")) });
 
 		assert.equal(requests[0]!.tools.includes("bash"), false);
+		for (const { messages } of requests) {
+			assert.deepEqual(subagentCalls(messages), []);
+			assert.equal(messages.some((entry) => entry.role === "toolResult" && entry.toolName === "subagent"), false);
+			assert.doesNotMatch(JSON.stringify(messages), /PARENT-NOTICE/);
+		}
+	});
+});
+
+describe("a child's context handler", () => {
+	const contextHandler = (config: Partial<ChildRuntimeConfig>) => {
+		const handlers = new Map<string, (event: unknown, ctx?: unknown) => unknown>();
+		registerSubagentPromptRuntime({
+			on: (name: string, handler: (event: unknown, ctx?: unknown) => unknown) => handlers.set(name, handler),
+			registerTool: () => {},
+			events: { on: () => () => {} },
+		} as never, { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false, ...config });
+		const ctx = { model: { api: "anthropic-messages" }, sessionManager: { getHeader: () => ({ id: "fork", timestamp: new Date(FORKED_AT).toISOString() }) } };
+		return (messages: unknown[]) => (handlers.get("context")!({ messages }, ctx) as { messages: unknown[] } | undefined)?.messages ?? messages;
+	};
+	const notice = (timestamp: number) => ({ role: "custom", customType: "subagent-notify", content: "done", display: false, timestamp });
+	const call = (timestamp: number) => ({ role: "assistant", content: [{ type: "toolCall", id: `call_${timestamp}`, name: "subagent", arguments: {} }], timestamp });
+	const result = (timestamp: number) => ({ role: "toolResult", toolCallId: `call_${timestamp}`, toolName: "subagent", content: [], isError: false, timestamp });
+
+	it("in a fork, strips only what the child itself added after the fork", () => {
+		const inherited = [user(10), notice(20), call(30), result(40), call(50)];
+		const own = [user(FORKED_AT + 1), notice(FORKED_AT + 2), call(FORKED_AT + 3), result(FORKED_AT + 4)];
+
+		assert.deepEqual(contextHandler({ forkCacheKey: "pi-fork:test" })([...inherited, ...own]), [...inherited, own[0]]);
+	});
+
+	it("outside a fork, strips parent-only messages and subagent history as before, fanout or not", () => {
+		const messages = [user(10), notice(20), call(30), result(40)];
+
+		assert.deepEqual(contextHandler({})(messages), stripParentOnlySubagentMessages(messages));
+		assert.deepEqual(contextHandler({})(messages), [messages[0]]);
+		assert.deepEqual(contextHandler({ fanoutChild: true })(messages), [messages[0], messages[2], messages[3]]);
 	});
 });
