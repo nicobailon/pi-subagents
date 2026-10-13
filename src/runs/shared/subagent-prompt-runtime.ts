@@ -314,10 +314,12 @@ export function toolsDeclaredBefore(messages: readonly { role: string }[], forke
  * conversation, Pi sends one leading system message holding the current tools instead, and that
  * message's tools are set to the same list. The child still does not register the tools it may
  * not use, so a call to one gets Pi's "not found" error and runs nothing. Only what a request
- * sends changes; the session keeps Pi's own record.
+ * sends changes; the session keeps Pi's own record. Once a compaction in the child left no
+ * inherited message in the request, there is no parent prefix to match, and nothing changes.
  */
 export function keepInheritedToolDeclarations<T extends { role: string }>(messages: T[], inherited: readonly DeclaredTool[], forkedAt: number): T[] {
-	if (inherited.length === 0) return messages;
+	const older = (message: T & { timestamp?: unknown }) => typeof message.timestamp === "number" && message.timestamp < forkedAt;
+	if (inherited.length === 0 || !messages.some(older)) return messages;
 	const names = new Set(inherited.map((tool) => tool.name));
 	let changed = false;
 	let next = messages.map((message) => {

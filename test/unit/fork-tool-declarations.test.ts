@@ -70,6 +70,13 @@ describe("a forked child's requests", () => {
 		assert.deepEqual(declared(sent), ["a", "b", "c", "d"]);
 		assert.equal(sent[1], collapsed[1], "the conversation is sent as it was");
 	});
+
+	it("are unchanged once a compaction in the child left no inherited message", () => {
+		const session = [system(10, { added: [tool("a"), tool("b"), tool("c")] }), user(20), system(FORKED_AT + 1, { added: [tool("d")], removed: ["b", "c"] }), user(FORKED_AT + 2)];
+		const compacted = [system(FORKED_AT + 10, { added: [tool("a"), tool("d")] }), user(FORKED_AT + 10), user(FORKED_AT + 11)];
+
+		assert.equal(keepInheritedToolDeclarations(compacted, FORKED_AT, session), compacted);
+	});
 });
 
 describe("a forked child session", () => {
