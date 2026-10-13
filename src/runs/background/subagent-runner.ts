@@ -138,7 +138,7 @@ import { attachContractProjections, isAgentContract } from "../shared/agent-cont
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
-import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+import { initialToolBudgetState, isToolBudgetBlockedMessage, toolBudgetState } from "../shared/tool-budget.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
@@ -2555,6 +2555,7 @@ export async function runSubagent(
 		});
 		mutatingFailureStates.push(...Array.from({ length: added.addedFlatSteps }, () => createMutatingFailureState()));
 		pendingToolResults.push(...Array.from({ length: added.addedFlatSteps }, () => undefined));
+		pendingToolResultsByCallId.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, PendingToolResult>()));
 		if (config.childIntercomTargets) {
 			config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
 		}
@@ -3145,14 +3146,12 @@ export async function runSubagent(
 			const resultText = extractTextFromContent(event.message.content);
 			const resultToolName = (event.message as { toolName?: unknown }).toolName;
 			const blockedTool = (typeof resultToolName === "string" && resultToolName.length > 0 ? resultToolName : undefined) ?? toolSnapshot?.tool;
-			if (blockedTool && resultText.includes("Tool budget hard limit reached")) {
-				const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
-				if (configuredToolBudget) {
-					step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount ?? 0, blockedTool);
-					step.toolBudgetBlocked = true;
-					statusPayload.toolBudget = step.toolBudget;
-					statusPayload.toolBudgetBlocked = true;
-				}
+			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
+			if (configuredToolBudget && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool)) {
+				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount ?? 0, blockedTool);
+				step.toolBudgetBlocked = true;
+				statusPayload.toolBudget = step.toolBudget;
+				statusPayload.toolBudgetBlocked = true;
 			}
 			appendRecentStepOutput(step, resultText.split("\n").slice(-10));
 			if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
@@ -3731,6 +3730,7 @@ export async function runSubagent(
 			}
 			mutatingFailureStates.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => createMutatingFailureState()));
 			pendingToolResults.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => undefined));
+			pendingToolResultsByCallId.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, PendingToolResult>()));
 			const materializedDelta = dynamicStatusSteps.length - 1;
 			for (const group of statusPayload.parallelGroups) {
 				if (group.stepIndex === stepIndex) {
