@@ -413,6 +413,31 @@ describe("active async capacity", () => {
 		}
 	});
 
+	it("releases terminal workflows at once when an async child's launch failed before a runner existed", () => {
+		const rootDir = tempRoot();
+		const asyncRoot = path.join(rootDir, "runs");
+		const workflowDir = path.join(asyncRoot, "workflow");
+		try {
+			const workflow = acquireActiveAsyncCapacity({ sessionId: "session-a", limit: 1, runId: "workflow", kind: "workflow", asyncDir: workflowDir }, { rootDir });
+			assert.ok(workflow);
+			workflow.markWorkflowStarted();
+			writeJson(path.join(asyncRoot, "child", "mission.json"), {});
+			writeJson(path.join(workflowDir, "status.json"), {
+				runId: "workflow",
+				sessionId: "session-a",
+				mode: "workflow",
+				state: "complete",
+				startedAt: 100,
+				endedAt: 200,
+				steps: [{ agent: "worker", workflowKey: "launch-failure", runId: "child", async: true, status: "failed", error: "Failed to start async run 'child': cwd is missing" }],
+			});
+
+			assert.deepEqual(getActiveAsyncCapacitySnapshot("session-a", 1, { rootDir, now: () => 201 }), { used: 0, limit: 1 });
+		} finally {
+			fs.rmSync(rootDir, { recursive: true, force: true });
+		}
+	});
+
 	it("reclaims only old failed runs with dead runners under the abandoned-timeout policy", () => {
 		const cases = [
 			{ name: "dead old", state: "failed", pidLiveness: "dead" as const, lastActivityAt: 0, threshold: 1_000, releases: true },

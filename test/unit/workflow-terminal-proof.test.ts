@@ -91,6 +91,32 @@ describe("readWorkflowTerminalProof", () => {
 		});
 	}));
 
+	it("needs no process evidence for an async child whose launch failed before a runner existed", () => withFixture(({ root, asyncDir, writeChild }) => {
+		const launchError = "Unknown subagent model 'x/y' in the active Pi model registry.";
+		type StepOutcome = Pick<Steps[number], "status" | "error">;
+		const steps = (step: StepOutcome): Steps => [{ agent: "worker", workflowKey: "main", runId: "child-run", async: true, ...step }];
+		const failedLaunch = steps({ status: "failed", error: launchError });
+		const workflow = summary({ workflowState: "failed", children: [{ childId: "main", runId: "child-run", state: "failed" }] });
+		const observed = { version: 1, kind: "workflow", runId: "workflow-run", state: "observed", dispatchClosed: true, observedAt: 2_000, children: [] };
+		assert.deepEqual(readWorkflowTerminalProof(asyncDir, failedLaunch, workflow, 0, 2_000), observed);
+		const childDir = path.join(root, "child-run");
+		fs.mkdirSync(childDir);
+		fs.writeFileSync(path.join(childDir, "mission.json"), "{}");
+		fs.writeFileSync(path.join(childDir, "run-fanout-budget.json"), "{}");
+		assert.deepEqual(readWorkflowTerminalProof(asyncDir, failedLaunch, workflow, 0, 2_000), observed);
+		for (const artifact of ["process-terminal.json", "runner-startup.json"]) {
+			fs.writeFileSync(path.join(childDir, artifact), "{}");
+			assert.equal(readWorkflowTerminalProof(asyncDir, failedLaunch, workflow, 0, 2_000).state, "unknown", artifact);
+			fs.rmSync(path.join(childDir, artifact));
+		}
+		const retainedOutcomes: StepOutcome[] = [{ status: "failed" }, { status: "stopped", error: "Stopped." }, { status: "running" }];
+		for (const step of retainedOutcomes) {
+			assert.equal(readWorkflowTerminalProof(asyncDir, steps(step), workflow, 0, 2_000).state, "unknown", JSON.stringify(step));
+		}
+		writeChild({ state: "running", processTerminal: { ...runnerIdentity, state: "pending" } });
+		assert.equal(readWorkflowTerminalProof(asyncDir, failedLaunch, workflow, 0, 2_000).state, "pending");
+	}));
+
 	it("needs no process evidence for synchronous children that run inside the host", () => withFixture(({ asyncDir }) => {
 		const syncChild = [{ agent: "worker", workflowKey: "main", async: false, status: "completed" }] as Steps;
 		assert.deepEqual(readWorkflowTerminalProof(asyncDir, syncChild, summary({ children: [{ childId: "main", state: "completed" }] }), 0, 2_000), {

@@ -35,16 +35,25 @@ export function readWorkflowChildProcessEvidence(workflowAsyncDir: string, steps
 	return { state: "observed", children };
 }
 
-/** Evidence for one roster entry; undefined for synchronous children, which run inside the workflow host and have no process of their own. */
+/**
+ * The host records an async child's run id before launching it, so a launch that fails before any runner
+ * exists leaves a failed roster step whose run directory has no status and no runner artifacts.
+ */
+function launchFailedBeforeRunner(step: NonNullable<AsyncStatus["steps"]>[number], childDir?: string): boolean {
+	if (step.status !== "failed" || !step.error) return false;
+	return !childDir || !["process-terminal.json", "runner-startup.json"].some((file) => fs.existsSync(path.join(childDir, file)));
+}
+
+/** Evidence for one roster entry; undefined for synchronous children, which run inside the workflow host and have no process of their own, and for async children whose launch failed before a runner existed. */
 export function readWorkflowChildEvidence(workflowAsyncDir: string, step: NonNullable<AsyncStatus["steps"]>[number]): WorkflowChildEvidence | undefined {
 	const label = step.workflowKey ?? step.agent;
 	if (typeof step.async !== "boolean") return { state: "unknown", reason: `workflow child ${label} is missing async classification` };
 	if (!step.async) return undefined;
 	if (!step.runId || path.basename(step.runId) !== step.runId) return { state: "unknown", reason: `async workflow child ${label} is missing run id` };
 	const childDir = path.join(path.dirname(workflowAsyncDir), step.runId);
-	if (!fs.existsSync(childDir)) return { state: "unknown", reason: `async workflow child ${label} directory is missing` };
+	if (!fs.existsSync(childDir)) return launchFailedBeforeRunner(step) ? undefined : { state: "unknown", reason: `async workflow child ${label} directory is missing` };
 	const childStatus = readStatus(childDir);
-	if (!childStatus) return { state: "unknown", reason: `async workflow child ${label} status is missing or unreadable` };
+	if (!childStatus) return launchFailedBeforeRunner(step, childDir) ? undefined : { state: "unknown", reason: `async workflow child ${label} status is missing or unreadable` };
 	if (!isTerminalAsyncState(childStatus.state)) return { state: "pending", reason: `async workflow child ${label} is still ${childStatus.state}` };
 	const recorded = childStatus.processTerminal;
 	if (!recorded?.runnerProcessInstanceId) return { state: "unknown", reason: `async workflow child ${label} has no runner process identity` };
