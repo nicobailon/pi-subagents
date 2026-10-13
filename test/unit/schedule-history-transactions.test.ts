@@ -75,6 +75,8 @@ it("keeps concurrent skip and active receipts so completion still matches", { ti
 		fs.writeFileSync(path.join(root, "contender.start"), "");
 		await Promise.race([b.wait("lock-attempt"), b.wait("result")]);
 		fs.writeFileSync(path.join(root, "owner.release"), "");
+		await a.done;
+		fs.writeFileSync(path.join(root, "contender.lock"), "");
 		await Promise.all([a.done, b.done]);
 		let history = JSON.parse(fs.readFileSync(path.join(dir, "history.json"), "utf-8")).runs;
 		assert.deepEqual(history.map((run: any) => run.id).sort(), ["contender-1", "owner-1"]);

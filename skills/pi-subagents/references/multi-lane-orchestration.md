@@ -24,7 +24,7 @@ For every lane, record the delivery target, allowed actions, required validation
 
 ## Partitioned runs
 
-Use one writer per repo/cwd or worktree. Mutation lanes need distinct isolation paths and explicit `cwd` values. Set `worktree: true` when a run needs managed worktree isolation within one repository. Read-only runs can share a checkout only when they cannot change state or create generated files.
+Use one writer per repo/cwd or worktree. Mutation lanes need distinct isolation paths and explicit `cwd` values. Set `worktree: true` when a run needs managed worktree isolation within one repository. Each managed worktree branches from `HEAD` unless `baseRef` names another ref, and launch fails with "worktree isolation requires a clean git working tree" while the source checkout has modified, staged, or untracked files outside `.pi/subagents/`. In a shared or dirty checkout, commit your own changes before launching, give each lane an explicit `cwd` in a worktree you created, or run without isolation. Read-only runs can share a checkout only when they cannot change state or create generated files.
 
 For Pi extension repositories, keep lane worktrees outside auto-discovered extension directories such as `~/.pi/agent/extensions`. A stale extension worktree there can auto-load duplicate tools and shortcuts. Remove or move it only after its handoff is durable, the worktree is clean, and no run owns it.
 

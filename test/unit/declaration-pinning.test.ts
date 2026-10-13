@@ -10,7 +10,7 @@ import { SubagentFlatParams } from "../../src/extension/schemas.ts";
 
 const systemMessages = (messages: Message[]) => messages.filter((message) => message.role === "system");
 
-it("keeps a resumed session on the pi-subagents tools and prompt text it declared, and gives a new session the current ones", { timeout: 30_000 }, async () => {
+it("keeps a resumed session on the pi-subagents tools and prompt text it declared, gives a new session the current ones, and re-declares them when pinToolDeclarations is false", { timeout: 30_000 }, async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-declaration-pinning-"));
 	const cwd = path.join(root, "project");
 	const agentDir = path.join(root, "agent");
@@ -96,6 +96,16 @@ it("keeps a resumed session on the pi-subagents tools and prompt text it declare
 		assert.deepEqual(declared(fresh!), declared(first!));
 		assert.match(declared(fresh!).sections!.advertised_subagents!, /<name>specialist<\/name>/);
 		assert.doesNotMatch(declared(fresh!).sections!.advertised_subagents!, /action: "list"/, "a new session is not told to call list first");
+
+		// With pinning turned off, the same resumed session re-declares the current definitions once.
+		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ pinToolDeclarations: false }));
+		const [refreshed] = await run(SessionManager.inMemory(cwd, undefined, structuredClone(older)), [fauxAssistantMessage("ok")]);
+		const tool = (messages: Message[], name: string) => declared(messages).toolsAdded!.find((candidate) => candidate.name === name);
+		assert.ok(systemMessages(refreshed!).length > 1, "an unpinned resumed session declares its tool changes");
+		assert.deepEqual(tool(refreshed!, "subagent"), tool(first!, "subagent"));
+		assert.deepEqual(tool(refreshed!, "bg_wait"), tool(first!, "bg_wait"));
+		assert.equal(declared(refreshed!).sections!.advertised_subagents, declared(first!).sections!.advertised_subagents);
 	} finally {
 		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
 		if (priorChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = priorChild;

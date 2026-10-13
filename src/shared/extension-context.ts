@@ -14,6 +14,14 @@ export function isStaleExtensionContextError(error: unknown): boolean {
 		&& /extension ctx is stale|extension context no longer active|stale after session replacement or reload/i.test(error.message);
 }
 
+/**
+ * Whether the host can render a `ctx.ui.custom()` component. Stock Pi RPC defines `custom` as a
+ * no-op stub, so a non-TUI host must declare that it implements the custom-UI contract itself.
+ */
+export function canRenderComponents(ctx: ExtensionContext): boolean {
+	return ctx.mode === "tui" || process.env.PI_SUBAGENTS_COMPONENT_UI === "1";
+}
+
 /** Pi throws this from action methods while extensions are still loading, before it binds the runtime. */
 export function isUnboundExtensionRuntimeError(error: unknown): boolean {
 	return error instanceof Error && /extension runtime not initialized/i.test(error.message);

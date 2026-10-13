@@ -18,6 +18,7 @@ import {
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { findModelInfo, toModelInfo } from "../shared/model-info.ts";
 import { shortenPath } from "../shared/formatters.ts";
+import { canRenderComponents } from "../shared/extension-context.ts";
 import { listAsyncRuns, formatAsyncRunProgressLabel, type AsyncRunSummary } from "../runs/background/async-status.ts";
 import { encodeInspectReply, handleInspectRpcArgs, INSPECT_WIDGET_KEY } from "../runs/background/inspect-rpc.ts";
 import { listScheduledRunSummaries } from "../runs/background/scheduled-runs.ts";
@@ -627,7 +628,7 @@ export function registerSlashCommands(
 	};
 	const showFleet = async (ctx: ExtensionContext) => {
 		state.lastUiContext = ctx;
-		if (ctx.mode !== "tui") {
+		if (!canRenderComponents(ctx)) {
 			await runCommand(ctx, { action: "status", view: "fleet" });
 			return;
 		}
@@ -810,7 +811,7 @@ export function registerSlashCommands(
 				ctx.ui.notify(message, "error");
 				return;
 			}
-			if (ctx.mode !== "tui") {
+			if (!canRenderComponents(ctx)) {
 				sendSlashText(pi, stopFallbackText(targets));
 				return;
 			}
