@@ -2712,6 +2712,8 @@ export interface ExtensionConfig {
 	toolDescriptionMode?: ToolDescriptionMode;
 	/** How a new parent session offers the subagent tool. Defaults to auto. */
 	toolActivation?: ToolActivationMode;
+	/** Keep a resumed session on the pi-subagents tool definitions and prompt text it already declared. Defaults to true. */
+	pinToolDeclarations?: boolean;
 	/** Opt-in feature groups removed from the subagent tool schema and rejected at every execution boundary. */
 	disabledFeatures?: SubagentFeature[];
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */

@@ -10,6 +10,7 @@ import {
 	finalizeSingleOutput,
 	formatSavedOutputReference,
 	injectSingleOutputInstruction,
+	isSettlementFatalOutputError,
 	normalizeSingleOutputOverride,
 	requestedOutputPathFromTask,
 	resolveSingleOutput,
@@ -337,5 +338,27 @@ describe("finalizeSingleOutput", () => {
 		});
 
 		assert.equal(result.displayOutput.match(/Output saved to:/g)?.length, 1);
+	});
+});
+
+describe("isSettlementFatalOutputError", () => {
+	it("treats fatal errors as settlement failures regardless of output mode", () => {
+		assert.equal(isSettlementFatalOutputError({ fatalError: true, saveError: "fatal" }, "file-only"), true);
+		assert.equal(isSettlementFatalOutputError({ fatalError: true, saveError: "fatal" }, "inline"), true);
+		assert.equal(isSettlementFatalOutputError({ fatalError: true, saveError: "fatal" }, undefined), true);
+	});
+
+	it("fails settlement when required file-only output fails to save", () => {
+		assert.equal(isSettlementFatalOutputError({ saveError: "EACCES", savedPath: undefined }, "file-only"), true);
+	});
+
+	it("keeps save errors nonfatal in inline mode or when outputMode is omitted", () => {
+		assert.equal(isSettlementFatalOutputError({ saveError: "EACCES", savedPath: undefined }, "inline"), false);
+		assert.equal(isSettlementFatalOutputError({ saveError: "EACCES", savedPath: undefined }, undefined), false);
+	});
+
+	it("does not report error when output was successfully saved", () => {
+		assert.equal(isSettlementFatalOutputError({ savedPath: "/tmp/out.md" }, "file-only"), false);
+		assert.equal(isSettlementFatalOutputError({ savedPath: "/tmp/out.md" }, "inline"), false);
 	});
 });
