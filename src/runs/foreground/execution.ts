@@ -1063,7 +1063,7 @@ async function runSingleAttempt(
 				}
 				progress.toolCount++;
 				if (options.toolBudget) {
-					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount);
+					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount, result.toolBudget?.blockedTool);
 				}
 				const mutates = isMutatingTool(evt.toolName, toolArgs, agent.mutationTools);
 				pendingToolResult = { tool: evt.toolName ?? "tool", path: activeTool?.path, mutates, startedAt: now };

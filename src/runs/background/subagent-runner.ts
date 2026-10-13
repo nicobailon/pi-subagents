@@ -3085,7 +3085,7 @@ export async function runSubagent(
 			step.toolCount = (step.toolCount ?? 0) + 1;
 			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
 			if (configuredToolBudget) {
-				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount);
+				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount, step.toolBudget?.blockedTool);
 				statusPayload.toolBudget = step.toolBudget;
 			}
 			recordActiveToolCall(flatIndex, { toolCallId: (event as { toolCallId?: unknown }).toolCallId, toolName: event.toolName }, { argsPreview, currentPath, blocksSupervisor, now });

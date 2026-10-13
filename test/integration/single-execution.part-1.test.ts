@@ -366,6 +366,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 					{ type: "message_end", message: { role: "toolResult", toolCallId: "bash-1", toolName: "bash", isError: true, content: [{ type: "text", text: blockedMessage }] } },
 					{ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", isError: false },
 					{ type: "message_end", message: { role: "toolResult", toolCallId: "read-1", toolName: "read", isError: false, content: [{ type: "text", text: "ordinary notes" }] } },
+					// A call that starts after the block keeps the recorded block in the budget state.
+					{ type: "tool_execution_start", toolCallId: "ls-1", toolName: "ls", args: {} },
+					{ type: "tool_execution_end", toolCallId: "ls-1", toolName: "ls", isError: false },
+					{ type: "message_end", message: { role: "toolResult", toolCallId: "ls-1", toolName: "ls", isError: false, content: [{ type: "text", text: "notes.md" }] } },
 				] },
 				{ jsonl: [events.assistantMessage("I could not read the required canary because bash was blocked.")] },
 			],
@@ -394,6 +398,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "delegated execution failed");
 		assert.equal(child?.toolBudgetBlocked, true);
 		assert.equal(child?.toolBudget?.blockedTool, "bash");
+		assert.equal(child?.toolBudget?.outcome, "hard-blocked");
 		assert.equal(child?.finalOutput, "I could not read the required canary because bash was blocked.");
 
 		mockPi.onCall({ output: "No tool needed." });
