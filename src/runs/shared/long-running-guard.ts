@@ -40,18 +40,6 @@ const MUTATING_BASH_PATTERNS = [
 	/\bopen\s*\([^)]*,\s*["'][wa]/,
 ];
 
-const MUTATING_FAILURE_HINTS = [
-	"failed",
-	"error",
-	"no exact match",
-	"did not match",
-	"malformed",
-	"rejected",
-	"unable",
-	"cannot",
-	"could not",
-];
-
 export function resolveCurrentPath(toolName: string | undefined, args: Record<string, unknown> | undefined): string | undefined {
 	if (!toolName || !args) return undefined;
 	const direct = ["path", "file", "filename", "target", "cwd"];
@@ -91,6 +79,7 @@ function hasUnquotedFileRedirection(command: string): boolean {
 		const targetStart = command[cursor]!;
 		if (targetStart === "&" || targetStart === "|" || targetStart === ";") continue;
 		if (targetStart === "(" || targetStart === ")") continue;
+		if (command.startsWith("/dev/null", cursor) && (cursor + 9 === command.length || /[\s;&|()]/.test(command[cursor + 9]!))) continue;
 		return true;
 	}
 	return false;
@@ -155,9 +144,8 @@ export function isMutatingTool(toolName: string | undefined, args: Record<string
 	return isMutatingBashCommand(command);
 }
 
-export function didMutatingToolFail(text: string): boolean {
-	const lowered = text.toLowerCase();
-	return MUTATING_FAILURE_HINTS.some((hint) => lowered.includes(hint));
+export function didMutatingToolFail(result: { isError?: unknown }): boolean {
+	return result.isError === true;
 }
 
 export function nextLongRunningTrigger(
