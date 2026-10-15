@@ -2611,6 +2611,29 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(result.progress.activityState, "active_long_running");
 	});
 
+	it("does not escalate healthy read-only greps with discarded stderr", async () => {
+		mockPi.onCall({
+			jsonl: [
+				...Array.from({ length: 4 }, () => [
+					events.toolStart("bash", { command: "grep -rn mimeType index.ts 2>/dev/null; ls *.ts" }),
+					events.toolEnd("bash"),
+					events.toolResult("bash", '987: return { ...result, error: "Page answer requires textual fetched content" };', false),
+				]).flat(),
+				events.assistantMessage("The review is complete."),
+			],
+		});
+		const controlEvents: NonNullable<RunSyncResult["controlEvents"]> = [];
+		const result = await runSync(tempDir, [makeAgent("worker")], "worker", "Review without edits", {
+			runId: "run-healthy-greps",
+			controlConfig: { enabled: true, failedToolAttemptsBeforeAttention: 3, notifyOn: ["active_long_running", "needs_attention"] },
+			onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) => controlEvents.push(event),
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(controlEvents.some((event) => event.reason === "tool_failures"), false);
+		assert.equal(result.controlEvents?.some((event) => event.reason === "tool_failures") ?? false, false);
+	});
+
 	it("escalates repeated mutating tool failures to needs attention", async () => {
 		mockPi.onCall({
 			jsonl: [
@@ -2642,6 +2665,33 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.match(failureEvent?.recentFailureSummary ?? "", /No exact match/);
 		assert.equal(result.progress.activityState, "needs_attention");
 		assert.equal(result.messages?.filter((message) => message.role === "toolResult").length, 3, "each tool result is recorded once");
+	});
+
+	it("does not count tool-budget blocks of a mutating tool as tool failures", async () => {
+		const toolBudget = { hard: 1, block: "*" as const };
+		const blocked = "Tool budget hard limit reached after 2 tool calls (hard 1). The 'edit' tool is blocked so you can finalize from the context you already have.";
+		mockPi.onCall({
+			jsonl: [
+				...Array.from({ length: 3 }, () => [
+					events.toolStart("edit", { path: "src/a.ts" }),
+					events.toolEnd("edit"),
+					events.toolResult("edit", blocked, true),
+				]).flat(),
+				events.assistantMessage("The budget is spent."),
+			],
+		});
+		const controlEvents: NonNullable<RunSyncResult["controlEvents"]> = [];
+
+		const result = await runSync(tempDir, [makeAgent("worker")], "worker", "Edit the file", {
+			runId: "run-budget-blocked-edits",
+			toolBudget,
+			controlConfig: { enabled: true, failedToolAttemptsBeforeAttention: 3, notifyOn: ["active_long_running", "needs_attention"] },
+			onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) => controlEvents.push(event),
+		});
+
+		assert.equal(result.toolBudgetBlocked, true);
+		assert.equal(controlEvents.some((event) => event.reason === "tool_failures"), false);
+		assert.notEqual(result.progress.activityState, "needs_attention");
 	});
 
 	it("records a parallel batch's mutating failure against the failed call's path", async () => {

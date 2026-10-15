@@ -10,7 +10,8 @@ import { SubagentFlatParams } from "../../src/extension/schemas.ts";
 
 const systemMessages = (messages: Message[]) => messages.filter((message) => message.role === "system");
 
-it("keeps a resumed session on the pi-subagents tools and prompt text it declared, gives a new session the current ones, and re-declares them when pinToolDeclarations is false", { timeout: 30_000 }, async () => {
+/** A temporary Pi agent directory and project that load pi-subagents, and a way to run one session in them. */
+function pinningHarness() {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-declaration-pinning-"));
 	const cwd = path.join(root, "project");
 	const agentDir = path.join(root, "agent");
@@ -53,6 +54,16 @@ it("keeps a resumed session on the pi-subagents tools and prompt text it declare
 		}
 		return requests;
 	};
+	const dispose = () => {
+		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
+		if (priorChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = priorChild;
+		fs.rmSync(root, { recursive: true, force: true });
+	};
+	return { cwd, agentDir, run, dispose };
+}
+
+it("keeps a resumed session on the pi-subagents tools and prompt text it declared, gives a new session the current ones, and re-declares them when pinToolDeclarations is false", { timeout: 30_000 }, async () => {
+	const { cwd, agentDir, run, dispose } = pinningHarness();
 	// The declared prompt and tools, without the timestamp of the session that declared them.
 	const declared = (messages: Message[]) => ({ ...getCurrentSystemMessage(messages)!, timestamp: 0 });
 	try {
@@ -107,8 +118,47 @@ it("keeps a resumed session on the pi-subagents tools and prompt text it declare
 		assert.deepEqual(tool(refreshed!, "bg_wait"), tool(first!, "bg_wait"));
 		assert.equal(declared(refreshed!).sections!.advertised_subagents, declared(first!).sections!.advertised_subagents);
 	} finally {
-		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
-		if (priorChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = priorChild;
-		fs.rmSync(root, { recursive: true, force: true });
+		dispose();
+	}
+});
+
+it("pins a tool description without the note a host appends to it, so the note is declared once across resumes", { timeout: 30_000 }, async () => {
+	const { cwd, run, dispose } = pinningHarness();
+	// Pi's codemode appends this to each declared script-callable tool and records the result.
+	const note = "\n\nCodemode: `tools.bg_wait(args)` resolves to a string.";
+	const declaredTool = (messages: Message[], name: string) => getCurrentSystemMessage(messages)!.toolsAdded!.find((tool) => tool.name === name)!;
+	// The host decorates what pi-subagents registered: the newest recorded bg_wait gets the note.
+	const decorate = (entries: ReturnType<SessionManager["getEntries"]>) => {
+		const latest = entries.findLast((entry) => entry.type === "message" && entry.message.role === "system" && entry.message.toolsAdded?.some((tool) => tool.name === "bg_wait"));
+		assert.ok(latest?.type === "message" && latest.message.role === "system");
+		latest.message.toolsAdded!.find((tool) => tool.name === "bg_wait")!.description += note;
+		return entries;
+	};
+	try {
+		const original = SessionManager.inMemory(cwd);
+		const [first] = await run(original, [fauxAssistantMessage("ok")]);
+		const description = declaredTool(first!, "bg_wait").description;
+		const subagent = declaredTool(first!, "subagent");
+		let entries = decorate(structuredClone(original.getEntries()));
+		for (let start = 2; start <= 3; start++) {
+			const recorded = declaredTool(entries.flatMap((entry) => entry.type === "message" ? [entry.message] : []), "bg_wait").description;
+			const session = SessionManager.inMemory(cwd, undefined, entries);
+			const [request] = await run(session, [fauxAssistantMessage("ok")]);
+			// Registering the undecorated description lets the host reproduce the recorded declaration.
+			assert.equal(declaredTool(request!, "bg_wait").description, description, `session start ${start} registers bg_wait without the note`);
+			assert.equal(description + note, recorded);
+			assert.deepEqual(declaredTool(request!, "subagent"), subagent);
+			entries = decorate(structuredClone(session.getEntries()));
+		}
+
+		// A session that already accumulated several notes registers the description without them.
+		const polluted = structuredClone(original.getEntries());
+		const system = polluted.find((entry) => entry.type === "message" && entry.message.role === "system");
+		assert.ok(system?.type === "message" && system.message.role === "system");
+		system.message.toolsAdded!.find((tool) => tool.name === "bg_wait")!.description = description + note + note + note;
+		const [cleaned] = await run(SessionManager.inMemory(cwd, undefined, polluted), [fauxAssistantMessage("ok")]);
+		assert.equal(declaredTool(cleaned!, "bg_wait").description, description);
+	} finally {
+		dispose();
 	}
 });

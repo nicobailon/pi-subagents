@@ -242,10 +242,10 @@ export function removeMissionObserverIndex(resultsDir: string, runId: string | u
 }
 
 /** Serializes one run's result publication and retirement across processes. Lookups never take it. */
-export function withResultRunLease<T>(resultsDir: string, runId: string, action: () => T): T {
+export function withResultRunLease<T>(resultsDir: string, runId: string, action: () => T, waitMs?: number): T {
 	const leaseDir = path.join(resultsDir, RESULT_LEASE_DIR);
 	fs.mkdirSync(leaseDir, { recursive: true });
-	return withFileLease(path.join(leaseDir, createHash("sha256").update(runId).digest("hex")), action);
+	return withFileLease(path.join(leaseDir, createHash("sha256").update(runId).digest("hex")), action, waitMs);
 }
 
 /**
@@ -297,7 +297,7 @@ export function resultSnapshotReplaced(publicPath: string, read: ResultSnapshot)
  * the consumer's own claimed copy goes. A payload that cannot be removed is reported after the
  * indexes are gone.
  */
-export function retireResultSnapshot(publicPath: string, read: ResultSnapshot, payloadPath = publicPath): "retired" | "replaced" {
+export function retireResultSnapshot(publicPath: string, read: ResultSnapshot, payloadPath = publicPath, leaseWaitMs?: number): "retired" | "replaced" {
 	const resultsDir = path.dirname(publicPath);
 	return withResultRunLease(resultsDir, read.runId, () => {
 		// Check every shared path before deleting any: unleased reader promotion can move a newer
@@ -319,11 +319,11 @@ export function retireResultSnapshot(publicPath: string, read: ResultSnapshot, p
 		removeResultIndex(resultsDir, read.sessionId, read.runId, read.toolCallId);
 		if (removalFailure) throw removalFailure.error;
 		return "retired";
-	});
+	}, leaseWaitMs);
 }
 
 /** Removes the mission observer index for the payload an observer handled, unless a newer payload replaced it. */
-export function acknowledgeMissionObserverSnapshot(publicPath: string, read: ResultSnapshot): "acknowledged" | "replaced" {
+export function acknowledgeMissionObserverSnapshot(publicPath: string, read: ResultSnapshot, leaseWaitMs?: number): "acknowledged" | "replaced" {
 	const resultsDir = path.dirname(publicPath);
 	// With no index there is nothing to remove; skipping keeps the lease off runs without a mission.
 	if (!fs.existsSync(observerIndexPath(resultsDir, MISSION_OBSERVER, read.runId))) return "acknowledged";
@@ -331,7 +331,7 @@ export function acknowledgeMissionObserverSnapshot(publicPath: string, read: Res
 		if (resultSnapshotReplaced(publicPath, read)) return "replaced";
 		removeMissionObserverIndex(resultsDir, read.runId);
 		return "acknowledged";
-	});
+	}, leaseWaitMs);
 }
 
 function existingResultFile(resultPath: string): boolean {

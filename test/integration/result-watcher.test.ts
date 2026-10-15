@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fsDefault, * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
@@ -10,7 +11,8 @@ import { createResultWatcher as createRawResultWatcher } from "../../src/runs/ba
 import { collectWaitCompletions } from "../../src/runs/background/wait-completions.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
-import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { resultPayloadPathForMissionObserverRun, writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { tryLease } from "../../src/shared/file-lease.ts";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
@@ -557,6 +559,70 @@ describe("result watcher", () => {
 		} finally {
 			console.error = originalError;
 			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("retries a mission observer acknowledgement silently while a runner holds the run's result lease", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-observer-lease-"));
+		const resultsDir = path.join(root, "results");
+		const asyncDir = path.join(root, "async-child");
+		fs.mkdirSync(resultsDir, { recursive: true });
+		fs.mkdirSync(path.join(root, "project"), { recursive: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const originalError = console.error;
+		const errors: string[] = [];
+		try {
+			console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
+			const binding = prepareMissionLaunch({
+				params: { mission: { title: "Lease mission" }, task: "Run async child" },
+				projectRoot: path.join(root, "project"),
+				config: { directory: path.join(root, "missions"), globalIndexDir: path.join(root, "global-index") },
+				ownerSessionId: "session-current",
+			});
+			assert.ok(binding);
+			writeMissionAsyncBinding(asyncDir, binding);
+			const runId = "lease-child";
+			const resultPath = path.join(resultsDir, `${runId}.json`);
+			writeIndexedResult(resultPath, { id: runId, runId, sessionId: "session-current", asyncDir, mode: "single", state: "complete", success: true, summary: "done" });
+			assert.equal(resultPayloadPathForMissionObserverRun(resultsDir, runId), resultPath);
+
+			// The runner's lease, held from just before the acknowledgement until the notification is delivered.
+			const leasePath = path.join(fs.realpathSync.native(resultsDir), "result-leases", `${createHash("sha256").update(runId).digest("hex")}.write-lock`);
+			fs.mkdirSync(path.dirname(leasePath), { recursive: true });
+			let releaseLease: (() => void) | undefined;
+			let observerCalls = 0;
+			let deliveries = 0;
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				observeCompletion: () => {
+					observerCalls += 1;
+					if (observerCalls === 1) releaseLease = tryLease(leasePath);
+				},
+				notifier: {
+					deliver: async () => {
+						deliveries += 1;
+						assert.equal(resultPayloadPathForMissionObserverRun(resultsDir, runId), resultPath);
+						releaseLease?.();
+						return true;
+					},
+				},
+			});
+			try {
+				watcher.primeExistingResults();
+				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath)), true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+
+			assert.ok(releaseLease, "the test held the run lease during the first acknowledgement");
+			assert.equal(observerCalls, 2);
+			assert.equal(deliveries, 1);
+			assert.equal(resultPayloadPathForMissionObserverRun(resultsDir, runId), undefined);
+			assert.deepEqual(errors, []);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 

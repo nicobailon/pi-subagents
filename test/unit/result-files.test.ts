@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
+import { FileLeaseBusyError } from "../../src/shared/file-lease.ts";
 import { acknowledgeMissionObserverSnapshot, cleanupResultIndexes, removeResultIndex, resultCandidateFilesForSession, resultFilesForSession, resultFilesForToolCall, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, retireResultSnapshot, withResultRunLease, writeAsyncResultFile, writePendingAsyncResultFile, writeResultIndexForData } from "../../src/runs/background/result-files.ts";
 
 const JSON_EXTENSION = ".json";
@@ -770,6 +771,8 @@ describe("a run's paused result replaced by its final result", () => {
 			withResultRunLease(dir, runId, () => {
 				assert.throws(() => retireResultSnapshot(publicPath, read), /Timed out waiting/);
 				assert.throws(() => acknowledgeMissionObserverSnapshot(publicPath, read), /Timed out waiting/);
+				assert.throws(() => retireResultSnapshot(publicPath, read, publicPath, 0), FileLeaseBusyError);
+				assert.throws(() => acknowledgeMissionObserverSnapshot(publicPath, read, 0), FileLeaseBusyError);
 				assert.equal(resultPayloadPathForSessionRun(dir, sessionId, runId), publicPath);
 				assert.equal(resultPayloadPathForIndexedRun(dir, runId), publicPath);
 				assert.equal(resultPayloadPathForMissionObserverRun(dir, runId), publicPath);
