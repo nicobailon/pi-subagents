@@ -815,4 +815,14 @@ describe("selected built-in MCP tools in a child session", () => {
 	it("rejects selected tools when the host Pi has no built-in MCP", async () => {
 		await assert.rejects(createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() }).create(mcpLaunch), /mcp__srv__echo\) need a Pi version with built-in MCP/);
 	});
+
+	it("names the Pi 0.99.2 floor when built-in MCP has no connection readiness hook", async () => {
+		const mcp = builtinMcpPi();
+		type Api = { on(type: string, handler: unknown): void };
+		const create = (mcp.pi as unknown as { createMcpExtension: () => (api: Api) => unknown }).createMcpExtension;
+		// Pi 0.99.0 and 0.99.1 register no tool_call handler.
+		Object.assign(mcp.pi, { createMcpExtension: () => (api: Api) => create()({ ...api, on: (type: string, handler: unknown) => { if (type !== "tool_call") api.on(type, handler); } }) });
+		await assert.rejects(createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create(mcpLaunch), /mcp__srv__echo\) need Pi 0\.99\.2 or later/);
+		assert.deepEqual(mcp.lifecycle, ["session_shutdown", "dispose"]);
+	});
 });

@@ -264,7 +264,7 @@ function applyProcessEnv(values: Record<string, string | undefined> | undefined)
  * through the explicit `builtin:mcp` path even with `noExtensions`, and `replaceable` lets an
  * ambient MCP extension that registers `/mcp` replace it, as in the parent.
  */
-function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, selections: ReadonlyArray<{ name: string; selector: string }>, readinessTool: () => ToolDefinition | undefined): ChildHookExtension & { builtin: true; replaceable: true; waitForTools(signal: AbortSignal): Promise<void> } {
+function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, selections: ReadonlyArray<{ name: string; selector: string }>, readinessTool: () => ToolDefinition | undefined): ChildHookExtension & { builtin: true; replaceable: true; waitForTools(signal: AbortSignal, loadError: () => string | undefined): Promise<void> } {
 	// Pi 0.99 export; the pinned SDK types predate it.
 	const createMcpExtension = (pi as { createMcpExtension?: () => (api: ExtensionAPI) => void | Promise<void> }).createMcpExtension;
 	if (typeof createMcpExtension !== "function") throw new Error(`Selected built-in MCP tools (${selections.map(({ name }) => name).join(", ")}) need a Pi version with built-in MCP.`);
@@ -307,7 +307,7 @@ function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, selections: Readon
 		}));
 		api.on("session_start", (_event, ctx) => {
 			waitForTools = async (signal) => {
-				if (toolCallHandlers.length === 0) throw new Error("Pi's built-in MCP extension has no tool readiness handler.");
+				if (toolCallHandlers.length === 0) throw new Error(`Selected built-in MCP tools (${selections.map(({ name }) => name).join(", ")}) need Pi 0.99.2 or later; earlier built-in MCP cannot report when its servers have connected.`);
 				// Run only MCP's readiness hook, not a tool or script. Pi 1.0 recognizes its
 				// own codemode schema; newer hosts use that tool's reachesTools metadata.
 				const event: ToolCallEvent = { type: "tool_call", toolCallId: "pi-subagents:mcp-startup", toolName: "codemode", input: { code: selections.map(({ name }) => `tools.${name}`).join(";\n") } };
@@ -323,8 +323,11 @@ function selectedBuiltinMcpExtension(pi: PiCodingAgentModule, selections: Readon
 			};
 		});
 	};
-	return { name: "mcp", factory, builtin: true, replaceable: true, async waitForTools(signal) {
-		if (!waitForTools) throw new Error("Pi's built-in MCP readiness hook did not start in the child session.");
+	return { name: "mcp", factory, builtin: true, replaceable: true, async waitForTools(signal, loadError) {
+		if (!waitForTools) {
+			const error = loadError();
+			throw new Error(`Pi's built-in MCP readiness hook did not start in the child session${error ? `: ${error}` : "."}`);
+		}
 		await waitForTools(signal);
 	} };
 }
@@ -612,7 +615,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				if (disposals !== disposalsAtStart) cancel.abort();
 				const ready = (async () => {
 					try {
-						await builtinMcp.waitForTools(signal);
+						await builtinMcp.waitForTools(signal, () => loader.getExtensions().errors.find(({ path }) => path === "builtin:mcp")?.error);
 						if (disposals !== disposalsAtStart) throw new Error("The child session factory was disposed while the child waited for its MCP tools.");
 						if (signal.aborted) throw new Error("The child launch was cancelled while waiting for its MCP tools.");
 						const missing = missingBuiltinMcpTools(session, builtinMcpTools.map(({ name }) => name));
