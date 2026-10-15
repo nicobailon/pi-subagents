@@ -5,6 +5,7 @@
 ### Fixed
 
 - A child's `contact_supervisor` request could expire before the parent ever saw it. When the parent was inside a long tool call, Pi held the request notice until that call returned, while the child's 10-minute wait counted from when it asked, so the child gave up and asked again, and the parent's reply to the late notice failed. The parent now moves the request's deadline forward until its notice reaches the model, and the child waits until that deadline. Thanks to [@agustinsacco](https://github.com/agustinsacco) for the report. ([#2894](https://github.com/nicobailon/pi-subagents/issues/2894))
+- After Pi auto-compacted in the middle of a running turn, the async and Fleet status widgets stayed hidden until the whole run ended, so background subagents showed no status in the TUI or to RPC hosts. They now come back as soon as the compaction finishes. Thanks to [@agustinsacco](https://github.com/agustinsacco) for [#2891](https://github.com/nicobailon/pi-subagents/pull/2891). ([#2890](https://github.com/nicobailon/pi-subagents/issues/2890))
 
 ## [0.78.0] - 2026-10-12
 
