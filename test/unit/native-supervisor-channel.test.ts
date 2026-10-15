@@ -1213,4 +1213,45 @@ describe("native supervisor channel", () => {
 
 		assert.deepEqual(fs.readdirSync(path.join(channelDir, "requests")), []);
 	});
+
+	it("keeps a child waiting while its parent moves expiresAt forward, and times out once it stops", async () => {
+		process.env.PI_INTERCOM_ASK_TIMEOUT_MS = "300";
+		const runId = `run-${randomUUID()}`;
+		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+		createdChannels.push(channelDir);
+		const registeredTools = new Map<string, { execute: (_id: string, params: { reason: string; message?: string }) => Promise<{ content: Array<{ text?: string }> }> }>();
+		const pi = {
+			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+			registerTool: (tool: { name: string; execute: (_id: string, params: { reason: string; message?: string }) => Promise<{ content: Array<{ text?: string }> }> }) => {
+				registeredTools.set(tool.name, tool);
+			},
+		};
+		registerNativeSupervisorClient(pi as never, { channelDir, runId, agent: "worker", childIndex: 0, orchestratorSessionId: "session-parent" });
+		const requestsDir = path.join(channelDir, "requests");
+		const ask = async () => {
+			for (const file of fs.existsSync(requestsDir) ? fs.readdirSync(requestsDir) : []) fs.rmSync(path.join(requestsDir, file));
+			let settled = false;
+			const result = registeredTools.get("contact_supervisor")!.execute("contact", { reason: "need_decision", message: "Proceed?" });
+			void result.then(() => { settled = true; }, () => { settled = true; });
+			await waitForCondition(() => fs.existsSync(requestsDir) && fs.readdirSync(requestsDir).length === 1, "the request file");
+			const file = path.join(requestsDir, fs.readdirSync(requestsDir)[0]!);
+			const extendBy = (ms: number) => fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf-8")), expiresAt: Date.now() + ms }));
+			return { result, file, extendBy, settled: () => settled };
+		};
+
+		const waiting = await ask();
+		waiting.extendBy(900);
+		await new Promise((resolve) => setTimeout(resolve, 600));
+		assert.equal(waiting.settled(), false, "the child must not time out at its original deadline while the parent extends it");
+		const requestId = path.basename(waiting.file, ".json");
+		fs.writeFileSync(path.join(channelDir, "replies", `${requestId}.json`), JSON.stringify({ type: "subagent.supervisor.reply", requestId, createdAt: Date.now(), message: "Go ahead" }));
+		assert.match((await waiting.result).content[0]?.text ?? "", /Go ahead/);
+
+		const abandoned = await ask();
+		abandoned.extendBy(400);
+		const started = Date.now();
+		await assert.rejects(abandoned.result, /Timed out waiting for supervisor reply/);
+		const waited = Date.now() - started;
+		assert.ok(waited >= 300 && waited < 1500, `a parent that stops extending lets the child time out at the last deadline (waited ${waited} ms)`);
+	});
 });

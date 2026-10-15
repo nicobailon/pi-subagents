@@ -1014,6 +1014,64 @@ describe("supervisor ask registration", () => {
 		} finally { channel.dispose(); }
 	});
 
+	it("moves a queued ask's deadline forward until its notice reaches the parent model", async () => {
+		const previousTimeout = process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
+		process.env.PI_INTERCOM_ASK_TIMEOUT_MS = "1000";
+		const sessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const handlers = new Map<string, Set<(event: unknown) => void>>();
+		const pi = {
+			...makePi({ tools: new Map() }),
+			on(name: string, handler: (event: unknown) => void) {
+				const set = handlers.get(name) ?? new Set();
+				handlers.set(name, set.add(handler));
+				return () => { set.delete(handler); };
+			},
+		};
+		const emit = (name: string, event: unknown) => { for (const handler of handlers.get(name) ?? []) handler(event); };
+		let appended = false;
+		const channel = createNativeSupervisorChannel(pi as never, makeState(sessionId, makeCtx(sessionId)), {
+			platform: "darwin",
+			parentWake: { sendMessage: () => appended },
+		});
+		const expiresAt = (requestId: string) => JSON.parse(fs.readFileSync(path.join(resolveSupervisorChannelDir(runId, "worker", 0), "requests", `${requestId}.json`), "utf-8")).expiresAt as number;
+		try {
+			channel.start();
+			const queued = writeRequest({ sessionId, runId, expiresAt: Date.now() + 100 });
+			channel.hasPendingRequests();
+			channel.hasPendingRequests();
+			assert.ok(expiresAt(queued) > Date.now() + 500, "a notice Pi queued behind a busy run must not let the ask expire unread");
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			assert.equal(channel.hasPendingRequests(), true);
+			assert.equal(channel.pending.has(queued), true, "the parent keeps the ask past its original deadline");
+
+			emit("message_start", { message: { role: "custom", customType: "subagent_supervisor_request", details: { requestId: queued } } });
+			assert.equal(handlers.get("message_start")?.size ?? 0, 0, "delivery ends the extension and its subscription");
+			const delivered = expiresAt(queued);
+			await new Promise((resolve) => setTimeout(resolve, 600));
+			channel.hasPendingRequests();
+			assert.equal(expiresAt(queued), delivered, "a delivered ask keeps its deadline");
+
+			const dropped = writeRequest({ sessionId, runId, expiresAt: Date.now() + 100 });
+			channel.hasPendingRequests();
+			emit("agent_settled", {});
+			const settled = expiresAt(dropped);
+			channel.hasPendingRequests();
+			assert.equal(expiresAt(dropped), settled, "a notice still queued when the run settles was dropped and is not extended");
+
+			appended = true;
+			const visible = writeRequest({ sessionId, runId, expiresAt: Date.now() + 100 });
+			channel.hasPendingRequests();
+			channel.hasPendingRequests();
+			assert.ok(expiresAt(visible) <= Date.now() + 100, "an ask appended to an idle parent is visible already and keeps its deadline");
+			assert.equal(handlers.get("message_start")?.size ?? 0, 0);
+		} finally {
+			channel.dispose();
+			if (previousTimeout === undefined) delete process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
+			else process.env.PI_INTERCOM_ASK_TIMEOUT_MS = previousTimeout;
+		}
+	});
+
 	it("registers both asks even when every user-turn notification throws", () => {
 		const sessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
