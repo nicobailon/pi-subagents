@@ -7,7 +7,7 @@ import { Type } from "typebox";
 import type { ChildSupervisorMetadata } from "../runs/shared/child-runtime-config.ts";
 import type { ParentWake } from "../shared/parent-wake.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type ControlEvent, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
-import { writeAtomicJson } from "../shared/atomic-json.ts";
+import { writeAtomicJson, writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import { shouldUseNativeFsWatch } from "../shared/watch-strategy.ts";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 import {
@@ -935,7 +935,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			if (!request || requestExpiresAt(request, now) - now > timeoutMs / 2 || !fs.existsSync(request.requestFile)) continue;
 			const { channelDir: _channelDir, requestFile, ...stored } = request;
 			try {
-				writeAtomicJson(requestFile, { ...stored, expiresAt: now + timeoutMs });
+				writePrivateAtomicJson(requestFile, { ...stored, expiresAt: now + timeoutMs });
 				request.expiresAt = now + timeoutMs;
 			} catch {
 				// The ask keeps its current deadline; a later poll retries.
