@@ -1066,7 +1066,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		programStatus.agentStarted();
 	});
 
-	pi.on("message_start", (event) => completionNotifier.messageStarted(event.message));
+	pi.on("message_start", (event) => {
+		// Pi also compacts between turns of a running loop, with no agent_start after it. A message
+		// starts only once that compaction has finished and its status indicator is cleared.
+		resumeWidgetsAfterCompaction();
+		completionNotifier.messageStarted(event.message);
+	});
 
 	pi.on("agent_settled", () => {
 		resumeWidgetsAfterCompaction();

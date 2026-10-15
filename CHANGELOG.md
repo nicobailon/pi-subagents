@@ -5,6 +5,7 @@
 ### Fixed
 
 - With Pi's codemode on, every start or resume of a session added another copy of codemode's note to the `bg_wait` description and declared the tool again, so the provider re-read the conversation without its prompt cache. Declaration pinning now ignores text the host appends to a tool description, so the note appears once and a resumed session keeps its declaration. Thanks to [@SamuelBadr](https://github.com/SamuelBadr) for the report. ([#2889](https://github.com/nicobailon/pi-subagents/issues/2889))
+- After Pi auto-compacted in the middle of a running turn, the async and Fleet status widgets stayed hidden until the whole run ended, so background subagents showed no status in the TUI or to RPC hosts. They now come back as soon as the compaction finishes. Thanks to [@agustinsacco](https://github.com/agustinsacco) for [#2891](https://github.com/nicobailon/pi-subagents/pull/2891). ([#2890](https://github.com/nicobailon/pi-subagents/issues/2890))
 
 ## [0.78.0] - 2026-10-12
 
