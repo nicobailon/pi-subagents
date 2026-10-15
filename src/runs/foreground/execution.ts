@@ -595,8 +595,11 @@ async function runSingleAttempt(
 				timeoutHardFinishTimer = undefined;
 			}
 		};
+		const startup = new AbortController();
 		const abortChild = (): void => {
-			if (!session || sessionSettled || lifecycleFinished) return;
+			if (sessionSettled || lifecycleFinished) return;
+			startup.abort();
+			if (!session) return;
 			void session.abort().catch(() => {
 				// The session settles through its prompt promise; abort failures are not separately actionable.
 			});
@@ -1413,6 +1416,7 @@ async function runSingleAttempt(
 		void (async () => {
 			try {
 				const input = createReportedChildSessionInput(launch, shared.transcriptWriter);
+				input.signal = startup.signal;
 				const created = await childSessions.create(input);
 				if (lifecycleFinished) {
 					void created.dispose();
