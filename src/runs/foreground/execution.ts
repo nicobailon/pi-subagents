@@ -1155,7 +1155,8 @@ async function runSingleAttempt(
 					// The result message's own tool name is authoritative; the pending snapshot is only a fallback.
 					const resultToolName = (evt.message as { toolName?: unknown }).toolName;
 					const blockedTool = (typeof resultToolName === "string" && resultToolName.length > 0 ? resultToolName : undefined) ?? toolSnapshot?.tool;
-					if (options.toolBudget && isToolBudgetBlockedMessage(options.toolBudget, resultText, blockedTool)) {
+					const budgetBlocked = Boolean(options.toolBudget && isToolBudgetBlockedMessage(options.toolBudget, resultText, blockedTool));
+					if (options.toolBudget && budgetBlocked) {
 						result.toolBudgetBlocked = true;
 						result.toolBudget = toolBudgetState(
 							options.toolBudget,
@@ -1164,7 +1165,8 @@ async function runSingleAttempt(
 						);
 					}
 					appendRecentOutput(progress, resultText.split("\n").slice(-10));
-					if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
+					// A budget block has its own signal; it is not a failing mutation.
+					if (toolSnapshot?.mutates && !budgetBlocked && didMutatingToolFail(evt.message)) {
 						recordMutatingFailure(mutatingFailures, {
 							tool: toolSnapshot.tool,
 							path: toolSnapshot.path,
