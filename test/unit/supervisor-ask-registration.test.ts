@@ -796,8 +796,9 @@ describe("supervisor ask registration", () => {
 				assert.match(JSON.stringify(await runtime.tool.execute("reply", { action: "reply", replyTo: next, message: "Approved" })), new RegExp(next));
 			} finally {
 				await runtime?.shutdown();
-				for (const dir of channels) fs.rmSync(dir, { recursive: true, force: true });
-				fs.rmSync(root, { recursive: true, force: true });
+				// No process or watcher of this script holds these; Windows can briefly hold a just-written file.
+				for (const dir of channels) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+				fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 			}
 		`;
 		const env = { ...process.env };

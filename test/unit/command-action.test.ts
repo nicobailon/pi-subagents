@@ -21,6 +21,18 @@ function liveState(runId: string): SubagentState {
 	return state;
 }
 
+async function until(check: () => boolean, label: string): Promise<void> {
+	const deadline = Date.now() + 15_000;
+	while (!check()) {
+		if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
+function exited(pid: number): boolean {
+	try { process.kill(pid, 0); return false; }
+	catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+}
+
 describe("supervisor command actions", () => {
 	for (const kind of ["foreground", "async"] as const) {
 		it(`targets one command in a ${kind} child`, async () => {
@@ -31,8 +43,15 @@ describe("supervisor command actions", () => {
 			const state = liveState(runId);
 			const target = kind === "foreground" ? { kind, id: runId } : { kind, id: runId, location: { resolvedId: runId, asyncDir: dir, resultPath: null } };
 			if (kind === "async") fs.writeFileSync(path.join(dir, "status.json"), JSON.stringify({ runId, sessionId: "session-1", state: "running", steps: [{ agent: "worker", status: "running" }, { agent: "worker", status: "running" }] }));
+			// The command records its own pid, so teardown can wait for the process that holds dir as its cwd.
+			// On Windows, Pi ends a cancelled command with a taskkill it does not await.
+			const pidFile = path.join(dir, "command.pid");
+			fs.writeFileSync(path.join(dir, "hold.cjs"), `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 10_000);`);
+			let pid: number | undefined;
 			try {
-				await commands.wrap(createBashToolDefinition(dir)).execute("selected-command", { command: "sleep 10", yieldTimeMs: 0 }, undefined, undefined, ctx);
+				await commands.wrap(createBashToolDefinition(dir)).execute("selected-command", { command: `${JSON.stringify(process.execPath)} hold.cjs`, yieldTimeMs: 0 }, undefined, undefined, ctx);
+				await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8").length > 0, "the command to start");
+				pid = Number(fs.readFileSync(pidFile, "utf8"));
 				await assert.rejects(commandAction({ state, target, operation: "cancel", toolCallId: "selected-command" }), /explicit child index/);
 				await assert.rejects(commandAction({ state, target, operation: "cancel", index: 1 }), /exact toolCallId/);
 				const result = await commandAction({ state, target, operation: "status", index: 1, toolCallId: "selected-command" });
@@ -44,7 +63,11 @@ describe("supervisor command actions", () => {
 				await commands.shutdown();
 				const terminal = await commandAction({ state, target, operation: "status", index: 1 });
 				assert.equal(terminal.details.commands?.[0].state, "cancelled");
-			} finally { await commands.shutdown(); fs.rmSync(channel, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
+			} finally {
+				await commands.shutdown();
+				if (pid !== undefined) await until(() => exited(pid!), `command process ${pid} to exit`);
+				fs.rmSync(channel, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+			}
 		});
 	}
 });
