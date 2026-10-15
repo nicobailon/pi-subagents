@@ -3147,14 +3147,16 @@ export async function runSubagent(
 			const resultToolName = (event.message as { toolName?: unknown }).toolName;
 			const blockedTool = (typeof resultToolName === "string" && resultToolName.length > 0 ? resultToolName : undefined) ?? toolSnapshot?.tool;
 			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
-			if (configuredToolBudget && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool)) {
+			const budgetBlocked = Boolean(configuredToolBudget && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool));
+			if (configuredToolBudget && budgetBlocked) {
 				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount ?? 0, blockedTool);
 				step.toolBudgetBlocked = true;
 				statusPayload.toolBudget = step.toolBudget;
 				statusPayload.toolBudgetBlocked = true;
 			}
 			appendRecentStepOutput(step, resultText.split("\n").slice(-10));
-			if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
+			// A budget block has its own signal; it is not a failing mutation.
+			if (toolSnapshot?.mutates && !budgetBlocked && didMutatingToolFail(event.message)) {
 				const state = mutatingFailureStates[flatIndex]!;
 				recordMutatingFailure(state, omitUndefinedProperties({
 					tool: toolSnapshot.tool,
