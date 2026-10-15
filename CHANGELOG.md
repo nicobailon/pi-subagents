@@ -5,6 +5,7 @@
 ### Fixed
 
 - When a background subagent finished, the parent session often logged `Failed to acknowledge the mission observer ... Timed out waiting for another process to finish updating` with a stack trace, and its event loop stalled for 200 ms, because it waited for the run's result lease while the runner was still publishing. The parent now makes one attempt at the lease when it acknowledges or removes a delivered result, and retries 100 ms later without logging when the runner holds it. Thanks to [@RainbowXie](https://github.com/RainbowXie) for the report. ([#2896](https://github.com/nicobailon/pi-subagents/issues/2896))
+- After Pi auto-compacted in the middle of a running turn, the async and Fleet status widgets stayed hidden until the whole run ended, so background subagents showed no status in the TUI or to RPC hosts. They now come back as soon as the compaction finishes. Thanks to [@agustinsacco](https://github.com/agustinsacco) for [#2891](https://github.com/nicobailon/pi-subagents/pull/2891). ([#2890](https://github.com/nicobailon/pi-subagents/issues/2890))
 
 ## [0.78.0] - 2026-10-12
 
