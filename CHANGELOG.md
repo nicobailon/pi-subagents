@@ -6,6 +6,10 @@
 
 - The pi-subagents skill now says that `subagent`, `subagents_enable`, `subagent_supervisor`, `contact_supervisor`, and `structured_output` are model-only tool calls that codemode scripts cannot reach. With codemode on, models used to call `tools.subagent_supervisor(...)` from a script and get a "does not exist" error. Thanks to [@CovetingEpiphany2152](https://github.com/CovetingEpiphany2152) for the report. ([#2887](https://github.com/nicobailon/pi-subagents/issues/2887))
 
+### Fixed
+
+- After Pi auto-compacted in the middle of a running turn, the async and Fleet status widgets stayed hidden until the whole run ended, so background subagents showed no status in the TUI or to RPC hosts. They now come back as soon as the compaction finishes. Thanks to [@agustinsacco](https://github.com/agustinsacco) for [#2891](https://github.com/nicobailon/pi-subagents/pull/2891). ([#2890](https://github.com/nicobailon/pi-subagents/issues/2890))
+
 ## [0.78.0] - 2026-10-12
 
 ### Highlights
