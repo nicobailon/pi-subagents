@@ -126,6 +126,27 @@ jobs:
           NODE_DISABLE_COMPILE_CACHE: '1'
         run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --import ./test/support/native-peer-loader.mjs --test test/integration/nested-async-wait.test.ts
 
+  native-mcp-readiness:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - name: Install native Pi SDK
+        run: npm install --prefix "${{ runner.temp }}/native-host" --no-package-lock --ignore-scripts @earendil-works/pi-coding-agent@1.2.0
+      - name: Native MCP connection readiness and cancellation
+        env:
+          PI_SUBAGENTS_NATIVE_PI_ROOT: ${{ runner.temp }}/native-host/node_modules/@earendil-works/pi-coding-agent
+          NODE_DISABLE_COMPILE_CACHE: '1'
+        run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --import ./test/support/native-peer-loader.mjs --test test/integration/builtin-mcp-readiness.test.ts
+
   bun-workflow-script:
     runs-on: ubuntu-latest
     timeout-minutes: 10

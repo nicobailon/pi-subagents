@@ -695,31 +695,57 @@ describe("default child session factory", () => {
 	});
 });
 
-/** Pi 0.99's built-in MCP seam: MCP registers `mcp__srv__*` as `codemode` after the session starts, `builtin:` entries load only when their path is requested, and `tools` declares allowlisted direct tools. */
-function builtinMcpPi(tools = [["mcp__srv__echo", "srv/echo"], ["mcp__srv__add", "srv/add"]]) {
+/** MCP connects after session_start. Its tool_call hook waits for the connection, not a separate registration timer. */
+function builtinMcpPi(tools = [["mcp__srv__echo", "srv/echo"], ["mcp__srv__add", "srv/add"]], connect?: Promise<void>) {
+	type Tool = { name: string; label?: string; exposure: string; reachesTools?: () => string[] };
+	type Handler = (event: { toolName?: string }, ctx: { signal?: AbortSignal }) => unknown;
 	const registry = new Map<string, string>();
+	const definitions = new Map<string, Tool>();
+	const handlers = new Map<string, Handler[]>();
 	const loaded: Array<{ name: string; replaceable?: boolean }> = [];
 	const lifecycle: string[] = [];
 	let allowlist: string[] = [];
-	const pi = stubPi({ extensionRunner: { hasHandlers: () => true, emit: async () => { lifecycle.push("session_shutdown"); } }, dispose: () => { lifecycle.push("dispose"); }, getAllTools: () => [...registry].map(([name, exposure]) => ({ name, exposure })).filter(({ name }) => allowlist.includes(name)), getActiveToolNames: () => [...registry].filter(([name, exposure]) => exposure === "direct" && allowlist.includes(name)).map(([name]) => name) });
-	Object.assign(pi, { createMcpExtension: () => (api: { registerTool(tool: { name: string; label: string; exposure: string }): void }) => {
-		setTimeout(() => { for (const [name, label] of tools) api.registerTool({ name: name!, label: label!, exposure: "codemode" }); }, 20);
-	} });
+	const getAllTools = () => [...definitions.values()].filter(({ name }) => allowlist.includes(name));
+	const pi = stubPi({ bindExtensions: async () => { for (const handler of handlers.get("session_start") ?? []) await handler({}, {}); }, extensionRunner: { hasHandlers: () => true, emit: async () => { lifecycle.push("session_shutdown"); } }, dispose: () => { lifecycle.push("dispose"); }, getAllTools, getActiveToolNames: () => getAllTools().filter(({ exposure }) => exposure === "direct").map(({ name }) => name) });
+	Object.assign(pi, {
+		createCodemodeExtension: () => (api: { registerTool(tool: Tool): void }) => api.registerTool({ name: "codemode", exposure: "codemode", reachesTools: () => ["mcp__srv"] }),
+		createMcpExtension: () => (api: { registerTool(tool: Tool): void; on(type: string, handler: Handler): void; getAllTools(): Tool[] }) => {
+			let ready: Promise<void>;
+			api.on("session_start", () => {
+				ready = (async () => {
+					await (connect ?? new Promise((resolve) => setTimeout(resolve, 20)));
+					for (const [name, label, exposure = "codemode"] of tools) api.registerTool({ name: name!, label: label!, exposure });
+				})();
+			});
+			api.on("tool_call", async (event, ctx) => {
+				assert.ok(api.getAllTools().find(({ name }) => name === event.toolName)?.reachesTools, "MCP must see the host-owned readiness metadata despite the child allowlist");
+				if (ctx.signal?.aborted) return;
+				let onAbort: () => void;
+				try {
+					await Promise.race([ready, new Promise<void>((resolve) => { onAbort = resolve; ctx.signal?.addEventListener("abort", onAbort, { once: true }); })]);
+				} finally { ctx.signal?.removeEventListener("abort", onAbort!); }
+			});
+		},
+	});
 	type Entry = { name: string; factory: (api: unknown) => unknown; builtin?: boolean; replaceable?: boolean };
 	pi.DefaultResourceLoader = class {
 		private readonly options: { additionalExtensionPaths: string[]; extensionFactories: Entry[] };
 		constructor(options: typeof this.options) { this.options = options; }
 		async reload() {
 			for (const entry of this.options.extensionFactories) {
-				if (!entry.builtin || !this.options.additionalExtensionPaths.includes(`builtin:${entry.name}`)) continue;
-				loaded.push({ name: entry.name, replaceable: entry.replaceable });
-				await entry.factory({ registerTool: (tool: { name: string; exposure: string }) => { registry.set(tool.name, tool.exposure); } });
+				if (entry.builtin && !this.options.additionalExtensionPaths.includes(`builtin:${entry.name}`)) continue;
+				if (entry.builtin) loaded.push({ name: entry.name, replaceable: entry.replaceable });
+				await entry.factory({
+					registerTool: (tool: Tool) => { definitions.set(tool.name, tool); if (tool.name.startsWith("mcp__")) registry.set(tool.name, tool.exposure); },
+					getAllTools,
+					on: (type: string, handler: Handler) => { const list = handlers.get(type) ?? []; list.push(handler); handlers.set(type, list); },
+				});
 			}
 		}
 	} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
 	const createSession = pi.createAgentSession;
 	pi.createAgentSession = ((options: { tools?: string[] }) => { allowlist = options.tools ?? []; return createSession(options); }) as PiCodingAgentModule["createAgentSession"];
-	return { pi, registry, loaded, lifecycle };
+	return { pi, registry, definitions, loaded, lifecycle };
 }
 
 describe("selected built-in MCP tools in a child session", () => {
@@ -730,45 +756,48 @@ describe("selected built-in MCP tools in a child session", () => {
 		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create(mcpLaunch);
 		assert.deepEqual(mcp.loaded, [{ name: "mcp", replaceable: true }]);
 		assert.deepEqual([...mcp.registry], [["mcp__srv__echo", "direct"], ["mcp__srv__add", "hidden"]]);
+		assert.equal(mcp.definitions.get("codemode")?.exposure, "hidden", "the readiness metadata must not grant codemode");
 	});
 
 	it("grants a server's tools for its configured name and for its `-`→`_` form", async () => {
 		const name = "mcp__codebase_memory__list_projects";
 		for (const selector of ["codebase-memory", "codebase_memory", "codebase_memory/list_projects"]) {
 			const mcp = builtinMcpPi([[name, "codebase-memory/list_projects"]]);
-			await createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 200, loadPiCodingAgent: async () => mcp.pi }).create({ ...stubLaunch, tools: [name], builtinMcpTools: [{ name, selector }] });
+			await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create({ ...stubLaunch, tools: [name], builtinMcpTools: [{ name, selector }] });
 			assert.deepEqual([...mcp.registry], [[name, "direct"]], selector);
 		}
 	});
 
 	it("fails the launch and shuts the session down when a selected tool never registers", async () => {
 		const mcp = builtinMcpPi();
-		const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 30, loadPiCodingAgent: async () => mcp.pi });
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi });
 		await assert.rejects(factory.create({ ...mcpLaunch, tools: [...mcpLaunch.tools!, "mcp__gone__x"], builtinMcpTools: [...mcpLaunch.builtinMcpTools!, { name: "mcp__gone__x", selector: "gone" }] }), /did not register in the child session: mcp__gone__x\. The MCP server may have failed to connect/);
 		assert.deepEqual(mcp.lifecycle, ["session_shutdown", "dispose"]);
 	});
 
 	it("does not expose a tool whose name Pi gave to a different raw tool than the selector names", async () => {
 		const mcp = builtinMcpPi([["mcp__srv__a_b", "srv/a_b"]]);
-		const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 50, loadPiCodingAgent: async () => mcp.pi });
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi });
 		await assert.rejects(factory.create({ ...stubLaunch, tools: ["mcp__srv__a_b"], builtinMcpTools: [{ name: "mcp__srv__a_b", selector: "srv/a.b" }] }), /did not register in the child session: mcp__srv__a_b\./);
 		assert.deepEqual([...mcp.registry], [["mcp__srv__a_b", "hidden"]]);
 	});
 
 	it("does not hold other child launches while it waits for MCP tools", async () => {
-		const mcp = builtinMcpPi();
+		let connected!: () => void;
+		const mcp = builtinMcpPi(undefined, new Promise<void>((resolve) => { connected = resolve; }));
 		let waitEnded = false;
-		const waiting = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 500, loadPiCodingAgent: async () => mcp.pi })
+		const waiting = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi })
 			.create({ ...mcpLaunch, builtinMcpTools: [{ name: "mcp__gone__x", selector: "gone" }] }).finally(() => { waitEnded = true; });
 		while (mcp.loaded.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
 		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() }).create(stubLaunch);
 		assert.equal(waitEnded, false);
+		connected();
 		await assert.rejects(waiting, /mcp__gone__x/);
 	});
 
 	it("shuts down a child still waiting for MCP tools when the factory is disposed", async () => {
-		const mcp = builtinMcpPi();
-		const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 5_000, loadPiCodingAgent: async () => mcp.pi });
+		const mcp = builtinMcpPi(undefined, new Promise<void>(() => {}));
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi });
 		const creating = factory.create({ ...mcpLaunch, builtinMcpTools: [{ name: "mcp__gone__x", selector: "gone" }] });
 		while (mcp.loaded.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
 		await new Promise((resolve) => setTimeout(resolve, 20));
@@ -785,5 +814,15 @@ describe("selected built-in MCP tools in a child session", () => {
 
 	it("rejects selected tools when the host Pi has no built-in MCP", async () => {
 		await assert.rejects(createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() }).create(mcpLaunch), /mcp__srv__echo\) need a Pi version with built-in MCP/);
+	});
+
+	it("names the Pi 0.99.2 floor when built-in MCP has no connection readiness hook", async () => {
+		const mcp = builtinMcpPi();
+		type Api = { on(type: string, handler: unknown): void };
+		const create = (mcp.pi as unknown as { createMcpExtension: () => (api: Api) => unknown }).createMcpExtension;
+		// Pi 0.99.0 and 0.99.1 register no tool_call handler.
+		Object.assign(mcp.pi, { createMcpExtension: () => (api: Api) => create()({ ...api, on: (type: string, handler: unknown) => { if (type !== "tool_call") api.on(type, handler); } }) });
+		await assert.rejects(createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create(mcpLaunch), /mcp__srv__echo\) need Pi 0\.99\.2 or later/);
+		assert.deepEqual(mcp.lifecycle, ["session_shutdown", "dispose"]);
 	});
 });

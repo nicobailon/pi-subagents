@@ -251,10 +251,12 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			refreshCurrentTool();
 		};
 
+		const startup = new AbortController();
 		const abortChild = (): void => {
 			if (settled || promptSettled) return;
-			// A hung session creation has no session to abort yet; the settle timer below is the only
-			// thing that ends the run, and a session created afterwards is disposed by the launch block.
+			startup.abort();
+			// MCP startup can now stop before a session is returned. The timer still bounds
+			// other creation work that does not observe the startup signal.
 			void session?.abort().catch(() => {
 				// The run settles through its prompt promise; abort failures are not separately actionable.
 			});
@@ -665,6 +667,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 		void (async () => {
 			try {
 				const createInput = createReportedChildSessionInput(input.launch, input.transcriptWriter);
+				createInput.signal = startup.signal;
 				const created = await input.factory.create(createInput);
 				if (settled) {
 					await created.dispose().catch(() => undefined);
