@@ -937,8 +937,11 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			try {
 				writePrivateAtomicJson(requestFile, { ...stored, expiresAt: now + timeoutMs });
 				request.expiresAt = now + timeoutMs;
-			} catch {
-				// The ask keeps its current deadline; a later poll retries.
+			} catch (error) {
+				// Report once and stop renewing: the ask keeps its current deadline.
+				queuedNotices.delete(id);
+				updateDeliverySubscription();
+				console.error(`Failed to extend supervisor request ${id} while its notice is queued; it keeps its current deadline:`, error);
 			}
 		}
 	};
