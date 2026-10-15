@@ -21,6 +21,7 @@ import {
 } from "../../intercom/result-intercom.ts";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
+import { FileLeaseBusyError } from "../../shared/file-lease.ts";
 import { recordWaitCompletion } from "./wait-completions.ts";
 import { MISSION_BINDING_FILE, syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
 import { acknowledgeMissionObserverSnapshot, missionObserverResultCandidateFiles, promotePendingResultFile, readResultPayload, resultCandidateFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, resultSnapshotReplaced, retireResultSnapshot, withResultRunLease, writeAsyncResultFile, writeResultIndexForData, type ResultSnapshot } from "./result-files.ts";
@@ -31,6 +32,9 @@ const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
 const HEALTHY_SCAN_INTERVAL_MS = 60_000;
 const RETRY_DELAY_MS = 100;
+// Acknowledging and retiring a delivered result are retried after RETRY_DELAY_MS, so they make one
+// lease attempt instead of parking this event loop while a runner publishes the same run.
+const CLEANUP_LEASE_WAIT_MS = 0;
 const SLOW_RESULT_SCAN_MS = 500;
 
 type ResultWatcherFs = Pick<typeof fs, "existsSync" | "readFileSync" | "unlinkSync" | "readdirSync" | "mkdirSync" | "realpathSync" | "statSync" | "watch">;
@@ -330,10 +334,10 @@ export function createResultWatcher(
 	const removeDeliveredResult = (file: string, triggerTurn: boolean, read: ResultSnapshot): void => {
 		identityCache.delete(file);
 		try {
-			if (retireResultSnapshot(publicResultPath(file), read) === "replaced") scheduleResult(file, triggerTurn);
+			if (retireResultSnapshot(publicResultPath(file), read, undefined, CLEANUP_LEASE_WAIT_MS) === "replaced") scheduleResult(file, triggerTurn);
 		} catch (error) {
 			if (isAbsentResultCandidate(error)) return;
-			console.error(`Failed to remove delivered subagent result '${publicResultPath(file)}'; will retry:`, error);
+			if (!(error instanceof FileLeaseBusyError)) console.error(`Failed to remove delivered subagent result '${publicResultPath(file)}'; will retry:`, error);
 			scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 		}
 	};
@@ -421,10 +425,10 @@ export function createResultWatcher(
 			}
 			if (observerSucceeded) {
 				try {
-					if (acknowledgeMissionObserverSnapshot(publicResultPath(file), read) === "replaced") rereadReplacedPayload = true;
+					if (acknowledgeMissionObserverSnapshot(publicResultPath(file), read, CLEANUP_LEASE_WAIT_MS) === "replaced") rereadReplacedPayload = true;
 				} catch (error) {
 					observerSucceeded = false;
-					console.error(`Failed to acknowledge the mission observer for '${resultPath}'; will retry:`, error);
+					if (!(error instanceof FileLeaseBusyError)) console.error(`Failed to acknowledge the mission observer for '${resultPath}'; will retry:`, error);
 				}
 			}
 			const epoch = deliveryEpoch;
