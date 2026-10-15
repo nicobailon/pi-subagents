@@ -31,10 +31,24 @@ interface Pins {
 const pinsByApi = new WeakMap<ExtensionAPI, Pins>();
 const GUIDELINES_PLACEHOLDER = "\u0000pi-subagents guidelines";
 
+/**
+ * A recorded description without the text a host appends to each declared tool, such as Pi's
+ * codemode note on script-callable tools. The host decorates whatever is registered, so reusing a
+ * decorated description would add the note again on every session start (#2889). Drops a repeated
+ * trailing paragraph, then a trailing paragraph added after the current description.
+ */
+function undecorated(recorded: string, current: string): string {
+	const paragraphs = recorded.split("\n\n");
+	while (paragraphs.length > 1 && paragraphs.at(-1) === paragraphs.at(-2)) paragraphs.pop();
+	const stripped = paragraphs.join("\n\n");
+	return stripped.startsWith(`${current}\n\n`) ? current : stripped;
+}
+
 function pinnedDefinition(tool: PinnableTool, pin: DeclaredPin | undefined): PinnableTool {
 	const { constrainedSampling, promptSnippet, promptGuidelines, ...rest } = tool;
 	// An unchanged declaration keeps the registered schema object rather than its JSON copy.
-	const declaration = pin && !declarationsEqual(pin.declaration, tool) ? pin.declaration : undefined;
+	const recorded = pin ? { ...pin.declaration, description: undecorated(pin.declaration.description, rest.description) } : undefined;
+	const declaration = recorded && !declarationsEqual(recorded, tool) ? recorded : undefined;
 	const definition: PinnableTool = { ...rest, description: declaration?.description ?? rest.description, parameters: declaration?.parameters ?? rest.parameters };
 	const sampling = declaration ? declaration.constrainedSampling : constrainedSampling;
 	if (sampling !== undefined) definition.constrainedSampling = sampling;
