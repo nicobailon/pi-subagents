@@ -30,19 +30,25 @@ it("session startup yields to the event loop and both first advertisements await
 		fs.writeFileSync(path.join(newerPackage, "agents", "new-specialist.md"), agent("new-specialist"));
 		fs.writeFileSync(path.join(localDir, "local-specialist.md"), agent("local-specialist"));
 		const oldDone = path.join(temp, "old-lookup-finished");
+		const oldRelease = path.join(temp, "old-lookup-release");
 		fs.writeFileSync(path.join(bin, "fake-npm.cjs"), `
 const fs = require("node:fs");
 const phase = process.env.TEST_NPM_PHASE;
 if (phase === "failure") { console.error("private npm failure"); process.exit(1); }
-if (phase === "old") process.on("exit", () => fs.writeFileSync(${JSON.stringify(oldDone)}, "done"));
-setTimeout(() => { if (phase !== "timeout") console.log(phase === "latest" ? ${JSON.stringify(newerRoot)} : ${JSON.stringify(globalRoot)}); }, phase === "timeout" ? 6000 : phase === "old" ? 2500 : phase === "seed" || phase === "latest" ? 150 : 300);
+const print = () => { if (phase !== "timeout") console.log(phase === "latest" ? ${JSON.stringify(newerRoot)} : ${JSON.stringify(globalRoot)}); };
+if (phase === "old") {
+	process.on("exit", () => fs.writeFileSync(${JSON.stringify(oldDone)}, "done"));
+	// The stale lookup answers only after the test releases it; the cap only ends an orphan.
+	const cap = Date.now() + 30000;
+	const poll = setInterval(() => { if (fs.existsSync(${JSON.stringify(oldRelease)}) || Date.now() > cap) { clearInterval(poll); print(); } }, 25);
+} else setTimeout(print, phase === "timeout" ? 6000 : phase === "seed" || phase === "latest" ? 150 : 300);
 `);
 		const npm = path.join(bin, process.platform === "win32" ? "npm.cmd" : "npm");
 		fs.writeFileSync(npm, process.platform === "win32"
 			? `@echo off\r\n"${process.execPath}" "%~dp0fake-npm.cjs" %*\r\n`
 			: `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/fake-npm.cjs" "$@"\n`);
 		if (process.platform !== "win32") fs.chmodSync(npm, 0o755);
-		const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, HOME: path.join(temp, "home"), USERPROFILE: path.join(temp, "home"), PI_CODING_AGENT_DIR: path.join(temp, "home"), TEST_PROJECT: path.join(fixtureRoot, "project"), TEST_OLD_DONE: oldDone, TEST_NPM_PHASE: "initial", APPDATA: path.join(temp, "missing-appdata") };
+		const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, HOME: path.join(temp, "home"), USERPROFILE: path.join(temp, "home"), PI_CODING_AGENT_DIR: path.join(temp, "home"), TEST_PROJECT: path.join(fixtureRoot, "project"), TEST_OLD_DONE: oldDone, TEST_OLD_RELEASE: oldRelease, TEST_NPM_PHASE: "initial", APPDATA: path.join(temp, "missing-appdata") };
 		delete env.PI_OFFLINE;
 		delete env[SUBAGENT_CHILD_ENV];
 		const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", String.raw`
@@ -103,6 +109,7 @@ setTimeout(() => { if (phase !== "timeout") console.log(phase === "latest" ? ${J
 			process.env.TEST_NPM_PHASE = "seed";
 			assert.ok(discoverAgents(ctx.cwd, "both").agents.some((agent) => agent.name === "global-specialist"));
 			process.env.TEST_NPM_PHASE = "old";
+			const oldStarted = Date.now();
 			start({ reason: "reload" }, ctx);
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			const waitingOnOld = advertise();
@@ -113,7 +120,11 @@ setTimeout(() => { if (phase !== "timeout") console.log(phase === "latest" ? ${J
 			const mergedExecution = tools.get("subagent").execute("merged-runtime", { agent: "new-specialist", task: "Probe", async: false }, new AbortController().signal, undefined, ctx)
 				.then((result) => JSON.stringify(result), (error) => error.message);
 			const [latest, reloadedLoader] = await Promise.all([waitingOnOld, waitingLoader]);
-			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), false, "old lookup held the new session's prompt");
+			// The stale lookup stays pending until released below, so a prompt that waited on it could only
+			// resolve when the 5 s npm lookup timeout ended that lookup.
+			assert.ok(Date.now() - oldStarted < 5000, "old lookup held the new session's prompt");
+			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), false, "stale lookup finished before its release");
+			fs.writeFileSync(process.env.TEST_OLD_RELEASE, "release");
 			assert.match(latest, /<name>new-specialist<\/name>/);
 			assert.match(reloadedLoader.content[0].text, /<name>new-specialist<\/name>/);
 			assert.doesNotMatch(latest, /<name>global-specialist<\/name>/);
@@ -130,8 +141,8 @@ setTimeout(() => { if (phase !== "timeout") console.log(phase === "latest" ? ${J
 				.then((result) => JSON.stringify(result), (error) => error.message);
 			assert.match(runtime, /new-specialist/, "execution must resolve the advertised agent");
 			assert.doesNotMatch(runtime, /Unknown agent|not found/i);
-			// The stale npm child prints its result 2.5 s after it starts and writes the marker as it exits; a loaded
-			// Windows runner can start it late. Then give the parent time to handle the closed child before checking.
+			// The released stale npm child prints its result and writes the marker as it exits. Then give the parent
+			// time to handle the closed child before checking.
 			const oldDeadline = Date.now() + 15_000;
 			while (!fs.existsSync(process.env.TEST_OLD_DONE) && Date.now() < oldDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
 			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true, "old lookup completed");
