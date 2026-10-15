@@ -940,7 +940,7 @@ async function runSingleAttempt(
 					reason: "tool_open_threshold",
 					currentTool: toolAttentionTarget.tool,
 					toolCallId,
-					hasCommandController: Boolean(toolCallId && options.runId && retainsChildCommand(supervisorChannelDir(options.runId, agent.name, options.index ?? 0), toolCallId)),
+					hasCommandController: Boolean(toolCallId && retainsChildCommand(supervisorChannelDir(options.runId, agent.name, options.index ?? 0), toolCallId)),
 					currentPath: toolAttentionTarget.path,
 					currentToolDurationMs: durationMs,
 				});

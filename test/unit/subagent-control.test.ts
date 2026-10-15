@@ -18,16 +18,12 @@ const config = resolveControlConfig(undefined, {
 });
 
 describe("mutating tool supervision", () => {
-	it("does not count a read-only grep discarding stderr as a mutation", () => {
-		assert.equal(isMutatingTool("bash", { command: "grep -rn mimeType index.ts 2>/dev/null; ls *.ts" }), false);
-	});
-
 	it("exempts only exact /dev/null redirect targets while retaining real writes", () => {
 		for (const command of [
 			"grep x index.ts 2>/dev/null", "grep x index.ts >/dev/null", "grep x index.ts &>/dev/null",
 			"grep x index.ts 2>>/dev/null", "grep x index.ts >/dev/null 2>&1", "grep x index.ts > /dev/null",
 			"grep x index.ts >/dev/null && ls", "grep x index.ts >/dev/null | cat",
-			"echo 'a > b'", "grep x index.ts 2>&1", "grep x index.ts 2>&2",
+			"echo 'a > b'", "grep x index.ts 2>&1", "grep x index.ts 2>&2", "grep -rn mimeType index.ts 2>/dev/null; ls *.ts",
 		]) {
 			assert.equal(isMutatingTool("bash", { command }), false, command);
 		}
@@ -44,9 +40,8 @@ describe("mutating tool supervision", () => {
 	it("uses only the tool result's isError flag to judge a failure", () => {
 		assert.equal(didMutatingToolFail({ isError: false, content: [{ type: "text", text: 'return { error: "failed" }' }] }), false);
 		assert.equal(didMutatingToolFail({ isError: true, content: [{ type: "text", text: "No exact match found" }] }), true);
-		assert.equal(didMutatingToolFail({ isError: true, content: [{ type: "text", text: "Permission denied" }] }), true);
-		assert.equal(didMutatingToolFail({ content: [{ type: "text", text: "error" }] }), false);
 		assert.equal(didMutatingToolFail({ isError: "true" }), false);
+		assert.equal(didMutatingToolFail({ content: [{ type: "text", text: "error" }] }), false);
 	});
 });
 

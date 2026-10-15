@@ -103,6 +103,7 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 
 afterEach(() => {
 	for (const channel of createdChannels.splice(0)) fs.rmSync(channel, { recursive: true, force: true });
+	delete process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
 });
 
 /** Deterministic session/model seam: real launch hooks and tools, with the host's tool allowlist. */
@@ -849,7 +850,7 @@ describe("supervisor ask registration", () => {
 			channel.start();
 			const tool = tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
 			const expired = writeRequest({ sessionId, runId, expiresAt: Date.now() - 1 });
-			await assert.rejects(tool.execute("expired", { action: "reply", replyTo: expired, message: "Too late" }), /No pending supervisor request found.*No supervisor requests are pending now\./);
+			await assert.rejects(tool.execute("expired", { action: "reply", replyTo: expired, message: "Too late" }), /No pending supervisor request found.*No pending supervisor requests\./);
 			const missing = writeRequest({ sessionId, runId });
 			const resolved = writeRequest({ sessionId, runId });
 			await tool.execute("pending", { action: "pending" });
@@ -1021,7 +1022,6 @@ describe("supervisor ask registration", () => {
 	});
 
 	it("moves a queued ask's deadline forward until its notice reaches the parent model", async () => {
-		const previousTimeout = process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
 		process.env.PI_INTERCOM_ASK_TIMEOUT_MS = "1000";
 		const sessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
@@ -1071,11 +1071,7 @@ describe("supervisor ask registration", () => {
 			channel.hasPendingRequests();
 			assert.ok(expiresAt(visible) <= Date.now() + 100, "an ask appended to an idle parent is visible already and keeps its deadline");
 			assert.equal(handlers.get("message_start")?.size ?? 0, 0);
-		} finally {
-			channel.dispose();
-			if (previousTimeout === undefined) delete process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
-			else process.env.PI_INTERCOM_ASK_TIMEOUT_MS = previousTimeout;
-		}
+		} finally { channel.dispose(); }
 	});
 
 	it("registers both asks even when every user-turn notification throws", () => {

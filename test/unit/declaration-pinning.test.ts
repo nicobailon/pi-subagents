@@ -141,23 +141,21 @@ it("pins a tool description without the note a host appends to it, so the note i
 		const subagent = declaredTool(first!, "subagent");
 		let entries = decorate(structuredClone(original.getEntries()));
 		for (let start = 2; start <= 3; start++) {
-			const recorded = declaredTool(entries.flatMap((entry) => entry.type === "message" ? [entry.message] : []), "bg_wait").description;
 			const session = SessionManager.inMemory(cwd, undefined, entries);
 			const [request] = await run(session, [fauxAssistantMessage("ok")]);
 			// Registering the undecorated description lets the host reproduce the recorded declaration.
 			assert.equal(declaredTool(request!, "bg_wait").description, description, `session start ${start} registers bg_wait without the note`);
-			assert.equal(description + note, recorded);
 			assert.deepEqual(declaredTool(request!, "subagent"), subagent);
 			entries = decorate(structuredClone(session.getEntries()));
 		}
 
-		// A session that already accumulated several notes registers the description without them.
+		// A recorded description that differs from the current one keeps one note, not one per session start.
 		const polluted = structuredClone(original.getEntries());
 		const system = polluted.find((entry) => entry.type === "message" && entry.message.role === "system");
 		assert.ok(system?.type === "message" && system.message.role === "system");
-		system.message.toolsAdded!.find((tool) => tool.name === "bg_wait")!.description = description + note + note + note;
+		system.message.toolsAdded!.find((tool) => tool.name === "bg_wait")!.description = "Older bg_wait description." + note + note;
 		const [cleaned] = await run(SessionManager.inMemory(cwd, undefined, polluted), [fauxAssistantMessage("ok")]);
-		assert.equal(declaredTool(cleaned!, "bg_wait").description, description);
+		assert.equal(declaredTool(cleaned!, "bg_wait").description, "Older bg_wait description." + note);
 	} finally {
 		dispose();
 	}

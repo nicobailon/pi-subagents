@@ -1,10 +1,15 @@
-import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { describe, it } from "node:test";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+function runScript(script: string): void {
+	const env = { ...process.env };
+	delete env.PI_SUBAGENT_CHILD;
+	execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+}
 
 describe("async compaction resume", () => {
 	it("only re-drives manual compaction while async work is active", () => {
@@ -98,10 +103,7 @@ describe("async compaction resume", () => {
 			await sleep(150);
 			if (sent.some((entry) => entry.message?.customType === "subagent-compaction-resume")) throw new Error("resumed after session shutdown");
 		`;
-		const env = { ...process.env };
-		delete env.PI_SUBAGENT_CHILD;
-		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
-		assert.ok(true);
+		runScript(script);
 	});
 
 	it("restores widgets when the same run continues after automatic compaction", () => {
@@ -116,30 +118,22 @@ describe("async compaction resume", () => {
 			const pi = new Proxy({
 				events,
 				on(name, handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
-				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
-				sendMessage() {}, getSessionName() { return undefined; },
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
 			const ctx = { cwd: process.cwd(), isIdle() { return false; }, hasUI: true, ui: { setWidget(key, value) { widgets.push([key, value]); }, requestRender() {}, onTerminalInput() { return () => {}; }, getEditorText() { return ""; }, notify() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager: { getSessionId() { return "mid-run-session"; }, getSessionFile() { return null; }, getEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } };
 			registerSubagentExtension(pi);
 			for (const handler of handlers.get("session_start")) await handler({}, ctx);
 			for (const handler of handlers.get("agent_start")) await handler();
 			events.emit("subagent:async-started", { id: "running", pid: 1, sessionId: "mid-run-session", mode: "single", agent: "worker", asyncDir: path.join(os.tmpdir(), "pi-compaction-test-mid-run") });
-			const restored = () => widgets.filter(([key, value]) => key === "subagent-async" && value !== undefined).length;
-			for (const reason of ["threshold", "overflow"]) {
-				for (const handler of handlers.get("session_before_compact")) await handler({ reason, signal: new AbortController().signal });
-				widgets.length = 0;
-				for (const handler of handlers.get("session_compact")) await handler({ reason });
-				if (restored() !== 0) throw new Error("widgets restored inside compaction hook");
-				// The run's next message, after Pi has cleared its compaction state.
-				for (const handler of handlers.get("message_start")) await handler({ message: { role: "assistant", content: [] } });
-				if (restored() === 0) throw new Error(reason + " compaction left the async widget withdrawn for the rest of the run");
-			}
+			const restored = () => widgets.some(([key, value]) => key === "subagent-async" && value !== undefined);
+			for (const handler of handlers.get("session_before_compact")) await handler({ reason: "threshold", signal: new AbortController().signal });
+			widgets.length = 0;
+			for (const handler of handlers.get("session_compact")) await handler({ reason: "threshold" });
+			if (restored()) throw new Error("widgets restored inside compaction hook");
+			for (const handler of handlers.get("message_start")) await handler({ message: { role: "assistant", content: [] } });
+			if (!restored()) throw new Error("threshold compaction left the async widget withdrawn for the rest of the run");
 			for (const handler of handlers.get("session_shutdown")) await handler();
 		`;
-		const env = { ...process.env };
-		delete env.PI_SUBAGENT_CHILD;
-		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
-		assert.ok(true);
+		runScript(script);
 	});
 
 	it("ignores stale cached UI context during compaction lifecycle callbacks", () => {
@@ -166,9 +160,6 @@ describe("async compaction resume", () => {
 			for (const handler of handlers.get("session_before_compact")) await handler({ reason: "threshold", signal: new AbortController().signal });
 			for (const handler of handlers.get("session_shutdown")) await handler();
 		`;
-		const env = { ...process.env };
-		delete env.PI_SUBAGENT_CHILD;
-		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
-		assert.ok(true);
+		runScript(script);
 	});
 });

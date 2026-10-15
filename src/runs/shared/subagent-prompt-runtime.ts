@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { declarationsEqual, getCurrentSystemMessage, getCurrentTools, type Message, type SystemMessage } from "@earendil-works/pi-ai";
+import { declarationsEqual, getCurrentSystemMessage, getCurrentTools, type AnthropicMessagesCompat, type SystemMessage, type TranscriptMessages } from "@earendil-works/pi-ai";
 import type { BeforeAgentStartEvent, BeforeProviderRequestEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
 import { permissionDecision } from "./permissions.ts";
@@ -295,13 +295,8 @@ const PROMPT_CACHE_KEY_APIS = new Set([
 	"openai-responses",
 ]);
 
-type Transcript = readonly { role: string }[];
-
 const isSystemMessage = <T extends { role: string }>(message: T): message is T & SystemMessage => message.role === "system";
 const writtenBefore = (message: { timestamp?: unknown }, forkedAt: number) => typeof message.timestamp === "number" && message.timestamp < forkedAt;
-/** Pi's view of a transcript: the one leading system message it sends to providers without mid-conversation system messages. */
-const currentSystem = (messages: Transcript) => getCurrentSystemMessage(messages as Message[]);
-const currentToolNames = (messages: Transcript) => getCurrentTools(messages as Message[]).map((tool) => tool.name);
 const promptText = (message: SystemMessage | undefined) => typeof message?.content === "string" ? message.content : (message?.content ?? []).map((block) => block.text).join("");
 
 /** The system messages older than `forkedAt`: the prompt and tool state a fork inherited. */
@@ -330,29 +325,26 @@ export function modelBefore(messages: readonly { role: string }[], forkedAt: num
  */
 const LOADOUT_SECTIONS = new Set(["tools", "rules", "docs", "skills", "advertised_subagents", "mcp_servers", "project_context"]);
 
-const FORK_INSTRUCTIONS_OPEN = "<subagent_instructions>";
-const FORK_INSTRUCTIONS_CLOSE = "</subagent_instructions>";
-
 /**
  * The child's own instructions, which a fork sends in its task message instead of its system
  * prompt: the text its own system messages (`own`) add, the sections it changed except the loadout
  * ones, the tools it can call, and its boundary. `parent` is the inherited system messages and
  * `child` the whole request.
  */
-export function forkInstructions(input: { parent: Transcript; child: Transcript; own: Transcript; boundary?: string }): string {
-	const parent = currentSystem(input.parent);
-	const child = currentSystem(input.child);
+function forkInstructions(input: { parent: TranscriptMessages; child: TranscriptMessages; own: TranscriptMessages; boundary?: string }): string {
+	const parent = getCurrentSystemMessage(input.parent);
+	const child = getCurrentSystemMessage(input.child);
 	const parts = [
 		"The system prompt and tool list of this conversation are the parent session's, sent unchanged so this request reuses the parent's prompt cache. The instructions below are yours and take precedence over the parent's role.",
-		`Tools you can call: ${currentToolNames(input.child).join(", ") || "none"}. Any other declared tool belongs to the parent session and fails if called.`,
+		`Tools you can call: ${getCurrentTools(input.child).map((tool) => tool.name).join(", ") || "none"}. Any other declared tool belongs to the parent session and fails if called.`,
 	];
-	const ownPrompt = promptText(currentSystem(input.own));
+	const ownPrompt = promptText(getCurrentSystemMessage(input.own));
 	if (ownPrompt.length > 0) parts.push(ownPrompt);
 	for (const [name, value] of Object.entries(child?.sections ?? {})) {
 		if (!LOADOUT_SECTIONS.has(name) && value && parent?.sections?.[name] !== value) parts.push(value);
 	}
 	if (input.boundary) parts.push(input.boundary);
-	return `${FORK_INSTRUCTIONS_OPEN}\n${parts.join("\n\n")}\n${FORK_INSTRUCTIONS_CLOSE}`;
+	return `<subagent_instructions>\n${parts.join("\n\n")}\n</subagent_instructions>`;
 }
 
 function prependText<T>(message: T, text: string): T {
@@ -372,13 +364,10 @@ function prependText<T>(message: T, text: string): T {
  * - The system messages it inherited (`inherited`, older than `forkedAt`) are sent as they are,
  *   and the child's own ones are dropped. When a `context` handler made Pi collapse the request
  *   into one leading system message, that message is rebuilt from `inherited`.
- * - Every tool the parent declared stays declared, with the parent's definition. A tool the child
- *   lacks is not registered in the child, so a call to it gets Pi's "not found" error and runs
- *   nothing. A tool only the child has, or one the child defines differently under the parent's
- *   name (a `structured_output` with its own schema, for example), is declared by one system
- *   message at the fork point, so the model sees the definition the child's tool checks: a
- *   provider with native tool changes adds it there and keeps the cache; others append it to the
- *   tool list, which keeps only the tools' part of the cache.
+ * - Every tool the parent declared stays declared, with the parent's definition. A tool only the
+ *   child has, or one the child defines differently under the parent's name (a `structured_output`
+ *   with its own schema, for example), is declared by one system message at the fork point, so the
+ *   model sees the definition the child's tool checks.
  * - The child's instructions (its role sections, the boundary, the tools it can call) go first in
  *   its first own user message, after the inherited history.
  *
@@ -395,8 +384,8 @@ export function projectForkRequest<T extends { role: string }>(messages: T[], in
 		return at === -1 ? [...messages, section] : [...messages.slice(0, at), section, ...messages.slice(at)];
 	}
 	const instructions = forkInstructions({ parent: inherited, child: messages, own: messages.filter((message) => isSystemMessage(message) && own(message)), boundary: options.boundary });
-	const parentTools = new Map(getCurrentTools(inherited as unknown as Message[]).map((tool) => [tool.name, tool]));
-	const childTools = getCurrentTools(messages as unknown as Message[]).filter((tool) => {
+	const parentTools = new Map(getCurrentTools(inherited).map((tool) => [tool.name, tool]));
+	const childTools = getCurrentTools(messages).filter((tool) => {
 		const parentTool = parentTools.get(tool.name);
 		return !parentTool || !declarationsEqual(parentTool, tool);
 	});
@@ -404,7 +393,7 @@ export function projectForkRequest<T extends { role: string }>(messages: T[], in
 	const sentInherited = messages.filter((message) => isSystemMessage(message) && !own(message));
 	const uncollapsed = sentInherited.length === inherited.length && sentInherited.every((message, index) => JSON.stringify(message) === JSON.stringify(inherited[index]));
 	const conversation = messages.filter((message) => !isSystemMessage(message));
-	const head = currentSystem(inherited) as T | undefined;
+	const head = getCurrentSystemMessage(inherited) as T | undefined;
 	const next = uncollapsed
 		? messages.filter((message) => !isSystemMessage(message) || !own(message))
 		: [...(head ? [head] : []), ...conversation];
@@ -431,7 +420,7 @@ export function applyForkSessionAffinity(headers: Record<string, string | null |
 	const parent = parentSessionId?.trim();
 	if (!headers || !parent || model?.api !== "anthropic-messages") return;
 	if (!parentModel || parentModel.provider !== model.provider || parentModel.api !== model.api || parentModel.model !== model.id) return;
-	const compat = (model as { compat?: { sendSessionAffinityHeaders?: boolean; sessionAffinityFormat?: string } }).compat;
+	const compat = model.compat as AnthropicMessagesCompat | undefined;
 	if (!compat?.sendSessionAffinityHeaders) return;
 	headers[compat.sessionAffinityFormat === "openrouter" ? "x-session-id" : "x-session-affinity"] = parent;
 }

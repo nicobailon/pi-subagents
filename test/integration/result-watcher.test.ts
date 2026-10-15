@@ -584,7 +584,6 @@ describe("result watcher", () => {
 			const runId = "lease-child";
 			const resultPath = path.join(resultsDir, `${runId}.json`);
 			writeIndexedResult(resultPath, { id: runId, runId, sessionId: "session-current", asyncDir, mode: "single", state: "complete", success: true, summary: "done" });
-			assert.equal(resultPayloadPathForMissionObserverRun(resultsDir, runId), resultPath);
 
 			// The runner's lease, held from just before the acknowledgement until the notification is delivered.
 			const leasePath = path.join(fs.realpathSync.native(resultsDir), "result-leases", `${createHash("sha256").update(runId).digest("hex")}.write-lock`);

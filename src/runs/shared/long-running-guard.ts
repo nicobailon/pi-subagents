@@ -79,7 +79,7 @@ function hasUnquotedFileRedirection(command: string): boolean {
 		const targetStart = command[cursor]!;
 		if (targetStart === "&" || targetStart === "|" || targetStart === ";") continue;
 		if (targetStart === "(" || targetStart === ")") continue;
-		if (command.startsWith("/dev/null", cursor) && (cursor + 9 === command.length || /[\s;&|()]/.test(command[cursor + 9]!))) continue;
+		if (/^\/dev\/null(?=$|[\s;&|()])/.test(command.slice(cursor))) continue;
 		return true;
 	}
 	return false;

@@ -167,8 +167,7 @@ const INTERCOM_DETACH_RECEIPT = "Detached for intercom coordination before task 
 
 // This process hosts child sessions. An ambient copy of pi-subagents loaded
 // into one of them must register nothing; the variable marks the process as a
-// child host. Processes spawned from a child inherit both variables, so only
-// the runner pid, matched against process.pid, identifies the runner itself.
+// child host.
 process.env[SUBAGENT_CHILD_ENV] = "1";
 process.env[SUBAGENT_RUNNER_PID_ENV] = String(process.pid);
 
@@ -3152,8 +3151,8 @@ export async function runSubagent(
 			const resultToolName = (event.message as { toolName?: unknown }).toolName;
 			const blockedTool = (typeof resultToolName === "string" && resultToolName.length > 0 ? resultToolName : undefined) ?? toolSnapshot?.tool;
 			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
-			const budgetBlocked = Boolean(configuredToolBudget && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool));
-			if (configuredToolBudget && budgetBlocked) {
+			const budgetBlocked = configuredToolBudget !== undefined && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool);
+			if (budgetBlocked) {
 				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount ?? 0, blockedTool);
 				step.toolBudgetBlocked = true;
 				statusPayload.toolBudget = step.toolBudget;

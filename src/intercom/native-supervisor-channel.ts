@@ -593,20 +593,17 @@ function appendSupervisorReplyEntry(pi: ExtensionAPI, request: PendingSupervisor
 }
 
 function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, params: IntercomParams): PendingSupervisorRequest {
+	const requests = [...pending.values()].filter((request) => request.expectsReply);
 	if (params.replyTo) {
 		const request = pending.get(params.replyTo);
 		if (!request) {
 			// A child stops waiting after its ask timeout and may ask again under a new id. Its first
 			// notice can reach a busy parent after that, so name what can still be answered.
-			const open = [...pending.values()].filter((candidate) => candidate.expectsReply);
-			const current = open.length
-				? ` It was answered, expired or withdrawn. Pending now:\n${open.map(pendingHeader).join("\n")}`
-				: " It was answered, expired or withdrawn. No supervisor requests are pending now.";
-			throw new Error(`No pending supervisor request found for replyTo '${params.replyTo}'.${current}`);
+			const current = requests.length ? `Pending now:\n${requests.map(pendingHeader).join("\n")}` : "No pending supervisor requests.";
+			throw new Error(`No pending supervisor request found for replyTo '${params.replyTo}'. It was answered, expired or withdrawn. ${current}`);
 		}
 		return request;
 	}
-	const requests = [...pending.values()].filter((request) => request.expectsReply);
 	if (params.to) {
 		const normalizedTo = params.to.toLowerCase();
 		const matches = requests.filter((request) =>
@@ -950,7 +947,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				writePrivateAtomicJson(requestFile, { ...stored, expiresAt: now + timeoutMs });
 				request.expiresAt = now + timeoutMs;
 			} catch (error) {
-				// Report once and stop renewing: the ask keeps its current deadline.
 				queuedNotices.delete(id);
 				updateDeliverySubscription();
 				console.error(`Failed to extend supervisor request ${id} while its notice is queued; it keeps its current deadline:`, error);

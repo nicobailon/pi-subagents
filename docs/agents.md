@@ -425,10 +425,10 @@ Field notes:
 | `subagentOnlyExtensions` | Extension paths loaded only in this agent's child sessions. Tools registered there are unavailable to the main agent unless also installed through normal Pi extension configuration. |
 | `model` | Default model. Bare ids prefer the current provider when possible, then unique registry matches. On the two Claude Code adapters this is Claude Code's own alias or id, and a trailing `:level` picks the effort. |
 | `thinking` | Appended as a `:level` suffix at runtime unless a suffix is already present. On the two Claude Code adapters it becomes `--effort`, and a suffix on `model` wins over it. |
-| `systemPromptMode` | `replace` by default; `append` keeps Pi's base prompt. A forked child sends its parent's prompt and gets its agent prompt in its task message. |
-| `inheritProjectContext` | Keeps or strips inherited repository instruction blocks. Has no effect on a forked child. |
-| `inheritGlobalContext` | Keeps or strips the operator's global context file from the Pi config agent directory (e.g. `~/.pi/agent/AGENTS.md`). It has an effect only when `inheritProjectContext` is `true`; otherwise all context files are already disabled. Defaults to `false`. Has no effect on a forked child. |
-| `inheritSkills` | Keeps or strips Pi's discovered skills catalog. For in-process children this includes skills that loaded extensions add; herdr-placed children rely on Pi's `--no-skills`. Has no effect on a forked child. |
+| `systemPromptMode` | `replace` by default; `append` keeps Pi's base prompt. |
+| `inheritProjectContext` | Keeps or strips inherited repository instruction blocks. |
+| `inheritGlobalContext` | Keeps or strips the operator's global context file from the Pi config agent directory (e.g. `~/.pi/agent/AGENTS.md`). It has an effect only when `inheritProjectContext` is `true`; otherwise all context files are already disabled. Defaults to `false`. |
+| `inheritSkills` | Keeps or strips Pi's discovered skills catalog. For in-process children this includes skills that loaded extensions add; herdr-placed children rely on Pi's `--no-skills`. |
 | `defaultContext` | Optional `fresh` or `fork` launch-context preference. An implicit `fork` falls back to `fresh` when the parent has no persisted session file or current leaf; an explicit launch `context: "fork"` remains strict. |
 | `skills` | Selects specific skills for the child, regardless of `inheritSkills`. |
 | `skillPath` | Invocation-private skill files or discovery directories. Relative paths resolve from the agent definition file. Local matches take precedence, while unresolved or unreadable matches fall back to normal skill discovery. This field discovers candidates only; `skills` still selects what the child receives. |

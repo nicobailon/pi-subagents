@@ -64,9 +64,8 @@ export interface AsyncStatusSnapshotNode {
 	updatedAt?: number;
 	endedAt?: number;
 	activity?: AsyncStatusSnapshotActivity;
-	/** Step nodes: the model the child runs on, as its status reports it. */
+	/** Step nodes only: the model and thinking level the child reports. */
 	model?: string;
-	/** Step nodes: the child's thinking level, when its status reports one. */
 	thinking?: ThinkingLevel;
 	hostStep?: AsyncStatusSnapshotHostStep;
 	children?: AsyncStatusSnapshotNode[];
@@ -231,11 +230,10 @@ function activityFor(source: {
  * node reports the bare model and keeps the level in `thinking`.
  */
 function setStepModel(node: AsyncStatusSnapshotNode, ctx: ProjectionContext, ...sources: Array<{ model?: string; thinking?: string } | undefined>): void {
-	const reported = sources.find((source) => source?.model)?.model;
-	const parsed = reported ? splitKnownThinkingSuffix(reported) : undefined;
-	const model = publicOptionalText(parsed?.baseModel, ctx.caps.maxStringLength);
+	const { baseModel, thinkingSuffix } = splitKnownThinkingSuffix(sources.find((source) => source?.model)?.model ?? "");
+	const model = publicOptionalText(baseModel, ctx.caps.maxStringLength);
 	if (model) node.model = model;
-	const thinking = childThinkingLevel(...sources, { thinking: parsed?.thinkingSuffix.slice(1) });
+	const thinking = childThinkingLevel(...sources, { thinking: thinkingSuffix.slice(1) });
 	if (thinking) node.thinking = thinking;
 }
 
