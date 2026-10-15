@@ -1254,6 +1254,25 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 2);
 	});
 
+	it("names each failed parallel child's provider stop text without the workflow fan-out line", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const filtered = { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Blocked by the provider's usage policy." }], model: "mock/model", stopReason: "error", rawStopReason: "content_filter", errorMessage: "Provider finish_reason: content_filter", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } };
+		mockPi.onCall({ exitCode: 1, jsonl: [filtered] });
+		mockPi.onCall({ exitCode: 1, jsonl: [filtered] });
+		const result = await makeExecutor([makeAgent("reviewer"), makeAgent("scout")]).executePublic(
+			"named-parallel-provider-stop",
+			{ workflow: "parallel", args: { tasks: [{ agent: "reviewer", task: "Review src/api" }, { agent: "scout", task: "Map the tests" }] }, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, true);
+		const text = result.content[0]?.text ?? "";
+		const failure = text.slice(text.indexOf("Workflow failed:"));
+		assert.match(failure, /task-1 \(reviewer\) failed: Provider finish_reason: content_filter\nReply text: Blocked by the provider's usage policy\./);
+		assert.match(failure, /task-2 \(scout\) failed: Provider finish_reason: content_filter\nReply text: Blocked/);
+		assert.doesNotMatch(failure, /failed: Run fan-out:/);
+	});
+
 	it("executes a registered mixed foreground workflow without widening session or child authority", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const ctx = makeMinimalCtx(tempDir);
 		// A persistent session's file path is not its SDK session ID.
