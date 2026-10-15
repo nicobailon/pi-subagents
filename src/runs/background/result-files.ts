@@ -103,6 +103,11 @@ function observerIndexPath(resultsDir: string, observer: string, runId: string):
 	return path.join(observerIndexDir(resultsDir, observer), encodedJsonFileName(runId));
 }
 
+/** Present from publication until an observer acknowledges the payload it handled. */
+export function missionObserverIndexPath(resultsDir: string, runId: string): string {
+	return observerIndexPath(resultsDir, MISSION_OBSERVER, runId);
+}
+
 function toolCallIndexDir(resultsDir: string, toolCallId: string): string {
 	return path.join(resultsDir, RESULT_INDEX_DIR, TOOL_CALL_INDEX_DIR, encodeIndexSegment(toolCallId));
 }

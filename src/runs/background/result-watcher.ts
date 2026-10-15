@@ -23,8 +23,8 @@ import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-
 import { resolveWatchPath } from "../../shared/utils.ts";
 import { FileLeaseBusyError } from "../../shared/file-lease.ts";
 import { recordWaitCompletion } from "./wait-completions.ts";
-import { MISSION_BINDING_FILE, syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
-import { acknowledgeMissionObserverSnapshot, missionObserverResultCandidateFiles, promotePendingResultFile, readResultPayload, resultCandidateFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, resultSnapshotReplaced, retireResultSnapshot, withResultRunLease, writeAsyncResultFile, writeResultIndexForData, type ResultSnapshot } from "./result-files.ts";
+import { syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
+import { acknowledgeMissionObserverSnapshot, missionObserverIndexPath, missionObserverResultCandidateFiles, promotePendingResultFile, readResultPayload, resultCandidateFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, resultSnapshotReplaced, retireResultSnapshot, withResultRunLease, writeAsyncResultFile, writeResultIndexForData, type ResultSnapshot } from "./result-files.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
 
@@ -110,7 +110,6 @@ type ResultFileIdentity = {
 	sessionId?: string;
 	completionOwnerId?: string;
 	runId?: string;
-	asyncDir?: string;
 };
 
 interface ResultScanStats {
@@ -137,7 +136,6 @@ function resultFileIdentity(raw: string, file: string): ResultFileIdentity {
 		sessionId: jsonStringProperty(raw, "sessionId"),
 		completionOwnerId: jsonStringProperty(raw, "completionOwnerId"),
 		runId: file.replace(/\.json$/i, ""),
-		asyncDir: jsonStringProperty(raw, "asyncDir"),
 	};
 }
 
@@ -326,7 +324,9 @@ export function createResultWatcher(
 		// files keep their existing diagnostics and compatibility behavior.
 		if (!identity.sessionId) return true;
 		if (ownsResult(identity.sessionId, identity.completionOwnerId)) return true;
-		if (identity.asyncDir && fsApi.existsSync(path.join(identity.asyncDir, MISSION_BINDING_FILE))) return true;
+		// Acknowledgment removes the observer index; gating on the mission binding instead
+		// re-ran mission sync for an unowned result on every scan.
+		if (identity.runId && fsApi.existsSync(missionObserverIndexPath(resultsDir, identity.runId))) return true;
 		if (identity.runId && (observed ?? observedRunIds()).has(identity.runId)) return true;
 		return Boolean(deps.observeCompletion && !deps.observedCompletionRunIds);
 	};
