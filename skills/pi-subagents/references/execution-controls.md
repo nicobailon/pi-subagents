@@ -558,4 +558,6 @@ subagent_supervisor({ action: "pending" })
 
 Native supervisor coordination does not expose generic `intercom` as a fallback. Use `subagent_supervisor` for parent replies.
 
+`subagent`, `subagents_enable`, `subagent_supervisor`, `contact_supervisor`, and `structured_output` are model-only: call them as ordinary model tool calls. Codemode scripts cannot reach them through `tools.*`, `ALL_TOOLS`, or `searchTools`.
+
 If intercom messages do not show up, run `subagent({ action: "doctor" })` or `/subagents-doctor`.

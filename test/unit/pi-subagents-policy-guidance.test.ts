@@ -25,4 +25,12 @@ describe("pi-subagents delegation policy guidance", () => {
 		assert.doesNotMatch(guidance, /delegate[^\n]*(?:most|all) non-trivial requests/i);
 		assert.doesNotMatch(guidance, /use this at the start of non-trivial work/i);
 	});
+
+	it("says which pi-subagents tools codemode scripts cannot call", () => {
+		for (const file of ["skills/pi-subagents/SKILL.md", "skills/pi-subagents/references/execution-controls.md"]) {
+			const text = readProjectFile(file);
+			assert.match(text, /`subagent`, `subagents_enable`, `subagent_supervisor`, `contact_supervisor`, and `structured_output`[^\n]*model-only/, file);
+			assert.match(text, /codemode scripts cannot reach them through `tools\.\*`, `ALL_TOOLS`, or `searchTools`/i, file);
+		}
+	});
 });

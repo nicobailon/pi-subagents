@@ -105,6 +105,7 @@ For an authorized complex delegated workflow, read `prompting-and-roles.md` and
 ## Operating rules
 
 - Avoid duplicate scouts, overlapping writers, and vague prompts without a concrete deliverable.
+- Call `subagent`, `subagents_enable`, `subagent_supervisor`, `contact_supervisor`, and `structured_output` as ordinary model tool calls. They are model-only, so codemode scripts cannot reach them through `tools.*`, `ALL_TOOLS`, or `searchTools`.
 - Keep the parent on the ordinary strong default model. Route workers/scouts to a fast capable tier, serious reviews to a strong tier, and top reasoning to bounded read-only critique.
 - Exact model names are deployment policy. Put them in user/project settings or profiles, not package guidance.
 - Give every child a compact meta-prompt checklist: objective; repo/cwd/ref; authority/edit boundary; relevant files/contracts and constraints; success/acceptance criteria; validation; expected output/report; and stop/ask conditions. See `references/prompting-and-roles.md`.
