@@ -511,9 +511,13 @@ function refreshPendingRequests(pending: Map<string, PendingSupervisorRequest>, 
 	}
 }
 
+function pendingHeader(request: PendingSupervisorRequest): string {
+	return `- ${request.id}: ${request.agent} [${request.runId}#${request.childIndex}] ${request.reason}.`;
+}
+
 function formatPendingLine(request: PendingSupervisorRequest): string {
 	const replyHint = request.expectsReply ? ` Reply: ${supervisorReplyHint(request.id)}` : "";
-	const header = `- ${request.id}: ${request.agent} [${request.runId}#${request.childIndex}] ${request.reason}.${replyHint}`;
+	const header = `${pendingHeader(request)}${replyHint}`;
 	// The request notice can be missed; pending is the parent's only way to read the question again.
 	return request.message ? `${header}\n  ${request.message.replace(/\n/g, "\n  ")}` : header;
 }
@@ -577,7 +581,15 @@ function appendSupervisorReplyEntry(pi: ExtensionAPI, request: PendingSupervisor
 function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, params: IntercomParams): PendingSupervisorRequest {
 	if (params.replyTo) {
 		const request = pending.get(params.replyTo);
-		if (!request) throw new Error(`No pending supervisor request found for replyTo '${params.replyTo}'.`);
+		if (!request) {
+			// A child stops waiting after its ask timeout and may ask again under a new id. Its first
+			// notice can reach a busy parent after that, so name what can still be answered.
+			const open = [...pending.values()].filter((candidate) => candidate.expectsReply);
+			const current = open.length
+				? ` It was answered, expired or withdrawn. Pending now:\n${open.map(pendingHeader).join("\n")}`
+				: " It was answered, expired or withdrawn. No supervisor requests are pending now.";
+			throw new Error(`No pending supervisor request found for replyTo '${params.replyTo}'.${current}`);
+		}
 		return request;
 	}
 	const requests = [...pending.values()].filter((request) => request.expectsReply);

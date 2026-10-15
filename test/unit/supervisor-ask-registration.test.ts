@@ -817,7 +817,12 @@ describe("supervisor ask registration", () => {
 			const first = writeRequest({ sessionId, runId });
 			const tool = tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
 			await assert.rejects(tool.execute("wrong", { action: "reply", to: "different-agent", message: "Approved" }), /No pending supervisor request matches/);
-			await assert.rejects(tool.execute("unknown", { action: "reply", replyTo: "unknown", message: "Approved" }), /No pending supervisor request found/);
+			// A reply to a request that is gone names the one that can still be answered.
+			await assert.rejects(tool.execute("unknown", { action: "reply", replyTo: "unknown", message: "Approved" }), (error: Error) => {
+				assert.match(error.message, /No pending supervisor request found for replyTo 'unknown'\. It was answered, expired or withdrawn\. Pending now:/);
+				assert.match(error.message, new RegExp(`- ${first}: worker \\[${runId}#0\\]`));
+				return true;
+			});
 			assert.equal(channel.pending.has(first), true);
 			const second = writeRequest({ sessionId, runId });
 			await assert.rejects(tool.execute("ambiguous", { action: "reply", message: "Approved" }), /Multiple pending supervisor requests/);
@@ -843,7 +848,7 @@ describe("supervisor ask registration", () => {
 			channel.start();
 			const tool = tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
 			const expired = writeRequest({ sessionId, runId, expiresAt: Date.now() - 1 });
-			await assert.rejects(tool.execute("expired", { action: "reply", replyTo: expired, message: "Too late" }), /No pending supervisor request found/);
+			await assert.rejects(tool.execute("expired", { action: "reply", replyTo: expired, message: "Too late" }), /No pending supervisor request found.*No supervisor requests are pending now\./);
 			const missing = writeRequest({ sessionId, runId });
 			const resolved = writeRequest({ sessionId, runId });
 			await tool.execute("pending", { action: "pending" });
