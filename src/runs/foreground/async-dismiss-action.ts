@@ -7,6 +7,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resultFilePath } from "../background/result-files.ts";
+import { ownsRun } from "../shared/run-ownership.ts";
 
 export function dismissRecoveredWorkflow(
 	state: SubagentState,
@@ -29,7 +30,7 @@ export function dismissRecoveredWorkflow(
 			details: { mode: "management", results: [] },
 		};
 	}
-	if (!state.currentSessionId || status.sessionId !== state.currentSessionId) {
+	if (!ownsRun(state, status.sessionId)) {
 		return {
 			content: [{ type: "text", text: `Recovered workflow '${runId}' was not found in the active session.` }],
 			isError: true,

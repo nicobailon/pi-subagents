@@ -4,6 +4,7 @@ import { readStatus } from "../../shared/utils.ts";
 import type { ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { supervisorChannelDir } from "../shared/child-tool-plan.ts";
 import { controlChildCommand, type CommandOperation } from "../shared/child-commands.ts";
+import { ownsRun } from "../shared/run-ownership.ts";
 
 function commandChildren(state: SubagentState, target: ResolvedSubagentRunId): Array<{ index: number; agent: string }> {
 	if (!state.currentSessionId) throw new Error("Command controls require an owning parent session.");
@@ -17,7 +18,7 @@ function commandChildren(state: SubagentState, target: ResolvedSubagentRunId): A
 		return retained?.children.map(({ index, agent }) => ({ index, agent })) ?? [];
 	}
 	const status = target.location.asyncDir ? readStatus(target.location.asyncDir) : undefined;
-	if (status?.sessionId !== state.currentSessionId) throw new Error("Run is not owned by this session.");
+	if (!status || !ownsRun(state, status.sessionId)) throw new Error("Run is not owned by this session.");
 	return status.steps?.map((step, index) => ({ index, agent: step.agent })) ?? [];
 }
 

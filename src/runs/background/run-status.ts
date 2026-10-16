@@ -36,6 +36,7 @@ import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { workflowAsyncChildSteeringGuidance } from "../shared/workflow-async-child-guidance.ts";
 import { formatWorkflowKeyRevival, projectWorkflowKeyRevival } from "../../workflows/workflow-revival.ts";
 import { capSummaryOutputs } from "../shared/single-output.ts";
+import { ownsRun } from "../shared/run-ownership.ts";
 
 /** A step whose structured output has a path line needs only a short inline preview. */
 const STRUCTURED_PREVIEW_WITH_PATH_CHARS = 500;
@@ -362,6 +363,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
 	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const currentSessionId = deps.state?.currentSessionId ?? undefined;
+	const foreign = (sessionId: string | undefined) => Boolean(currentSessionId) && !ownsRun(deps.state!, sessionId);
 	if (params.view && params.view !== "fleet" && params.view !== "transcript") {
 		return {
 			content: [{ type: "text", text: `Unknown status view: ${params.view}. Valid: fleet, transcript.` }],
@@ -500,7 +502,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				};
 			}
 			if (params.view === "transcript") {
-				if (currentSessionId && diskStatus.sessionId !== currentSessionId) {
+				if (foreign(diskStatus.sessionId)) {
 					return {
 						content: [{ type: "text", text: "Transcript view is only available for async runs owned by the current session." }],
 						isError: true,
@@ -527,7 +529,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				};
 			}
 			if (params.view === "transcript") {
-				if (currentSessionId && status.sessionId !== currentSessionId) {
+				if (foreign(status.sessionId)) {
 					return {
 						content: [{ type: "text", text: "Transcript view is only available for async runs owned by the current session." }],
 						isError: true,
@@ -584,11 +586,13 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				? readWorkflowTerminalProof(asyncDir, status.steps, workflowChildren, validHostStepNodes(status.workflowGraph).length, status.endedAt ?? status.lastUpdate ?? status.startedAt)
 				: undefined;
 			const workflowChildrenByKey = new Map(workflowChildren?.children.map((child) => [child.childId, child]));
+			const inherited = currentSessionId !== undefined && status.sessionId !== currentSessionId && !foreign(status.sessionId);
 			const lines = [
 				`Run: ${status.runId}`,
 				status.toolCallId ? `Tool call: ${status.toolCallId}` : undefined,
 				missionId ? `Mission: ${missionId}` : undefined,
 				`State: ${status.state}`,
+				inherited ? `Owner: inherited from session '${status.sessionId}' (replaced in this process).` : undefined,
 				processTerminal ? `Process terminal: ${processTerminal.state}${processTerminal.reason ? ` (${processTerminal.reason})` : ""}` : undefined,
 				status.capabilityCeiling ? `Capability ceiling: ${status.capabilityCeiling.allowedTools === undefined ? "names unrestricted" : status.capabilityCeiling.allowedTools.length === 0 ? "none" : status.capabilityCeiling.allowedTools.join(", ")}\nExtensions denied: ${status.capabilityCeiling.denyExtensions ? "yes" : "no"} (sources: ${status.capabilityCeiling.sources.join(", ")})` : undefined,
 				status.capabilityAudit ? `Capability audit: ${status.capabilityAudit.removedTools.length} tools removed, ${status.capabilityAudit.removedExtensionCount} extension entries removed` : undefined,
@@ -720,7 +724,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (status.state !== "running") {
 				lines.push(allExternal
 					? hasExternalJobFollowUpHint ? "Resume: use the external-job follow-up hint above." : "Resume: unavailable; external runners do not persist Pi sessions."
-					: formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true, otherSession: Boolean(currentSessionId) && status.sessionId !== currentSessionId }));
+					: formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true, otherSession: foreign(status.sessionId) }));
 			}
 			if (fs.existsSync(logPath)) lines.push(`Log: ${logPath}`);
 			if (fs.existsSync(eventsPath)) lines.push(`Events: ${eventsPath}`);
@@ -782,7 +786,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				if (hasStructuredOutputPath) lines.push(`  Structured output path${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPath}`);
 				lines.push(...formatTimeoutRecoveryLines(child.timeoutRecovery, "  "));
 			}
-			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped", otherSession: Boolean(currentSessionId) && data.sessionId !== currentSessionId }));
+			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped", otherSession: foreign(data.sessionId) }));
 			if (data.summary) lines.push("", capSummaryOutputs(data.summary, data.results));
 			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);
 			if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match the result run id.");

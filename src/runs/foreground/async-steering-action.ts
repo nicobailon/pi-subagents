@@ -9,6 +9,7 @@ import { deliverInterruptRequest, queueRevivalBrief, requestAsyncSteer, type Ste
 import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, steeringReceipt, updateSteeringTarget, waitForSteeringAction } from "../background/steering.ts";
+import { ownsRun } from "../shared/run-ownership.ts";
 
 function steerTargetsAccepted(result: Pick<SteerActionResult, "targets"> | undefined): boolean {
 	const targets = result?.targets ?? [];
@@ -52,7 +53,7 @@ export async function steerAsyncRun(input: {
 	const asyncDir = input.location.asyncDir;
 	const snapshot = input.findPendingAsks ? readStatus(asyncDir) : null;
 	if (snapshot?.mode === "single"
-		&& (!input.state.currentSessionId || snapshot.sessionId === input.state.currentSessionId)
+		&& (!input.state.currentSessionId || ownsRun(input.state, snapshot.sessionId))
 		&& (snapshot.state === "running" || snapshot.state === "queued")
 		&& snapshot.steps?.length === 1 && (input.index === undefined || input.index === 0)
 		&& (snapshot.steps[0]?.status === "running" || snapshot.steps[0]?.status === "pending")) {
@@ -69,7 +70,7 @@ export async function steerAsyncRun(input: {
 	// The read-only snapshot precedes even stale-run reconciliation. An ask arriving
 	// later does not make a runner acknowledgement proof of consumption or unblocking.
 	const status = reconcileAsyncRun(asyncDir, { kill: input.kill }).status;
-	if (input.state.currentSessionId && status?.sessionId !== input.state.currentSessionId) {
+	if (input.state.currentSessionId && !ownsRun(input.state, status?.sessionId)) {
 		return {
 			content: [{ type: "text", text: `Async run '${input.runId}' was not found in the active session.` }],
 			isError: true,
