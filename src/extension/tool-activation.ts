@@ -29,8 +29,8 @@ function hasNativeToolSelection(messages: readonly ToolSelectionMessage[]): bool
 		&& (Object.hasOwn(message, "toolsAdded") || Object.hasOwn(message, "toolsRemoved")));
 }
 
-function setSelection(pi: ExtensionAPI, includeSubagent: boolean, includeLoader: boolean): void {
-	const next = pi.getActiveTools().filter((name) => (includeSubagent || (name !== SUBAGENT_NAME && name !== SUPERVISOR_NAME)) && (includeLoader || name !== LOADER_NAME));
+function setSelection(pi: ExtensionAPI, includeSubagent: boolean, includeLoader: boolean, restore: readonly string[] = []): void {
+	const next = [...pi.getActiveTools(), ...restore].filter((name) => (includeSubagent || (name !== SUBAGENT_NAME && name !== SUPERVISOR_NAME)) && (includeLoader || name !== LOADER_NAME));
 	if (includeSubagent) next.push(SUBAGENT_NAME, SUPERVISOR_NAME);
 	if (includeLoader) next.push(LOADER_NAME);
 	pi.setActiveTools([...new Set(next)]);
@@ -67,17 +67,28 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 	if (hasNativeToolSelection(messages)) {
 		// Replayed here because a package-local pi-ai may be older than the running Pi.
 		const recorded = new Set<string>();
+		const unloadedNames = new Set<string>();
 		for (const message of messages) {
 			if (message.role !== "system") continue;
 			// Pi records an extension unload (update, reload) as a removal of each of its active tools, with no cause.
 			// One that drops bg_wait is that unload, not a choice, so the selection from before it stands.
 			const unloaded = message.toolsRemoved?.some((tool) => tool.name === WAIT_NAME) && !message.toolsAdded?.some((tool) => tool.name === WAIT_NAME);
-			if (!unloaded) for (const tool of message.toolsRemoved ?? []) recorded.delete(tool.name);
+			for (const tool of message.toolsRemoved ?? []) {
+				if (unloaded) unloadedNames.add(tool.name);
+				else recorded.delete(tool.name);
+			}
 			for (const tool of message.toolsAdded ?? []) recorded.add(tool.name);
 		}
 		// "auto" never adds the loader to a transcript that did not declare it: that is itself a tool change.
 		const loaderSelected = mode === "dynamic" || recorded.has(LOADER_NAME);
-		setSelection(pi, recorded.has(SUBAGENT_NAME), loaderSelected);
+		// A new process restores the transcript's tools, where the unload left this extension's tools inactive; only
+		// /reload re-adds them. Restoring them keeps bg_wait declared, so a later unload is recognised too. Tools of
+		// other extensions, and tools excluded for this process (not registered, so not in getAllTools), stay as they are.
+		const source = unloadedNames.size > 0 ? available.find((tool) => tool.name === LOADER_NAME)?.sourceInfo.path : undefined;
+		const restore = source === undefined ? [] : available
+			.filter((tool) => unloadedNames.has(tool.name) && recorded.has(tool.name) && tool.sourceInfo.path === source)
+			.map((tool) => tool.name);
+		setSelection(pi, recorded.has(SUBAGENT_NAME), loaderSelected, restore);
 		return loaderSelected;
 	}
 	// "auto" goes eager only for an empty session; any history keeps the tools it already sent.

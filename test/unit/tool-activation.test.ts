@@ -10,7 +10,7 @@ import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 
 type Handler = (event: any, context: any) => any;
-type Tool = { name: string; description?: string; promptSnippet?: string; parameters?: unknown; execute?: (...args: any[]) => any };
+type Tool = { name: string; description?: string; promptSnippet?: string; parameters?: unknown; execute?: (...args: any[]) => any; sourceInfo?: { path: string } };
 
 const runtimes: Array<{ handlers: Map<string, Handler[]>; context: any }> = [];
 
@@ -35,7 +35,7 @@ function createRuntime(messages: any[] = [], excluded: string[] = [], missingApi
 			if (!excludedNames.has(tool.name)) activeNames = [...new Set([...activeNames, tool.name])];
 		},
 		getAllTools() {
-			return [...tools.values()].filter((tool) => !excludedNames.has(tool.name));
+			return [...tools.values()].filter((tool) => !excludedNames.has(tool.name)).map((tool) => ({ sourceInfo: { path: "pi-subagents" }, ...tool }));
 		},
 		getActiveTools() { return [...activeNames]; },
 		setActiveTools(names: string[]) {
@@ -321,6 +321,36 @@ describe("toolActivation modes", () => {
 			const selectedTools = await startAgent(runtime);
 			for (const name of ["subagents_enable", "subagent"]) assert.equal(selectedTools.includes(name), expected.includes(name), `${label}: ${name}`);
 		}
+	});
+
+	it("brings back the extension's tools an unload left off when a new process restores the transcript", async () => {
+		const extensionTools = ["subagent", "contact_supervisor", "bg_wait", "subagent_supervisor"];
+		// A new process (`pi --continue`) starts with the transcript's tools, which the unload left without this extension's.
+		const restart = async (messages: any[], excluded: string[] = [], restored = ["read"]) => {
+			const runtime = createRuntime(messages, excluded, [], { model: COMPATIBLE });
+			runtime.tools.set("plan_tool", { name: "plan_tool", sourceInfo: { path: "other-extension" } });
+			runtime.select(restored);
+			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
+			return runtime;
+		};
+		const firstUpdate = [declared(["read", "plan_tool", ...extensionTools]), declared([], ["plan_tool", ...extensionTools])];
+		const continued = await restart(firstUpdate);
+		assert.deepEqual(continued.active().sort(), ["bg_wait", "contact_supervisor", "read", "subagent", "subagent_supervisor"]);
+
+		// The next turn declares what is active; a second update then removes it again.
+		const redeclared = continued.active().filter((name) => name !== "read");
+		const again = await restart([...firstUpdate, declared(redeclared), declared([], redeclared)]);
+		assert.ok(again.active().includes("subagent"), "second update: subagent");
+		assert.ok(again.active().includes("bg_wait"), "second update: bg_wait");
+
+		const excluded = await restart(firstUpdate, ["subagent_supervisor"]);
+		assert.ok(excluded.active().includes("bg_wait"), "excluded: bg_wait");
+		assert.equal(excluded.active().includes("subagent_supervisor"), false, "excluded: subagent_supervisor");
+
+		// Without an unload, the transcript's tools stand: bg_wait was never declared here.
+		const unaffected = await restart([declared(["read", "subagent", "contact_supervisor"])], [], ["read", "subagent", "contact_supervisor"]);
+		assert.equal(unaffected.active().includes("bg_wait"), false, "unaffected: bg_wait");
+		assert.ok(unaffected.active().includes("subagent"), "unaffected: subagent");
 	});
 
 	it("rejects an unknown toolActivation value instead of falling back", () => {
