@@ -610,7 +610,7 @@ function stopAsyncRun(
 	const initialStatus = readStatus(location.asyncDir);
 	const initialRunId = initialStatus?.runId ?? location.resolvedId ?? path.basename(location.asyncDir);
 	if (!initialStatus) throw new SubagentRpcError("not_found", `Status file not found for async run '${initialRunId}'.`);
-	if (!ownsRun({ currentSessionId }, initialStatus.sessionId)) {
+	if (!ownsRun(currentSessionId, initialStatus.sessionId)) {
 		throw new SubagentRpcError("not_found", `Async run '${initialRunId}' was not found in the active session.`);
 	}
 
@@ -684,7 +684,7 @@ function stopAsyncRun(
 	}
 	const runId = status?.runId ?? initialRunId;
 	if (!status) throw new SubagentRpcError("not_found", `Status file not found for async run '${runId}'.`);
-	if (!ownsRun({ currentSessionId }, status.sessionId)) {
+	if (!ownsRun(currentSessionId, status.sessionId)) {
 		throw new SubagentRpcError("not_found", `Async run '${runId}' was not found in the active session.`);
 	}
 	const pausedWholeRun = status.state === "paused" && childId === undefined;

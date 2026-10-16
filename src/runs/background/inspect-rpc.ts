@@ -352,7 +352,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			status = reconcileAsyncRun(asyncDir, { resultsDir, kill: deps.kill, now: deps.now }).status ?? readStatus(asyncDir);
 		}
 		if (!status) return errorReply(request, "stale", `Async run '${request.asyncId}' artifacts are no longer available.`);
-		if (!ownsRun({ currentSessionId }, status.sessionId)) {
+		if (!ownsRun(currentSessionId, status.sessionId)) {
 			return errorReply(request, "foreign_session", "Inspection is only available for async runs owned by the current session.");
 		}
 
@@ -361,7 +361,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			: findChildNode(status, asyncDir, request.childId);
 		if ("error" in node) return errorReply(request, "not_found", node.error);
 		if (node.asyncDir !== asyncDir) {
-			if (!ownsRun({ currentSessionId }, node.status.sessionId)) {
+			if (!ownsRun(currentSessionId, node.status.sessionId)) {
 				return errorReply(request, "foreign_session", "Inspection is only available for async runs owned by the current session.");
 			}
 			reconcileAsyncRun(node.asyncDir, { resultsDir, kill: deps.kill, now: deps.now });

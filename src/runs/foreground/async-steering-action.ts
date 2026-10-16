@@ -53,7 +53,7 @@ export async function steerAsyncRun(input: {
 	const asyncDir = input.location.asyncDir;
 	const snapshot = input.findPendingAsks ? readStatus(asyncDir) : null;
 	if (snapshot?.mode === "single"
-		&& (!input.state.currentSessionId || ownsRun(input.state, snapshot.sessionId))
+		&& (!input.state.currentSessionId || ownsRun(input.state.currentSessionId, snapshot.sessionId))
 		&& (snapshot.state === "running" || snapshot.state === "queued")
 		&& snapshot.steps?.length === 1 && (input.index === undefined || input.index === 0)
 		&& (snapshot.steps[0]?.status === "running" || snapshot.steps[0]?.status === "pending")) {
@@ -70,7 +70,7 @@ export async function steerAsyncRun(input: {
 	// The read-only snapshot precedes even stale-run reconciliation. An ask arriving
 	// later does not make a runner acknowledgement proof of consumption or unblocking.
 	const status = reconcileAsyncRun(asyncDir, { kill: input.kill }).status;
-	if (input.state.currentSessionId && !ownsRun(input.state, status?.sessionId)) {
+	if (input.state.currentSessionId && !ownsRun(input.state.currentSessionId, status?.sessionId)) {
 		return {
 			content: [{ type: "text", text: `Async run '${input.runId}' was not found in the active session.` }],
 			isError: true,

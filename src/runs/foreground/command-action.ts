@@ -18,7 +18,7 @@ function commandChildren(state: SubagentState, target: ResolvedSubagentRunId): A
 		return retained?.children.map(({ index, agent }) => ({ index, agent })) ?? [];
 	}
 	const status = target.location.asyncDir ? readStatus(target.location.asyncDir) : undefined;
-	if (!status || !ownsRun(state, status.sessionId)) throw new Error("Run is not owned by this session.");
+	if (!status || !ownsRun(state.currentSessionId, status.sessionId)) throw new Error("Run is not owned by this session.");
 	return status.steps?.map((step, index) => ({ index, agent: step.agent })) ?? [];
 }
 

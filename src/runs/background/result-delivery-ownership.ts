@@ -18,7 +18,7 @@ export function createResultDeliveryOwnership(state: ResultDeliveryState): Resul
 		owns(sessionId, completionOwnerId) {
 			const owner = currentOwner();
 			if (!owner || completionOwnerId !== owner) return false;
-			return ownsRun(state, sessionId);
+			return ownsRun(state.currentSessionId, sessionId);
 		},
 		claimedSessionIds() {
 			if (!currentOwner() || !state.currentSessionId) return [];

@@ -30,7 +30,7 @@ export function dismissRecoveredWorkflow(
 			details: { mode: "management", results: [] },
 		};
 	}
-	if (!ownsRun(state, status.sessionId)) {
+	if (!ownsRun(state.currentSessionId, status.sessionId)) {
 		return {
 			content: [{ type: "text", text: `Recovered workflow '${runId}' was not found in the active session.` }],
 			isError: true,

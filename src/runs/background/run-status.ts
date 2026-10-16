@@ -363,7 +363,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
 	const resultsDir = deps.resultsDir ?? DIRS.results;
 	const currentSessionId = deps.state?.currentSessionId ?? undefined;
-	const foreign = (sessionId: string | undefined) => Boolean(currentSessionId) && !ownsRun(deps.state!, sessionId);
+	const foreign = (sessionId: string | undefined) => Boolean(currentSessionId) && !ownsRun(currentSessionId, sessionId);
 	if (params.view && params.view !== "fleet" && params.view !== "transcript") {
 		return {
 			content: [{ type: "text", text: `Unknown status view: ${params.view}. Valid: fleet, transcript.` }],
@@ -586,7 +586,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				? readWorkflowTerminalProof(asyncDir, status.steps, workflowChildren, validHostStepNodes(status.workflowGraph).length, status.endedAt ?? status.lastUpdate ?? status.startedAt)
 				: undefined;
 			const workflowChildrenByKey = new Map(workflowChildren?.children.map((child) => [child.childId, child]));
-			const inherited = currentSessionId !== undefined && status.sessionId !== currentSessionId && !foreign(status.sessionId);
+			const inherited = status.sessionId !== currentSessionId && ownsRun(currentSessionId, status.sessionId);
 			const lines = [
 				`Run: ${status.runId}`,
 				status.toolCallId ? `Tool call: ${status.toolCallId}` : undefined,

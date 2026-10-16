@@ -442,7 +442,7 @@ function requestMatchesOwner(request: SupervisorRequest, state: Pick<SubagentSta
 	if (!state.currentSessionId || inheritedSessionIds(state.currentSessionId).length === 0) return false;
 	if (!request.runId || request.runId.startsWith(".") || path.basename(request.runId) !== request.runId) return false;
 	try {
-		return ownsRun(state, readStatus(path.join(ASYNC_DIR, request.runId))?.sessionId);
+		return ownsRun(state.currentSessionId, readStatus(path.join(ASYNC_DIR, request.runId))?.sessionId);
 	} catch {
 		return false;
 	}

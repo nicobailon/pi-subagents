@@ -484,8 +484,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
 	const runId = status?.runId ?? result?.runId ?? result?.id ?? location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
 	const mode = resumeTargetMode(status, result);
-	const owner = { currentSessionId: options.sessionId ?? null };
-	if (options.sessionId && ((status && !ownsRun(owner, status.sessionId)) || (result && !ownsRun(owner, result.sessionId)))) {
+	if (options.sessionId && ((status && !ownsRun(options.sessionId, status.sessionId)) || (result && !ownsRun(options.sessionId, result.sessionId)))) {
 		throw new Error(`Async run '${runId}' was not found in the active session.`);
 	}
 	if (recoveryDescriptor && recoveryDescriptor.sourceRunId !== runId) throw new Error(`Async run '${runId}' has a recovery descriptor for a different source run.`);
