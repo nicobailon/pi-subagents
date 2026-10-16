@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
+import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
 
 function writeJson(filePath: string, value: object): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -914,6 +915,37 @@ describe("async resume lookup", () => {
 				() => resolveAsyncResumeTarget({ id: "mixed-reverse" }, { asyncDirRoot: asyncRoot, resultsDir }, { requireSessionFile: false, sessionId: "session-a" }),
 				/not found in the active session/,
 			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("revives a run of a session this process replaced, and still refuses other sessions' runs", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-inherited-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "child.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			const [replaced, successor, unrelated] = ["replaced", "successor", "unrelated"].map((name) => path.join(root, `${name}.jsonl`));
+			writeJson(path.join(asyncRoot, "failed-child", "status.json"), {
+				runId: "failed-child",
+				sessionId: replaced,
+				mode: "single",
+				state: "failed",
+				startedAt: 100,
+				endedAt: 200,
+				cwd: root,
+				sessionFile,
+				steps: [{ agent: "worker", status: "failed", sessionFile }],
+			});
+			const resume = (sessionId: string) => resolveAsyncResumeTarget({ id: "failed-child" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId });
+			assert.throws(() => resume(successor), /not found in the active session/);
+			recordSessionReplacement(successor, replaced);
+			const target = resume(successor);
+			assert.equal(target.kind, "revive");
+			assert.equal(target.sessionFile, sessionFile);
+			assert.throws(() => resume(unrelated), /not found in the active session/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
