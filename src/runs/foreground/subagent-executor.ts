@@ -4658,7 +4658,7 @@ function workflowChildResult(
 		: receiptOutput;
 	const childError = result.details.results.map((child) => child.error).find((error): error is string => Boolean(error));
 	const stopped = result.details.results.some((child) => child.stopped);
-	// A stopped child's receipt text carries the run fan-out annotation; report the structured stop reason instead.
+	// A stopped child reports its structured stop reason alone, without the receipt's output block.
 	const failureErrorBase = stopped && childError
 		? childError
 		: childError && receiptOutput
