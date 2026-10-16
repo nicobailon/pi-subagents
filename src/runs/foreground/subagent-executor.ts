@@ -6573,7 +6573,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							}
 							workflowLaunchObservers.set(childRequest, (launch) => {
 								childLaunches.set(key, { agent: launch.agent, ...(launch.runId ? { runId: launch.runId } : {}) });
-								sendWorkflowProgress();
+								// Telemetry must not decide the child's outcome, as with onTrace in scripted-workflow.
+								try {
+									sendWorkflowProgress();
+								} catch (error) {
+									console.error("Workflow progress update failed:", error);
+								}
 								recordMissionWorkflowChild(missionBinding, foregroundWorkflowRunId, key, {
 									status: "running",
 									agent: launch.agent,
