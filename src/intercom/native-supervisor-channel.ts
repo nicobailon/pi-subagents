@@ -440,7 +440,12 @@ function requestMatchesOwner(request: SupervisorRequest, state: Pick<SubagentSta
 	// so an ask from a replaced session's async run is matched through that run's recorded owner.
 	if (!state.currentSessionId || inheritedSessionIds(state.currentSessionId).length === 0) return false;
 	if (!request.runId || request.runId.startsWith(".") || path.basename(request.runId) !== request.runId) return false;
-	return ownsRun(state, readStatus(path.join(ASYNC_DIR, request.runId))?.sessionId);
+	// The poll runs from timers and watchers, where a throw exits Pi; an unreadable status is not owned.
+	try {
+		return ownsRun(state, readStatus(path.join(ASYNC_DIR, request.runId))?.sessionId);
+	} catch {
+		return false;
+	}
 }
 
 function rememberedForegroundChild(request: SupervisorRequest, state: SubagentState) {

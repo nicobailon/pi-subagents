@@ -7,8 +7,7 @@ import { deliverAsyncRunStop } from "../runs/foreground/async-stop-action.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
-import { inheritedSessionIds } from "../shared/session-succession.ts";
-import { ownsRun } from "../runs/shared/run-ownership.ts";
+import { ownerSessionIds, ownsRun } from "../runs/shared/run-ownership.ts";
 import {
 	type AsyncJobStep,
 	type Details,
@@ -195,8 +194,7 @@ function buildFleetStatus(
 	}
 
 	let totalActive = 0;
-	// Async runs of sessions this process replaced on the way to this one belong to it too.
-	const asyncOwners = new Set([authoritativeSessionId, ...inheritedSessionIds(authoritativeSessionId)]);
+	const asyncOwners = ownerSessionIds(authoritativeSessionId);
 	const candidates: FleetCandidate[] = [];
 	const addCandidate = (candidate: FleetCandidate) => {
 		totalActive += 1;
@@ -225,7 +223,7 @@ function buildFleetStatus(
 		}
 	}
 	for (const job of state.asyncJobs.values()) {
-		if (job.sessionId === undefined || !asyncOwners.has(job.sessionId) || !activeState(job.status)) continue;
+		if (!asyncOwners.has(job.sessionId) || !activeState(job.status)) continue;
 		const startedAt = job.startedAt ?? job.updatedAt;
 		if (job.mode === "workflow") {
 			addCandidate({

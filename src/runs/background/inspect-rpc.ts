@@ -8,6 +8,7 @@ import { completionReplayPath, readCompletionArchive, readCompletionReplay } fro
 import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
+import { ownsRun } from "../shared/run-ownership.ts";
 
 /** On-demand inspection of current-session async children. Re-reads canonical artifacts after the same reconciliation as status; nothing is persisted or broadcast. */
 
@@ -351,7 +352,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			status = reconcileAsyncRun(asyncDir, { resultsDir, kill: deps.kill, now: deps.now }).status ?? readStatus(asyncDir);
 		}
 		if (!status) return errorReply(request, "stale", `Async run '${request.asyncId}' artifacts are no longer available.`);
-		if (status.sessionId !== currentSessionId) {
+		if (!ownsRun({ currentSessionId }, status.sessionId)) {
 			return errorReply(request, "foreign_session", "Inspection is only available for async runs owned by the current session.");
 		}
 
@@ -360,7 +361,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			: findChildNode(status, asyncDir, request.childId);
 		if ("error" in node) return errorReply(request, "not_found", node.error);
 		if (node.asyncDir !== asyncDir) {
-			if (node.status.sessionId !== currentSessionId) {
+			if (!ownsRun({ currentSessionId }, node.status.sessionId)) {
 				return errorReply(request, "foreign_session", "Inspection is only available for async runs owned by the current session.");
 			}
 			reconcileAsyncRun(node.asyncDir, { resultsDir, kill: deps.kill, now: deps.now });
@@ -393,7 +394,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			}
 		}
 
-		const result = readResultOutput(resultsDir, currentSessionId, node.status.runId, node.stepIndex, trustedRoots, step?.agent, deps.now ?? Date.now, deps.state?.trustedSessionFileRoot);
+		const result = readResultOutput(resultsDir, node.status.sessionId ?? currentSessionId, node.status.runId, node.stepIndex, trustedRoots, step?.agent, deps.now ?? Date.now, deps.state?.trustedSessionFileRoot);
 		const failedText = step?.error ?? node.status.error;
 		if (result.output === undefined && result.errorText === undefined && failedText !== undefined) {
 			return errorReply(request, "internal", "Inspection could not read the async run artifacts.");

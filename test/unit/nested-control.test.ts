@@ -19,6 +19,7 @@ import { isActiveAsyncState } from "../../src/runs/background/active-run-index.t
 import { readProcessTerminal } from "../../src/runs/background/process-terminal.ts";
 import { readStatus } from "../../src/shared/utils.ts";
 import { interruptRequestPath } from "../../src/runs/background/control-channel.ts";
+import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
 
 const routeRoots: string[] = [];
 const fanoutListenerCleanupKey = "__piSubagentFanoutChildNestedControlInboxCleanups";
@@ -522,6 +523,53 @@ describe("nested control routing", () => {
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /outside trusted nested session roots/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("shows the transcript of an async run inherited from a session this process replaced", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inherited-transcript-"));
+		const runId = `inherited-transcript-${randomUUID()}`;
+		try {
+			const successorSessionFile = path.join(root, "successor.jsonl");
+			const replacedSessionFile = path.join(root, "replaced.jsonl");
+			recordSessionReplacement(successorSessionFile, replacedSessionFile);
+			const sessionFile = path.join(root, "replaced", runId, "run-0", "session.jsonl");
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ message: { role: "assistant", content: "INHERITED_SESSION_LINE" } })}\n`);
+			fs.mkdirSync(path.join(ASYNC_DIR, runId), { recursive: true });
+			fs.writeFileSync(path.join(ASYNC_DIR, runId, "status.json"), JSON.stringify({ runId, sessionId: replacedSessionFile, mode: "single", state: "complete", startedAt: 100, lastUpdate: 200, steps: [{ agent: "worker", status: "complete", sessionFile }] }));
+			const state = createState();
+			state.currentSessionId = successorSessionFile;
+
+			const result = await createExecutor(state).execute("transcript", { action: "status", id: runId, index: 0, view: "transcript" }, new AbortController().signal, undefined, ctx(root, successorSessionFile));
+
+			assert.match(text(result), /INHERITED_SESSION_LINE/);
+		} finally {
+			fs.rmSync(path.join(ASYNC_DIR, runId), { recursive: true, force: true });
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("trusts nested session files under the root of a session this process replaced, and no other session's", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-terminal-inherited-"));
+		try {
+			const successorSessionFile = path.join(root, "successor.jsonl");
+			recordSessionReplacement(successorSessionFile, path.join(root, "replaced.jsonl"));
+			const resume = (owner: string) => {
+				const runId = `nested-${owner}-resume`;
+				const sessionFile = path.join(root, owner, runId, "run-0", "session.jsonl");
+				fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+				fs.writeFileSync(sessionFile, "");
+				const route = createNestedRun(runId, "complete", { sessionFile });
+				return createExecutor(stateWithNestedRoute(route), [{ name: "worker", description: "Worker", prompt: "Do work" }])
+					.execute("resume", { action: "resume", id: runId, message: "continue" }, new AbortController().signal, undefined, ctx(root, successorSessionFile));
+			};
+
+			// Past the trust check, revival stops at the missing recovery descriptor.
+			assert.match(text(await resume("replaced")), /missing its required recovery identity/);
+			assert.match(text(await resume("unrelated")), /outside trusted nested session roots/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

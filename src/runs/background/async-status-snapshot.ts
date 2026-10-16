@@ -1,5 +1,5 @@
 import type { AsyncJobState, SubagentState } from "../../shared/types.ts";
-import { inheritedSessionIds } from "../../shared/session-succession.ts";
+import { ownerSessionIds } from "../shared/run-ownership.ts";
 import {
 	projectAsyncStatusSnapshot as buildAsyncStatusSnapshot,
 	type AsyncStatusSnapshotOptions,
@@ -28,14 +28,13 @@ export { buildAsyncStatusSnapshot };
 
 export function asyncStatusSnapshotJobsForState(state: SubagentState | undefined, sessionId: string | null | undefined): AsyncJobState[] {
 	if (!state || !sessionId || state.currentSessionId !== sessionId) return [];
-	// Also the runs of sessions this process replaced on the way to sessionId (they belong to it).
-	const owners = new Set([sessionId, ...inheritedSessionIds(sessionId)]);
+	const owners = ownerSessionIds(sessionId);
 	const jobs = new Map<string, AsyncJobState>();
 	for (const job of state.asyncJobs.values()) {
-		if (job.sessionId !== undefined && owners.has(job.sessionId)) jobs.set(job.asyncId, job);
+		if (owners.has(job.sessionId)) jobs.set(job.asyncId, job);
 	}
 	for (const job of state.fleetJobs?.values() ?? []) {
-		if (job.sessionId !== undefined && owners.has(job.sessionId) && !jobs.has(job.asyncId)) jobs.set(job.asyncId, job);
+		if (owners.has(job.sessionId) && !jobs.has(job.asyncId)) jobs.set(job.asyncId, job);
 	}
 	return [...jobs.values()];
 }

@@ -19,6 +19,7 @@ import { recordWaitCompletion } from "../../src/runs/background/wait-completions
 import { completionArchivePath, completionReplayPath } from "../../src/runs/background/completion-replay.ts";
 import { formatOutputArtifactContent } from "../../src/shared/artifacts.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
+import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
 
 const SESSION_ID = "session-current";
 
@@ -129,6 +130,20 @@ describe("inspect-rpc resolution and ownership", () => {
 		assert.equal(reply.messages, undefined);
 		assert.equal(reply.task, undefined);
 		assert.equal(reply.finalOutput, undefined);
+	});
+	it("inspects a run inherited from a session this process replaced", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-inherited-"));
+		recordSessionReplacement(SESSION_ID, "session-replaced");
+		const { resultsDir } = makeRun(root, {
+			runId: "run-inherited",
+			sessionId: "session-replaced",
+			sessionMessages: [userMessage("Inherited task"), assistantMessage("Done.")],
+			resultPayload: { summary: "Inherited summary", results: [{ agent: "worker", output: "inherited answer", success: true }] },
+		});
+		const reply = buildInspectReply({ requestId: "r-inherited", asyncId: "run-inherited" }, makeDeps(root, resultsDir));
+		assert.equal(reply.error, undefined);
+		assert.equal(reply.task, "Inherited task");
+		assert.equal(reply.finalOutput, "Inherited summary");
 	});
 	it("returns no_active_session when the request cannot be attributed", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-nosession-"));

@@ -869,6 +869,11 @@ describe("native supervisor channel", () => {
 		}
 		const inheritedAsk = writeRequest({ sessionId: `session-${randomUUID()}`, runId: inheritedRun, message: "Inherited question" });
 		const foreignAsk = writeRequest({ sessionId: `session-${randomUUID()}`, runId: foreignRun, message: "Foreign question" });
+		const unreadableRun = `run-${randomUUID()}`;
+		fs.mkdirSync(path.join(ASYNC_DIR, unreadableRun), { recursive: true });
+		fs.writeFileSync(path.join(ASYNC_DIR, unreadableRun, "status.json"), "{");
+		createdChannels.push(path.join(ASYNC_DIR, unreadableRun));
+		writeRequest({ sessionId: `session-${randomUUID()}`, runId: unreadableRun, message: "Unreadable question" });
 		recordSessionReplacement(currentFile, previousFile);
 		const tools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }> }> }>();
 		const ctx = { cwd: process.cwd(), hasUI: false, sessionManager: { getSessionId: () => currentRuntimeId, getSessionFile: () => currentFile, getEntries: () => [] } };
@@ -886,6 +891,7 @@ describe("native supervisor channel", () => {
 			const pending = await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
 			assert.match(pending.content[0]!.text, /Inherited question/);
 			assert.doesNotMatch(pending.content[0]!.text, /Foreign question/);
+			assert.doesNotMatch(pending.content[0]!.text, /Unreadable question/);
 
 			await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: inheritedAsk, message: "Go ahead" });
 			assert.equal((JSON.parse(fs.readFileSync(replyFile(inheritedRun, inheritedAsk), "utf-8")) as { message?: string }).message, "Go ahead");

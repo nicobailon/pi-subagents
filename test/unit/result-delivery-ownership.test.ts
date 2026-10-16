@@ -33,4 +33,13 @@ describe("result delivery ownership", () => {
 		assert.equal(ownership.owns("bound-0", OWNER), false);
 		assert.equal(ownership.owns("bound-1", OWNER), true);
 	});
+
+	it("forgets the oldest recorded replacements once a long-lived process has recorded many", () => {
+		const state = { currentSessionId: "cap-1" as string | null, completionOwnerId: OWNER };
+		const ownership = createResultDeliveryOwnership(state);
+		recordSessionReplacement("cap-1", "cap-0");
+		assert.deepEqual(ownership.claimedSessionIds(), ["cap-0"]);
+		for (let index = 0; index < 64; index += 1) recordSessionReplacement(`cap-later-${index}`, `cap-earlier-${index}`);
+		assert.deepEqual(ownership.claimedSessionIds(), []);
+	});
 });

@@ -98,6 +98,7 @@ import {
 } from "./workflow-foreground-steering.ts";
 import { stopAsyncRun } from "./async-stop-action.ts";
 import { dismissRecoveredWorkflow } from "./async-dismiss-action.ts";
+import { inheritedSessionIds } from "../../shared/session-succession.ts";
 import { promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletion } from "./workflow-detach-reconcile.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
@@ -620,10 +621,10 @@ function nestedResolutionScopeForExecutor(deps: ExecutorDeps): NestedRunResoluti
 	};
 }
 
-function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps): string[] {
+function trustedSessionRoots(parentSessionFile: string | null, deps: ExecutorDeps): string[] {
 	const roots = deps.config.defaultSessionDir ? [path.resolve(deps.expandTilde(deps.config.defaultSessionDir))] : [];
-	const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-	if (parentSessionFile) roots.push(deps.getSubagentSessionRoot(parentSessionFile));
+	// Inherited runs keep their children under the root of the session that launched them.
+	if (parentSessionFile) for (const sessionFile of [parentSessionFile, ...inheritedSessionIds(parentSessionFile)]) roots.push(deps.getSubagentSessionRoot(sessionFile));
 	return [...new Set(roots)];
 }
 
@@ -1895,11 +1896,7 @@ function resolveRequestedResumeTarget(params: SubagentParamsLike, deps: Executor
 		if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") return { kind: "live-nested", target: resolved };
 		const externalJobTarget = resolveNestedExternalJobResumeTarget(resolved, params, deps);
 		if (externalJobTarget) return externalJobTarget;
-		const trustedSessionRoots = [
-			...(deps.config.defaultSessionDir ? [path.resolve(deps.expandTilde(deps.config.defaultSessionDir))] : []),
-			...(parentSessionFile ? [deps.getSubagentSessionRoot(parentSessionFile)] : []),
-		];
-		return resolveNestedResumeTarget(resolved, trustedSessionRoots);
+		return resolveNestedResumeTarget(resolved, trustedSessionRoots(parentSessionFile, deps));
 	}
 	return resolveResumeTarget(params, deps.state, { asyncRequireSessionFile: false });
 }
@@ -5591,7 +5588,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const toolCallId = _id;
 				const workflowSessionRoot = requestParams.sessionDir
 					? path.resolve(deps.expandTilde(requestParams.sessionDir))
-					: trustedSessionRootsForStatus(ctx, deps)[0];
+					: trustedSessionRoots(ctx.sessionManager.getSessionFile() ?? null, deps)[0];
 				const asyncDir = path.join(DIRS.async, workflowRunId);
 				const resultPath = resultFilePath(DIRS.results, workflowRunId);
 				const statusPath = path.join(asyncDir, "status.json");
@@ -7104,7 +7101,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					};
 				};
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
-				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
+				const sessionRoots = trustedSessionRoots(ctx.sessionManager.getSessionFile() ?? null, deps);
 				if (action === "debug.run") {
 					if (!targetRunId && !hasDirectoryTarget) {
 						return withBudget({ content: [{ type: "text", text: "action='debug.run' requires id, runId, or dir." }], isError: true, details: { mode: "management", results: [] } });
