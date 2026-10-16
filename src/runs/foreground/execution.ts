@@ -45,6 +45,7 @@ import {
 	hasEmptyTerminalAssistantResponse,
 	formatEmptyTerminalAssistantResponseError,
 	extractToolArgsPreview,
+	assistantMessageError,
 	extractTextFromContent,
 	MAX_STREAMED_RECENT_TOOLS,
 	boundStreamedRecentTools,
@@ -1132,7 +1133,7 @@ async function runSingleAttempt(
 							if (modelVerificationError && !result.error) result.error = modelVerificationError;
 						}
 					}
-					if (evt.message.errorMessage) assistantError = evt.message.errorMessage;
+					if (evt.message.errorMessage) assistantError = assistantMessageError(evt.message);
 					else if (hasToolCall && evt.message.stopReason === "toolUse") {
 						// A recovered request can finish via a terminating tool, without a text stop.
 						assistantError = undefined;

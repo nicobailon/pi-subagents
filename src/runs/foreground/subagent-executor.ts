@@ -4649,13 +4649,16 @@ function workflowChildResult(
 	forcedTerminalOutcome?: WorkflowTerminalOutcome,
 ): WorkflowScriptChildResult {
 	const running = missionWorkflowChildStatus(result) === "running";
-	const receiptOutput = result.content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join("\n");
+	// The receipt opens with the workflow-wide run fan-out line, which says nothing about this child.
+	const fanoutPrefix = result.details.runFanoutBudget ? `${formatRunFanoutBudget(result.details.runFanoutBudget)}\n` : undefined;
+	const fullReceipt = result.content.map((part) => part.type === "text" ? part.text : "").filter(Boolean).join("\n");
+	const receiptOutput = fanoutPrefix && fullReceipt.startsWith(fanoutPrefix) ? fullReceipt.slice(fanoutPrefix.length) : fullReceipt;
 	const output = running ? "" : result.details.results.length === 1 && result.details.results[0]?.finalOutput !== undefined
 		? result.details.results[0].finalOutput
 		: receiptOutput;
 	const childError = result.details.results.map((child) => child.error).find((error): error is string => Boolean(error));
 	const stopped = result.details.results.some((child) => child.stopped);
-	// A stopped child's receipt text carries the run fan-out annotation; report the structured stop reason instead.
+	// A stopped child reports its structured stop reason alone, without the receipt's output block.
 	const failureErrorBase = stopped && childError
 		? childError
 		: childError && receiptOutput
@@ -6484,6 +6487,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowHostSteps = new Map<string, HostStepNode>();
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [], ...(workflowResource ? { resource: workflowResource.provenance } : {}) };
 			const childProgress = new Map<string, ReturnType<typeof workflowChildProgress>>();
+			const childLaunches = new Map<string, { agent: string; runId?: string }>();
 			let activityTimer: ReturnType<typeof setTimeout> | undefined;
 			let lastProgressAt = 0;
 			let workflowProgressClosed = false;
@@ -6494,7 +6498,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (activityTimer) clearTimeout(activityTimer);
 				activityTimer = undefined;
 				lastProgressAt = Date.now();
-				const liveWorkflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "running", inventoryComplete: false, trace: liveWorkflow.trace, progress: childProgress });
+				const liveWorkflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "running", inventoryComplete: false, trace: liveWorkflow.trace, progress: childProgress, launches: childLaunches });
 				onUpdate?.(workflowProgressUpdate(foregroundWorkflowRunId, chatProgress, liveWorkflow, liveWorkflowChildren, workflowPreflight));
 			};
 			try {
@@ -6572,11 +6576,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (childAgent?.runner?.type === "external-cli" || childAgent?.runner?.type === "external-job") throw new Error("Workflow child permit supports native Pi children only.");
 								workflowPermitContexts.set(childRequest, { child: { permit: delegatedWorkflowPermit, workflowRunId: foregroundWorkflowRunId, childKey: key } });
 							}
-							workflowLaunchObservers.set(childRequest, (launch) => recordMissionWorkflowChild(missionBinding, foregroundWorkflowRunId, key, {
-								status: "running",
-								agent: launch.agent,
-								...(launch.sessionFile ? { sessionPath: launch.sessionFile } : {}),
-							}));
+							workflowLaunchObservers.set(childRequest, (launch) => {
+								childLaunches.set(key, { agent: launch.agent, ...(launch.runId ? { runId: launch.runId } : {}) });
+								// Telemetry must not decide the child's outcome, as with onTrace in scripted-workflow.
+								try {
+									sendWorkflowProgress();
+								} catch (error) {
+									console.error("Workflow progress update failed:", error);
+								}
+								recordMissionWorkflowChild(missionBinding, foregroundWorkflowRunId, key, {
+									status: "running",
+									agent: launch.agent,
+									...(launch.sessionFile ? { sessionPath: launch.sessionFile } : {}),
+								});
+							});
 							return execute(randomUUID(), childRequest, workflowSignal, (update) => {
 								const progress = update.details.progress?.[0];
 								if (!progress) return;

@@ -496,7 +496,16 @@ const CONTEXT_OVERFLOW_PATTERNS = [
 	/context.*overflow/i,
 ];
 
-export function isContextOverflow(error: string | undefined): boolean {
+/** Separates an error from the reply text appended to it; classification reads only the part before it. */
+export const ERROR_REPLY_TEXT_SEPARATOR = "\nReply text: ";
+
+/** The part of a child error that a classifier may read: everything before any appended reply text. */
+export function errorWithoutReplyText(error: string | undefined): string | undefined {
+	return error?.split(ERROR_REPLY_TEXT_SEPARATOR, 1)[0];
+}
+
+export function isContextOverflow(fullError: string | undefined): boolean {
+	const error = errorWithoutReplyText(fullError);
 	if (!error) return false;
 	if (/^[\w.:@/-]+ failed (?:(?:\(exit \d+\):)|(?:with exit code \d+))(?:\s|$)/i.test(error.trim())) return false;
 	return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => pattern.test(error));

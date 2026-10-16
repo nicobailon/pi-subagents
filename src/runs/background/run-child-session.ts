@@ -7,7 +7,7 @@
  */
 import type { Message } from "@earendil-works/pi-ai";
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
-import { SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse } from "../../shared/utils.ts";
+import { SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, assistantMessageError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse } from "../../shared/utils.ts";
 import { qualifyModelWithProvider } from "../../shared/model-info.ts";
 import type { EffectsProjection, RuntimeAcknowledgedChildExtensions, SubagentOutputState, ToolBudgetState, Usage } from "../../shared/types.ts";
 import {
@@ -519,7 +519,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 						if (modelVerificationError && !error) error = modelVerificationError;
 					}
 				}
-				if (event.message.errorMessage) assistantError = event.message.errorMessage;
+				if (event.message.errorMessage) assistantError = assistantMessageError(event.message);
 				else if (hasToolCall && event.message.stopReason === "toolUse") {
 					// A recovered request can finish via a terminating tool, without a text stop.
 					assistantError = undefined;
