@@ -59,6 +59,8 @@ export function workflowChildSummary(input: {
 	steps?: NonNullable<AsyncStatus["steps"]>;
 	/** In-memory snapshots from synchronous child callbacks, keyed by workflow key. */
 	progress?: ReadonlyMap<string, WorkflowChildLiveProgress>;
+	/** Agent and run id each child launched with, keyed by workflow key; known before an async child settles. */
+	launches?: ReadonlyMap<string, { agent: string; runId?: string }>;
 }): WorkflowChildSummary {
 	const rows = new Map<string, WorkflowChildSummary["children"][number]>();
 	const runningAsyncKeys = new Set(input.children?.filter((child) => child.state === "running").map((child) => child.key));
@@ -119,6 +121,15 @@ export function workflowChildSummary(input: {
 		for (const [key, row] of rows) {
 			if (!TERMINAL_STATES.has(row.state) && !runningAsyncKeys.has(key)) rows.set(key, { ...row, state: input.workflowState === "stopped" ? "stopped" : "failed" });
 		}
+	}
+	for (const [key, launch] of input.launches ?? []) {
+		const row = rows.get(key);
+		if (!row || row.state !== "running") continue;
+		rows.set(key, {
+			...row,
+			...(!row.runId && bounded(launch.runId, 256) ? { runId: launch.runId } : {}),
+			...(!row.agent && bounded(launch.agent, 256) ? { agent: launch.agent } : {}),
+		});
 	}
 	for (const [key, progress] of input.progress ?? []) {
 		const row = rows.get(key);
