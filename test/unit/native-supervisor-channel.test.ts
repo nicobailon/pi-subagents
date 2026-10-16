@@ -13,7 +13,8 @@ import {
 	resolveSupervisorChannelDir,
 } from "../../src/intercom/native-supervisor-channel.ts";
 import { SUPERVISOR_REPLY_ENTRY_TYPE, SUPERVISOR_REQUEST_MESSAGE_TYPE } from "../../src/intercom/supervisor-ui.ts";
-import { INTERCOM_DETACH_REQUEST_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
+import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, type SubagentState } from "../../src/shared/types.ts";
 
 const createdChannels: string[] = [];
 
@@ -853,6 +854,46 @@ describe("native supervisor channel", () => {
 		channel.dispose();
 
 		assert.deepEqual(sent.map((message) => message.details?.id), [matchingId]);
+	});
+
+	it("lets a session answer asks from async runs of the session it replaced in this process", async () => {
+		const previousFile = path.join(os.tmpdir(), `previous-${randomUUID()}.jsonl`);
+		const currentFile = path.join(os.tmpdir(), `current-${randomUUID()}.jsonl`);
+		const currentRuntimeId = `session-${randomUUID()}`;
+		const inheritedRun = `run-${randomUUID()}`;
+		const foreignRun = `run-${randomUUID()}`;
+		for (const [runId, sessionId] of [[inheritedRun, previousFile], [foreignRun, path.join(os.tmpdir(), `other-${randomUUID()}.jsonl`)]]) {
+			fs.mkdirSync(path.join(ASYNC_DIR, runId), { recursive: true });
+			fs.writeFileSync(path.join(ASYNC_DIR, runId, "status.json"), JSON.stringify({ runId, sessionId, mode: "single", state: "running", startedAt: Date.now() }));
+			createdChannels.push(path.join(ASYNC_DIR, runId));
+		}
+		const inheritedAsk = writeRequest({ sessionId: `session-${randomUUID()}`, runId: inheritedRun, message: "Inherited question" });
+		const foreignAsk = writeRequest({ sessionId: `session-${randomUUID()}`, runId: foreignRun, message: "Foreign question" });
+		recordSessionReplacement(currentFile, previousFile);
+		const tools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }> }> }>();
+		const ctx = { cwd: process.cwd(), hasUI: false, sessionManager: { getSessionId: () => currentRuntimeId, getSessionFile: () => currentFile, getEntries: () => [] } };
+		const pi = {
+			getAllTools: () => [...tools.keys()].map((name) => ({ name })),
+			registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<{ content: Array<{ text: string }> }> }) => { tools.set(tool.name, tool); },
+			sendMessage: () => {},
+			appendEntry: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentFile, ctx));
+
+		try {
+			channel.start();
+			const pending = await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			assert.match(pending.content[0]!.text, /Inherited question/);
+			assert.doesNotMatch(pending.content[0]!.text, /Foreign question/);
+
+			await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: inheritedAsk, message: "Go ahead" });
+			assert.equal((JSON.parse(fs.readFileSync(replyFile(inheritedRun, inheritedAsk), "utf-8")) as { message?: string }).message, "Go ahead");
+			await assert.rejects(() => tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: foreignAsk, message: "No" }));
+			assert.equal(fs.existsSync(replyFile(foreignRun, foreignAsk)), false);
+		} finally {
+			channel.dispose();
+		}
 	});
 
 	it("keeps an installed intercom tool and still exposes a native supervisor reply path", async () => {

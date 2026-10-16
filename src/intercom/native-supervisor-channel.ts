@@ -6,7 +6,10 @@ import type { AgentBeforeSettleEvent, AgentBeforeSettleEventResult, ExtensionAPI
 import { Type } from "typebox";
 import type { ChildSupervisorMetadata } from "../runs/shared/child-runtime-config.ts";
 import type { ParentWake } from "../shared/parent-wake.ts";
-import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type ControlEvent, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
+import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type ControlEvent, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
+import { readStatus } from "../shared/utils.ts";
+import { inheritedSessionIds } from "../shared/session-succession.ts";
+import { ownsRun } from "../runs/shared/run-ownership.ts";
 import { writeAtomicJson, writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import { shouldUseNativeFsWatch } from "../shared/watch-strategy.ts";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
@@ -430,9 +433,14 @@ function cleanupStaleEmptySupervisorChannels(nowMs = Date.now(), platform: NodeJ
 	return removed;
 }
 
-function requestMatchesOwner(request: SupervisorRequest, state: Pick<SubagentState, "supervisorOwnerSessionId">): boolean {
+function requestMatchesOwner(request: SupervisorRequest, state: Pick<SubagentState, "supervisorOwnerSessionId" | "currentSessionId">): boolean {
 	const currentSessionId = state.supervisorOwnerSessionId;
-	return Boolean(currentSessionId && request.orchestratorSessionId === currentSessionId);
+	if (currentSessionId && request.orchestratorSessionId === currentSessionId) return true;
+	// orchestratorSessionId is Pi's runtime session id, but inherited sessions are known by session file,
+	// so an ask from a replaced session's async run is matched through that run's recorded owner.
+	if (!state.currentSessionId || inheritedSessionIds(state.currentSessionId).length === 0) return false;
+	if (!request.runId || request.runId.startsWith(".") || path.basename(request.runId) !== request.runId) return false;
+	return ownsRun(state, readStatus(path.join(ASYNC_DIR, request.runId))?.sessionId);
 }
 
 function rememberedForegroundChild(request: SupervisorRequest, state: SubagentState) {
