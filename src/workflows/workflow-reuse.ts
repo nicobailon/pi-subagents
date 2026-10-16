@@ -11,7 +11,9 @@ type WorkflowStopCause = typeof WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED;
 
 const WORKFLOW_CHILD_JOURNAL_FILE = "workflow-children.jsonl";
 
-export const WORKFLOW_RUNTIME_REPLACED_RELAUNCH_NOTICE = "Async children that were still running keep running. Relaunching the same workflow script with the same args from this session reuses finished children and re-attaches to running ones; relaunching from another session runs every child again.";
+export function workflowRuntimeReplacedRelaunchNotice(runId: string): string {
+	return `Async children that were still running keep running. Relaunching the same workflow script with the same args from this session reuses finished children and re-attaches to running ones; from another session, add options: { reuseFrom: "${runId}" }.`;
+}
 
 /** Abort reason for workflow controllers torn down by runtime replacement; carries the cause as data, not text. */
 export function runtimeReplacedAbortReason(): Error {
@@ -109,6 +111,21 @@ export function findWorkflowReuseSource(asyncDirRoot: string, sessionId: string,
 		return status.workflow.stopCause === WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED ? readWorkflowChildJournal(runId, asyncDir) : undefined;
 	}
 	return undefined;
+}
+
+/**
+ * The runtime-replaced workflow run named by `options.reuseFrom`, from any session. Only the script
+ * must match: each child is still reused only when its key and launch params match.
+ */
+export function readNamedWorkflowReuseSource(asyncDirRoot: string, runId: string, scriptDigest: string, cwd: string): WorkflowReuseSource {
+	// A user-supplied id: it must name one run directory, never a path.
+	const status = runId === path.basename(runId) && runId !== "." && runId !== ".." ? readStatus(path.join(asyncDirRoot, runId)) : null;
+	if (!status) throw new Error(`options.reuseFrom: workflow run '${runId}' was not found.`);
+	if (status.mode !== "workflow") throw new Error(`options.reuseFrom: run '${runId}' is not a workflow run.`);
+	if (status.workflow?.stopCause !== WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED) throw new Error(`options.reuseFrom: workflow run '${runId}' did not stop because its session was replaced, so its children cannot be reused.`);
+	if (status.workflow.scriptDigest !== scriptDigest) throw new Error(`options.reuseFrom: workflow run '${runId}' ran a different workflow script.`);
+	if (status.cwd !== cwd) throw new Error(`options.reuseFrom: workflow run '${runId}' ran in '${status.cwd}', not '${cwd}'.`);
+	return readWorkflowChildJournal(runId, path.join(asyncDirRoot, runId));
 }
 
 /** A settled match is reusable only when that child succeeded; failed or stopped children run again. */

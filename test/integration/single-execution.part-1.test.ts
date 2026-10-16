@@ -2009,8 +2009,13 @@ Answer only from the supplied synthetic text.
 		const setup = () => {
 			const workflowControllers = new Map<string, AbortController>();
 			const executor = makeExecutor([makeAgent("echo"), makeAgent("bg", { defaultAsync: true })], {}, false, undefined, true, new Map(), workflowControllers, undefined, undefined, undefined, undefined, () => {});
-			const launch = async (params: Record<string, unknown>): Promise<string> => {
-				const started = await executor.execute(`workflow-reuse-${Date.now()}-${Math.random().toString(16).slice(2)}`, { async: true, mission: false, ...params }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			const start = (params: Record<string, unknown>, sessionId?: string) => {
+				const ctx = makeMinimalCtx(tempDir);
+				if (sessionId) ctx.sessionManager.getSessionId = () => sessionId;
+				return executor.execute(`workflow-reuse-${Date.now()}-${Math.random().toString(16).slice(2)}`, { async: true, mission: false, ...params }, new AbortController().signal, undefined, ctx);
+			};
+			const launch = async (params: Record<string, unknown>, sessionId?: string): Promise<string> => {
+				const started = await start(params, sessionId);
 				assert.equal(started.isError, undefined, started.content[0]?.text ?? "workflow launch failed");
 				return started.details.asyncId!;
 			};
@@ -2033,7 +2038,7 @@ Answer only from the supplied synthetic text.
 				if (sessionId) ctx.sessionManager.getSessionId = () => sessionId;
 				return executor.execute(`workflow-stop-${Date.now()}`, { action: "stop", ...target }, new AbortController().signal, undefined, ctx);
 			};
-			return { launch, waitFor, settled, stopWhenStage2Starts, stopAction };
+			return { start, launch, waitFor, settled, stopWhenStage2Starts, stopAction };
 		};
 		const resultFileText = (runId: string) => fs.readFileSync(path.join(DIRS.results, `${runId}.json`), "utf-8");
 
@@ -2049,8 +2054,9 @@ Answer only from the supplied synthetic text.
 			assert.equal(stopped.state, "stopped");
 			assert.equal(stopped.workflow?.stopCause, "runtime-replaced");
 			assert.equal(stopped.workflow?.scriptDigest, createHash("sha256").update(script).digest("hex"));
-			assert.match(resultFileText(firstId), /Async children that were still running keep running\. Relaunching the same workflow script with the same args from this session reuses finished children and re-attaches to running ones; relaunching from another session runs every child again\./);
 			assert.equal(stopped.steps?.find((step) => step.workflowKey === "stage2")?.status, "stopped", "a foreground child cut by the replacement is stopped");
+			const stopSummary = (JSON.parse(resultFileText(firstId)) as { summary?: string }).summary ?? "";
+			assert.ok(stopSummary.endsWith(`Async children that were still running keep running. Relaunching the same workflow script with the same args from this session reuses finished children and re-attaches to running ones; from another session, add options: { reuseFrom: "${firstId}" }.`), stopSummary);
 			const stage1RunId = stopped.steps?.find((step) => step.workflowKey === "stage1")?.runId;
 			assert.ok(stage1RunId);
 			const callsAfterStop = mockPi.callCount();
@@ -2153,6 +2159,78 @@ Answer only from the supplied synthetic text.
 				{ workflowKey: "stage3", total: 150, turnCount: 1 },
 			]);
 			assert.equal(fs.existsSync(path.join(DIRS.async, stage2RunId, "workflow-result.json")), false, "the relaunch consumes the awaited result like the normal path");
+		});
+
+		it("reuses another session's runtime-replaced run only when options.reuseFrom names it", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `reuse-from-${Date.now()}`;
+			const script = `const first = await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce} " + (args.variant ?? "") }); const second = await runs.run("stage2", { agent: "echo", task: "Stage two ${nonce}" }); return { first: first.output, reused: first.reused === true };`;
+			const successor = "session-successor";
+			const { start, launch, settled, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, hangUntilAbort: true });
+			const firstId = await launch({ workflowScript: script, args: { variant: "a" } });
+			assert.equal((await stopWhenStage2Starts(firstId, runtimeReplacedAbortReason())).workflow?.stopCause, "runtime-replaced");
+			const callsAfterStop = mockPi.callCount();
+
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one again" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
+			const plainId = await launch({ workflowScript: script, args: { variant: "a" } }, successor);
+			assert.equal((await settled(plainId)).workflow?.reusedFrom, undefined, "another session does not reuse it implicitly");
+			assert.equal(mockPi.callCount(), callsAfterStop + 2);
+
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
+			const named = await settled(await launch({ workflowScript: script, args: { variant: "a", only: ["stage2"] }, reuseFrom: firstId }, successor));
+			assert.equal(named.state, "complete", named.error);
+			assert.equal(named.workflow?.reusedFrom, firstId);
+			assert.deepEqual(named.workflow?.value, { first: "stage one done", reused: true });
+			assert.equal(mockPi.callCount(), callsAfterStop + 3, "different args still reuse a child whose launch params match");
+
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one b" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
+			const changed = await settled(await launch({ workflowScript: script, args: { variant: "b" }, reuseFrom: firstId }, successor));
+			assert.deepEqual(changed.workflow?.value, { first: "stage one b", reused: false });
+			assert.equal(mockPi.callCount(), callsAfterStop + 5, "a child whose launch params changed launches again");
+
+			const otherCwd = path.join(tempDir, `${nonce}-other`);
+			fs.mkdirSync(otherCwd);
+			for (const [params, expected] of [
+				[{ reuseFrom: "no-such-run" }, "options.reuseFrom: workflow run 'no-such-run' was not found."],
+				[{ reuseFrom: `../${path.basename(DIRS.async)}/${firstId}` }, `options.reuseFrom: workflow run '../${path.basename(DIRS.async)}/${firstId}' was not found.`],
+				[{ reuseFrom: plainId }, `options.reuseFrom: workflow run '${plainId}' did not stop because its session was replaced, so its children cannot be reused.`],
+				[{ workflowScript: `${script}\n// changed`, reuseFrom: firstId }, `options.reuseFrom: workflow run '${firstId}' ran a different workflow script.`],
+				[{ reuseFrom: firstId, cwd: otherCwd }, `options.reuseFrom: workflow run '${firstId}' ran in '${tempDir}', not '${otherCwd}'.`],
+				[{ reuseFrom: firstId, async: false }, "options.reuseFrom requires an async top-level workflow."],
+			] as const) {
+				const result = await start({ workflowScript: script, args: { variant: "a" }, ...params }, successor);
+				assert.equal(result.isError, true, expected);
+				assert.equal(result.content[0]?.type === "text" ? result.content[0].text : undefined, expected);
+			}
+			assert.equal(mockPi.callCount(), callsAfterStop + 5, "a rejected reuseFrom launches nothing");
+		});
+
+		it("re-attaches another session's still-running child through options.reuseFrom", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `reuse-from-reattach-${Date.now()}`;
+			const release = path.join(tempDir, `${nonce}.release`);
+			const script = `const first = await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); const second = await runs.run("stage2", { agent: "bg", task: "Stage two ${nonce}" }); const third = await runs.run("stage3", { agent: "echo", task: "Stage three ${nonce}" }); return { second: second.output, secondReused: second.reused === true, third: third.output };`;
+			const { launch, waitFor, settled, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, waitForPath: release, output: "stage two done" });
+			const callsBefore = mockPi.callCount();
+			const firstId = await launch({ workflowScript: script, args: { nonce } });
+			const stage2RunId = (await stopWhenStage2Starts(firstId, runtimeReplacedAbortReason(), awaitedStage2Ready)).steps?.find((step) => step.workflowKey === "stage2")?.runId;
+			assert.ok(stage2RunId);
+			for (const deadline = Date.now() + 15_000; mockPi.callCount() < callsBefore + 2 && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 50));
+
+			mockPi.onCall({ matchArgIncludes: `Stage three ${nonce}`, output: "stage three done" });
+			const relaunchId = await launch({ workflowScript: script, args: { nonce }, reuseFrom: firstId }, "session-successor");
+			await waitFor(relaunchId, (status) => status.workflow?.trace.some((entry) => entry.key === "stage2" && entry.state === "started") ?? false);
+			fs.writeFileSync(release, "go");
+			const relaunched = await settled(relaunchId);
+			assert.equal(relaunched.state, "complete", relaunched.error);
+			assert.equal(mockPi.callCount(), callsBefore + 3, "only stage3 launches; the running stage2 is re-attached");
+			assert.equal(relaunched.workflow?.reusedFrom, firstId);
+			assert.deepEqual(relaunched.workflow?.value, { second: "stage two done", secondReused: true, third: "stage three done" });
+			assert.equal(relaunched.steps?.find((step) => step.workflowKey === "stage2")?.runId, stage2RunId);
 		});
 
 		it("launches fresh when a re-attached child fails after the reload", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

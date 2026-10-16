@@ -134,6 +134,13 @@ describe("public subagent execution normalization", () => {
 		}
 	});
 
+	it("rejects options.reuseFrom without a workflow", () => {
+		for (const params of [{ reuseFrom: "run-1" }, { agent: "worker", task: "work", reuseFrom: "run-1" }] as const) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.deepEqual(result, { ok: false, error: "options.reuseFrom requires a workflow launch.", mode: "workflow" });
+		}
+	});
+
 	it("keeps raw workflow inputs untrusted and rejects invalid named-resource arguments", () => {
 		const raw = normalizePublicSubagentExecution({ workflowScript: `return await runs.host("ci", { kind: "command", command: "npm test", timeoutMs: 1000 });` });
 		assert.equal(raw.ok, true);

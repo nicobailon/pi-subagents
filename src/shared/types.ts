@@ -1555,7 +1555,7 @@ export interface Details {
 			generatedLaneKey?: string;
 			warning?: string;
 			error?: string;
-			/** Came from a previous runtime-replaced run of the same script and args; this run launched nothing. */
+			/** Came from a previous runtime-replaced run of the same script (and args, unless named by options.reuseFrom); this run launched nothing. */
 			reused?: boolean;
 		}>;
 		emits: unknown[];

@@ -22,7 +22,7 @@ const OPTION_SAMPLES: Record<string, unknown> = {
 	sessionOnly: true, quiet: true, on: ["mon"], timezone: "UTC", overlap: "skip", catchUp: "none", missionId: "mission-1",
 	mission: false, missionUpdate: {}, missionStatus: "open", missionScope: "project", runMode: "single", runStatus: "running",
 	summary: "done", config: { name: "reviewer" }, globalConcurrencyLimit: 2, maxSubagentSpawnsPerRun: 3,
-	preflight: { version: 1, lanes: [] }, chatProgress: "off", baseRef: "main", lane: { version: 1, key: "lane-a" },
+	preflight: { version: 1, lanes: [] }, reuseFrom: "run-1", chatProgress: "off", baseRef: "main", lane: { version: 1, key: "lane-a" },
 	context: "fresh", timeoutMs: 1000, checkpointBeforeDeadlineMs: 100, toolTimeoutMs: 100, toolBudget: { hard: 3 },
 	usageBudget: { tokens: { hard: 10 } }, agentScope: "user", machine: "box", artifacts: false, includeProgress: true,
 	share: false, sessionDir: "/tmp/sessions", control: { enabled: false }, outputMode: "file-only", skill: "review",

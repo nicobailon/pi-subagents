@@ -22,6 +22,7 @@ export interface PublicSubagentExecutionParams {
 	config?: unknown;
 	workflow?: unknown;
 	args?: unknown;
+	reuseFrom?: unknown;
 	workflowScript?: unknown;
 	workflowScriptPath?: unknown;
 	sessionOnly?: unknown;
@@ -117,6 +118,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	const hasWorkflowInput = hasRawScript || hasNamedWorkflow;
 	if (!hasWorkflowInput && params.args !== undefined) {
 		return { ok: false, error: "args requires workflow.", mode: "workflow" };
+	}
+	if (!hasWorkflowInput && params.reuseFrom !== undefined) {
+		return { ok: false, error: "options.reuseFrom requires a workflow launch.", mode: "workflow" };
 	}
 	const hasCapacityOverride = params.globalConcurrencyLimit !== undefined || params.maxSubagentSpawnsPerRun !== undefined;
 	if (hasCapacityOverride) {

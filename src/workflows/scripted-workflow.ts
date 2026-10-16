@@ -1143,7 +1143,7 @@ export interface WorkflowScriptChildResult {
 	continuation?: { runIds: string[] };
 	artifactPaths: string[];
 	results?: SingleResult[];
-	/** Came from a runtime-replaced run of the same script and args (its saved result, or its still-running child re-attached); this run launched nothing. */
+	/** Came from a runtime-replaced run of the same script (and args, unless named by options.reuseFrom): its saved result, or its still-running child re-attached; this run launched nothing. */
 	reused?: boolean;
 }
 
