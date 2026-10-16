@@ -6073,6 +6073,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							if (entry.state === "reused" && existing) {
 								continue;
 							}
+							// A runtime replacement does not stop awaited async children (stopAwaitedAsyncChildOnAbort): they keep running.
+							if (entry.state === "stopped" && existing?.async === true && existing.runId && workflowStopCause(controller.signal.reason)) continue;
 							const mapped = entry.state === "started" || entry.state === "reused"
 								? "running"
 								: entry.state === "completed"
