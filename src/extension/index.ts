@@ -881,8 +881,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state.widgetsSuspended = false;
 		state.baseCwd = ctx.cwd;
 		goalTurnId = 0;
-		const previousRuntimeSessionId = state.currentSessionId;
-		resultDeliveryOwnership.claimPredecessor(previousSessionFile, previousRuntimeSessionId);
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
 		// Pi passes previousSessionFile only for new/resume/fork, after tearing that session down in this process.
 		if (previousSessionFile) recordSessionReplacement(state.currentSessionId, previousSessionFile);
@@ -984,7 +982,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			modulePreloadTimer = undefined;
 			asyncRetentionAbort.abort();
 			stopResultWatcher();
-			resultDeliveryOwnership.clear();
 			completionNotifier.dispose();
 			mainWatchdog.dispose();
 			scheduledRunManager.stop();

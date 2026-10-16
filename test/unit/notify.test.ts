@@ -21,6 +21,7 @@ import registerSubagentNotify, {
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
+import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
 import { createParentWake } from "../../src/shared/parent-wake.ts";
 import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { formatPartialOutput, timedOutRunSummary } from "../../src/runs/shared/partial-output.ts";
@@ -462,13 +463,13 @@ describe("registerSubagentNotify", () => {
 		assert.equal(sent.length, 0);
 	});
 
-	it("accepts only explicitly claimed predecessor-session completions", async () => {
+	it("accepts completions of a session this process replaced", async () => {
 		const events = createEventBus();
 		const sent: unknown[] = [];
 		const pi = { events, isHeld: () => false, sendMessage(message: unknown) { sent.push(message); } };
 		const state = { currentSessionId: "session-old" as string | null, completionOwnerId: COMPLETION_OWNER_ID };
 		const ownership = createResultDeliveryOwnership(state);
-		assert.equal(ownership.claimPredecessor("session-old", "session-old"), true);
+		recordSessionReplacement("session-new", "session-old");
 		state.currentSessionId = "session-new";
 		const notifier = registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false }, ownership });
 		try {

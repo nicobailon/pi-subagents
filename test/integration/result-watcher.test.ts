@@ -11,6 +11,7 @@ import { createResultWatcher as createRawResultWatcher } from "../../src/runs/ba
 import { collectWaitCompletions } from "../../src/runs/background/wait-completions.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
+import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
 import { missionObserverIndexPath, resultPayloadPathForMissionObserverRun, writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { tryLease } from "../../src/shared/file-lease.ts";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
@@ -245,7 +246,7 @@ describe("result watcher", () => {
 			});
 			try {
 				watcher.startResultWatcher();
-				assert.equal(ownership.claimPredecessor("session-old", "session-old"), true);
+				recordSessionReplacement("session-new", "session-old");
 				state.currentSessionId = "session-new";
 				watcher.transitionResultDelivery();
 				writeIndexedResult(path.join(resultsDir, "old-run.json"), { id: "old-run", sessionId: "session-old", success: true, summary: "old" });

@@ -1248,7 +1248,7 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("claims the explicit predecessor session during session replacement", () => {
+	it("delivers a replaced session's async results to the session started in its place", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-session-transition-"));
 		const configDir = path.join(agentDir, "extensions", "subagent");
 		fs.mkdirSync(configDir, { recursive: true });
@@ -1258,37 +1258,60 @@ describe("subagent extension child mode", () => {
 			import path from "node:path";
 			import registerSubagentExtension from "./index.ts";
 			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
-			const handlers = new Map();
-			const listeners = new Map();
-			const events = {
-				on(channel, handler) { let set = listeners.get(channel); if (!set) listeners.set(channel, set = new Set()); set.add(handler); return () => set.delete(handler); },
-				emit(channel, payload) { for (const handler of [...(listeners.get(channel) ?? [])]) handler(payload); },
+			import { writeAsyncResultFile } from "./src/runs/background/result-files.ts";
+			import { DIRS } from "./src/shared/types.ts";
+			// Pi tears the old session's extension instance down and starts a new one on every session switch.
+			const makePi = () => {
+				const handlers = new Map();
+				const listeners = new Map();
+				const events = {
+					on(channel, handler) { let set = listeners.get(channel); if (!set) listeners.set(channel, set = new Set()); set.add(handler); return () => set.delete(handler); },
+					emit(channel, payload) { for (const handler of [...(listeners.get(channel) ?? [])]) handler(payload); },
+				};
+				const sent = [];
+				const pi = new Proxy({
+					events,
+					on(channel, handler) { handlers.set(channel, [...(handlers.get(channel) ?? []), handler]); },
+					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+					sendMessage(message) { sent.push(message); }, getSessionName() { return undefined; },
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+				registerSubagentExtension(pi);
+				return { handlers, events, sent };
 			};
-			const sent = [];
-			const pi = new Proxy({
-				events,
-				on(channel, handler) { handlers.set(channel, [...(handlers.get(channel) ?? []), handler]); },
-				registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
-				sendMessage(message) { sent.push(message); }, getSessionName() { return undefined; },
-			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			const emit = async (instance, name, event, ctx) => { for (const handler of instance.handlers.get(name) ?? []) await handler(event, ctx); };
 			const sessions = path.join(process.env.PI_CODING_AGENT_DIR, "sessions");
 			fs.mkdirSync(sessions, { recursive: true });
 			const oldSession = path.join(sessions, "old.jsonl");
 			const newSession = path.join(sessions, "new.jsonl");
+			const foreignSession = path.join(sessions, "foreign.jsonl");
 			fs.writeFileSync(oldSession, "");
 			fs.writeFileSync(newSession, "");
-			let currentSession = oldSession;
-			const sessionManager = { getSessionId() { return path.basename(currentSession); }, getSessionFile() { return currentSession; }, getEntries() { return []; } };
-			const ctx = { cwd: process.cwd(), isIdle() { return false; }, hasUI: false, ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager, modelRegistry: { getAvailable() { return []; } } };
-			registerSubagentExtension(pi);
-			for (const handler of handlers.get("session_start")) await handler({ reason: "startup" }, ctx);
-			currentSession = newSession;
-			for (const handler of handlers.get("session_start")) await handler({ reason: "new", previousSessionFile: oldSession }, ctx);
+			const ctxFor = (file) => ({ cwd: process.cwd(), isIdle() { return false; }, hasUI: false, ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager: { getSessionId() { return path.basename(file); }, getSessionFile() { return file; }, getEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } });
 			const owner = currentCompletionOwnerId();
-			events.emit("subagent:async-complete", { id: "old-owned", agent: "worker", success: true, summary: "old", timestamp: 1, sessionId: oldSession, completionOwnerId: owner });
-			events.emit("subagent:async-complete", { id: "foreign", agent: "worker", success: true, summary: "foreign", timestamp: 2, sessionId: path.join(sessions, "foreign.jsonl"), completionOwnerId: owner });
-			if (sent.length !== 1) throw new Error("expected only the claimed predecessor completion, got " + sent.length);
-			for (const handler of handlers.get("session_shutdown")) await handler({ reason: "quit" });
+			const stamp = Date.now();
+			const writeResult = (name, sessionId) => {
+				const id = "transition-" + name + "-" + stamp;
+				writeAsyncResultFile(path.join(DIRS.results, id + ".json"), { id, agent: "worker", success: true, summary: name, timestamp: stamp, sessionId, completionOwnerId: owner });
+				return id;
+			};
+			const delivered = (instance, id) => instance.sent.filter((message) => JSON.stringify(message).includes(id)).length;
+			const waitFor = async (predicate) => { for (let i = 0; i < 100 && !predicate(); i += 1) await new Promise((resolve) => setTimeout(resolve, 20)); };
+			const first = makePi();
+			await emit(first, "session_start", { reason: "startup" }, ctxFor(oldSession));
+			await emit(first, "session_shutdown", { reason: "new" });
+			// Finished while the old session was shutting down and nobody owned delivery.
+			const before = writeResult("before", oldSession);
+			const foreign = writeResult("foreign", foreignSession);
+			const second = makePi();
+			await emit(second, "session_start", { reason: "new", previousSessionFile: oldSession }, ctxFor(newSession));
+			await waitFor(() => delivered(second, before) > 0);
+			second.events.emit("subagent:async-complete", { id: "transition-after-" + stamp, agent: "worker", success: true, summary: "after", timestamp: stamp + 1, sessionId: oldSession, completionOwnerId: owner });
+			second.events.emit("subagent:async-complete", { id: "transition-live-foreign-" + stamp, agent: "worker", success: true, summary: "foreign", timestamp: stamp + 2, sessionId: foreignSession, completionOwnerId: owner });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			const counts = { before: delivered(second, before), after: delivered(second, "transition-after-" + stamp), foreign: delivered(second, foreign), liveForeign: delivered(second, "transition-live-foreign-" + stamp), old: first.sent.length };
+			await emit(second, "session_shutdown", { reason: "quit" });
+			fs.rmSync(path.join(DIRS.results, foreign + ".json"), { force: true });
+			if (JSON.stringify(counts) !== JSON.stringify({ before: 1, after: 1, foreign: 0, liveForeign: 0, old: 0 })) throw new Error("unexpected deliveries " + JSON.stringify(counts));
 		`;
 
 		try {
