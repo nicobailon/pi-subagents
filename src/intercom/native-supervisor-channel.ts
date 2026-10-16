@@ -436,11 +436,11 @@ function cleanupStaleEmptySupervisorChannels(nowMs = Date.now(), platform: NodeJ
 function requestMatchesOwner(request: SupervisorRequest, state: Pick<SubagentState, "supervisorOwnerSessionId" | "currentSessionId">): boolean {
 	const currentSessionId = state.supervisorOwnerSessionId;
 	if (currentSessionId && request.orchestratorSessionId === currentSessionId) return true;
-	// orchestratorSessionId is Pi's runtime session id, but inherited sessions are known by session file,
-	// so an ask from a replaced session's async run is matched through that run's recorded owner.
+	// orchestratorSessionId is Pi's runtime session id, while inherited sessions are known by session file,
+	// so an inherited run's ask is matched through the run's recorded owner. This runs inside the poll's
+	// timers and watchers, where a throw exits Pi, so an unreadable status counts as not owned.
 	if (!state.currentSessionId || inheritedSessionIds(state.currentSessionId).length === 0) return false;
 	if (!request.runId || request.runId.startsWith(".") || path.basename(request.runId) !== request.runId) return false;
-	// The poll runs from timers and watchers, where a throw exits Pi; an unreadable status is not owned.
 	try {
 		return ownsRun(state, readStatus(path.join(ASYNC_DIR, request.runId))?.sessionId);
 	} catch {
