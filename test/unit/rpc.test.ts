@@ -7,6 +7,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { closeStopInbox, consumeStopRequestPayload, stopRequestPath, stopRequestsDir } from "../../src/runs/background/control-channel.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { readStatus } from "../../src/shared/utils.ts";
+import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
 import { readProcessTerminal } from "../../src/runs/background/process-terminal.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import {
@@ -573,6 +574,31 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
+	it("shows the async runs of the session this process replaced in the fleet and snapshot, but not other sessions' runs", async () => {
+		const events = new FakeEvents();
+		recordSessionReplacement("/sessions/rpc-fleet-successor.jsonl", "/sessions/rpc-fleet-replaced.jsonl");
+		const state = {
+			currentSessionId: "/sessions/rpc-fleet-successor.jsonl",
+			statusProjectionSessionId: "/sessions/rpc-fleet-successor.jsonl",
+			foregroundControls: new Map(),
+			asyncJobs: new Map([
+				["inherited-run", { asyncId: "inherited-run", sessionId: "/sessions/rpc-fleet-replaced.jsonl", status: "running", mode: "single", startedAt: 1, agents: ["inherited-agent"] }],
+				["foreign-run", { asyncId: "foreign-run", sessionId: "/sessions/rpc-fleet-other.jsonl", status: "running", mode: "single", startedAt: 2, agents: ["foreign-agent"] }],
+			]),
+		} as any;
+		const bridge = registerSubagentRpcBridge({
+			events,
+			getContext: () => ctx("successor-id", "/sessions/rpc-fleet-successor.jsonl"),
+			state,
+			execute: async () => assert.fail("in-memory status should not call executor"),
+		});
+		const reply = await request(events, "fleet-inherited", "status");
+		const data = (reply as any).data;
+		assert.deepEqual(data.fleet.entries.map((entry: { agent: string }) => entry.agent), ["inherited-agent"]);
+		assert.deepEqual(data.asyncSnapshot.runs.map((run: { id: string }) => run.id), ["inherited-run"]);
+		bridge.dispose();
+	});
+
 	it("forces spawn requests onto the existing async execution path and takes scripts as script or a workflow path", async () => {
 		const events = new FakeEvents();
 		const executed: SubagentParamsLike[] = [];
@@ -1072,6 +1098,45 @@ describe("subagent extension RPC bridge", () => {
 			assert.equal(readStatus(asyncDir)?.state, "running");
 			assert.equal(fs.existsSync(path.join(asyncDir, "process-terminal.json")), false);
 
+			bridge.dispose();
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("stops an async run of the session this process replaced, as the session that replaced it", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rpc-stop-inherited-"));
+		try {
+			const events = new FakeEvents();
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-inherited");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-inherited",
+				sessionId: "/sessions/rpc-stop-replaced.jsonl",
+				mode: "single",
+				state: "running",
+				pid: 4242,
+				startedAt: 100,
+				lastUpdate: 100,
+				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+			}, null, 2), "utf-8");
+			recordSessionReplacement("/sessions/rpc-stop-successor.jsonl", "/sessions/rpc-stop-replaced.jsonl");
+			const bridge = registerSubagentRpcBridge({
+				events,
+				getContext: () => ctx("successor-id", "/sessions/rpc-stop-successor.jsonl"),
+				execute: async () => assert.fail("stop should not call executor"),
+				asyncDirRoot: asyncRoot,
+				resultsDir: path.join(root, "results"),
+				kill: () => true,
+				now: () => 150,
+			});
+
+			const reply = await request(events, "stop-inherited", "stop", { id: "run-inherited" });
+
+			assert.equal(reply.success, true, JSON.stringify(reply));
+			assert.equal((reply as { data: { state?: string } }).data.state, "stopping");
+			assert.equal(consumeStopRequestPayload(asyncDir)?.type, "stop");
 			bridge.dispose();
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
