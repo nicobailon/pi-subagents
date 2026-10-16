@@ -999,6 +999,32 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("offers resume only to the session that launched the run", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-resume-owner-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.mkdirSync(path.join(asyncRoot, "run-status"), { recursive: true });
+			fs.mkdirSync(resultsDir, { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(asyncRoot, "run-status", "status.json"), JSON.stringify({
+				runId: "run-status", sessionId: "session-owner", mode: "single", state: "complete", startedAt: 100, lastUpdate: 200, endedAt: 200, sessionFile,
+				steps: [{ agent: "worker", status: "complete", startedAt: 100, sessionFile }],
+			}), "utf-8");
+			fs.writeFileSync(path.join(resultsDir, "run-result.json"), JSON.stringify({ id: "run-result", sessionId: "session-owner", agent: "worker", success: true, state: "complete", sessionFile, results: [{ agent: "worker", success: true, sessionFile }] }), "utf-8");
+			for (const id of ["run-status", "run-result"]) {
+				const inspect = (currentSessionId: string) => textContent(inspectSubagentStatus({ id }, { asyncDirRoot: asyncRoot, resultsDir, state: { currentSessionId, asyncJobs: new Map(), foregroundControls: new Map() } as unknown as SubagentState }));
+				assert.match(inspect("session-owner"), new RegExp(`Revive: subagent\\(\\{ action: "resume", id: "${id}"`), id);
+				const successor = inspect("session-successor");
+				assert.doesNotMatch(successor, /Revive/, id);
+				assert.match(successor, /Resume: unavailable; only the session that launched this run can resume it\./, id);
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("escapes terminal control sequences in remembered foreground transcripts", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-foreground-transcript-unsafe-"));
 		try {

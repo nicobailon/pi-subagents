@@ -129,8 +129,10 @@ function hasExistingSessionFile(value: unknown): value is string {
 	return typeof value === "string" && fs.existsSync(value);
 }
 
-function formatResumeGuidance(runId: string | undefined, children: Array<{ agent?: unknown; sessionFile?: unknown; runId?: unknown; workflowKey?: unknown; status?: unknown; activityState?: unknown }>, fallbackSessionFile?: unknown, options: { stopped?: boolean } = {}): string {
+function formatResumeGuidance(runId: string | undefined, children: Array<{ agent?: unknown; sessionFile?: unknown; runId?: unknown; workflowKey?: unknown; status?: unknown; activityState?: unknown }>, fallbackSessionFile?: unknown, options: { stopped?: boolean; otherSession?: boolean } = {}): string {
 	if (options.stopped) return "Resume: unavailable; stopped runs are not resumable. Start a new run instead.";
+	// Resume refuses a run whose sessionId is not the active session's.
+	if (options.otherSession) return "Resume: unavailable; only the session that launched this run can resume it.";
 	const knownChildren = children
 		.map((child, index) => ({ child, index }))
 		.filter(({ child }) => typeof child.agent === "string");
@@ -718,7 +720,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (status.state !== "running") {
 				lines.push(allExternal
 					? hasExternalJobFollowUpHint ? "Resume: use the external-job follow-up hint above." : "Resume: unavailable; external runners do not persist Pi sessions."
-					: formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true }));
+					: formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile, { stopped: status.state === "stopped" || status.stopped === true, otherSession: Boolean(currentSessionId) && status.sessionId !== currentSessionId }));
 			}
 			if (fs.existsSync(logPath)) lines.push(`Log: ${logPath}`);
 			if (fs.existsSync(eventsPath)) lines.push(`Events: ${eventsPath}`);
@@ -737,7 +739,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		}
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; timeoutRecovery?: unknown; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; sessionName?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null; timeoutRecovery?: unknown; savedOutputPath?: string; artifactPaths?: { outputPath?: string } }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; sessionId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; timeoutRecovery?: unknown; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; sessionName?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null; timeoutRecovery?: unknown; savedOutputPath?: string; artifactPaths?: { outputPath?: string } }> };
 			if (params.view === "transcript") {
 				try {
 					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
@@ -780,7 +782,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				if (hasStructuredOutputPath) lines.push(`  Structured output path${children.length > 1 ? ` (${index + 1})` : ""}: ${structuredOutputPath}`);
 				lines.push(...formatTimeoutRecoveryLines(child.timeoutRecovery, "  "));
 			}
-			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped" }));
+			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped", otherSession: Boolean(currentSessionId) && data.sessionId !== currentSessionId }));
 			if (data.summary) lines.push("", capSummaryOutputs(data.summary, data.results));
 			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);
 			if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match the result run id.");
