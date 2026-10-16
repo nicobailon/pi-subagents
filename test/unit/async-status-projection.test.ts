@@ -452,6 +452,21 @@ describe("async status projection", () => {
 		assert.equal(fanout?.model, undefined);
 	});
 
+	it("reports the agent each step runs as", () => {
+		const snapshot = projectAsyncStatusSnapshot([
+			job({ asyncId: "fanout", status: "running", steps: [{ agent: "worker", status: "running" }, { agent: "scout", status: "pending" }] }),
+			materializedWorkflow,
+			job({ ...materializedRunningChild, steps: [{ agent: "reviewer-strict", status: "running" }] }),
+		], { generatedAt: 5_000 });
+
+		const fanout = snapshot.runs.find((run) => run.id === "fanout");
+		assert.deepEqual(fanout?.children?.map(({ agent }) => agent), ["worker", "scout"]);
+		assert.equal(fanout?.agent, undefined);
+		const lanes = snapshot.runs.find((run) => run.id === "wf-1")?.children;
+		assert.equal(lanes?.find((child) => child.id === "rev-r")?.agent, "reviewer-strict");
+		assert.equal(lanes?.find((child) => child.id === "rev-parity")?.agent, "reviewer");
+	});
+
 	it("derives safe end times only for terminal steps", () => {
 		const snapshot = projectAsyncStatusSnapshot([job({
 			asyncId: "step-times",

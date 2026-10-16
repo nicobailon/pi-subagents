@@ -6,6 +6,7 @@ import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
 import { validateAsyncStatusLaneMetadata } from "../runs/shared/lane-metadata.ts";
+import { ERROR_REPLY_TEXT_SEPARATOR } from "../runs/shared/model-resolution.ts";
 
 const DEFAULT_CONFIG_DIR_NAME = ".pi";
 const PI_CODING_AGENT_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
@@ -246,6 +247,22 @@ const PI_TURN_TIMING_FOOTER = /(?:\r?\n)*\x1b\[38;2;136;136;136m✻ Turn took [^
 
 function stripPiTurnTimingFooter(text: string): string {
 	return text.replace(PI_TURN_TIMING_FOOTER, "");
+}
+
+const PROVIDER_STOP_TEXT_MAX = 500;
+
+/**
+ * The error to report for an assistant message. When the provider ended the turn with an error stop
+ * (`rawStopReason` is set, e.g. `content_filter`), the reply text rides along with the bare stop code: a
+ * policy refusal usually puts its explanation there. The text may also be the model's own partial reply,
+ * so it is labelled as reply text, not as the provider's message.
+ */
+export function assistantMessageError(message: { errorMessage?: string; rawStopReason?: string; content?: unknown }): string | undefined {
+	const error = message.errorMessage;
+	if (!error || typeof message.rawStopReason !== "string") return error;
+	const text = extractTextFromContent(message.content).trim();
+	if (!text || error.includes(text)) return error;
+	return `${error}${ERROR_REPLY_TEXT_SEPARATOR}${text.length > PROVIDER_STOP_TEXT_MAX ? `${text.slice(0, PROVIDER_STOP_TEXT_MAX)}…` : text}`;
 }
 
 export function getFinalOutput(messages: Message[]): string {

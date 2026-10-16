@@ -63,6 +63,7 @@ describe("async status snapshot", () => {
 				id: "step:0",
 				kind: "step",
 				label: "worker",
+				agent: "worker",
 				state: "running",
 				startedAt: 110,
 				updatedAt: 110,

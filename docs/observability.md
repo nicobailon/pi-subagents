@@ -155,8 +155,9 @@ If something feels misconfigured, run `/subagents-doctor` or ask: "Check whether
 ## Host inspection protocol (RPC)
 
 RPC hosts receive live async status through the bounded `subagent-async` widget
-(`PI_SUBAGENT_ASYNC_JSON:` payload). Step nodes report the `model` and
-`thinking` level the child runs on once its status reports them. For on-demand
+(`PI_SUBAGENT_ASYNC_JSON:` payload). Step nodes report the `agent` the child
+runs as, and the `model` and `thinking` level it runs on once its status reports
+them. For on-demand
 detail — a child's delegated task, transcript window, or final output — hosts
 can invoke the extension command:
 

@@ -64,7 +64,8 @@ export interface AsyncStatusSnapshotNode {
 	updatedAt?: number;
 	endedAt?: number;
 	activity?: AsyncStatusSnapshotActivity;
-	/** Step nodes only: the model and thinking level the child reports. */
+	/** Step nodes only: the agent the child runs as, and the model and thinking level it reports. */
+	agent?: string;
 	model?: string;
 	thinking?: ThinkingLevel;
 	hostStep?: AsyncStatusSnapshotHostStep;
@@ -258,6 +259,7 @@ function projectStep(step: AsyncJobStep | NestedStepSummary, index: number, dept
 	const updatedAt = endedAt ?? publicTime(step.lastActivityAt) ?? startedAt;
 	const activity = activityFor(step, ctx);
 	const { id, label } = stepIdentity(step, index, ctx);
+	const agent = publicOptionalText(step.agent, ctx.caps.maxStringLength);
 	const node: AsyncStatusSnapshotNode = {
 		id,
 		kind: "step",
@@ -268,6 +270,7 @@ function projectStep(step: AsyncJobStep | NestedStepSummary, index: number, dept
 		...(terminalState(state) && endedAt !== undefined ? { endedAt } : {}),
 		...(activity ? { activity } : {}),
 	};
+	if (agent) node.agent = agent;
 	setStepModel(node, ctx, step);
 	if (depth < ctx.caps.maxDepth && step.children?.length) {
 		const nested = step.children.map((child, childIndex) => projectNestedRun(child, childIndex, depth + 1, ctx));
@@ -418,6 +421,8 @@ function projectMaterializedStep(step: AsyncJobStep, index: number, child: Async
 	const selfActivity = selfStep ? activityFor(selfStep, ctx) : undefined;
 	const activity = laneActivity || selfActivity || live.activity ? { ...laneActivity, ...selfActivity, ...live.activity } : undefined;
 	const node: AsyncStatusSnapshotNode = { ...live, id, kind: "step", label };
+	const agent = publicOptionalText(selfStep?.agent || step.agent, ctx.caps.maxStringLength);
+	if (agent) node.agent = agent;
 	if (activity) node.activity = activity;
 	setStepModel(node, ctx, selfStep, step);
 	return node;

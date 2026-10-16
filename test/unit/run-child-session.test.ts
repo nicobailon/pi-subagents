@@ -280,3 +280,26 @@ for (const mode of ["foreground", "background"] as const) {
 		assert.match(result.finalOutput ?? "", /half a thought, finished/);
 	});
 }
+
+for (const mode of ["foreground", "background"] as const) {
+	it(`${mode}: reports a provider stop with its reply text`, { timeout: 10_000 }, async () => {
+		let listener: Parameters<ChildSession["subscribe"]>[0] = () => {};
+		const messages: ChildSession["messages"] = [];
+		const session: ChildSession = {
+			subscribe(handler) { listener = handler; return () => {}; },
+			async prompt() {
+				const message = { ...fauxAssistantMessage("Blocked by the provider's usage policy."), stopReason: "error", rawStopReason: "content_filter", errorMessage: "Provider finish_reason: content_filter" };
+				messages.push(message);
+				listener({ type: "message_end", message });
+			},
+			async steer() {}, async followUp() {}, async abort() {}, async dispose() {},
+			messages, sessionId: "filtered-session", modelId: "mock/model",
+		};
+		const factory: ChildSessionFactory = { create: async () => session, async dispose() {} };
+		const result = mode === "foreground"
+			? await runSync(process.cwd(), makeAgentConfigs(["worker"]), "worker", "Study", { childSessionFactory: factory })
+			: await runChildSession({ factory, launch, prompt: "Study", appendChildEvent() {}, writeOutputLine() {} });
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.error, "Provider finish_reason: content_filter\nReply text: Blocked by the provider's usage policy.");
+	});
+}
