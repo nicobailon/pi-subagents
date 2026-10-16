@@ -133,7 +133,7 @@ export function stopAsyncRun(
 	state: SubagentState,
 	runId: string | undefined,
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean,
-	location?: { asyncDir: string | null; resolvedId?: string },
+	location?: { asyncDir: string | null; resolvedId?: string; reattachedRunId?: string },
 	childId?: string,
 ): AgentToolResult<Details> | null {
 	const target = getAsyncStopTarget(state, runId, location);
@@ -151,7 +151,8 @@ export function stopAsyncRun(
 	}
 	if (!target) return null;
 	const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
-	if (state.currentSessionId && status?.sessionId !== state.currentSessionId) {
+	// A workflow relaunched with options.reuseFrom stops the exact child run it re-attached, whichever session launched it.
+	if (state.currentSessionId && status?.sessionId !== state.currentSessionId && location?.reattachedRunId !== target.asyncId) {
 		return {
 			content: [{ type: "text", text: `Async run '${target.asyncId}' was not found in the active session.` }],
 			isError: true,

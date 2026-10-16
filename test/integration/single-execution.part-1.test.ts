@@ -2233,6 +2233,25 @@ Answer only from the supplied synthetic text.
 			assert.equal(relaunched.steps?.find((step) => step.workflowKey === "stage2")?.runId, stage2RunId);
 		});
 
+		it("stops another session's re-attached child when the user stops the options.reuseFrom relaunch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `reuse-from-user-stop-${Date.now()}`;
+			const script = `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); await runs.run("stage2", { agent: "bg", task: "Stage two ${nonce}" });`;
+			const args = { nonce };
+			const { launch, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, waitForPath: path.join(tempDir, `${nonce}.never`), output: "never" });
+			const firstId = await launch({ workflowScript: script, args });
+			const stage2RunId = (await stopWhenStage2Starts(firstId, runtimeReplacedAbortReason(), awaitedStage2Ready)).steps?.find((step) => step.workflowKey === "stage2")?.runId;
+			assert.ok(stage2RunId);
+			assert.equal(readStatusFile(stage2RunId).state, "running");
+
+			const relaunchId = await launch({ workflowScript: script, args, reuseFrom: firstId }, "session-successor");
+			const journalPath = path.join(DIRS.async, relaunchId, "workflow-children.jsonl");
+			await stopWhenStage2Starts(relaunchId, new Error("Stopped by user."), () => fs.existsSync(journalPath) && fs.readFileSync(journalPath, "utf-8").includes(`"runId":"${stage2RunId}"`));
+			const child = await waitForAsyncState(stage2RunId, (status) => terminalStates.includes(status.state ?? ""), 10_000);
+			assert.equal(child.state, "stopped");
+		});
+
 		it("launches fresh when a re-attached child fails after the reload", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 			const nonce = `reattach-failed-${Date.now()}`;
 			const release = path.join(tempDir, `${nonce}.release`);
