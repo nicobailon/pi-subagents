@@ -13,6 +13,8 @@ interface ActivationDetails {
 
 const LOADER_NAME = "subagents_enable";
 const SUBAGENT_NAME = "subagent";
+// Registered and active whenever this extension loads, and never deactivated here.
+const WAIT_NAME = "bg_wait";
 // SUPERVISOR_NAME is declared with subagent: a fork launched through it then declares exactly this session's tools.
 let warnedUnsupportedHost = false;
 
@@ -67,7 +69,10 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 		const recorded = new Set<string>();
 		for (const message of messages) {
 			if (message.role !== "system") continue;
-			for (const tool of message.toolsRemoved ?? []) recorded.delete(tool.name);
+			// Pi records an extension unload (update, reload) as a removal of each of its active tools, with no cause.
+			// One that drops bg_wait is that unload, not a choice, so the selection from before it stands.
+			const unloaded = message.toolsRemoved?.some((tool) => tool.name === WAIT_NAME) && !message.toolsAdded?.some((tool) => tool.name === WAIT_NAME);
+			if (!unloaded) for (const tool of message.toolsRemoved ?? []) recorded.delete(tool.name);
 			for (const tool of message.toolsAdded ?? []) recorded.add(tool.name);
 		}
 		// "auto" never adds the loader to a transcript that did not declare it: that is itself a tool change.

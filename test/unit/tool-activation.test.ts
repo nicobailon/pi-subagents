@@ -304,6 +304,25 @@ describe("toolActivation modes", () => {
 		}
 	});
 
+	it("keeps the selection from before an extension unload when the session starts again", async () => {
+		const extensionTools = ["bg_wait", "subagent_supervisor"];
+		const unload = (names: string[]) => declared([], [...names, ...extensionTools]);
+		const cases: Array<[string, RuntimeOptions, any[], string[]]> = [
+			["warm unload", {}, [declared(["read", "subagent", "contact_supervisor", ...extensionTools]), unload(["subagent", "contact_supervisor"])], ["subagent"]],
+			["warm unload, support tools re-added", {}, [declared(["read", "subagent", ...extensionTools]), unload(["subagent"]), declared(extensionTools)], ["subagent"]],
+			["cold unload", {}, [declared(["read", "subagents_enable", ...extensionTools]), unload(["subagents_enable"])], ["subagents_enable"]],
+			["dynamic warm unload", DYNAMIC, [declared(["read", "subagent", ...extensionTools]), unload(["subagent"])], ["subagents_enable", "subagent"]],
+			["deliberate removal", {}, [declared(["read", "subagent", ...extensionTools]), declared([], ["subagent", "contact_supervisor"])], []],
+			["bg_wait redefined", {}, [declared(["read", "subagent", ...extensionTools]), declared(["bg_wait"], ["subagent", "bg_wait"])], []],
+		];
+		for (const [label, options, messages, expected] of cases) {
+			const runtime = createRuntime(messages, [], [], { ...options, model: COMPATIBLE });
+			await runtime.emit("session_start", { type: "session_start", reason: "reload" });
+			const selectedTools = await startAgent(runtime);
+			for (const name of ["subagents_enable", "subagent"]) assert.equal(selectedTools.includes(name), expected.includes(name), `${label}: ${name}`);
+		}
+	});
+
 	it("rejects an unknown toolActivation value instead of falling back", () => {
 		assert.throws(() => createRuntime([], [], [], { config: { toolActivation: "lazy" } }), /config\.toolActivation must be "auto", "dynamic", or "eager"/);
 	});
