@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A background workflow child showed no model on its lane in the async widget, FleetView, or `status` output, because only the child's own `status.json` recorded the resolved model. Lanes now fill a missing model and thinking level from the child run. Thanks to [@bottfish](https://github.com/bottfish) for [#2941](https://github.com/nicobailon/pi-subagents/pull/2941).
+
 ## [0.79.0] - 2026-10-17
 
 ### Highlights
