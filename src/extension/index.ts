@@ -614,6 +614,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		);
 	});
 
+	// Keep view-only reports in the transcript/RPC stream, but out of model context.
+	// SLASH_RESULT_TYPE carries delegated work and must remain model-visible.
+	pi.on("context", (event) => ({
+		messages: event.messages.filter((message) =>
+			message.role !== "custom"
+			|| message.customType !== SLASH_TEXT_RESULT_TYPE
+			|| (message.details as { viewOnly?: unknown } | undefined)?.viewOnly !== true),
+	}));
+
 	pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
 		const content = typeof message.content === "string"
 			? message.content

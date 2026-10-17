@@ -1408,6 +1408,66 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("keeps view-only slash reports visible but excludes new ones from every model request", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "slash-context-agent-"));
+		const script = String.raw`
+			import assert from "node:assert/strict";
+			import registerSubagentExtension from "./index.ts";
+			const handlers = new Map();
+			const commands = new Map();
+			const renderers = new Map();
+			const transcript = [];
+			const fakePi = new Proxy({
+				events: { on() { return () => {}; }, emit() {} },
+				on(name, handler) {
+					const registered = handlers.get(name) ?? [];
+					registered.push(handler);
+					handlers.set(name, registered);
+				},
+				registerCommand(name, spec) { commands.set(name, spec); },
+				registerMessageRenderer(type, renderer) { renderers.set(type, renderer); },
+				sendMessage(message) { transcript.push({ role: "custom", timestamp: 1, ...message }); },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			registerSubagentExtension(fakePi);
+			const ctx = {
+				cwd: process.cwd(), hasUI: false,
+				sessionManager: { getBranch() { return []; } },
+			};
+			await commands.get("subagent-cost").handler("", ctx);
+			assert.equal(transcript.length, 1);
+			const report = transcript[0];
+			assert.equal(report.customType, "subagent-slash-text-result");
+			assert.equal(report.display, true, "TUI and RPC retain the displayed message");
+			const theme = { fg(_token, text) { return text; }, bg(_token, text) { return text; }, bold(text) { return text; } };
+			assert.match(renderers.get(report.customType)(report, { expanded: true }, theme).render(120).join("\n"), /cost/i);
+			const user = { role: "user", content: "Continue", timestamp: 2 };
+			const workResult = { role: "custom", customType: "subagent-slash-result", content: "Worker finished", timestamp: 3 };
+			const unrelated = { role: "custom", customType: "other-extension", content: "Keep this", timestamp: 4 };
+			const assistant = { role: "assistant", content: [{ type: "text", text: "subagent-slash-text-result" }], timestamp: 5 };
+			const historical = { role: "custom", customType: "subagent-slash-text-result", content: "Report stored before the update", display: true, timestamp: 0 };
+			const messages = [historical, report, user, workResult, unrelated, assistant, { ...report, content: "Second report" }];
+			async function modelContext(input) {
+				let current = input;
+				for (const handler of handlers.get("context") ?? []) {
+					const result = await handler({ type: "context", messages: current }, ctx);
+					if (result?.messages) current = result.messages;
+				}
+				return current;
+			}
+			const expected = [historical, user, workResult, unrelated, assistant];
+			assert.deepEqual(await modelContext(messages), expected);
+			assert.deepEqual(await modelContext(messages), expected, "persisted reports stay excluded on later requests and resume");
+			assert.equal(messages.length, 7, "filtering must not mutate the stored transcript");
+			assert.deepEqual(await modelContext([]), []);
+			assert.deepEqual(await modelContext(expected), expected);
+		`;
+		try {
+			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(agentDir), stdio: "pipe" });
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("registers the main watchdog command and renderer in parent mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";

@@ -2894,6 +2894,9 @@ export const DIRS = {
 export const WIDGET_KEY = "subagent-async";
 export const SLASH_RESULT_TYPE = "subagent-slash-result";
 export const SLASH_TEXT_RESULT_TYPE = "subagent-slash-text-result";
+// Only reports carrying this marker leave model context. Reports stored before the marker existed
+// stay in context, so an update does not change an existing session's history or its prompt cache.
+export const SLASH_TEXT_VIEW_ONLY_DETAILS = { viewOnly: true } as const;
 export const SLASH_SUBAGENT_REQUEST_EVENT = "subagent:slash:request";
 export const SLASH_SUBAGENT_STARTED_EVENT = "subagent:slash:started";
 export const SLASH_SUBAGENT_RESPONSE_EVENT = "subagent:slash:response";
