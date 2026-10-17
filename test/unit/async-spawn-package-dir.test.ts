@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
+import { resolveHostPiPackageRoot, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { makeAgent } from "../support/helpers.ts";
 
@@ -37,7 +37,7 @@ test("detached spawn does not keep an inherited bundled-layout PI_PACKAGE_DIR", 
 			acceptance: false,
 		});
 		assert.match(result.content[0]!.text, /spawn boundary captured/);
-		const npmRoot = resolvePiPackageRoot() ?? resolveInstalledPiPackageRoot();
+		const npmRoot = resolveHostPiPackageRoot();
 		assert.equal(spawn.mock.calls[0]!.arguments[2].env.PI_PACKAGE_DIR, npmRoot);
 		assert.notEqual(npmRoot, bundled);
 	} finally {
@@ -87,6 +87,9 @@ test("detached launch honors the package-root environment override when host det
 
 test("detached launch ignores a whitespace-only package-root override", async (t) => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "blank-package-root-"));
+	const previousArgv = process.argv[1];
+	// No real host entry: this fixture withholds both host-relative and installed discovery.
+	process.argv[1] = path.join(root, "missing-host.mjs");
 	const previous = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 	process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = "   ";
 	const manifests = [resolvePiPackageRoot(), resolveInstalledPiPackageRoot()]
@@ -109,6 +112,7 @@ test("detached launch ignores a whitespace-only package-root override", async (t
 		assert.match(result.content[0]!.text, /installed npm package.*neither is available/);
 		assert.equal(spawn.mock.calls.length, 0);
 	} finally {
+		process.argv[1] = previousArgv;
 		t.mock.restoreAll();
 		syncBuiltinESMExports();
 		if (previous === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
@@ -119,6 +123,8 @@ test("detached launch ignores a whitespace-only package-root override", async (t
 
 test("npm detached launch fails closed when the detected package root is absent", async (t) => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "missing-npm-root-"));
+	const previousArgv = process.argv[1];
+	process.argv[1] = path.join(root, "missing-host.mjs");
 	const previous = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
 	// An ambient override would satisfy host detection and defeat the fixture.
 	delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
@@ -142,6 +148,7 @@ test("npm detached launch fails closed when the detected package root is absent"
 		assert.match(result.content[0]!.text, /installed npm package.*neither is available/);
 		assert.equal(spawn.mock.callCount(), 0);
 	} finally {
+		process.argv[1] = previousArgv;
 		t.mock.restoreAll();
 		syncBuiltinESMExports();
 		if (previous === undefined) delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
