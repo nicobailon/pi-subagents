@@ -1529,12 +1529,13 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 	}
 	if (!realSessionFile.split(path.sep).includes(run.id)) {
 		// A resume replacement continues its source's session; accept it only when that source,
-		// resolved in the caller's own scope, validates on its own and owns this same file.
+		// resolved in the caller's own scope, is one the caller could resume itself (the states
+		// resolveNestedResumeTarget refuses), validates on its own and owns this same file.
 		const sourceId = run.revivedFrom;
 		const chain = [...visited, run.id];
 		const source = sourceId && chain.length <= 8 && !chain.includes(sourceId) ? resolveSource(sourceId) : undefined;
 		let sourceFile: string | undefined;
-		if (source && source.state !== "running" && source.state !== "queued") {
+		if (source && source.state !== "running" && source.state !== "queued" && source.state !== "stopped") {
 			try {
 				sourceFile = validateNestedSessionFile(source, trustedSessionRoots, resolveSource, chain);
 			} catch {

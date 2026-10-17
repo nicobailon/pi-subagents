@@ -598,7 +598,7 @@ describe("nested control routing", () => {
 	describe("resume of a run that a resume replaced", () => {
 		const accepted = /missing its required recovery identity/;
 		const refused = /not under that nested run's session directory/;
-		type RunSpec = { id: string; sessionFile: string; revivedFrom?: string; state?: "running" | "complete" };
+		type RunSpec = { id: string; sessionFile: string; revivedFrom?: string; state?: "running" | "complete" | "stopped" };
 		const sessionFileIn = (root: string, ...dirs: string[]) => {
 			const sessionFile = path.join(root, ...dirs, "run-0", "session.jsonl");
 			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
@@ -652,12 +652,13 @@ describe("nested control routing", () => {
 			assert.match(await resume(root, "r9", chain(9)), refused);
 		}));
 
-		it("refuses when the source is missing, out of scope, live, owns another file, or forms a cycle", () => withRoot(async (root) => {
+		it("refuses when the source is missing, out of scope, live, stopped, owns another file, or forms a cycle", () => withRoot(async (root) => {
 			const sessionFile = sessionFileIn(root, "parent", "source");
 			const replacement = { id: "replacement", sessionFile, revivedFrom: "source" };
 			assert.match(await resume(root, "replacement", [replacement]), refused);
 			assert.match(await resume(root, "replacement", [replacement], [{ id: "source", sessionFile }]), refused);
 			assert.match(await resume(root, "replacement", [{ id: "source", sessionFile, state: "running" }, replacement]), refused);
+			assert.match(await resume(root, "replacement", [{ id: "source", sessionFile, state: "stopped" }, replacement]), refused);
 			assert.match(await resume(root, "replacement", [{ id: "source", sessionFile: sessionFileIn(root, "parent", "source", "other") }, { ...replacement, sessionFile: sessionFileIn(root, "parent", "sibling") }]), refused);
 			const shared = sessionFileIn(root, "parent", "neither");
 			assert.match(await resume(root, "a", [{ id: "a", sessionFile: shared, revivedFrom: "b" }, { id: "b", sessionFile: shared, revivedFrom: "a" }]), refused);
