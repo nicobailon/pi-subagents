@@ -154,6 +154,86 @@ test("an explicit root wins over the embedded host dependency, but a Pi-owned ar
 	assert.equal(getPiSpawnCommand([]).args[0], path.join(pi, "cli.mjs"));
 });
 
+test("an extensionless .bin/pi symlink honors the override across SDK, CLI and background", async (t) => {
+	const { tmp, pi } = fixture(t);
+	const bin = path.join(tmp, "node_modules", ".bin", "pi");
+	fs.mkdirSync(path.dirname(bin), { recursive: true });
+	try {
+		fs.symlinkSync(path.join(pi, "cli.mjs"), bin, "file");
+	} catch (error) {
+		if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") {
+			t.skip("file symlinks require elevated privileges on Windows");
+			return;
+		}
+		throw error;
+	}
+	process.argv[1] = bin;
+	const override = path.join(tmp, "override");
+	writePackage(override, PI_CODING_AGENT_PACKAGE, "override");
+	writePeers(override);
+	process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = override;
+	assert.equal(resolveHostPiPackageRoot(), override);
+	assert.equal((await loadHostPiCodingAgent() as { owner?: string }).owner, "override");
+	assert.equal(resolveHostPiPackageRoot({ piPackageRoot: pi }), pi);
+	assert.equal(getPiSpawnCommand([], { piPackageRoot: pi }).args[0], path.join(pi, "cli.mjs"));
+	for (const platform of ["linux", "darwin", "win32"] as const) {
+		assert.equal(getPiSpawnCommand([], { platform }).args[0], path.join(override, "cli.mjs"));
+	}
+	const { calls } = await captureBackground(t, tmp);
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0]!.arguments[2].env.PI_PACKAGE_DIR, override);
+
+	fs.writeFileSync(path.join(override, "package.json"), "{");
+	assert.throws(() => resolveHostPiPackageRoot(), /malformed JSON/);
+	await assert.rejects(loadHostPiCodingAgent(), /malformed JSON/);
+	assert.throws(() => getPiSpawnCommand([]), /malformed JSON/);
+	await assertBackgroundFailure(t, tmp, /malformed JSON/);
+
+	delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	assert.equal(resolveHostPiPackageRoot(), pi);
+	assert.equal((await loadHostPiCodingAgent() as { owner?: string }).owner, "host");
+	assert.equal(getPiSpawnCommand([]).args[0], path.join(pi, "cli.mjs"));
+});
+
+test("injected roots share SDK and CLI precedence and fail closed without installed fallback", (t) => {
+	const { tmp, pi, entry } = fixture(t);
+	const injected = path.join(tmp, "injected");
+	const override = path.join(tmp, "override");
+	writePackage(injected);
+	writePackage(override);
+	let fallbackCalls = 0;
+	const deps = {
+		argv1: entry,
+		piPackageRoot: ` ${injected} `,
+		env: { [PI_CODING_AGENT_PACKAGE_ROOT_ENV]: override },
+		resolvePackageJson: () => { fallbackCalls++; return path.join(pi, "package.json"); },
+	};
+	assert.equal(resolveHostPiPackageRoot(deps), injected);
+	assert.equal(getPiSpawnCommand([], deps).args[0], path.join(injected, "cli.mjs"));
+	assert.equal(resolveHostPiPackageRoot({ ...deps, piPackageRoot: " " }), override);
+	assert.equal(getPiSpawnCommand([], { ...deps, piPackageRoot: " " }).args[0], path.join(override, "cli.mjs"));
+	fs.writeFileSync(path.join(injected, "package.json"), "{");
+	assert.throws(() => resolveHostPiPackageRoot(deps), /malformed JSON/);
+	assert.throws(() => getPiSpawnCommand([], deps), /malformed JSON/);
+	// Direct Pi-owned JS keeps its existing early-return priority over either override.
+	const direct = { ...deps, argv1: path.join(pi, "cli.mjs") };
+	assert.equal(resolveHostPiPackageRoot(direct), pi);
+	assert.equal(getPiSpawnCommand([], direct).args[0], path.join(pi, "cli.mjs"));
+	assert.equal(fallbackCalls, 0, "selected roots must not probe an installed fallback");
+});
+
+test("SDK and CLI share the extension-relative fallback when the host is unavailable", (t) => {
+	const { tmp } = fixture(t);
+	const installed = path.join(tmp, "extension-install");
+	writePackage(installed);
+	const deps = {
+		argv1: path.join(tmp, "missing-host.mjs"), env: {},
+		resolvePackageJson: () => path.join(installed, "package.json"),
+	};
+	assert.equal(resolveHostPiPackageRoot(deps), installed);
+	assert.equal(getPiSpawnCommand([], deps).args[0], path.join(installed, "cli.mjs"));
+});
+
 for (const source of ["dependency", "override"] as const) {
 	for (const [label, manifest, expected] of [
 		["malformed", "{", /malformed JSON/],
@@ -224,23 +304,6 @@ test("missing host argv falls back to the extension install, and blank override 
 	assert.equal(resolveHostPiPackageRoot(), resolveInstalledPiPackageRoot());
 	delete process.argv[1];
 	assert.equal(resolveHostDependencyPiPackageRoot(), undefined);
-});
-
-test("host dependency probing does not search NODE_PATH or unrelated stores", (t) => {
-	const { tmp, pi } = fixture(t);
-	fs.rmSync(pi, { recursive: true });
-	const unrelated = path.join(tmp, "unrelated-store", "node_modules", PI_CODING_AGENT_PACKAGE);
-	writePackage(unrelated);
-	const nodePath = path.dirname(path.dirname(unrelated));
-	// NODE_PATH is initialized at process startup, so changing process.env alone would not test it.
-	const result = childProcess.spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", [
-		`import { createRequire } from 'node:module';`,
-		`import { resolveHostDependencyPiPackageRoot } from ${JSON.stringify(new URL("../../src/runs/shared/pi-spawn.ts", import.meta.url).href)};`,
-		`const entry = ${JSON.stringify(process.argv[1])};`,
-		`console.log(JSON.stringify({ globalVisible: createRequire(entry).resolve.paths(${JSON.stringify(PI_CODING_AGENT_PACKAGE)}).includes(${JSON.stringify(nodePath)}), root: resolveHostDependencyPiPackageRoot(entry) ?? null }));`,
-	].join("\n")], { cwd: tmp, env: { ...process.env, NODE_PATH: nodePath }, encoding: "utf8" });
-	assert.equal(result.status, 0, result.stderr);
-	assert.deepEqual(JSON.parse(result.stdout), { globalVisible: true, root: null });
 });
 
 test("a broken nearest host dependency does not select a hoisted or extension copy", async (t) => {

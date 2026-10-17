@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Embedded hosts now resolve child SDK and CLI packages from the canonical host entry's dependency tree before the extension's own install, preserving explicit overrides for extensionless `.bin/pi` launches. Invalid selected SDK roots fail closed at launch while `doctor` and `status` remain usable.
 - When a workflow's owner process died, stale-run reconciliation marked every still-running child row failed, even a child whose detached runner had already finished. A child that already wrote its own `complete` or `failed` status now keeps that outcome; children that are unsettled or unreadable still inherit the owner failure. Thanks to [@isjiajia01](https://github.com/isjiajia01) for [#2940](https://github.com/nicobailon/pi-subagents/pull/2940) ([#2938](https://github.com/nicobailon/pi-subagents/issues/2938)).
 - A background workflow child showed no model on its lane in the async widget, FleetView, or `status` output, because only the child's own `status.json` recorded the resolved model. Lanes now fill a missing model and thinking level from the child run. Thanks to [@bottfish](https://github.com/bottfish) for [#2941](https://github.com/nicobailon/pi-subagents/pull/2941).
 

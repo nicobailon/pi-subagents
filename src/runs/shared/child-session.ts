@@ -390,10 +390,10 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
 
 /**
  * Load the host-owned pi-coding-agent module by absolute package entry so a
- * child cannot resolve an extension-owned copy. Root precedence is the running
- * Pi entry, an explicit override, the host entry's dependency, then the install
- * tree. Once any root is selected, its manifest, package identity, entry, and
- * import must all succeed; the bare specifier is used only when no root resolves.
+ * child cannot resolve an extension-owned copy. SDK and CLI root precedence is
+ * shared through resolveHostPiPackageRoot. Once any root is selected, its manifest,
+ * package identity, entry, and import must all succeed; the bare specifier is used
+ * only when no root resolves.
  */
 export async function loadHostPiCodingAgent(): Promise<PiCodingAgentModule> {
 	const overrideRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;

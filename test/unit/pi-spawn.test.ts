@@ -280,9 +280,9 @@ describe("getPiSpawnCommand", () => {
 	});
 
 	it("ignores embedded host entry points and resolves the Pi package bin on every platform", () => {
-		const tempDir = fs.mkdtempSync(
+		const tempDir = fs.realpathSync(fs.mkdtempSync(
 			path.join(os.tmpdir(), "pi-spawn-embedded-host-"),
-		);
+		));
 		try {
 			const hostRoot = path.join(tempDir, "pi-web");
 			const hostEntry = path.join(hostRoot, "dist", "server.js");
@@ -344,9 +344,9 @@ describe("getPiSpawnCommand", () => {
 	});
 
 	it("validates argv1 ownership against its canonical target", () => {
-		const tempDir = fs.mkdtempSync(
+		const tempDir = fs.realpathSync(fs.mkdtempSync(
 			path.join(os.tmpdir(), "pi-spawn-canonical-entry-"),
-		);
+		));
 		try {
 			const hostRoot = path.join(tempDir, "embedded-host");
 			const hostEntry = path.join(hostRoot, "dist", "server.js");
