@@ -186,17 +186,17 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => leafId,
 				getSessionDir: () => sessionDir,
-			}, "fork");
+			}, "fork", { runDirName: () => "child-run-id" });
 
 			const childSessionFile = resolver.sessionFileForIndex(0);
 			assert.ok(childSessionFile);
 			assert.equal(fs.existsSync(childSessionFile), true);
 
-			// The fork is nested under <sessionDir>/<parentBase>/forks/, never a
+			// The fork is nested under <sessionDir>/<parentBase>/forks/<run id>/, never a
 			// top-level sibling of the parent.
 			assert.equal(
 				path.dirname(childSessionFile),
-				path.join(sessionDir, path.basename(parentSessionFile, ".jsonl"), "forks"),
+				path.join(sessionDir, path.basename(parentSessionFile, ".jsonl"), "forks", "child-run-id"),
 			);
 			// Top-level listing — what pi -c sees — still contains only the parent.
 			const topLevel = fs.readdirSync(sessionDir).filter((f) => f.endsWith(".jsonl"));

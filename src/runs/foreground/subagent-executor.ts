@@ -7553,6 +7553,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		// Forked children keep their requested thinking level. Signed Anthropic thinking
 		// blocks are stripped from the inherited transcript by the resolver (they are bound
 		// to the parent session), which is not a reason to disable the child's own reasoning.
+		let sessionRunId: string | undefined;
 		try {
 			assertLaunchableAgentsAllowedBeforeFork();
 			const pruneSession = contextPolicy.usesFork && deps.config.forkContext?.mode === "pruned"
@@ -7561,7 +7562,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const forkContextResolver = createForkContextResolver(
 				ctx.sessionManager,
 				contextPolicy.usesFork ? "fork" : undefined,
-				pruneSession ? { pruneSession } : {},
+				{
+					...(pruneSession ? { pruneSession } : {}),
+					runDirName: () => {
+						if (!sessionRunId) throw new Error("A fork session was requested before the launch's run id was assigned.");
+						return sessionRunId;
+					},
+				},
 			);
 			prepareForkSessionForIndex = forkContextResolver.prepareSessionForIndex;
 			forkSessionFileForIndex = forkContextResolver.sessionFileForIndex;
@@ -7665,7 +7672,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let sessionRoot: string;
 		// Key the session directory by the id the run is recorded under: nested resume
 		// accepts a session file only inside a directory named by that run's id.
-		const sessionRunId = effectiveAsync ? asyncRunId : runId;
+		sessionRunId = effectiveAsync ? asyncRunId : runId;
 		if (effectiveParams.sessionDir) {
 			// An explicit sessionDir is a root keyed by this launch's run id so
 			// concurrent children resolve distinct per-child session files.
