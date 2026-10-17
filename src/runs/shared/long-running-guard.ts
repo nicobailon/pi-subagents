@@ -50,9 +50,11 @@ export function resolveCurrentPath(toolName: string | undefined, args: Record<st
 	if (toolName === "bash") {
 		const command = typeof args.command === "string" ? args.command : undefined;
 		if (!command) return undefined;
-		for (const redirect of command.matchAll(/(?:>>?|tee\s+)\s*([^\s;&|()]+|&\S*)/g)) {
-			const target = redirect[1]!;
-			if (!target.startsWith("&") && target !== "/dev/null") return target;
+		// Groups: quoted target, double-quoted target, fd duplication (&1, &-), bare target.
+		for (const redirect of command.matchAll(/(?:>>?|tee\s+)\s*(?:'([^']*)'|"([^"]*)"|(&[\w-]*)|([^\s;&|()<>'"]+))/g)) {
+			if (redirect[3] !== undefined) continue;
+			const target = redirect[1] ?? redirect[2] ?? redirect[4];
+			if (target && target !== "/dev/null") return target;
 		}
 	}
 	return undefined;

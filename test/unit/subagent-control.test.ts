@@ -49,6 +49,9 @@ describe("mutating tool supervision", () => {
 		assert.equal(resolveCurrentPath("bash", { command: "grep -rn x src 2>/dev/null >out.txt" }), "out.txt");
 		assert.equal(resolveCurrentPath("bash", { command: "npm test 2>&1; echo done" }), undefined);
 		assert.equal(resolveCurrentPath("bash", { command: "grep x index.ts &>/dev/null" }), undefined);
+		assert.equal(resolveCurrentPath("bash", { command: "npm test 2>&1>out.log" }), "out.log");
+		assert.equal(resolveCurrentPath("bash", { command: "npm test >'test-results(1).log'" }), "test-results(1).log");
+		assert.equal(resolveCurrentPath("bash", { command: 'npm test > "my log.txt" 2>&1' }), "my log.txt");
 	});
 });
 
