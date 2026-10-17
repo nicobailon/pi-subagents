@@ -293,16 +293,11 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 }
 
 function workflowChildRunModel(runId: string, workflowRunId: string, currentSessionId: string, asyncDirRoot: string, resultsDir: string, state: SubagentState | undefined): { provider: string; model: string } | undefined {
-	try {
-		const resolved = resolveSubagentRunId(runId, { asyncDirRoot, resultsDir, state });
-		if (resolved?.kind !== "async" || resolved.id !== runId || !resolved.location.asyncDir) return undefined;
-		const child = readStatus(resolved.location.asyncDir);
-		if (!child || child.runId !== runId || child.parentWorkflowRunId !== workflowRunId || child.mode !== "single" || !ownsRun(currentSessionId, child.sessionId)) return undefined;
-		return child.steps?.[0]?.resolvedModel;
-	} catch {
-		// An unreadable child record leaves the model unattributed, like any other missing record.
-		return undefined;
-	}
+	const resolved = resolveSubagentRunId(runId, { asyncDirRoot, resultsDir, state });
+	if (resolved?.kind !== "async" || resolved.id !== runId || !resolved.location.asyncDir) return undefined;
+	const child = readStatus(resolved.location.asyncDir);
+	if (!child || child.runId !== runId || child.parentWorkflowRunId !== workflowRunId || child.mode !== "single" || !ownsRun(currentSessionId, child.sessionId)) return undefined;
+	return child.steps?.[0]?.resolvedModel;
 }
 
 function toReplyMessage(message: SessionTranscriptMessage): InspectReplyMessage {
