@@ -213,11 +213,26 @@ describe("inspect-rpc reply content", () => {
 		const resolvedModel = { provider: "openai-codex", model: "gpt-6-sol" };
 		const single = makeRun(root, { runId: "run-model", steps: [{ agent: "worker", status: "complete", model: "llama-swap/qwen3.5:9b", resolvedModel }] });
 		assert.deepEqual(buildInspectReply({ requestId: "m1", asyncId: "run-model" }, makeDeps(root, single.resultsDir)).resolvedModel, resolvedModel);
-		const workflow = makeRun(root, { runId: "run-model-wf", mode: "workflow", steps: [{ agent: "planner", status: "complete", workflowKey: "step-a", resolvedModel }] });
-		assert.equal(buildInspectReply({ requestId: "m2", asyncId: "run-model-wf" }, makeDeps(root, workflow.resultsDir)).resolvedModel, undefined);
-		assert.deepEqual(buildInspectReply({ requestId: "m3", asyncId: "run-model-wf", childId: "step-a" }, makeDeps(root, workflow.resultsDir)).resolvedModel, resolvedModel);
 		const historical = makeRun(root, { runId: "run-model-old", steps: [{ agent: "worker", status: "complete", model: "llama-swap/qwen3.5:9b" }] });
 		assert.equal(buildInspectReply({ requestId: "m4", asyncId: "run-model-old" }, makeDeps(root, historical.resultsDir)).resolvedModel, undefined);
+		// A background workflow child records its reply in its own run's status; the workflow's step only names that run.
+		const workflow = makeRun(root, { runId: "run-model-wf", mode: "workflow", steps: [{ agent: "planner", status: "complete", workflowKey: "step-a", runId: "run-model-wf-child" }] });
+		const writeChild = (runId: string, extra: Record<string, unknown>) => {
+			const child = makeRun(root, { runId, steps: [{ agent: "planner", status: "complete", resolvedModel }] });
+			const statusPath = path.join(child.asyncDir, "status.json");
+			fs.writeFileSync(statusPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(statusPath, "utf-8")), ...extra }), "utf-8");
+		};
+		writeChild("run-model-wf-child", { parentWorkflowRunId: "run-model-wf" });
+		const wfDeps = makeDeps(root, workflow.resultsDir);
+		assert.equal(buildInspectReply({ requestId: "m2", asyncId: "run-model-wf" }, wfDeps).resolvedModel, undefined);
+		assert.deepEqual(buildInspectReply({ requestId: "m3", asyncId: "run-model-wf", childId: "step-a" }, wfDeps).resolvedModel, resolvedModel);
+		assert.deepEqual(buildInspectReply({ requestId: "m3b", asyncId: "run-model-wf", childId: "run-model-wf-child" }, wfDeps).resolvedModel, resolvedModel);
+		// A named run that is not this workflow's child, or belongs to another session, is not attributed.
+		makeRun(root, { runId: "run-model-wf2", mode: "workflow", steps: [{ agent: "planner", status: "complete", workflowKey: "step-b", runId: "run-model-other" }, { agent: "planner", status: "complete", workflowKey: "step-c", runId: "run-model-foreign" }] });
+		writeChild("run-model-other", { parentWorkflowRunId: "run-model-wf" });
+		writeChild("run-model-foreign", { parentWorkflowRunId: "run-model-wf2", sessionId: "session-other" });
+		assert.equal(buildInspectReply({ requestId: "m3c", asyncId: "run-model-wf2", childId: "step-b" }, wfDeps).resolvedModel, undefined);
+		assert.equal(buildInspectReply({ requestId: "m3d", asyncId: "run-model-wf2", childId: "step-c" }, wfDeps).resolvedModel, undefined);
 		const long = makeRun(root, { runId: "run-model-long", steps: [{ agent: "worker", status: "complete", resolvedModel: { provider: "p".repeat(500), model: "m".repeat(500) } }] });
 		const capped = buildInspectReply({ requestId: "m5", asyncId: "run-model-long" }, makeDeps(root, long.resultsDir)).resolvedModel;
 		assert.ok(capped && capped.provider.length <= 64 && capped.model.length <= 160);

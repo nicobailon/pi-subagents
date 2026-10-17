@@ -292,6 +292,19 @@ function readResultOutput(resultsDir: string, sessionId: string, runId: string, 
 	return output ? { output } : {};
 }
 
+function workflowChildRunModel(runId: string, workflowRunId: string, currentSessionId: string, asyncDirRoot: string, resultsDir: string, state: SubagentState | undefined): { provider: string; model: string } | undefined {
+	try {
+		const resolved = resolveSubagentRunId(runId, { asyncDirRoot, resultsDir, state });
+		if (resolved?.kind !== "async" || resolved.id !== runId || !resolved.location.asyncDir) return undefined;
+		const child = readStatus(resolved.location.asyncDir);
+		if (!child || child.runId !== runId || child.parentWorkflowRunId !== workflowRunId || child.mode !== "single" || !ownsRun(currentSessionId, child.sessionId)) return undefined;
+		return child.steps?.[0]?.resolvedModel;
+	} catch {
+		// An unreadable child record leaves the model unattributed, like any other missing record.
+		return undefined;
+	}
+}
+
 function toReplyMessage(message: SessionTranscriptMessage): InspectReplyMessage {
 	return {
 		role: truncateDisplayText(sanitizeDisplayText(message.role), 32),
@@ -410,7 +423,9 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 		if (finalOutputRaw !== undefined && boundedFinal !== finalOutputRaw) truncated.finalOutput = true;
 		const label = publicText(node.label ?? step?.label ?? step?.agent ?? node.status.runId, MAX_LABEL_LENGTH);
 		// Only the inspected child's own record: a multi-step run-level node has no single child.
-		const recordedModel = (step ?? (node.status.mode === "single" ? node.status.steps?.[0] : undefined))?.resolvedModel;
+		// A background workflow child records its model in its own run's status, linked back by parentWorkflowRunId.
+		const recordedModel = (step ?? (node.status.mode === "single" ? node.status.steps?.[0] : undefined))?.resolvedModel
+			?? (step?.runId ? workflowChildRunModel(step.runId, node.status.runId, currentSessionId, asyncDirRoot, resultsDir, deps.state) : undefined);
 		const resolvedProvider = publicText(recordedModel?.provider, 64);
 		const resolvedModelId = publicText(recordedModel?.model, 160);
 
