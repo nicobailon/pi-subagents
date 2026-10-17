@@ -90,12 +90,12 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 		const restore = source === undefined ? [] : available
 			.filter((tool) => unloadedNames.has(tool.name) && recorded.has(tool.name) && tool.sourceInfo.path === source)
 			.map((tool) => tool.name);
-		setSelection(pi, recorded.has(SUBAGENT_NAME), loaderSelected, restore, replyOwed || recorded.has(PARENT_SUPERVISOR_NAME));
+		setSelection(pi, recorded.has(SUBAGENT_NAME), loaderSelected, replyOwed ? [...restore, PARENT_SUPERVISOR_NAME] : restore, replyOwed || recorded.has(PARENT_SUPERVISOR_NAME));
 		return loaderSelected;
 	}
 	// "auto" goes eager only for an empty session; any history keeps the tools it already sent.
 	const eager = mode === "auto" && messages.length === 0 && !addsToolsWithoutCheckpoint(ctx.model);
-	setSelection(pi, eager || (messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME)), !eager, [], replyOwed || messages.length > 0);
+	setSelection(pi, eager || (messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME)), !eager, replyOwed ? [PARENT_SUPERVISOR_NAME] : [], replyOwed || messages.length > 0);
 	return !eager;
 }
 

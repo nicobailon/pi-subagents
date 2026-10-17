@@ -373,6 +373,10 @@ describe("toolActivation modes", () => {
 			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
 			assert.ok(runtime.active().includes("subagent_supervisor"));
 			assert.equal(runtime.active().includes("subagent"), false);
+			// Pi restores a branch's own tools before session_tree; a branch that never had the tool loses it.
+			runtime.select(["read", "subagents_enable", "bg_wait"]);
+			await runtime.emit("session_tree", { type: "session_tree", newLeafId: null, oldLeafId: null });
+			assert.ok(runtime.active().includes("subagent_supervisor"), "branch switch while a reply is owed");
 		} finally {
 			fs.rmSync(channelDir, { recursive: true, force: true });
 		}
