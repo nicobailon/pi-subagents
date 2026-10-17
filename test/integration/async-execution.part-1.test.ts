@@ -1069,6 +1069,29 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi/subagents", "artifacts")), false);
 	});
 
+	it("keeps a background child's session under a directory named by its run id", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		mockPi.onCall({ output: "session layout" });
+		const sessionsDir = path.join(tempDir, "child-sessions");
+		const executor = makeAsyncExecutor([makeAgent("worker")], { defaultSessionDir: sessionsDir });
+
+		const launch = await executor.execute(
+			"async-session-run-id",
+			{ agent: "worker", task: "Report", async: true, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		) as AsyncExecutionResult;
+
+		assert.equal(launch.isError, undefined, launch.content[0]?.text);
+		const id = launch.details.asyncId!;
+		await readAsyncPayload(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const expected = path.join(sessionsDir, id, "run-0", "session.jsonl");
+		assert.equal(status.steps?.[0]?.sessionFile, expected);
+		const args = readMockPiArgs(mockPi, 0);
+		assert.equal(args[args.indexOf("--session") + 1], expected);
+	});
+
 	it("launches foreground and background children with the parent session's project trust", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const executor = makeAsyncExecutor([makeAgent("worker")]);
 		const ctx = { ...makeMinimalCtx(tempDir), isProjectTrusted: () => false };
