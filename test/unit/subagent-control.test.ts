@@ -52,6 +52,9 @@ describe("mutating tool supervision", () => {
 		assert.equal(resolveCurrentPath("bash", { command: "npm test 2>&1>out.log" }), "out.log");
 		assert.equal(resolveCurrentPath("bash", { command: "npm test >'test-results(1).log'" }), "test-results(1).log");
 		assert.equal(resolveCurrentPath("bash", { command: 'npm test > "my log.txt" 2>&1' }), "my log.txt");
+		assert.equal(resolveCurrentPath("bash", { command: "printf 'value > label' >out.log" }), "out.log");
+		assert.equal(resolveCurrentPath("bash", { command: 'echo "a > b" && echo \\> c' }), undefined);
+		assert.equal(resolveCurrentPath("bash", { command: "npm test | tee -a run.log" }), "run.log");
 	});
 });
 

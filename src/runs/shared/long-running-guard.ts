@@ -50,12 +50,57 @@ export function resolveCurrentPath(toolName: string | undefined, args: Record<st
 	if (toolName === "bash") {
 		const command = typeof args.command === "string" ? args.command : undefined;
 		if (!command) return undefined;
-		// Groups: quoted target, double-quoted target, fd duplication (&1, &-), bare target.
-		for (const redirect of command.matchAll(/(?:>>?|tee\s+)\s*(?:'([^']*)'|"([^"]*)"|(&[\w-]*)|([^\s;&|()<>'"]+))/g)) {
-			if (redirect[3] !== undefined) continue;
-			const target = redirect[1] ?? redirect[2] ?? redirect[4];
-			if (target && target !== "/dev/null") return target;
+		return firstWrittenFile(command);
+	}
+	return undefined;
+}
+
+// Reads one shell word starting at `start`, removing quotes and escapes.
+function readShellWord(command: string, start: number): { word: string; end: number } {
+	let word = "";
+	let quote: string | undefined;
+	let i = start;
+	for (; i < command.length; i++) {
+		const char = command[i]!;
+		if (quote) {
+			if (char === quote) quote = undefined;
+			else if (char === "\\" && quote === '"' && i + 1 < command.length) word += command[++i];
+			else word += char;
+			continue;
 		}
+		if (char === "'" || char === '"') quote = char;
+		else if (char === "\\" && i + 1 < command.length) word += command[++i];
+		else if (/[\s;&|()<>]/.test(char)) break;
+		else word += char;
+	}
+	return { word, end: i };
+}
+
+// First file an unquoted `>`, `>>`, or `tee` writes, skipping fd duplications (`>&1`) and /dev/null.
+function firstWrittenFile(command: string): string | undefined {
+	let quote: string | undefined;
+	for (let i = 0; i < command.length; i++) {
+		const char = command[i]!;
+		if (quote) {
+			if (char === quote) quote = undefined;
+			else if (char === "\\" && quote === '"') i++;
+			continue;
+		}
+		if (char === "'" || char === '"') { quote = char; continue; }
+		if (char === "\\") { i++; continue; }
+		const isTee = command.startsWith("tee", i) && (i === 0 || /[\s|;&(]/.test(command[i - 1]!)) && /\s/.test(command[i + 3] ?? "");
+		if (char !== ">" && !isTee) continue;
+		let cursor = isTee ? i + 3 : command[i + 1] === ">" ? i + 2 : i + 1;
+		for (;;) {
+			while (cursor < command.length && /\s/.test(command[cursor]!)) cursor++;
+			if (command[cursor] === "&") break;
+			const { word, end } = readShellWord(command, cursor);
+			cursor = end;
+			if (isTee && word.startsWith("-")) continue;
+			if (word && word !== "/dev/null") return word;
+			break;
+		}
+		i = cursor - 1;
 	}
 	return undefined;
 }
