@@ -3208,6 +3208,8 @@ export async function runSubagent(
 					step.model = observedModel;
 				}
 			}
+			const { provider, model } = event.message;
+			if (typeof provider === "string" && provider && typeof model === "string" && model) step.resolvedModel = { provider, model };
 			const usage = event.message.usage;
 			if (config.usageBudget) {
 				const known = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0;

@@ -185,6 +185,10 @@ Inspection properties:
 - `task` is the child session's first user message and is only populated when
   it is genuinely attributable (fresh-context child whose session file fits the
   read window); forked children omit it.
+- `resolvedModel` (`{ provider, model }`) is the pair Pi recorded on the
+  inspected child's latest own assistant reply, never the requested model. It is
+  absent before the first reply, for run-level inspection of a multi-step or
+  workflow run, and for runs recorded before pi-subagents reported it.
 - `childId` is exactly the node id the host received in the status snapshot
   (step `workflowKey`/`runId`/`step:<index>`, or a nested run id).
 

@@ -53,6 +53,8 @@ export interface InspectReply {
 	task?: string;
 	messages?: InspectReplyMessage[];
 	finalOutput?: string;
+	/** Provider and model of the inspected child's latest own assistant reply, as Pi recorded them. */
+	resolvedModel?: { provider: string; model: string };
 	truncated?: { task: boolean; messages: number; finalOutput: boolean };
 	error?: { code: InspectErrorCode; message: string };
 }
@@ -407,6 +409,10 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 		const boundedFinal = finalOutputRaw !== undefined ? boundContent(finalOutputRaw, MAX_FINAL_OUTPUT_LENGTH) : undefined;
 		if (finalOutputRaw !== undefined && boundedFinal !== finalOutputRaw) truncated.finalOutput = true;
 		const label = publicText(node.label ?? step?.label ?? step?.agent ?? node.status.runId, MAX_LABEL_LENGTH);
+		// Only the inspected child's own record: a multi-step run-level node has no single child.
+		const recordedModel = (step ?? (node.status.mode === "single" ? node.status.steps?.[0] : undefined))?.resolvedModel;
+		const resolvedProvider = publicText(recordedModel?.provider, 64);
+		const resolvedModelId = publicText(recordedModel?.model, 160);
 
 		const reply: InspectReply = {
 			kind: INSPECT_REPLY_KIND,
@@ -419,6 +425,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			...(boundedTask !== undefined ? { task: boundedTask } : {}),
 			...(messages && messages.length > 0 ? { messages } : {}),
 			...(boundedFinal !== undefined ? { finalOutput: boundedFinal } : {}),
+			...(resolvedProvider && resolvedModelId ? { resolvedModel: { provider: resolvedProvider, model: resolvedModelId } } : {}),
 			...(truncated.task || truncated.finalOutput || truncated.messages > 0 ? { truncated } : {}),
 		};
 		return enforceByteBudget(reply);

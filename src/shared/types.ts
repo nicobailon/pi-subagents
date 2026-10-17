@@ -2028,6 +2028,8 @@ export interface AsyncStatus {
 		model?: string;
 		/** Model the child was launched on, recorded when its replies reported a different `model`; revival uses it. */
 		launchModel?: string;
+		/** Provider and model recorded on this child's latest own live assistant reply; never the requested model. */
+		resolvedModel?: { provider: string; model: string };
 		thinking?: string;
 		contextLimit?: number;
 		thinkingCeiling?: ThinkingLevel;

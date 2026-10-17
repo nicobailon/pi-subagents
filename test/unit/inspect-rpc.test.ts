@@ -208,6 +208,20 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(serialized.includes(sessionFile), false);
 		assert.equal(serialized.includes(root), false);
 	});
+	it("reports the provider and model the child's own reply recorded, and nothing a run-level workflow or historical status cannot attribute", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-model-"));
+		const resolvedModel = { provider: "openai-codex", model: "gpt-6-sol" };
+		const single = makeRun(root, { runId: "run-model", steps: [{ agent: "worker", status: "complete", model: "llama-swap/qwen3.5:9b", resolvedModel }] });
+		assert.deepEqual(buildInspectReply({ requestId: "m1", asyncId: "run-model" }, makeDeps(root, single.resultsDir)).resolvedModel, resolvedModel);
+		const workflow = makeRun(root, { runId: "run-model-wf", mode: "workflow", steps: [{ agent: "planner", status: "complete", workflowKey: "step-a", resolvedModel }] });
+		assert.equal(buildInspectReply({ requestId: "m2", asyncId: "run-model-wf" }, makeDeps(root, workflow.resultsDir)).resolvedModel, undefined);
+		assert.deepEqual(buildInspectReply({ requestId: "m3", asyncId: "run-model-wf", childId: "step-a" }, makeDeps(root, workflow.resultsDir)).resolvedModel, resolvedModel);
+		const historical = makeRun(root, { runId: "run-model-old", steps: [{ agent: "worker", status: "complete", model: "llama-swap/qwen3.5:9b" }] });
+		assert.equal(buildInspectReply({ requestId: "m4", asyncId: "run-model-old" }, makeDeps(root, historical.resultsDir)).resolvedModel, undefined);
+		const long = makeRun(root, { runId: "run-model-long", steps: [{ agent: "worker", status: "complete", resolvedModel: { provider: "p".repeat(500), model: "m".repeat(500) } }] });
+		const capped = buildInspectReply({ requestId: "m5", asyncId: "run-model-long" }, makeDeps(root, long.resultsDir)).resolvedModel;
+		assert.ok(capped && capped.provider.length <= 64 && capped.model.length <= 160);
+	});
 	it("resolves a direct step child by snapshot node id", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-child-"));
 		const childSession = path.join(root, "child.jsonl");
@@ -578,6 +592,7 @@ describe("inspect-rpc bounds", () => {
 		const big = "x".repeat(1_000);
 		const { resultsDir } = makeRun(root, {
 			runId: "run-big",
+			steps: [{ agent: "worker", status: "complete", resolvedModel: { provider: "openai-codex", model: "gpt-6-sol" } }],
 			sessionMessages: Array.from({ length: 300 }, (_, index) => assistantMessage(`${index}:${big}`)),
 			resultPayload: { summary: big.repeat(9), results: [] },
 		});
@@ -586,6 +601,7 @@ describe("inspect-rpc bounds", () => {
 		const bytes = Buffer.byteLength(JSON.stringify(reply), "utf-8");
 		assert.ok(bytes <= MAX_SERIALIZED_BYTES, `reply ${bytes} exceeds ${MAX_SERIALIZED_BYTES}`);
 		assert.ok((reply.truncated?.messages ?? 0) > 0);
+		assert.deepEqual(reply.resolvedModel, { provider: "openai-codex", model: "gpt-6-sol" }, "message trimming must keep the resolved model");
 	});
 	it("caps per-field lengths", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-inspect-caps-"));
