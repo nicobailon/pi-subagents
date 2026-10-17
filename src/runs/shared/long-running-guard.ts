@@ -50,8 +50,10 @@ export function resolveCurrentPath(toolName: string | undefined, args: Record<st
 	if (toolName === "bash") {
 		const command = typeof args.command === "string" ? args.command : undefined;
 		if (!command) return undefined;
-		const redirect = command.match(/(?:>|>>|tee\s+)(\S+)/);
-		if (redirect?.[1]) return redirect[1];
+		for (const redirect of command.matchAll(/(?:>>?|tee\s+)\s*([^\s;&|()]+|&\S*)/g)) {
+			const target = redirect[1]!;
+			if (!target.startsWith("&") && target !== "/dev/null") return target;
+		}
 	}
 	return undefined;
 }
