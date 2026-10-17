@@ -93,7 +93,8 @@ function firstWrittenFile(command: string): string | undefined {
 		if (char !== ">" && !isTee) continue;
 		let cursor = isTee ? i + 3 : command[i + 1] === ">" ? i + 2 : i + 1;
 		for (;;) {
-			while (cursor < command.length && /\s/.test(command[cursor]!)) cursor++;
+			// A newline ends the command, so arguments never continue onto the next line.
+			while (cursor < command.length && /[ \t]/.test(command[cursor]!)) cursor++;
 			if (command[cursor] === "&") break;
 			const { word, end } = readShellWord(command, cursor);
 			cursor = end;
