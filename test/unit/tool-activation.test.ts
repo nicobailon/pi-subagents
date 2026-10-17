@@ -9,6 +9,7 @@ import { ensureSupervisorChannelDir, registerNativeSupervisorClient, resolveSupe
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
+import { registerBackgroundWorkProvider } from "../../src/api/background-work.ts";
 
 type Handler = (event: any, context: any) => any;
 type Tool = { name: string; description?: string; promptSnippet?: string; parameters?: unknown; execute?: (...args: any[]) => any; sourceInfo?: { path: string } };
@@ -101,13 +102,13 @@ describe("subagent tool activation", () => {
 		}
 	});
 
-	it("starts fresh parents with a compact self-service loader and declares subagent_supervisor only with subagent", async () => {
+	it("starts fresh parents with a compact self-service loader and declares bg_wait and subagent_supervisor only with subagent", async () => {
 		const runtime = createRuntime([], [], [], DYNAMIC);
 		await runtime.emit("session_start", { type: "session_start", reason: "startup" });
 
 		assert.equal(runtime.active().includes("subagent"), false);
 		assert.ok(runtime.active().includes("subagents_enable"));
-		assert.ok(runtime.active().includes("bg_wait"));
+		assert.equal(runtime.active().includes("bg_wait"), false);
 		assert.equal(runtime.active().includes("subagent_supervisor"), false);
 		const loader = runtime.tools.get("subagents_enable");
 		assert.ok(loader);
@@ -118,6 +119,7 @@ describe("subagent tool activation", () => {
 		assert.notEqual(result?.isError, true);
 		assert.ok(runtime.active().includes("subagent"));
 		assert.ok(runtime.active().includes("subagent_supervisor"));
+		assert.ok(runtime.active().includes("bg_wait"));
 		assert.ok(runtime.active().includes("read"));
 		const enabled = runtime.active();
 		await loader.execute?.("enable-again", {}, new AbortController().signal, undefined, runtime.context);
@@ -147,10 +149,12 @@ describe("subagent tool activation", () => {
 		await legacy.emit("session_start", { type: "session_start", reason: "startup" });
 		assert.ok(legacy.active().includes("subagent"));
 		assert.ok(legacy.active().includes("subagents_enable"));
+		assert.ok(legacy.active().includes("bg_wait"));
 
 		const restricted = createRuntime([], ["subagents_enable"], [], DYNAMIC);
 		await restricted.emit("session_start", { type: "session_start", reason: "startup" });
 		assert.ok(restricted.active().includes("subagent"));
+		assert.ok(restricted.active().includes("bg_wait"));
 		assert.equal(restricted.active().includes("subagents_enable"), false);
 	});
 
@@ -274,6 +278,7 @@ describe("toolActivation modes", () => {
 			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
 			assert.equal(runtime.tools.has("subagents_enable"), false);
 			const selectedTools = await startAgent(runtime);
+			assert.ok(selectedTools.includes("bg_wait"));
 			assert.ok(selectedTools.includes("subagent"));
 			assert.equal(selectedTools.includes("subagents_enable"), false);
 		}
@@ -353,6 +358,41 @@ describe("toolActivation modes", () => {
 		const unaffected = await restart([declared(["read", "subagent", "contact_supervisor"])], [], ["read", "subagent", "contact_supervisor"]);
 		assert.equal(unaffected.active().includes("bg_wait"), false, "unaffected: bg_wait");
 		assert.ok(unaffected.active().includes("subagent"), "unaffected: subagent");
+	});
+
+	it("keeps bg_wait exactly as the transcript recorded it, and recognises an unload without it", async () => {
+		const cases: Array<[string, any[], boolean]> = [
+			["recorded", [declared(["read", "subagents_enable", "bg_wait"])], true],
+			["never declared", [declared(["read", "subagents_enable"])], false],
+			["warm, never declared", [declared(["read", "subagent", "contact_supervisor"])], false],
+		];
+		for (const [label, messages, expected] of cases) {
+			const runtime = createRuntime(messages, [], [], { model: COMPATIBLE });
+			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
+			assert.equal((await startAgent(runtime)).includes("bg_wait"), expected, label);
+		}
+
+		// A cold session that never declared bg_wait: its unload removes the loader, and a new process brings it back.
+		const unloaded = createRuntime([declared(["read", "subagents_enable", "subagent_supervisor"]), declared([], ["subagents_enable", "subagent_supervisor"])], [], [], { model: COMPATIBLE });
+		unloaded.select(["read"]);
+		await unloaded.emit("session_start", { type: "session_start", reason: "resume" });
+		assert.ok((await startAgent(unloaded)).includes("subagents_enable"), "unload: loader restored");
+		assert.equal(unloaded.active().includes("bg_wait"), false, "unload: bg_wait stays undeclared");
+		assert.ok(unloaded.active().includes("subagent_supervisor"), "unload: subagent_supervisor restored");
+	});
+
+	it("declares bg_wait without subagent once a background-work provider is registered", async () => {
+		const runtime = createRuntime([], [], [], DYNAMIC);
+		await runtime.emit("session_start", { type: "session_start", reason: "startup" });
+		assert.equal((await startAgent(runtime)).includes("bg_wait"), false);
+		const dispose = registerBackgroundWorkProvider({ name: "tool-activation-test", listActiveWork: () => [] });
+		try {
+			assert.ok((await startAgent(runtime)).includes("bg_wait"));
+			assert.ok(runtime.active().includes("bg_wait"));
+			assert.equal(runtime.active().includes("subagent"), false);
+		} finally {
+			dispose();
+		}
 	});
 
 	it("rejects an unknown toolActivation value instead of falling back", () => {

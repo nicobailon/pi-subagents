@@ -90,7 +90,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 			const wait = tools.find((tool) => tool.name === "bg_wait");
 			const supervisor = tools.find((tool) => tool.name === "subagent_supervisor");
 			assert.ok(loader);
-			assert.ok(wait);
+			assert.equal(wait, undefined, "a session that has not delegated does not declare bg_wait");
 			assert.equal(supervisor, undefined, "a session that has not delegated does not declare subagent_supervisor");
 			assert.ok(JSON.stringify(loader).length <= 800);
 			assert.ok(!tools.some((tool) => tool.name === "subagent"));
@@ -106,6 +106,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 			const subagent = tools.find((tool) => tool.name === "subagent");
 			assert.ok(subagent);
 			assert.ok(tools.some((tool) => tool.name === "subagent_supervisor"));
+			assert.ok(tools.some((tool) => tool.name === "bg_wait"));
 			assert.deepEqual(subagent.parameters, createSubagentParamsSchema());
 			return fauxAssistantMessage("Activation verified.");
 		},
@@ -113,7 +114,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 
 	assert.equal(captured.length, 2);
 	// Every package tool definition is sent on every request. Raising these budgets needs owner approval (#2770).
-	assert.ok(captured[0]! <= 2_200, `cold package tool text exceeded budget: ${captured[0]} (${sizes[0]})`);
+	assert.ok(captured[0]! <= 500, `cold package tool text exceeded budget: ${captured[0]} (${sizes[0]})`);
 	assert.ok(captured[1]! <= 5_500, `activated package tool text exceeded budget: ${captured[1]} (${sizes[1]})`);
 	assert.ok(captured[1]! - captured[0]! >= 3_000, "lazy activation should remove the full subagent schema from cold requests");
 	console.log(`package tool characters cold=${captured[0]} (${sizes[0]}) activated=${captured[1]} (${sizes[1]})`);

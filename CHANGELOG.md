@@ -5,6 +5,7 @@
 ### Changed
 
 - A parent session that never delegates no longer declares `subagent_supervisor`, which saves about 420 characters of tool definition on every request. The tool now becomes active with `subagent`, or when a child request reaches a session that does not have it, for example from a scheduled run. A resumed session keeps it if its transcript declared it, so upgrading does not change an existing session's tools or miss its prompt cache. Thanks to [@armchairfuturist-code](https://github.com/armchairfuturist-code) for reporting [#2936](https://github.com/nicobailon/pi-subagents/issues/2936).
+- Every parent session declared `bg_wait` on every request, about 1,100 characters of tool definition, even when it never ran background work. With dynamic tool activation, a new parent session now declares `bg_wait` only together with `subagent` (after `subagents_enable`), or once another extension registers a background-work provider. Sessions that already declared it keep it, so resuming one after the upgrade does not miss the prompt cache. Thanks to [@armchairfuturist-code](https://github.com/armchairfuturist-code) for reporting [#2935](https://github.com/nicobailon/pi-subagents/issues/2935).
 
 ### Fixed
 

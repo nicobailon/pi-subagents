@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 import type { ToolActivationMode } from "../shared/types.ts";
 import { registerPinnedTool } from "./declaration-pinning.ts";
+import { listBackgroundWorkProviders } from "../api/background-work.ts";
 import { CONTACT_SUPERVISOR_TOOL_NAME as SUPERVISOR_NAME, NATIVE_SUPERVISOR_TOOL_NAME as PARENT_SUPERVISOR_NAME } from "../intercom/native-supervisor-channel.ts";
 
 interface ActivationDetails {
@@ -13,11 +14,12 @@ interface ActivationDetails {
 
 const LOADER_NAME = "subagents_enable";
 const SUBAGENT_NAME = "subagent";
-// Registered and active whenever this extension loads, and never deactivated here.
+// Declared with subagent, or once background-work providers exist (they report work only bg_wait reads).
 const WAIT_NAME = "bg_wait";
 // SUPERVISOR_NAME is declared with subagent: a fork launched through it then declares exactly this session's tools.
 // PARENT_SUPERVISOR_NAME (answering this session's children) is declared with subagent too, unless the session already
 // declared it: a changed tool set would miss the prompt cache. The channel declares it when a child request arrives.
+const UNLOAD_SENTINELS = new Set([LOADER_NAME, SUBAGENT_NAME, WAIT_NAME]);
 let warnedUnsupportedHost = false;
 
 type ToolSelectionMessage = {
@@ -31,10 +33,12 @@ function hasNativeToolSelection(messages: readonly ToolSelectionMessage[]): bool
 		&& (Object.hasOwn(message, "toolsAdded") || Object.hasOwn(message, "toolsRemoved")));
 }
 
-function setSelection(pi: ExtensionAPI, includeSubagent: boolean, includeLoader: boolean, restore: readonly string[] = [], keepParentSupervisor = false): void {
-	const next = [...pi.getActiveTools(), ...restore].filter((name) => (includeSubagent || (name !== SUBAGENT_NAME && name !== SUPERVISOR_NAME && (keepParentSupervisor || name !== PARENT_SUPERVISOR_NAME))) && (includeLoader || name !== LOADER_NAME));
+function setSelection(pi: ExtensionAPI, includeSubagent: boolean, includeLoader: boolean, includeWait: boolean, restore: readonly string[] = [], keepParentSupervisor = false): void {
+	const next = [...pi.getActiveTools(), ...restore].filter((name) => (includeSubagent || (name !== SUBAGENT_NAME && name !== SUPERVISOR_NAME && (keepParentSupervisor || name !== PARENT_SUPERVISOR_NAME)))
+		&& (includeLoader || name !== LOADER_NAME) && (includeWait || name !== WAIT_NAME));
 	if (includeSubagent) next.push(SUBAGENT_NAME, SUPERVISOR_NAME, PARENT_SUPERVISOR_NAME);
 	if (includeLoader) next.push(LOADER_NAME);
+	if (includeWait) next.push(WAIT_NAME);
 	pi.setActiveTools([...new Set(next)]);
 }
 
@@ -70,11 +74,15 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 		// Replayed here because a package-local pi-ai may be older than the running Pi.
 		const recorded = new Set<string>();
 		const unloadedNames = new Set<string>();
+		const declaredSentinels = new Set<string>();
 		for (const message of messages) {
 			if (message.role !== "system") continue;
 			// Pi records an extension unload (update, reload) as a removal of each of its active tools, with no cause.
-			// One that drops bg_wait is that unload, not a choice, so the selection from before it stands.
-			const unloaded = message.toolsRemoved?.some((tool) => tool.name === WAIT_NAME) && !message.toolsAdded?.some((tool) => tool.name === WAIT_NAME);
+			// While this extension is loaded, the loader, subagent or bg_wait stays declared, so a removal that leaves
+			// none of them is that unload, not a choice, and the selection from before it stands.
+			for (const tool of message.toolsRemoved ?? []) declaredSentinels.delete(tool.name);
+			for (const tool of message.toolsAdded ?? []) if (UNLOAD_SENTINELS.has(tool.name)) declaredSentinels.add(tool.name);
+			const unloaded = declaredSentinels.size === 0 && message.toolsRemoved?.some((tool) => UNLOAD_SENTINELS.has(tool.name));
 			for (const tool of message.toolsRemoved ?? []) {
 				if (unloaded) unloadedNames.add(tool.name);
 				else recorded.delete(tool.name);
@@ -84,18 +92,19 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 		// "auto" never adds the loader to a transcript that did not declare it: that is itself a tool change.
 		const loaderSelected = mode === "dynamic" || recorded.has(LOADER_NAME);
 		// A new process restores the transcript's tools, where the unload left this extension's tools inactive; only
-		// /reload re-adds them. Restoring them keeps bg_wait declared, so a later unload is recognised too. Tools of
+		// /reload re-adds them. Restoring them keeps a sentinel declared, so a later unload is recognised too. Tools of
 		// other extensions, and tools excluded for this process (not registered, so not in getAllTools), stay as they are.
 		const source = unloadedNames.size > 0 ? available.find((tool) => tool.name === LOADER_NAME)?.sourceInfo.path : undefined;
 		const restore = source === undefined ? [] : available
 			.filter((tool) => unloadedNames.has(tool.name) && recorded.has(tool.name) && tool.sourceInfo.path === source)
 			.map((tool) => tool.name);
-		setSelection(pi, recorded.has(SUBAGENT_NAME), loaderSelected, replyOwed ? [...restore, PARENT_SUPERVISOR_NAME] : restore, replyOwed || recorded.has(PARENT_SUPERVISOR_NAME));
+		setSelection(pi, recorded.has(SUBAGENT_NAME), loaderSelected, recorded.has(WAIT_NAME), replyOwed ? [...restore, PARENT_SUPERVISOR_NAME] : restore, replyOwed || recorded.has(PARENT_SUPERVISOR_NAME));
 		return loaderSelected;
 	}
 	// "auto" goes eager only for an empty session; any history keeps the tools it already sent.
 	const eager = mode === "auto" && messages.length === 0 && !addsToolsWithoutCheckpoint(ctx.model);
-	setSelection(pi, eager || (messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME)), !eager, replyOwed ? [PARENT_SUPERVISOR_NAME] : [], replyOwed || messages.length > 0);
+	const kept = (name: string) => eager || (messages.length > 0 && pi.getActiveTools().includes(name));
+	setSelection(pi, kept(SUBAGENT_NAME), !eager, kept(WAIT_NAME), replyOwed ? [PARENT_SUPERVISOR_NAME] : [], replyOwed || messages.length > 0);
 	return !eager;
 }
 
@@ -130,7 +139,7 @@ export function registerSubagentToolActivation(
 				details: { unavailable: [SUBAGENT_NAME] },
 			};
 			try {
-				setSelection(pi, true, true);
+				setSelection(pi, true, true, true);
 			} catch (error) {
 				return {
 					isError: true,
@@ -158,11 +167,16 @@ export function registerSubagentToolActivation(
 	pi.on("session_start", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode, replyOwed()); });
 	pi.on("session_tree", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode, replyOwed()); });
 	pi.on("before_agent_start", (event) => {
-		if (!loaderSelected) return;
 		const available = pi.getAllTools();
 		if (!Array.isArray(available) || !available.some((tool) => tool.name === LOADER_NAME)) return;
+		// Another extension's background-work provider reports work only bg_wait can wait for, so a session with one
+		// declares bg_wait without enabling subagent, including when the provider registered after session start.
+		const providedWait = available.some((tool) => tool.name === WAIT_NAME) && listBackgroundWorkProviders().length > 0;
+		const names = [...(loaderSelected ? [LOADER_NAME] : []), ...(providedWait ? [WAIT_NAME] : [])];
+		if (names.length === 0) return;
 		const selectedTools = event.systemPromptOptions.selectedTools ??= [...pi.getActiveTools()];
-		if (!selectedTools.includes(LOADER_NAME)) selectedTools.push(LOADER_NAME);
-		if (!pi.getActiveTools().includes(LOADER_NAME)) pi.setActiveTools([...pi.getActiveTools(), LOADER_NAME]);
+		for (const name of names) if (!selectedTools.includes(name)) selectedTools.push(name);
+		const inactive = names.filter((name) => !pi.getActiveTools().includes(name));
+		if (inactive.length > 0) pi.setActiveTools([...pi.getActiveTools(), ...inactive]);
 	});
 }
