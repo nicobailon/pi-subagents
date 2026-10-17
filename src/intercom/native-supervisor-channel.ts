@@ -782,6 +782,14 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	const registerParentTools = (): void => {
 		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pi, pending, state, observeRequestLifecycle, () => poll(), runState));
 	};
+	// A session that never delegated through `subagent` does not declare the reply tool (scheduled runs, runs
+	// adopted after a resume), so declare it before the model is asked to use it.
+	const declareParentTool = (): void => {
+		if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
+		const active = pi.getActiveTools();
+		if (!Array.isArray(active) || active.includes(NATIVE_SUPERVISOR_TOOL_NAME) || !hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) return;
+		pi.setActiveTools([...active, NATIVE_SUPERVISOR_TOOL_NAME]);
+	};
 
 	const cleanupStaleChannelsIfDue = (): void => {
 		if (deps.getChannelDirs) return; // The root owns global retention cleanup.
@@ -822,6 +830,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			}
 			rememberPendingRequest(request);
 			pending.set(request.id, request);
+			declareParentTool();
 			updateSettleSubscription();
 			markForegroundSupervisorAttention(request, state);
 			// The ask is already queued above. A sendMessage failure (no UI, stale context) must not
@@ -887,6 +896,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		});
 		updateSettleSubscription();
 		if (!requests.length) return;
+		declareParentTool();
 		const unanswered = requests.filter(request => !settleNotices.has(request.id));
 		if (unanswered.length) {
 			for (const request of unanswered)

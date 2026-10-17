@@ -91,7 +91,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 			const supervisor = tools.find((tool) => tool.name === "subagent_supervisor");
 			assert.ok(loader);
 			assert.ok(wait);
-			assert.ok(supervisor);
+			assert.equal(supervisor, undefined, "a session that has not delegated does not declare subagent_supervisor");
 			assert.ok(JSON.stringify(loader).length <= 800);
 			assert.ok(!tools.some((tool) => tool.name === "subagent"));
 			return fauxAssistantMessage(fauxToolCall("subagents_enable", {}), { stopReason: "toolUse" });
@@ -105,6 +105,7 @@ test("native Pi exposes the full subagent schema on the request immediately afte
 			assert.ok(firstDeclared?.role === "system" && firstDeclared.toolsAdded?.some((tool) => tool.name === "subagents_enable"));
 			const subagent = tools.find((tool) => tool.name === "subagent");
 			assert.ok(subagent);
+			assert.ok(tools.some((tool) => tool.name === "subagent_supervisor"));
 			assert.deepEqual(subagent.parameters, createSubagentParamsSchema());
 			return fauxAssistantMessage("Activation verified.");
 		},

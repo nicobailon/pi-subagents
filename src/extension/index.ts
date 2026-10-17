@@ -1174,6 +1174,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	registerSubagentToolActivation(pi, {
 		mode: config.toolActivation,
+		// The channel's session_start poll already declared the reply tool for these; the replay must not drop it.
+		hasPendingSupervisorRequest: () => [...supervisorChannel.pending.values()].some((request) => request.expectsReply),
 		advertisedPrompt: async () => {
 			await waitForAdvertisement();
 			return buildAdvertisedAgentPrompt(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(state.currentSessionId ?? undefined));

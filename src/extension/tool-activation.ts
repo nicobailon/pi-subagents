@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 import type { ToolActivationMode } from "../shared/types.ts";
 import { registerPinnedTool } from "./declaration-pinning.ts";
-import { CONTACT_SUPERVISOR_TOOL_NAME as SUPERVISOR_NAME } from "../intercom/native-supervisor-channel.ts";
+import { CONTACT_SUPERVISOR_TOOL_NAME as SUPERVISOR_NAME, NATIVE_SUPERVISOR_TOOL_NAME as PARENT_SUPERVISOR_NAME } from "../intercom/native-supervisor-channel.ts";
 
 interface ActivationDetails {
 	enabled?: string[];
@@ -16,6 +16,8 @@ const SUBAGENT_NAME = "subagent";
 // Registered and active whenever this extension loads, and never deactivated here.
 const WAIT_NAME = "bg_wait";
 // SUPERVISOR_NAME is declared with subagent: a fork launched through it then declares exactly this session's tools.
+// PARENT_SUPERVISOR_NAME (answering this session's children) is declared with subagent too, unless the session already
+// declared it: a changed tool set would miss the prompt cache. The channel declares it when a child request arrives.
 let warnedUnsupportedHost = false;
 
 type ToolSelectionMessage = {
@@ -29,9 +31,9 @@ function hasNativeToolSelection(messages: readonly ToolSelectionMessage[]): bool
 		&& (Object.hasOwn(message, "toolsAdded") || Object.hasOwn(message, "toolsRemoved")));
 }
 
-function setSelection(pi: ExtensionAPI, includeSubagent: boolean, includeLoader: boolean, restore: readonly string[] = []): void {
-	const next = [...pi.getActiveTools(), ...restore].filter((name) => (includeSubagent || (name !== SUBAGENT_NAME && name !== SUPERVISOR_NAME)) && (includeLoader || name !== LOADER_NAME));
-	if (includeSubagent) next.push(SUBAGENT_NAME, SUPERVISOR_NAME);
+function setSelection(pi: ExtensionAPI, includeSubagent: boolean, includeLoader: boolean, restore: readonly string[] = [], keepParentSupervisor = false): void {
+	const next = [...pi.getActiveTools(), ...restore].filter((name) => (includeSubagent || (name !== SUBAGENT_NAME && name !== SUPERVISOR_NAME && (keepParentSupervisor || name !== PARENT_SUPERVISOR_NAME))) && (includeLoader || name !== LOADER_NAME));
+	if (includeSubagent) next.push(SUBAGENT_NAME, SUPERVISOR_NAME, PARENT_SUPERVISOR_NAME);
 	if (includeLoader) next.push(LOADER_NAME);
 	pi.setActiveTools([...new Set(next)]);
 }
@@ -57,8 +59,8 @@ function addsToolsWithoutCheckpoint(model: ExtensionContext["model"]): boolean {
 	}
 }
 
-// Returns whether the loader is selected for this session.
-function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "auto" | "dynamic"): boolean {
+// Returns whether the loader is selected for this session. `replyOwed`: a child request already woke this session.
+function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "auto" | "dynamic", replyOwed: boolean): boolean {
 	const available = pi.getAllTools();
 	if (!Array.isArray(available) || !Array.isArray(pi.getActiveTools())) return true;
 	if (!available.some((tool) => tool.name === LOADER_NAME)) return true;
@@ -88,18 +90,18 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 		const restore = source === undefined ? [] : available
 			.filter((tool) => unloadedNames.has(tool.name) && recorded.has(tool.name) && tool.sourceInfo.path === source)
 			.map((tool) => tool.name);
-		setSelection(pi, recorded.has(SUBAGENT_NAME), loaderSelected, restore);
+		setSelection(pi, recorded.has(SUBAGENT_NAME), loaderSelected, restore, replyOwed || recorded.has(PARENT_SUPERVISOR_NAME));
 		return loaderSelected;
 	}
 	// "auto" goes eager only for an empty session; any history keeps the tools it already sent.
 	const eager = mode === "auto" && messages.length === 0 && !addsToolsWithoutCheckpoint(ctx.model);
-	setSelection(pi, eager || (messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME)), !eager);
+	setSelection(pi, eager || (messages.length > 0 && pi.getActiveTools().includes(SUBAGENT_NAME)), !eager, [], replyOwed || messages.length > 0);
 	return !eager;
 }
 
 export function registerSubagentToolActivation(
 	pi: ExtensionAPI,
-	options: { advertisedPrompt: () => string | undefined | Promise<string | undefined>; mode?: ToolActivationMode },
+	options: { advertisedPrompt: () => string | undefined | Promise<string | undefined>; mode?: ToolActivationMode; hasPendingSupervisorRequest?: () => boolean },
 ): void {
 	const mode = options.mode ?? "auto";
 	// Same as --exclude-tools subagents_enable: without the loader, subagent stays active.
@@ -152,8 +154,9 @@ export function registerSubagentToolActivation(
 
 	// Decided at session start and tree navigation only; switching models keeps the session's tools.
 	let loaderSelected = true;
-	pi.on("session_start", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode); });
-	pi.on("session_tree", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode); });
+	const replyOwed = () => options.hasPendingSupervisorRequest?.() === true;
+	pi.on("session_start", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode, replyOwed()); });
+	pi.on("session_tree", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode, replyOwed()); });
 	pi.on("before_agent_start", (event) => {
 		if (!loaderSelected) return;
 		const available = pi.getAllTools();

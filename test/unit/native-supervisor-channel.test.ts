@@ -251,6 +251,32 @@ describe("native supervisor channel", () => {
 		assert.equal(sent.some(({ message }) => message.details?.id === otherId), false);
 	});
 
+	it("declares the reply tool before surfacing a request to a session that does not declare it", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const tools = new Map<string, unknown>();
+		let active = ["read"];
+		const activeAtNotice: string[][] = [];
+		const pi = {
+			getAllTools: () => [...tools.keys()].map((name) => ({ name })),
+			registerTool: (tool: { name: string }) => { tools.set(tool.name, tool); },
+			getActiveTools: () => [...active],
+			setActiveTools: (names: string[]) => { active = [...names]; },
+			sendMessage: () => { activeAtNotice.push([...active]); },
+			getSessionName: () => "shared-name",
+		};
+		const ctx = { sessionManager: { getSessionId: () => currentSessionId, getSessionFile: () => null, getEntries: () => [] } };
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx), { platform: "darwin" });
+		try {
+			channel.start();
+			assert.deepEqual(active, ["read"], "an idle session keeps its tools");
+			writeRequest({ sessionId: currentSessionId, runId: `run-${randomUUID()}` });
+			assert.equal(channel.hasPendingRequests(), true);
+			assert.deepEqual(activeAtNotice, [["read", NATIVE_SUPERVISOR_TOOL_NAME]]);
+		} finally {
+			channel.dispose();
+		}
+	});
+
 	it("does not inject progress updates into the parent session or wake a turn", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const progressRunId = `run-${randomUUID()}`;

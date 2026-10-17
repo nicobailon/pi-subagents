@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- A parent session that never delegates no longer declares `subagent_supervisor`, which saves about 420 characters of tool definition on every request. The tool now becomes active with `subagent`, or when a child request reaches a session that does not have it, for example from a scheduled run. A resumed session keeps it if its transcript declared it, so upgrading does not change an existing session's tools or miss its prompt cache. Thanks to [@armchairfuturist-code](https://github.com/armchairfuturist-code) for reporting [#2936](https://github.com/nicobailon/pi-subagents/issues/2936).
+
 ### Fixed
 
 - When a workflow's owner process died, stale-run reconciliation marked every still-running child row failed, even a child whose detached runner had already finished. A child that already wrote its own `complete` or `failed` status now keeps that outcome; children that are unsettled or unreadable still inherit the owner failure. Thanks to [@isjiajia01](https://github.com/isjiajia01) for [#2940](https://github.com/nicobailon/pi-subagents/pull/2940) ([#2938](https://github.com/nicobailon/pi-subagents/issues/2938)).

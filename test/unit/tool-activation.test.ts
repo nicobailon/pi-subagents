@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { toToolDeclaration, validateToolArguments } from "@earendil-works/pi-ai";
-import { registerNativeSupervisorClient, TOP_LEVEL_SUPERVISOR_REFUSAL } from "../../src/intercom/native-supervisor-channel.ts";
+import { ensureSupervisorChannelDir, registerNativeSupervisorClient, resolveSupervisorChannelDir, TOP_LEVEL_SUPERVISOR_REFUSAL } from "../../src/intercom/native-supervisor-channel.ts";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
@@ -100,14 +101,14 @@ describe("subagent tool activation", () => {
 		}
 	});
 
-	it("starts fresh parents with a compact self-service loader and keeps support tools active", async () => {
+	it("starts fresh parents with a compact self-service loader and declares subagent_supervisor only with subagent", async () => {
 		const runtime = createRuntime([], [], [], DYNAMIC);
 		await runtime.emit("session_start", { type: "session_start", reason: "startup" });
 
 		assert.equal(runtime.active().includes("subagent"), false);
 		assert.ok(runtime.active().includes("subagents_enable"));
 		assert.ok(runtime.active().includes("bg_wait"));
-		assert.ok(runtime.active().includes("subagent_supervisor"));
+		assert.equal(runtime.active().includes("subagent_supervisor"), false);
 		const loader = runtime.tools.get("subagents_enable");
 		assert.ok(loader);
 		assert.match(loader.description ?? "", /current request|applicable .*instructions/i);
@@ -116,6 +117,7 @@ describe("subagent tool activation", () => {
 		const result = await loader.execute?.("enable", {}, new AbortController().signal, undefined, runtime.context);
 		assert.notEqual(result?.isError, true);
 		assert.ok(runtime.active().includes("subagent"));
+		assert.ok(runtime.active().includes("subagent_supervisor"));
 		assert.ok(runtime.active().includes("read"));
 		const enabled = runtime.active();
 		await loader.execute?.("enable-again", {}, new AbortController().signal, undefined, runtime.context);
@@ -355,6 +357,41 @@ describe("toolActivation modes", () => {
 
 	it("rejects an unknown toolActivation value instead of falling back", () => {
 		assert.throws(() => createRuntime([], [], [], { config: { toolActivation: "lazy" } }), /config\.toolActivation must be "auto", "dynamic", or "eager"/);
+	});
+
+	it("keeps subagent_supervisor declared for a child request already pending when the session starts", async () => {
+		const runId = `run-${randomUUID()}`;
+		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+		ensureSupervisorChannelDir(channelDir);
+		const requestId = randomUUID();
+		fs.writeFileSync(path.join(channelDir, "requests", `${requestId}.json`), JSON.stringify({
+			type: "subagent.supervisor.request", id: requestId, createdAt: Date.now(), reason: "need_decision", message: "Proceed?",
+			expectsReply: true, orchestratorSessionId: "activation-session", runId, agent: "worker", childIndex: 0,
+		}));
+		try {
+			const runtime = createRuntime([declared(["read", "subagents_enable", "bg_wait"])], [], [], DYNAMIC);
+			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
+			assert.ok(runtime.active().includes("subagent_supervisor"));
+			assert.equal(runtime.active().includes("subagent"), false);
+		} finally {
+			fs.rmSync(channelDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps subagent_supervisor as a resumed transcript recorded it, and declared in eager mode", async () => {
+		const cases: Array<[string, any[], boolean]> = [
+			["declared before this version", [declared(["read", "subagents_enable", "bg_wait", "subagent_supervisor"])], true],
+			["never declared", [declared(["read", "subagents_enable", "bg_wait"])], false],
+			["declared with subagent", [declared(["read", "subagent", "contact_supervisor", "subagent_supervisor"])], true],
+		];
+		for (const [label, messages, expected] of cases) {
+			const runtime = createRuntime(messages, [], [], { model: COMPATIBLE });
+			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
+			assert.equal((await startAgent(runtime)).includes("subagent_supervisor"), expected, label);
+		}
+		const eager = createRuntime([], [], [], { config: { toolActivation: "eager" } });
+		await eager.emit("session_start", { type: "session_start", reason: "startup" });
+		assert.ok((await startAgent(eager)).includes("subagent_supervisor"), "eager");
 	});
 });
 
