@@ -1099,6 +1099,68 @@ describe("main watchdog runtime", () => {
 		assert.match(reviewedDelta, /category 'scope-drift'/);
 	});
 
+	for (const messageType of ["user", undefined]) it(`records genuine ${messageType ?? "prompt-shaped"} prompts in scope and the turn delta`, async () => {
+		const ctx = { cwd: "/tmp/project" };
+		const requests: Parameters<WatchdogReviewFunction>[0][] = [];
+		const runtime = new MainWatchdogRuntime({
+			cwd: ctx.cwd,
+			resolveConfig: () => configResult(enabledConfig()),
+			repoChangeSignature: () => undefined,
+			review: (request) => { requests.push(request); return {}; },
+		});
+		try {
+			runtime.handleBeforeAgentStart({ messageType, prompt: "Only update docs.", systemPrompt: "SYSTEM_TEXT" }, ctx);
+			runtime.handleTurnEnd({ message: { role: "assistant", content: "Updated docs." } }, ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(requests.length, 1);
+			assert.equal(requests[0]!.hasScope, true);
+			assert.match(requests[0]!.delta, /^Scope prompt 1 \(.*\):\nOnly update docs\./m);
+			assert.match(requests[0]!.delta, /User prompt:\nOnly update docs\./);
+			assert.doesNotMatch(requests[0]!.delta, /SYSTEM_TEXT/);
+		} finally { runtime.dispose(); }
+	});
+
+	for (const [name, event] of [
+		["custom wake", { messageType: "custom", systemPrompt: "SYSTEM_TEXT", message: { content: "CUSTOM_WAKE_TEXT" } }],
+		["custom wake with a prompt", { messageType: "custom", prompt: "CUSTOM_PROMPT_TEXT", systemPrompt: "SYSTEM_TEXT", message: { content: "CUSTOM_WAKE_TEXT" } }],
+		["system-only event", { systemPrompt: "SYSTEM_TEXT" }],
+		["non-string prompt", { messageType: "user", prompt: 42, systemPrompt: "SYSTEM_TEXT" }],
+		["message-only event", { messageType: "user", message: { content: "MESSAGE_TEXT" } }],
+	] as const) it(`preserves original scope without adding a user prompt for a ${name}`, async () => {
+		const ctx = { cwd: "/tmp/project" };
+		let key = "baseline";
+		const requests: Parameters<WatchdogReviewFunction>[0][] = [];
+		const runtime = new MainWatchdogRuntime({
+			cwd: ctx.cwd,
+			resolveConfig: () => configResult(enabledConfig()),
+			reviewChangesOnly: true,
+			repoChangeSignature: () => ({ root: ctx.cwd, key, changedPaths: ["file.ts"] }),
+			review: (request) => { requests.push(request); return {}; },
+		});
+		try {
+			runtime.handleBeforeAgentStart({ prompt: "Only update docs." }, ctx);
+			runtime.handleTurnEnd({ message: { role: "assistant", content: "Old pending turn." } }, ctx);
+			const epoch = runtime.getSnapshot().epoch;
+			runtime.handleBeforeAgentStart(event, ctx);
+			assert.equal(runtime.getSnapshot().epoch, epoch + 1, "ordinary run reset still occurs");
+			assert.equal(runtime.getSnapshot().bufferedDeltas, 0);
+			key = "edited";
+			runtime.handleTurnEnd(activityTurn("edit", { path: "file.ts" }, "Edited docs."), ctx);
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(requests.length, 1, "edits during the wake still trigger review");
+			assert.equal(requests[0]!.hasScope, true);
+			const delta = requests[0]!.delta;
+			const prompts = [...delta.matchAll(/^Scope prompt \d+ \(.*\):\n(.*)$/gm)].map((match) => match[1]);
+			assert.deepEqual(prompts, ["Only update docs."]);
+			assert.doesNotMatch(delta, /User prompt:|SYSTEM_TEXT|CUSTOM_WAKE_TEXT|CUSTOM_PROMPT_TEXT|MESSAGE_TEXT|Old pending turn/);
+			assert.match(delta, /Changed repo paths:[\s\S]*file\.ts/);
+			assert.match(delta, /Edited docs\./);
+			assert.equal(runtime.getSnapshot().status, "idle");
+			await runtime.handleAgentEnd({}, ctx);
+			assert.equal(requests.length, 1, "unchanged edits are still deduplicated");
+		} finally { runtime.dispose(); }
+	});
+
 	it("adds user messages sent while the agent streams to the scope record", async () => {
 		let reviewedDelta = "";
 		const runtime = new MainWatchdogRuntime({

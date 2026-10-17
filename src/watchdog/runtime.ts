@@ -117,10 +117,9 @@ function errorMessage(error: unknown): string {
 
 function promptFromBeforeAgentStart(event: unknown): string | undefined {
 	if (!event || typeof event !== "object") return undefined;
-	const input = event as { prompt?: unknown; systemPrompt?: unknown };
-	if (typeof input.prompt === "string") return input.prompt;
-	if (typeof input.systemPrompt === "string") return input.systemPrompt;
-	return undefined;
+	const input = event as { messageType?: unknown; prompt?: unknown };
+	if (input.messageType === "custom") return undefined;
+	return typeof input.prompt === "string" ? input.prompt : undefined;
 }
 
 function reviewInputSignature(input: string): string {
