@@ -228,6 +228,27 @@ function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, no
 	};
 }
 
+/**
+ * A dead workflow owner does not say how its detached children ended. A child that already
+ * wrote its own terminal status keeps that outcome instead of inheriting the owner failure.
+ */
+function settledWorkflowChildStatus(asyncDir: string, workflowRunId: string, step: NonNullable<AsyncStatus["steps"]>[number]): NonNullable<AsyncStatus["steps"]>[number] | undefined {
+	const childRunId = step.runId;
+	if (step.parentWorkflowRunId !== workflowRunId || !childRunId || childRunId === workflowRunId || childRunId !== path.basename(childRunId)) return undefined;
+	const child = readStatus(path.join(path.dirname(asyncDir), childRunId));
+	if (!child || child.runId !== childRunId || (child.state !== "complete" && child.state !== "failed")) return undefined;
+	const childStep = child.steps?.[0];
+	return {
+		...step,
+		status: child.state === "complete" ? "complete" : "failed",
+		activityState: undefined,
+		endedAt: child.endedAt ?? step.endedAt,
+		durationMs: child.endedAt !== undefined && step.startedAt !== undefined ? Math.max(0, child.endedAt - step.startedAt) : step.durationMs,
+		exitCode: childStep?.exitCode ?? (child.state === "complete" ? 0 : 1),
+		...(child.state === "failed" ? { error: childStep?.error ?? step.error } : {}),
+	};
+}
+
 function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, reason?: string): { status: AsyncStatus; result: Record<string, unknown>; message: string } {
 	const runId = status.runId || path.basename(asyncDir);
 	const pid = typeof status.pid === "number" ? status.pid : "unknown";
@@ -242,8 +263,11 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 	const diagnostics = readRunnerStartupDiagnostics(asyncDir);
 	const message = diagnostics ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}` : baseMessage;
 	const steps = status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" as const }];
-	const repairedSteps = steps.map((step) => step.status === "running" || step.status === "pending"
-		? {
+	const repairedSteps = steps.map((step) => {
+		if (step.status !== "running" && step.status !== "pending") return step;
+		const settled = settledWorkflowChildStatus(asyncDir, runId, step);
+		if (settled) return settled;
+		return {
 			...step,
 			status: "failed" as const,
 			activityState: undefined,
@@ -251,8 +275,8 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 			durationMs: step.startedAt !== undefined && step.durationMs === undefined ? Math.max(0, now - step.startedAt) : step.durationMs,
 			exitCode: step.exitCode ?? 1,
 			error: step.error ?? message,
-		}
-		: step);
+		};
+	});
 	const repairedStatus: AsyncStatus = {
 		...status,
 		state: "failed",

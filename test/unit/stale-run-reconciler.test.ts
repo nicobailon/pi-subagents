@@ -418,6 +418,47 @@ describe("async stale-run reconciliation", () => {
 		}
 	});
 
+	it("keeps the outcome of workflow children that settled before their owner died", () => {
+		const root = tempRoot("pi-stale-workflow-children-");
+		try {
+			const asyncDir = path.join(root, "wf");
+			const step = (key: string, runId: string) => ({ agent: "worker", status: "running", startedAt: 1000, workflowKey: key, parentWorkflowRunId: "wf", runId, async: true });
+			writeStatus(asyncDir, {
+				runId: "wf",
+				mode: "workflow",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [step("done", "child-done"), step("bad", "child-bad"), step("live", "child-live"), step("gone", "child-gone")],
+			});
+			writeStatus(path.join(root, "child-done"), { runId: "child-done", mode: "single", state: "complete", startedAt: 1000, endedAt: 1500, steps: [{ agent: "worker", status: "complete", exitCode: 0 }] });
+			writeStatus(path.join(root, "child-bad"), { runId: "child-bad", mode: "single", state: "failed", startedAt: 1000, endedAt: 1600, steps: [{ agent: "worker", status: "failed", exitCode: 1, error: "child boom" }] });
+			writeStatus(path.join(root, "child-live"), { runId: "child-live", mode: "single", state: "running", startedAt: 1000, steps: [{ agent: "worker", status: "running" }] });
+
+			const result = reconcileAsyncRun(asyncDir, {
+				resultsDir: path.join(root, "results"),
+				kill: () => { throw errno("ESRCH"); },
+				now: () => 2000,
+			});
+
+			assert.equal(result.status?.state, "failed");
+			const steps = result.status?.steps ?? [];
+			assert.equal(steps[0]?.status, "complete");
+			assert.equal(steps[0]?.exitCode, 0);
+			assert.equal(steps[0]?.endedAt, 1500);
+			assert.equal(steps[0]?.error, undefined);
+			assert.equal(steps[1]?.status, "failed");
+			assert.equal(steps[1]?.error, "child boom");
+			// Unsettled or unreadable children still inherit the owner failure.
+			assert.equal(steps[2]?.status, "failed");
+			assert.match(steps[2]?.error ?? "", /stale-run reconciliation/);
+			assert.equal(steps[3]?.status, "failed");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("retains a root failure when stale result repair writes after runner finalization", () => {
 		const root = tempRoot("pi-stale-result-race-");
 		try {

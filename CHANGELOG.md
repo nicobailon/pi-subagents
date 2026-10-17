@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- When a workflow's owner process died, stale-run reconciliation marked every still-running child row failed, even a child whose detached runner had already finished. A child that already wrote its own `complete` or `failed` status now keeps that outcome; children that are unsettled or unreadable still inherit the owner failure. ([#2938](https://github.com/nicobailon/pi-subagents/issues/2938))
+
 ## [0.79.0] - 2026-10-17
 
 ### Highlights
