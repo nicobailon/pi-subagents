@@ -295,6 +295,7 @@ describe("pruned fork sessions", () => {
 			writeJsonl(parentSession, [{ type: "session", version: 1, id: "parent", cwd: "/tmp" }]);
 			writeJsonl(childSession, largeForkEntries(parentSession));
 			const resolver = createForkContextResolver({ getSessionFile: () => parentSession, getLeafId: () => "tool-result" }, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({ createBranchedSession: () => childSession }),
 				pruneSession: (file) => pruneForkSessionFile(file, async (payload) => validSummaryResponse(payload)),
 			});
@@ -319,6 +320,7 @@ describe("pruned fork sessions", () => {
 			writeJsonl(parentSession, [{ type: "session", version: 1, id: "parent", cwd: "/tmp" }]);
 			writeJsonl(childSession, largeForkEntries(parentSession));
 			const resolver = createForkContextResolver({ getSessionFile: () => parentSession, getLeafId: () => "tool-result" }, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({ createBranchedSession: () => childSession }),
 				pruneSession: async () => { throw new Error("model failed"); },
 			});

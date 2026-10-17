@@ -50,7 +50,7 @@ interface ForkContextResolverOptions {
 	/** Rewrite a created fork before its path can be used to spawn a child. */
 	pruneSession?: (sessionFile: string) => Promise<void>;
 	/** Run id that names this launch's fork directory, read when the first fork is created. */
-	runDirName?: () => string;
+	runDirName: () => string;
 }
 
 interface ForkContextResolver {
@@ -151,7 +151,7 @@ function readSessionEntries(sessionFile: string): BranchSessionEntry[] {
 export function createForkContextResolver(
 	sessionManager: ForkableSessionManager,
 	requestedContext: unknown,
-	options: ForkContextResolverOptions = {},
+	options: ForkContextResolverOptions,
 ): ForkContextResolver {
 	if (resolveSubagentContext(requestedContext) !== "fork") {
 		return {
@@ -202,7 +202,7 @@ export function createForkContextResolver(
 				throw new Error(`Parent session file does not exist: ${parentSessionFile}. Pi has not persisted enough history to fork yet.`);
 			}
 			// Nested resume accepts a session file only under a directory named by the run's id.
-			const sessionDir = options.runDirName ? path.join(forksDir, options.runDirName()) : forksDir;
+			const sessionDir = path.join(forksDir, options.runDirName());
 			const sourceManager = openSession(parentSessionFile, sessionDir);
 			const sessionFile = sourceManager.createBranchedSession(leafId);
 			if (!sessionFile) {

@@ -69,6 +69,7 @@ describe("createForkContextResolver", () => {
 			getSessionFile: () => "/tmp/parent.jsonl",
 			getLeafId: () => "leaf-123",
 		}, "fresh", {
+			runDirName: () => "child-run",
 			openSession: () => ({
 				createBranchedSession: () => {
 					calls++;
@@ -86,7 +87,7 @@ describe("createForkContextResolver", () => {
 			() => createForkContextResolver({
 				getSessionFile: () => undefined,
 				getLeafId: () => "leaf-123",
-			}, "fork", { openSession: () => ({ createBranchedSession: () => "/tmp/child.jsonl" }) }),
+			}, "fork", { runDirName: () => "child-run", openSession: () => ({ createBranchedSession: () => "/tmp/child.jsonl" }) }),
 			/Forked subagent context requires a persisted parent session\./,
 		);
 	});
@@ -96,7 +97,7 @@ describe("createForkContextResolver", () => {
 			() => createForkContextResolver({
 				getSessionFile: () => "/tmp/parent.jsonl",
 				getLeafId: () => null,
-			}, "fork", { openSession: () => ({ createBranchedSession: () => "/tmp/child.jsonl" }) }),
+			}, "fork", { runDirName: () => "child-run", openSession: () => ({ createBranchedSession: () => "/tmp/child.jsonl" }) }),
 			/Forked subagent context requires a current leaf to fork from\./,
 		);
 	});
@@ -112,6 +113,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "leaf-xyz",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: (sessionFile: string) => {
 					openedPaths.push(sessionFile);
 					return {
@@ -153,7 +155,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => leafId,
 				getSessionDir: () => sessionDir,
-			}, "fork");
+			}, "fork", { runDirName: () => "child-run" });
 
 			const childSessionFile = resolver.sessionFileForIndex(0);
 			assert.ok(childSessionFile);
@@ -222,7 +224,7 @@ describe("createForkContextResolver", () => {
 			assert.ok(leafId);
 			assert.equal(fs.existsSync(parentSessionFile), false);
 
-			const resolver = createForkContextResolver(parent, "fork");
+			const resolver = createForkContextResolver(parent, "fork", { runDirName: () => "child-run" });
 			assert.throws(
 				() => resolver.sessionFileForIndex(0),
 				/Failed to create forked subagent session: Parent session file does not exist: .*Pi has not persisted enough history to fork yet\./,
@@ -245,6 +247,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "leaf-abc",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({
 					createBranchedSession: () => {
 						count++;
@@ -278,6 +281,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "leaf-abc",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({
 					createBranchedSession: () => {
 						calls++;
@@ -309,6 +313,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "leaf-abc",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({
 					createBranchedSession: () => childSessionFile,
 					getHeader: () => header,
@@ -342,6 +347,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "assistant-1",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({
 					createBranchedSession: () => childSessionFile,
 				}),
@@ -370,6 +376,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "edit-1",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({ createBranchedSession: () => childSessionFile }),
 			});
 
@@ -395,6 +402,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "assistant-1",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({ createBranchedSession: () => childSessionFile }),
 				pruneSession: async () => {},
 			});
@@ -421,6 +429,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "assistant-1",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({
 					createBranchedSession: () => childSessionFile,
 				}),
@@ -448,6 +457,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "assistant-1",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({
 					createBranchedSession: () => childSessionFile,
 				}),
@@ -476,6 +486,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "assistant-1",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({
 					createBranchedSession: () => childSessionFile,
 					getHeader: () => header,
@@ -503,6 +514,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "leaf-abc",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({
 					createBranchedSession: () => missingChildSessionFile,
 				}),
@@ -526,6 +538,7 @@ describe("createForkContextResolver", () => {
 				getSessionFile: () => parentSessionFile,
 				getLeafId: () => "leaf-abc",
 			}, "fork", {
+				runDirName: () => "child-run",
 				openSession: () => ({
 					createBranchedSession: () => undefined,
 				}),
