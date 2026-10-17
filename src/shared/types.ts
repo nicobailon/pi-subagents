@@ -1668,6 +1668,8 @@ export interface NestedRunSummary extends NestedRunAddress {
 	pid?: number;
 	sessionId?: string;
 	sessionFile?: string;
+	/** Run whose session this resume replacement continues. */
+	revivedFrom?: string;
 	intercomTarget?: string;
 	ownerIntercomTarget?: string;
 	leafIntercomTarget?: string;
@@ -1903,6 +1905,8 @@ export interface AsyncStatus {
 	sessionId?: string;
 	mode: SubagentRunMode;
 	context?: "fresh" | "fork" | "mixed";
+	/** Run whose session this resume replacement continues. */
+	revivedFrom?: string;
 	isNested?: boolean;
 	state: "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 	/** Display-only dismissal marker for a reload-orphaned workflow. */

@@ -1509,7 +1509,9 @@ function pathWithin(base: string, candidate: string): boolean {
 	return resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`);
 }
 
-function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: string[]): string {
+type ResolveNestedSource = (id: string) => NestedRunSummary | undefined;
+
+function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: string[], resolveSource: ResolveNestedSource, visited: string[] = []): string {
 	const sessionFile = nestedRunSessionFile(run);
 	if (!sessionFile) throw new Error(`Nested run '${run.id}' does not have a persisted session file to resume from.`);
 	if (path.extname(sessionFile) !== ".jsonl") throw new Error(`Nested run '${run.id}' session file must be a .jsonl file: ${sessionFile}`);
@@ -1526,7 +1528,22 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 		throw new Error(`Nested run '${run.id}' session file is outside trusted nested session roots: ${sessionFile}`);
 	}
 	if (!realSessionFile.split(path.sep).includes(run.id)) {
-		throw new Error(`Nested run '${run.id}' session file is not under that nested run's session directory: ${sessionFile}`);
+		// A resume replacement continues its source's session; accept it only when that source,
+		// resolved in the caller's own scope, validates on its own and owns this same file.
+		const sourceId = run.revivedFrom;
+		const chain = [...visited, run.id];
+		const source = sourceId && chain.length <= 8 && !chain.includes(sourceId) ? resolveSource(sourceId) : undefined;
+		let sourceFile: string | undefined;
+		if (source && source.state !== "running" && source.state !== "queued") {
+			try {
+				sourceFile = validateNestedSessionFile(source, trustedSessionRoots, resolveSource, chain);
+			} catch {
+				sourceFile = undefined;
+			}
+		}
+		if (sourceFile !== realSessionFile) {
+			throw new Error(`Nested run '${run.id}' session file is not under that nested run's session directory: ${sessionFile}`);
+		}
 	}
 	return realSessionFile;
 }
@@ -1539,7 +1556,7 @@ export function readNestedRecoveryDescriptor(asyncDir: string | undefined, runId
 	return recoveryDescriptor;
 }
 
-function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "nested" }, trustedSessionRoots: string[]): NestedResumeSourceTarget {
+function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "nested" }, trustedSessionRoots: string[], resolveSource: ResolveNestedSource): NestedResumeSourceTarget {
 	const run = match.match.run;
 	if (run.state === "running" || run.state === "queued") throw new Error(`Nested run '${run.id}' is live; route the follow-up to the owner process instead.`);
 	if (run.state === "stopped") throw new Error(`Nested run '${run.id}' was stopped and cannot be resumed. Start a new run instead.`);
@@ -1556,7 +1573,7 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 		agent,
 		index: 0,
 		cwd: asyncDir ? path.dirname(asyncDir) : undefined,
-		sessionFile: validateNestedSessionFile(run, trustedSessionRoots),
+		sessionFile: validateNestedSessionFile(run, trustedSessionRoots, resolveSource),
 		...(run.capabilityCeiling ? { capabilityCeiling: run.capabilityCeiling } : {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	});
@@ -1883,9 +1900,10 @@ async function resumeExternalJobFollowUp(input: {
 
 function resolveRequestedResumeTarget(params: SubagentParamsLike, deps: ExecutorDeps, parentSessionFile: string | null): ResumeSourceTarget | { kind: "live-nested"; target: ResolvedSubagentRunId & { kind: "nested" } } {
 	const requestedId = params.id ?? params.runId;
+	const resolutionDeps = omitUndefinedProperties({ state: deps.state, nested: nestedResolutionScopeForExecutor(deps) });
 	let resolved: ResolvedSubagentRunId | undefined;
 	try {
-		resolved = requestedId ? resolveSubagentRunId(requestedId, omitUndefinedProperties({ state: deps.state, nested: nestedResolutionScopeForExecutor(deps) })) : undefined;
+		resolved = requestedId ? resolveSubagentRunId(requestedId, resolutionDeps) : undefined;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "";
 		const asyncMatches = message.match(/async:/g)?.length ?? 0;
@@ -1896,7 +1914,17 @@ function resolveRequestedResumeTarget(params: SubagentParamsLike, deps: Executor
 		if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") return { kind: "live-nested", target: resolved };
 		const externalJobTarget = resolveNestedExternalJobResumeTarget(resolved, params, deps);
 		if (externalJobTarget) return externalJobTarget;
-		return resolveNestedResumeTarget(resolved, trustedSessionRoots(parentSessionFile, deps));
+		const rootRunId = resolved.match.rootRunId;
+		// The source must be a nested run the caller could address itself, in the same registry.
+		const resolveSource: ResolveNestedSource = (id) => {
+			try {
+				const source = resolveSubagentRunId(id, resolutionDeps);
+				return source?.kind === "nested" && source.id === id && source.match.rootRunId === rootRunId ? source.match.run : undefined;
+			} catch {
+				return undefined;
+			}
+		};
+		return resolveNestedResumeTarget(resolved, trustedSessionRoots(parentSessionFile, deps), resolveSource);
 	}
 	return resolveResumeTarget(params, deps.state, { asyncRequireSessionFile: false });
 }

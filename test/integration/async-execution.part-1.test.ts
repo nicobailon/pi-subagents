@@ -1092,6 +1092,30 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(args[args.indexOf("--session") + 1], expected);
 	});
 
+	it("records the run a resume replacement continues in its status", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "continued" });
+		const id = `async-revived-from-${Date.now().toString(36)}`;
+		const sessionFile = path.join(tempDir, "sessions", "source-run", "run-0", "session.jsonl");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", cwd: fs.realpathSync(tempDir) })}\n`, "utf-8");
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Continue",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-revived-from" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionFile,
+			revivalLease: { sessionFile, runId: id, sourceRunId: "source-run", parentSessionId: "session-revived-from" },
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		await readAsyncPayload(id);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as { revivedFrom?: string };
+		assert.equal(status.revivedFrom, "source-run");
+	});
+
 	it("keeps a background forked child's session under a fork directory named by its run id", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "fork layout" });
 		const parentSessionFile = path.join(tempDir, "parent-fork-layout.jsonl");
