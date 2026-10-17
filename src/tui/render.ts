@@ -2900,7 +2900,9 @@ function materializedWidgetChildLines(job: AsyncJobState, theme: Theme, width: n
 		const last = index === children.length - 1;
 		const identity = child.workflowKey ?? child.asyncId;
 		const stats = widgetStats(child, theme, projection, !expanded);
-		lines.push(`  ${last ? "└─" : "├─"} ${theme.bold(identity)} ${widgetStatusGlyph(child, theme, frame)} ${themeBold(theme, widgetJobName(child))}${contextModeBadge(theme, child.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`);
+		const childModel = child.steps?.[0]?.model;
+		const childThinking = child.steps?.[0]?.thinking;
+		lines.push(`  ${last ? "└─" : "├─"} ${theme.bold(identity)} ${widgetStatusGlyph(child, theme, frame)} ${themeBold(theme, widgetJobName(child))}${modelThinkingBadge(theme, childModel, childThinking)}${contextModeBadge(theme, child.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`);
 		for (const detail of foregroundStyleWidgetDetails(child, theme, expanded, Math.max(0, width - 6), frame, projection)) lines.push(`  ${last ? "  " : "│ "}${detail}`);
 		for (const detail of materializedWidgetChildLines(child, theme, Math.max(0, width - 4), expanded, frame, projectionFor)) lines.push(`    ${detail}`);
 	}

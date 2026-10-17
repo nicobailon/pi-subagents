@@ -26,6 +26,7 @@ import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, externalJobBridgeEligibility, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
+import { readWorkflowChildRunModel, withWorkflowChildRunModel } from "./workflow-terminal-proof.ts";
 import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { readProcessTerminal } from "./process-terminal.ts";
 import { withCachedUiContext } from "../../shared/extension-context.ts";
@@ -509,6 +510,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				if (status.mode === "workflow") job.workflowGraph = status.workflowGraph ?? job.workflowGraph;
 				job.hostSteps = validHostStepNodes(status.workflowGraph);
 				const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
+				if (workflowChildren && status.mode === "workflow") workflowChildren.children = workflowChildren.children.map((child) => withWorkflowChildRunModel(job.asyncDir, child));
 				if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error("workflowChildren.workflowRunId does not match async status runId.");
 				job.workflowChildren = workflowChildren ?? job.workflowChildren;
 				job.currentStep = status.currentStep ?? job.currentStep;
@@ -526,6 +528,14 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						? status.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
 						: status.steps.map((step, index) => ({ ...step, index }));
 					job.activeParallelGroup = Boolean(activeGroup);
+					if (status.mode === "workflow") {
+						for (const step of visibleSteps) {
+							if (step.model || step.thinking) continue;
+							const childModel = readWorkflowChildRunModel(job.asyncDir, step);
+							if (childModel?.model) step.model = childModel.model;
+							if (childModel?.thinking) step.thinking = childModel.thinking;
+						}
+					}
 					job.agents = visibleSteps.map((step) => step.agent);
 					job.steps = visibleSteps;
 					refreshNestedProjection();
