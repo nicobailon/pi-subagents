@@ -18,7 +18,9 @@ import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createNestedRoute, nestedResultsPath } from "../../src/runs/shared/nested-events.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
-import { INTERCOM_SESSION_IDENTITY_EVENT, SUBAGENT_ASYNC_COMPLETE_EVENT, TEMP_ROOT_DIR, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import { createChildHooks } from "../../src/runs/shared/child-hooks.ts";
+import { ensureSupervisorChannelDir, resolveSupervisorChannelDir } from "../../src/intercom/native-supervisor-channel.ts";
+import { INTERCOM_SESSION_IDENTITY_EVENT, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, TEMP_ROOT_DIR, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
@@ -175,6 +177,66 @@ it("registered child bg_wait discovers nested personas and agent_end drains the 
 	} finally {
 		fs.rmSync(asyncRoot, { recursive: true, force: true });
 		fs.rmSync(path.dirname(resultPath), { recursive: true, force: true });
+		fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+	}
+});
+
+it("fanout child bg_wait yields to a descendant's supervisor request while the awaited run is still running", async () => {
+	const route = createNestedRoute(randomUUID());
+	const runId = randomUUID();
+	const asyncRoot = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", route.rootRunId);
+	const asyncDir = path.join(asyncRoot, runId);
+	const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+	const sessionFile = "fanout-coordinator-session.jsonl";
+	const ownerSessionId = `coordinator-${randomUUID()}`;
+	const requestId = `ask-${randomUUID()}`;
+	const handlers = new Map<string, Function[]>();
+	const events = createEventBus();
+	const tools = new Map<string, { execute: Function }>();
+	const ctx = {
+		cwd: process.cwd(), hasUI: false, isIdle: () => false,
+		sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => ownerSessionId, getEntries: () => [] },
+	};
+	// SAFETY: this fixture supplies the registration/event APIs both child hooks use; other calls are inert.
+	const pi = new Proxy({
+		events,
+		on: (event: string, fn: Function) => {
+			handlers.set(event, [...(handlers.get(event) ?? []), fn]);
+			return () => handlers.set(event, (handlers.get(event) ?? []).filter((candidate) => candidate !== fn));
+		},
+		registerTool: (tool: { name: string; execute: Function }) => tools.set(tool.name, tool),
+		getAllTools: () => [...tools.keys()].map((name) => ({ name })),
+	}, { get: (target, prop) => prop in target ? target[prop as keyof typeof target] : () => undefined }) as never;
+	try {
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+			runId, sessionId: sessionFile, mode: "workflow", state: "running", pid: process.pid,
+			startedAt: Date.now(), lastUpdate: Date.now(), steps: [{ agent: "worker", status: "running" }],
+		}));
+		updateActiveRunIndex(asyncDir, "running");
+		// Real hook order: the prompt runtime registers bg_wait before fanout-child installs the supervisor channel.
+		for (const hook of createChildHooks(childConfig({ fanoutChild: true, nestedRoute: route }))) hook.factory(pi);
+		for (const fn of handlers.get("session_start") ?? []) await fn({ reason: "startup" }, ctx);
+		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: runId, asyncDir, sessionId: sessionFile, agents: ["worker"] });
+
+		const startedAt = Date.now();
+		const waiting = tools.get("bg_wait")!.execute("wait", { id: runId, timeoutMs: 3000 }, new AbortController().signal, undefined, ctx);
+		await new Promise((resolve) => setTimeout(resolve, 25));
+		ensureSupervisorChannelDir(channelDir);
+		fs.writeFileSync(path.join(channelDir, "requests", `${requestId}.json`), JSON.stringify({
+			type: "subagent.supervisor.request", id: requestId, createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+			reason: "need_decision", message: "Choose the safe path", expectsReply: true,
+			orchestratorSessionId: ownerSessionId, runId, agent: "worker", childIndex: 0,
+		}));
+
+		const result = await waiting;
+		assert.deepEqual(result.details.wait, { reason: "supervisor_request", timedOut: false, activeRunIds: [runId], activeProviderItems: [] });
+		assert.ok(Date.now() - startedAt < 2500, "bg_wait did not yield before its window elapsed");
+		assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")).state, "running");
+	} finally {
+		for (const fn of handlers.get("session_shutdown") ?? []) await fn({}, ctx);
+		fs.rmSync(asyncRoot, { recursive: true, force: true });
+		fs.rmSync(channelDir, { recursive: true, force: true });
 		fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
 	}
 });

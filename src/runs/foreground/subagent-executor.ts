@@ -7663,15 +7663,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 
 		let sessionRoot: string;
+		// Key the session directory by the id the run is recorded under: nested resume
+		// accepts a session file only inside a directory named by that run's id.
+		const sessionRunId = effectiveAsync ? asyncRunId : runId;
 		if (effectiveParams.sessionDir) {
 			// An explicit sessionDir is a root keyed by this launch's run id so
 			// concurrent children resolve distinct per-child session files.
-			sessionRoot = path.join(path.resolve(deps.expandTilde(effectiveParams.sessionDir)), runId);
+			sessionRoot = path.join(path.resolve(deps.expandTilde(effectiveParams.sessionDir)), sessionRunId);
 		} else {
 			const baseSessionRoot = deps.config.defaultSessionDir
 				? path.resolve(deps.expandTilde(deps.config.defaultSessionDir))
 				: deps.getSubagentSessionRoot(parentSessionFile);
-			sessionRoot = path.join(baseSessionRoot, runId);
+			sessionRoot = path.join(baseSessionRoot, sessionRunId);
 		}
 		try {
 			fs.mkdirSync(sessionRoot, { recursive: true });
