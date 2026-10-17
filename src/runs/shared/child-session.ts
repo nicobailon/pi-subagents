@@ -17,7 +17,7 @@ import { supervisorChannelDir } from "./child-tool-plan.ts";
 import { pinChildCacheRetention } from "../../shared/child-cache-retention.ts";
 import { getAgentDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import { resolvePackageSubpath } from "../background/runner-aliases.ts";
-import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "./pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE, resolveHostPiPackageRoot } from "./pi-spawn.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 import type { HerdrMachineReference, HerdrRemoteGitStatus } from "../../shared/types.ts";
@@ -391,17 +391,15 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
 /**
  * Load the host-owned pi-coding-agent module by absolute package entry so a
  * child cannot resolve an extension-owned copy. Root precedence is the running
- * host, an explicit override, then the install tree. Once any root is selected,
- * its manifest, package identity, entry, and import must all succeed; the bare
- * specifier is used only when no root resolves.
+ * Pi entry, an explicit override, the host entry's dependency, then the install
+ * tree. Once any root is selected, its manifest, package identity, entry, and
+ * import must all succeed; the bare specifier is used only when no root resolves.
  */
 export async function loadHostPiCodingAgent(): Promise<PiCodingAgentModule> {
 	const overrideRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
-	const runningRoot = resolvePiPackageRoot();
-	const selectedOverride = runningRoot === undefined ? overrideRoot : undefined;
-	const root = runningRoot ?? selectedOverride ?? resolveInstalledPiPackageRoot();
+	const root = resolveHostPiPackageRoot();
 	if (root) {
-		const entry = fs.realpathSync(resolveHostPackageEntry(root, selectedOverride));
+		const entry = fs.realpathSync(resolveHostPackageEntry(root, root === overrideRoot ? overrideRoot : undefined));
 		return import(pathToFileURL(entry).href);
 	}
 	return import(PI_CODING_AGENT_PACKAGE);

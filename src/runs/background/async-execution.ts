@@ -23,7 +23,7 @@ import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchd
 import { buildChainInstructions, getStepAgents, isDynamicParallelStep, isParallelStep, resolveExistingReadInstructionPaths, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import { isDynamicRunnerGroup, isParallelGroup, type RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
-import { PI_CODING_AGENT_PACKAGE, resolveBunPiExecutable, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../shared/pi-spawn.ts";
+import { PI_CODING_AGENT_PACKAGE, resolveBunPiExecutable, resolveHostPiPackageRoot } from "../shared/pi-spawn.ts";
 import { JITI_ALIAS_ENV, resolveHostPeerAliases } from "./runner-aliases.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
@@ -96,22 +96,15 @@ import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/
 import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, writeRetainedRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
-const piPackageRoot = resolveAsyncPiPackageRoot();
-
-/**
- * The detached runner resolves the same host package the foreground
- * `resolvePiCliScript` path resolves, so an explicit
- * `PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT` override must be honored here
- * too. Precedence mirrors the foreground resolver: argv-based discovery wins
- * first (the foreground returns the argv script before any candidate), the
- * environment override is consulted when that discovery cannot identify the
- * host (wrapper installs, non-standard layouts), and the
- * package-manager entry is last. Without the override, such hosts fail
- * closed with "neither is available" while foreground children launch fine.
- */
-function resolveAsyncPiPackageRoot(env: NodeJS.ProcessEnv = process.env): string | undefined {
-	return resolvePiPackageRoot() || env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || resolveInstalledPiPackageRoot();
-}
+// Cache failures as well as roots: management must remain loadable, and launches must not retry another SDK.
+const piPackageSelection = ((): { root?: string } | { error: unknown; root?: never } => {
+	try {
+		return { root: resolveHostPiPackageRoot() };
+	} catch (error) {
+		return { error };
+	}
+})();
+const piPackageRoot = piPackageSelection.root;
 
 function resolveJitiCliFromPackageJson(packageJsonPath: string): string | undefined {
 	if (!fs.existsSync(packageJsonPath)) return undefined;
@@ -685,6 +678,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 
 	// The compiled host exposes its SDK only through Pi's extension loader.
 	const binaryHost = resolveBunPiExecutable();
+	if (!binaryHost && "error" in piPackageSelection) throw piPackageSelection.error;
 	const nodeExecutable = resolveNodeExecutable();
 	const nativeRunnerSupported = supportsNativeRunner(nodeExecutable);
 	const runner = asyncRunnerSourcePath();

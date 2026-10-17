@@ -235,7 +235,7 @@ describe("getPiSpawnCommand", () => {
 		});
 	});
 
-	it("skips an unverified forwarded package-root env before resolving a verified Pi package", () => {
+	it("rejects an unverified forwarded package-root env instead of resolving a different Pi package", () => {
 		const tempDir = fs.mkdtempSync(
 			path.join(os.tmpdir(), "pi-spawn-unverified-env-root-"),
 		);
@@ -253,18 +253,13 @@ describe("getPiSpawnCommand", () => {
 			fs.writeFileSync(piCli, "#!/usr/bin/env node\n");
 			fs.writeFileSync(path.join(piRoot, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }));
 
-			const result = getPiSpawnCommand(["-p", "Task: hello"], {
+			assert.throws(() => getPiSpawnCommand(["-p", "Task: hello"], {
 				platform: "win32",
 				execPath: "C:\\Program Files\\nodejs\\node.exe",
 				argv1: "/opt/pi-web/dist/server.js",
 				env: { [PI_CODING_AGENT_PACKAGE_ROOT_ENV]: wrongRoot },
 				resolvePackageEntry: () => piEntry,
-			});
-
-			assert.deepEqual(result, {
-				command: "C:\\Program Files\\nodejs\\node.exe",
-				args: [piCli, "-p", "Task: hello"],
-			});
+			}), /expected "@earendil-works\/pi-coding-agent"/);
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -469,6 +464,17 @@ describe("getPiSpawnCommand with piPackageRoot", () => {
 });
 
 describe("resolvePiCliScript", () => {
+	it("keeps extension-relative installed CLI discovery best-effort on POSIX", () => {
+		const args = ["--version"];
+		const deps = makeDeps({
+			platform: "linux",
+			argv1: "/missing/host.js",
+			packageJsonPath: "/opt/extension/node_modules/pi/package.json",
+			packageJsonContent: "{ malformed",
+		});
+		assert.deepEqual(getPiSpawnCommand(args, deps), { command: "pi", args });
+	});
+
 	it("supports package bin as string", () => {
 		const packageJsonPath = "/opt/pi/package.json";
 		const cliPath = path.resolve(
