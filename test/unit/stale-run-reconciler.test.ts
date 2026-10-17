@@ -430,10 +430,12 @@ describe("async stale-run reconciliation", () => {
 				pid: 12345,
 				startedAt: 1000,
 				lastUpdate: 1000,
-				steps: [step("done", "child-done"), step("bad", "child-bad"), step("live", "child-live"), step("gone", "child-gone")],
+				steps: [step("done", "child-done"), step("bad", "child-bad"), step("live", "child-live"), step("gone", "child-gone"), step("corrupt", "child-corrupt")],
 			});
 			writeStatus(path.join(root, "child-done"), { runId: "child-done", mode: "single", state: "complete", startedAt: 1000, endedAt: 1500, steps: [{ agent: "worker", status: "complete", exitCode: 0 }] });
 			writeStatus(path.join(root, "child-bad"), { runId: "child-bad", mode: "single", state: "failed", startedAt: 1000, endedAt: 1600, steps: [{ agent: "worker", status: "failed", exitCode: 1, error: "child boom" }] });
+			fs.mkdirSync(path.join(root, "child-corrupt"), { recursive: true });
+			fs.writeFileSync(path.join(root, "child-corrupt", "status.json"), "{not json", "utf-8");
 			writeStatus(path.join(root, "child-live"), { runId: "child-live", mode: "single", state: "running", startedAt: 1000, steps: [{ agent: "worker", status: "running" }] });
 
 			const result = reconcileAsyncRun(asyncDir, {
@@ -454,6 +456,10 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(steps[2]?.status, "failed");
 			assert.match(steps[2]?.error ?? "", /stale-run reconciliation/);
 			assert.equal(steps[3]?.status, "failed");
+			// A corrupt child status keeps the owner repair going and stays visible in the error.
+			assert.equal(result.repaired, true);
+			assert.equal(steps[4]?.status, "failed");
+			assert.match(steps[4]?.error ?? "", /child status unreadable/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

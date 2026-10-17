@@ -265,7 +265,14 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 	const steps = status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" as const }];
 	const repairedSteps = steps.map((step) => {
 		if (step.status !== "running" && step.status !== "pending") return step;
-		const settled = settledWorkflowChildStatus(asyncDir, runId, step);
+		let settled: ReturnType<typeof settledWorkflowChildStatus>;
+		let childReadError: string | undefined;
+		try {
+			settled = settledWorkflowChildStatus(asyncDir, runId, step);
+		} catch (error) {
+			// An unreadable child status must not block repairing the dead owner.
+			childReadError = error instanceof Error ? error.message : String(error);
+		}
 		if (settled) return settled;
 		return {
 			...step,
@@ -274,7 +281,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 			endedAt: step.endedAt ?? now,
 			durationMs: step.startedAt !== undefined && step.durationMs === undefined ? Math.max(0, now - step.startedAt) : step.durationMs,
 			exitCode: step.exitCode ?? 1,
-			error: step.error ?? message,
+			error: step.error ?? (childReadError ? `${message} (child status unreadable: ${childReadError})` : message),
 		};
 	});
 	const repairedStatus: AsyncStatus = {
