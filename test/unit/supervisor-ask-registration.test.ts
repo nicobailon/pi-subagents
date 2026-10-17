@@ -1058,7 +1058,8 @@ describe("supervisor ask registration", () => {
 			channel.hasPendingRequests();
 			assert.equal(expiresAt(queued), delivered, "a delivered ask keeps its deadline");
 
-			const dropped = writeRequest({ sessionId, runId, expiresAt: Date.now() + 100 });
+			// 500 ms: long enough not to expire (and be removed) on a slow runner, shorter than the 1000 ms extension.
+			const dropped = writeRequest({ sessionId, runId, expiresAt: Date.now() + 500 });
 			channel.hasPendingRequests();
 			emit("agent_settled", {});
 			const settled = expiresAt(dropped);
@@ -1066,10 +1067,11 @@ describe("supervisor ask registration", () => {
 			assert.equal(expiresAt(dropped), settled, "a notice still queued when the run settles was dropped and is not extended");
 
 			appended = true;
-			const visible = writeRequest({ sessionId, runId, expiresAt: Date.now() + 100 });
+			const visibleDeadline = Date.now() + 500;
+			const visible = writeRequest({ sessionId, runId, expiresAt: visibleDeadline });
 			channel.hasPendingRequests();
 			channel.hasPendingRequests();
-			assert.ok(expiresAt(visible) <= Date.now() + 100, "an ask appended to an idle parent is visible already and keeps its deadline");
+			assert.equal(expiresAt(visible), visibleDeadline, "an ask appended to an idle parent is visible already and keeps its deadline");
 			assert.equal(handlers.get("message_start")?.size ?? 0, 0);
 		} finally { channel.dispose(); }
 	});
