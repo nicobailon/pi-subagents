@@ -75,13 +75,16 @@ function writePeers(pi: string): void {
 }
 
 let launchId = 0;
-async function captureBackground(t: TestContext, tmp: string) {
+async function captureBackground(t: TestContext, tmp: string, afterImport?: () => void) {
 	const spawn = t.mock.method(childProcess, "spawn", () => { throw new Error("spawn boundary captured"); });
 	syncBuiltinESMExports();
 	try {
 		const { makeAgent } = await import("../support/helpers.ts");
-		const { executeAsyncSingle } = await import(`../../src/runs/background/async-execution.ts?host-dependency=${++launchId}`);
-		const result = executeAsyncSingle(`host-dependency-${launchId}`, {
+		const modulePromise = import(`../../src/runs/background/async-execution.ts?host-dependency=${++launchId}`);
+		await assert.doesNotReject(modulePromise, "background module import must not require a working SDK");
+		const { executeAsyncSingle } = await modulePromise;
+		afterImport?.();
+		const result = await executeAsyncSingle(`host-dependency-${launchId}`, {
 			agent: "worker", task: "Check discovery", agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tmp, currentSessionId: "host-dependency" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
@@ -92,6 +95,13 @@ async function captureBackground(t: TestContext, tmp: string) {
 		spawn.mock.restore();
 		syncBuiltinESMExports();
 	}
+}
+
+async function assertBackgroundFailure(t: TestContext, tmp: string, expected: RegExp, afterImport?: () => void) {
+	const { result, calls } = await captureBackground(t, tmp, afterImport);
+	assert.equal(result.isError, true);
+	assert.match(result.content[0]!.text, expected);
+	assert.equal(calls.length, 0, "invalid selected SDK must fail before spawn");
 }
 
 for (const layout of ["npm", "pnpm"] as const) {
@@ -161,7 +171,7 @@ for (const source of ["dependency", "override"] as const) {
 			assert.throws(() => resolveHostPiPackageRoot(), expected);
 			await assert.rejects(loadHostPiCodingAgent(), expected);
 			assert.throws(() => getPiSpawnCommand([], { platform: "linux" }), expected);
-			await assert.rejects(captureBackground(t, tmp), expected);
+			await assertBackgroundFailure(t, tmp, expected);
 		});
 	}
 }
@@ -171,7 +181,19 @@ test("a missing explicit override is not hidden by a working host dependency", a
 	process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = path.join(tmp, "absent");
 	await assert.rejects(loadHostPiCodingAgent(), /ENOENT/);
 	assert.throws(() => getPiSpawnCommand([]), /ENOENT/);
-	await assert.rejects(captureBackground(t, tmp), /ENOENT/);
+	await assertBackgroundFailure(t, tmp, /ENOENT/);
+});
+
+test("background launch retains the selected error even after the override is repaired and removed", async (t) => {
+	const { tmp } = fixture(t);
+	const override = path.join(tmp, "broken-override");
+	writePackage(override);
+	fs.writeFileSync(path.join(override, "package.json"), "{");
+	process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = override;
+	await assertBackgroundFailure(t, tmp, /malformed JSON/, () => {
+		writePackage(override);
+		delete process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV];
+	});
 });
 
 test("selected host SDK missing entry, blocked export and import errors never load the extension SDK", async (t) => {
@@ -233,7 +255,7 @@ test("a broken nearest host dependency does not select a hoisted or extension co
 	assert.throws(() => resolveHostPiPackageRoot(), /ENOENT/);
 	await assert.rejects(loadHostPiCodingAgent(), /ENOENT/);
 	assert.throws(() => getPiSpawnCommand([]), /ENOENT/);
-	await assert.rejects(captureBackground(t, tmp), /ENOENT/);
+	await assertBackgroundFailure(t, tmp, /ENOENT/);
 });
 
 test("a Pi-owned entry reached through a directory junction still outranks a broken override", async (t) => {

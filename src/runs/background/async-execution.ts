@@ -96,7 +96,15 @@ import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/
 import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, writeRetainedRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
-const piPackageRoot = resolveHostPiPackageRoot();
+// Cache failures as well as roots: management must remain loadable, and launches must not retry another SDK.
+const piPackageSelection = ((): { root?: string } | { error: unknown; root?: never } => {
+	try {
+		return { root: resolveHostPiPackageRoot() };
+	} catch (error) {
+		return { error };
+	}
+})();
+const piPackageRoot = piPackageSelection.root;
 
 function resolveJitiCliFromPackageJson(packageJsonPath: string): string | undefined {
 	if (!fs.existsSync(packageJsonPath)) return undefined;
@@ -670,6 +678,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 
 	// The compiled host exposes its SDK only through Pi's extension loader.
 	const binaryHost = resolveBunPiExecutable();
+	if (!binaryHost && "error" in piPackageSelection) throw piPackageSelection.error;
 	const nodeExecutable = resolveNodeExecutable();
 	const nativeRunnerSupported = supportsNativeRunner(nodeExecutable);
 	const runner = asyncRunnerSourcePath();
