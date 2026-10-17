@@ -6,7 +6,7 @@ import { readProcessTerminal } from "./process-terminal.ts";
 
 const TERMINAL_WORKFLOW_STATES = new Set<WorkflowChildSummary["workflowState"]>(["completed", "failed", "stopped"]);
 
-export function isTerminalAsyncState(state: AsyncStatus["state"]): boolean {
+export function isTerminalAsyncState(state: AsyncStatus["state"]): state is Exclude<AsyncStatus["state"], "queued" | "running" | "paused"> {
 	return state !== "queued" && state !== "running" && state !== "paused";
 }
 

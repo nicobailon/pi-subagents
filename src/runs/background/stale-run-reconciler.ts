@@ -12,6 +12,7 @@ import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDi
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
+import { isTerminalAsyncState } from "./workflow-terminal-proof.ts";
 
 export type PidLiveness = "alive" | "dead" | "unknown";
 
@@ -229,24 +230,33 @@ function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, no
 }
 
 /**
- * A dead workflow owner does not say how its detached children ended. A child that already
- * wrote its own terminal status keeps that outcome instead of inheriting the owner failure.
+ * A dead workflow owner does not say how its detached children ended. A detached child this
+ * workflow owns that already wrote its own terminal status keeps that outcome instead of
+ * inheriting the owner failure.
  */
-function settledWorkflowChildStatus(asyncDir: string, workflowRunId: string, step: NonNullable<AsyncStatus["steps"]>[number]): NonNullable<AsyncStatus["steps"]>[number] | undefined {
+function settledWorkflowChildStatus(asyncDir: string, workflowRunId: string, step: NonNullable<AsyncStatus["steps"]>[number], now: number): NonNullable<AsyncStatus["steps"]>[number] | undefined {
 	const childRunId = step.runId;
-	if (step.parentWorkflowRunId !== workflowRunId || !childRunId || childRunId === workflowRunId || childRunId !== path.basename(childRunId)) return undefined;
+	if (step.async !== true || step.parentWorkflowRunId !== workflowRunId || !childRunId || childRunId === workflowRunId
+		|| childRunId !== path.basename(childRunId) || childRunId === "." || childRunId === "..") return undefined;
 	const child = readStatus(path.join(path.dirname(asyncDir), childRunId));
-	if (!child || child.runId !== childRunId || (child.state !== "complete" && child.state !== "failed")) return undefined;
+	if (!child || child.runId !== childRunId || child.parentWorkflowRunId !== workflowRunId || !isTerminalAsyncState(child.state)) return undefined;
+	if (step.workflowKey !== undefined && child.workflowKey !== step.workflowKey) return undefined;
+	const state = child.state;
 	const childStep = child.steps?.[0];
-	return {
+	const endedAt = child.endedAt ?? step.endedAt ?? now;
+	const settled: NonNullable<AsyncStatus["steps"]>[number] = {
 		...step,
-		status: child.state === "complete" ? "complete" : "failed",
+		status: state,
 		activityState: undefined,
-		endedAt: child.endedAt ?? step.endedAt,
-		durationMs: child.endedAt !== undefined && step.startedAt !== undefined ? Math.max(0, child.endedAt - step.startedAt) : step.durationMs,
-		exitCode: childStep?.exitCode ?? (child.state === "complete" ? 0 : 1),
-		...(child.state === "failed" ? { error: childStep?.error ?? step.error } : {}),
+		endedAt,
+		durationMs: step.startedAt !== undefined ? Math.max(0, endedAt - step.startedAt) : step.durationMs,
+		exitCode: childStep?.exitCode ?? (state === "complete" ? 0 : 1),
+		error: state === "complete" ? undefined : childStep?.error ?? child.error ?? step.error,
+		stopped: state === "stopped" ? true : step.stopped,
 	};
+	if (settled.error === undefined) delete settled.error;
+	if (settled.stopped === undefined) delete settled.stopped;
+	return settled;
 }
 
 function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, reason?: string): { status: AsyncStatus; result: Record<string, unknown>; message: string } {
@@ -268,7 +278,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 		let settled: ReturnType<typeof settledWorkflowChildStatus>;
 		let childReadError: string | undefined;
 		try {
-			settled = settledWorkflowChildStatus(asyncDir, runId, step);
+			settled = settledWorkflowChildStatus(asyncDir, runId, step, now);
 		} catch (error) {
 			// An unreadable child status must not block repairing the dead owner.
 			childReadError = error instanceof Error ? error.message : String(error);

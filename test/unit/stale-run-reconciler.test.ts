@@ -430,10 +430,25 @@ describe("async stale-run reconciliation", () => {
 				pid: 12345,
 				startedAt: 1000,
 				lastUpdate: 1000,
-				steps: [step("done", "child-done"), step("bad", "child-bad"), step("live", "child-live"), step("gone", "child-gone"), step("corrupt", "child-corrupt")],
+				steps: [
+					{ ...step("done", "child-done"), error: "stale host progress error" },
+					step("bad", "child-bad"),
+					step("live", "child-live"),
+					step("gone", "child-gone"),
+					step("corrupt", "child-corrupt"),
+					step("halted", "child-halted"),
+					step("cut", "child-cut"),
+					step("foreign", "child-foreign"),
+				],
 			});
-			writeStatus(path.join(root, "child-done"), { runId: "child-done", mode: "single", state: "complete", startedAt: 1000, endedAt: 1500, steps: [{ agent: "worker", status: "complete", exitCode: 0 }] });
-			writeStatus(path.join(root, "child-bad"), { runId: "child-bad", mode: "single", state: "failed", startedAt: 1000, endedAt: 1600, steps: [{ agent: "worker", status: "failed", exitCode: 1, error: "child boom" }] });
+			const child = (runId: string, key: string, state: string, endedAt: number | undefined, childStep: Record<string, unknown>, parentWorkflowRunId = "wf") =>
+				writeStatus(path.join(root, runId), { runId, mode: "single", state, startedAt: 1000, ...(endedAt !== undefined ? { endedAt } : {}), parentWorkflowRunId, workflowKey: key, steps: [{ agent: "worker", ...childStep }] });
+			child("child-done", "done", "complete", 1500, { status: "complete", exitCode: 0 });
+			child("child-bad", "bad", "failed", 1600, { status: "failed", exitCode: 1, error: "child boom" });
+			child("child-halted", "halted", "stopped", undefined, { status: "stopped", exitCode: 1, error: "stopped by bg_stop" });
+			child("child-cut", "cut", "partial", 1700, { status: "partial", exitCode: 1, error: "turn budget exhausted" });
+			// Owned by another workflow: its outcome must not be borrowed.
+			child("child-foreign", "foreign", "complete", 1500, { status: "complete", exitCode: 0 }, "other-wf");
 			fs.mkdirSync(path.join(root, "child-corrupt"), { recursive: true });
 			fs.writeFileSync(path.join(root, "child-corrupt", "status.json"), "{not json", "utf-8");
 			writeStatus(path.join(root, "child-live"), { runId: "child-live", mode: "single", state: "running", startedAt: 1000, steps: [{ agent: "worker", status: "running" }] });
@@ -460,6 +475,16 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(result.repaired, true);
 			assert.equal(steps[4]?.status, "failed");
 			assert.match(steps[4]?.error ?? "", /child status unreadable/);
+			// Every terminal child state is kept, not only complete and failed.
+			assert.equal(steps[5]?.status, "stopped");
+			assert.equal(steps[5]?.stopped, true);
+			assert.equal(steps[5]?.error, "stopped by bg_stop");
+			assert.equal(steps[5]?.endedAt, 2000);
+			assert.equal(steps[6]?.status, "partial");
+			assert.equal(steps[6]?.error, "turn budget exhausted");
+			assert.equal(steps[6]?.endedAt, 1700);
+			assert.equal(steps[7]?.status, "failed");
+			assert.match(steps[7]?.error ?? "", /stale-run reconciliation/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
