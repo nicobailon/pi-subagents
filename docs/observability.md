@@ -241,6 +241,8 @@ child stop API.
 
 The status/result fields are: `lifecycleArtifactVersion`, `runId`/`id`, `sessionId`, `mode`, `state`, `startedAt`, `lastUpdate`, `endedAt`, `durationMs`, `cwd`, `asyncDir`, `sessionFile`, `outputFile`, `workflowGraph`, `steps`, `results`, `totalTokens`, `totalCost`, `model`/`requestedModel`, `toolCount`, `turnCount`, optional `launchResolvedExtensions`, optional `runtimeAcknowledgedExtensions`, and nested `children` when a child is allowed to launch subagents.
 
+A workflow child's own status adds `parentWorkflowRunId` and `workflowKey`. Use that pair to bind the child to its workflow. The child's `toolCallId` is a launch id the workflow host generates for that child, not the id of the parent tool call that started the workflow. While an async child runs, its session path is in `steps[0].sessionFile`; the top-level `sessionFile` is written when it completes.
+
 `requestedModel` records the launch's requested model (the explicit `--model` override, else the agent's configured model) before registry normalization.
 
 `launchResolvedExtensions` is parent-resolved launch intent only: it reports opaque extension identifiers and whether ambient extensions were disabled, without exposing raw extension paths or claiming the child runtime acknowledged that those extensions loaded.
