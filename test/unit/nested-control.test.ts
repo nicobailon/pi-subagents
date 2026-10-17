@@ -667,9 +667,22 @@ describe("nested control routing", () => {
 		it("refuses when the source's own session file fails its checks", () => withRoot(async (root) => {
 			const siblingFile = sessionFileIn(root, "parent", "sibling");
 			assert.match(await resume(root, "replacement", [{ id: "source", sessionFile: siblingFile }, { id: "replacement", sessionFile: siblingFile, revivedFrom: "source" }]), refused);
+		}));
+
+		it("refuses when the source's own session file is a symlink", (context) => withRoot(async (root) => {
+			const siblingFile = sessionFileIn(root, "parent", "sibling");
 			const link = path.join(root, "parent", "source", "run-0", "session.jsonl");
 			fs.mkdirSync(path.dirname(link), { recursive: true });
-			fs.symlinkSync(siblingFile, link);
+			try {
+				fs.symlinkSync(siblingFile, link);
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				if (code === "EPERM" || code === "EACCES") {
+					context.skip("file symlink creation is unavailable");
+					return;
+				}
+				throw error;
+			}
 			assert.match(await resume(root, "replacement", [{ id: "source", sessionFile: link }, { id: "replacement", sessionFile: siblingFile, revivedFrom: "source" }]), refused);
 		}));
 	});
