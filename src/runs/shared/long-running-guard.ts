@@ -64,7 +64,8 @@ function readShellWord(command: string, start: number): { word: string; end: num
 		const char = command[i]!;
 		if (quote) {
 			if (char === quote) quote = undefined;
-			else if (char === "\\" && quote === '"' && i + 1 < command.length) word += command[++i];
+			// Inside double quotes a backslash escapes only $ ` " \ and newline; elsewhere it stays.
+			else if (char === "\\" && quote === '"' && /[$`"\\\n]/.test(command[i + 1] ?? "")) word += command[++i];
 			else word += char;
 			continue;
 		}
@@ -96,9 +97,9 @@ function firstWrittenFile(command: string): string | undefined {
 			if (command[cursor] === "&") break;
 			const { word, end } = readShellWord(command, cursor);
 			cursor = end;
-			if (isTee && word.startsWith("-")) continue;
-			if (word && word !== "/dev/null") return word;
-			break;
+			if (word && word !== "/dev/null" && !(isTee && word.startsWith("-"))) return word;
+			// tee takes several files and flags; a redirect takes one target.
+			if (!isTee || !word) break;
 		}
 		i = cursor - 1;
 	}
