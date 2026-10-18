@@ -18,7 +18,7 @@ import { readRecentTerminalRunIndex, TERMINAL_RUN_INDEX_DIR } from "./terminal-r
 import { canScanAsyncRunPrefix } from "./run-id-query.ts";
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
-import { readWorkflowChildRunModel, withWorkflowChildRunModel } from "./workflow-terminal-proof.ts";
+import { withWorkflowChildRunModel } from "./workflow-terminal-proof.ts";
 import { assertWorkflowGraphHostSteps, hostStepReportName, hostStepVerdictLabel, validHostStepNodes } from "../shared/host-step-status.ts";
 import { projectAsyncWorkflowRows } from "../shared/async-status-projection.ts";
 import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
@@ -333,9 +333,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		const stepActivityState = step.activityState;
 		const stepLastActivityAt = step.lastActivityAt;
 		const timeoutRecovery = projectTimeoutRecovery(step.timeoutRecovery);
-		const childModel = status.mode === "workflow" && (!step.model || !step.thinking) ? readWorkflowChildRunModel(asyncDir, step) : undefined;
-		const stepModel = step.model ?? childModel?.model;
-		const stepThinking = step.thinking ?? childModel?.thinking;
+		const { model: stepModel, thinking: stepThinking } = status.mode === "workflow" && step.async === true ? withWorkflowChildRunModel(asyncDir, step) : step;
 		return {
 			index,
 			childId: asyncStatusChildIdentity(step, index),

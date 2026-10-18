@@ -26,7 +26,7 @@ import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, externalJobBridgeEligibility, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
-import { readWorkflowChildRunModel, withWorkflowChildRunModel } from "./workflow-terminal-proof.ts";
+import { withWorkflowChildRunModel } from "./workflow-terminal-proof.ts";
 import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { readProcessTerminal } from "./process-terminal.ts";
 import { withCachedUiContext } from "../../shared/extension-context.ts";
@@ -529,12 +529,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 						: status.steps.map((step, index) => ({ ...step, index }));
 					job.activeParallelGroup = Boolean(activeGroup);
 					if (status.mode === "workflow") {
-						for (const step of visibleSteps) {
-							if (step.model || step.thinking) continue;
-							const childModel = readWorkflowChildRunModel(job.asyncDir, step);
-							if (childModel?.model) step.model = childModel.model;
-							if (childModel?.thinking) step.thinking = childModel.thinking;
-						}
+						for (const step of visibleSteps) if (step.async === true) Object.assign(step, withWorkflowChildRunModel(job.asyncDir, step));
 					}
 					job.agents = visibleSteps.map((step) => step.agent);
 					job.steps = visibleSteps;
