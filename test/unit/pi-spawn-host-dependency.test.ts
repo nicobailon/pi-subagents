@@ -321,6 +321,12 @@ test("a broken nearest host dependency does not select a hoisted or extension co
 	await assertBackgroundFailure(t, tmp, /ENOENT/);
 });
 
+test("a file named node_modules does not stop the host dependency walk", (t) => {
+	const { host, pi } = fixture(t);
+	fs.writeFileSync(path.join(host, "dist", "node_modules"), "stray");
+	assert.equal(resolveHostDependencyPiPackageRoot(), pi);
+});
+
 test("a Pi-owned entry reached through a directory junction still outranks a broken override", async (t) => {
 	const { tmp, pi } = fixture(t);
 	const launcher = path.join(tmp, "pi-launcher");

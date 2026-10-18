@@ -59,7 +59,9 @@ export function resolveHostDependencyPiPackageRoot(entry = process.argv[1]): str
 			fs.lstatSync(root);
 			present = true;
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			// ENOTDIR: a file named node_modules is not a candidate, so keep walking like Node's resolver.
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
 		}
 		if (present) {
 			// The nearest candidate is authoritative, even with a broken link or manifest.
