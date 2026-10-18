@@ -190,6 +190,9 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.asyncWidgetLayout !== undefined && config.asyncWidgetLayout !== "adaptive" && config.asyncWidgetLayout !== "rows") {
 		throw new Error('config.asyncWidgetLayout must be "adaptive" or "rows"');
 	}
+	if (config.tmuxInspectorLayout !== undefined && config.tmuxInspectorLayout !== "tab" && config.tmuxInspectorLayout !== "split") {
+		throw new Error('config.tmuxInspectorLayout must be "tab" or "split"');
+	}
 	if (config.programStatus !== undefined && typeof config.programStatus !== "boolean") {
 		throw new Error("config.programStatus must be a boolean");
 	}

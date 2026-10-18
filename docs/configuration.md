@@ -331,6 +331,14 @@ Controls the under-editor widget for active background runs. It defaults to `tru
 
 Starts each newly mounted under-editor async widget in its one-line folded state. It defaults to `false`. A header click still toggles the widget, and the folded state still resets when the widget is removed or Pi reloads.
 
+## `tmuxInspectorLayout`
+
+```json
+{ "tmuxInspectorLayout": "split" }
+```
+
+Where `inspector.open` places the inspector inside tmux. `"tab"` (the default) creates a new tmux window, which iTerm2's `tmux -CC` integration shows as a new tab. `"split"` splits the focused window horizontally, which iTerm2 shows as a split pane. With `"tab"`, the new window opens in the background unless `focus: true` is passed. The setting applies to the next `inspector.open`; an inspector that is already open keeps its place.
+
 ## `asyncWidgetLayout`
 
 ```json

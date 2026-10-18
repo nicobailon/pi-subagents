@@ -2708,6 +2708,8 @@ export interface ExtensionConfig {
 	asyncWidgetCollapsed?: boolean;
 	/** Unfolded async runs widget layout: "adaptive" fits run details to the terminal height, "rows" shows one line per run. Defaults to "adaptive". */
 	asyncWidgetLayout?: AsyncWidgetLayout;
+	/** Where the tmux inspector opens: "tab" makes a new tmux window (an iTerm2 -CC tab), "split" splits the focused window. Defaults to "tab". */
+	tmuxInspectorLayout?: "tab" | "split";
 	/** Report subagent run state to the terminal with OSC 7501. Defaults to true. */
 	programStatus?: boolean;
 	/** Add a short `active_subagents` system prompt section listing this session's active background runs. Defaults to false. */

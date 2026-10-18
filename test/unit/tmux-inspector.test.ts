@@ -82,6 +82,55 @@ describe("tmux inspector availability", () => {
 	});
 });
 
+describe("tmux inspector tab layout", () => {
+	it("opens a detached window and never touches the active pane when focus is not requested", async () => {
+		const root = tempRoot();
+		const commands: string[] = [];
+		const client = fakeClient({
+			"-V": ["tmux 3.7c"],
+			"new-window": ["%8"],
+			"set-option": [""],
+			"display-message": ["69556"],
+		}, commands);
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "tab" });
+		const response = await plugin.open(ctx(root, { TMUX: "1" }), launch(), {});
+		assert.ok(!response.isError, String(response.content[0].text));
+		assert.match(String(response.content[0].text), /tab \(window\) %8/);
+		assert.ok(commands.some((command) => command === "new-window -d -P -F #{pane_id} -c /tmp node x"));
+		assert.ok(!commands.some((command) => command.startsWith("split-window") || command.startsWith("select-pane")));
+		assert.equal(readTmuxInspectorBinding(root)?.paneId, "%8");
+	});
+
+	it("omits -d so the new window is selected when focus is requested", async () => {
+		const root = tempRoot();
+		const commands: string[] = [];
+		const client = fakeClient({
+			"-V": ["tmux 3.7c"],
+			"new-window": ["%8"],
+			"set-option": [""],
+			"display-message": ["69556"],
+		}, commands);
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "tab" });
+		await plugin.open(ctx(root, { TMUX: "1" }), launch(), { focus: true });
+		assert.ok(commands.some((command) => command === "new-window -P -F #{pane_id} -c /tmp node x"));
+	});
+
+	it("kills the created window's pane when stamping the marker fails", async () => {
+		const root = tempRoot();
+		const commands: string[] = [];
+		const client = fakeClient({
+			"-V": ["tmux 3.7c"],
+			"new-window": ["%8"],
+			"set-option": ["!TMUX_ERROR|set-option failed"],
+			"kill-pane": [""],
+		}, commands);
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "tab" });
+		const response = await plugin.open(ctx(root, { TMUX: "1" }), launch(), {});
+		assert.equal(response.isError, true);
+		assert.ok(commands.some((command) => command.startsWith("kill-pane -t %8")));
+	});
+});
+
 describe("tmux inspector open", () => {
 	it("splits the window, writes a binding, and refocuses the original pane when focus is not requested", async () => {
 		const root = tempRoot();
@@ -93,7 +142,7 @@ describe("tmux inspector open", () => {
 			"select-pane": [""],
 			"set-option": [""],
 		}, commands);
-		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "split" });
 		const response = await plugin.open(ctx(root, { TMUX: "1" }), launch({ id: "m-1", path: "/tmp/m-1.json" }), {});
 		assert.ok(!response.isError, String(response.content[0].text));
 		assert.match(String(response.content[0].text), /%6/);
@@ -119,7 +168,7 @@ describe("tmux inspector open", () => {
 			"set-option": [""],
 			"display-message": ["69556"],
 		}, commands);
-		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "split" });
 		await plugin.open(ctx(root, { TMUX: "1" }), launch(), { focus: true });
 		assert.ok(!commands.some((command) => command.startsWith("display-message -p #{pane_id}")));
 		assert.ok(!commands.some((command) => command.startsWith("select-pane")));
@@ -132,7 +181,7 @@ describe("tmux inspector open", () => {
 			"-V": ["tmux 3.7c"],
 			"list-panes": ["%6|pi-subagents:run-1:-|69556"],
 		}, commands);
-		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "split" });
 		const response = await plugin.open(ctx(root, { TMUX: "1" }), launch(), {});
 		assert.match(String(response.content[0].text), /already open/);
 		assert.ok(!commands.some((command) => command.startsWith("split-window")));
@@ -147,7 +196,7 @@ describe("tmux inspector open", () => {
 			"list-panes": ["%6|pi-subagents:run-1:-|69556"],
 			"select-pane": [""],
 		}, commands);
-		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "split" });
 		const response = await plugin.open(ctx(root, { TMUX: "1" }), launch(), { focus: true });
 		assert.match(String(response.content[0].text), /already open/);
 		assert.ok(commands.some((command) => command.startsWith("select-pane -t %6")));
@@ -164,7 +213,7 @@ describe("tmux inspector open", () => {
 			"select-pane": [""],
 			"set-option": [""],
 		}, commands);
-		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "split" });
 		const response = await plugin.open(ctx(root, { TMUX: "1" }), launch(), {});
 		assert.ok(!response.isError, String(response.content[0].text));
 		assert.match(String(response.content[0].text), /%7/);
@@ -178,7 +227,7 @@ describe("tmux inspector open", () => {
 			"-V": ["tmux 3.7c"],
 			"list-panes": ["!TIMEOUT|probe timed out"],
 		}, commands);
-		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "split" });
 		const response = await plugin.open(ctx(root, { TMUX: "1" }), launch(), {});
 		assert.ok(response.isError);
 		assert.match(String(response.content[0].text), /TIMEOUT/);
@@ -196,7 +245,7 @@ describe("tmux inspector open", () => {
 			"set-option": ["!TMUX_ERROR|cannot set option"],
 			"kill-pane": [""],
 		}, commands);
-		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "split" });
 		const response = await plugin.open(ctx(root, { TMUX: "1" }), launch(), {});
 		assert.ok(response.isError);
 		assert.match(String(response.content[0].text), /TMUX_ERROR/);
@@ -217,7 +266,7 @@ describe("tmux inspector open", () => {
 			"set-option": [""],
 			"kill-pane": [""],
 		}, commands);
-		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "split" });
 		await assert.rejects(Promise.resolve().then(() => plugin.open(ctx(root, { TMUX: "1" }), launch(), {})));
 		assert.ok(commands.some((command) => command.startsWith("kill-pane -t %6")));
 	});
@@ -231,7 +280,7 @@ describe("tmux inspector open", () => {
 			"set-option": [""],
 			"display-message": ["69556"],
 		}, commands);
-		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client });
+		const plugin = createTmuxInspectorPlugin({ platform: "darwin", client, layout: () => "split" });
 		const response = await plugin.open(ctx(root, { TMUX: "1" }, 0), launch(), { focus: true });
 		assert.ok(!response.isError, String(response.content[0].text));
 		assert.ok(commands.some((command) => command.includes("set-option -p -t %6 @pi-subagents-inspector pi-subagents:run-1:0")));

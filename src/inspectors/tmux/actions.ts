@@ -98,11 +98,14 @@ async function probePane(client: TmuxClient, binding: TmuxInspectorBinding, sign
 	return { state: "alive" };
 }
 
+export type TmuxInspectorLayout = "tab" | "split";
+
 export async function openTmuxInspector(
 	context: InspectorContext,
 	launch: InspectorLaunch,
 	focus: boolean,
 	client: TmuxClient,
+	layout: TmuxInspectorLayout,
 ): Promise<AgentToolResult<Details>> {
 	const detected = await client.run(["-V"], { timeoutMs: 3_000, signal: context.signal });
 	if (!detected.ok) return result(errorText(detected.error), true);
@@ -116,20 +119,20 @@ export async function openTmuxInspector(
 			}
 			return result(`tmux inspector pane ${existing.paneId} is already open for async run ${context.target.runId}. Ctrl-C inside the pane closes it.`);
 		}
-		// A gone or stale binding falls through to a fresh split; other failures must not open a duplicate.
+		// A gone or stale binding falls through to a fresh pane; other failures must not open a duplicate.
 		if (probe.state === "error") return result(errorText(probe.error), true);
 	}
-	// The split activates the new pane; when focus is not requested, remember the
-	// active pane so it can be re-selected after the split.
-	const originalPane = focus ? undefined : await client.run(["display-message", "-p", "#{pane_id}"], { timeoutMs: 5_000, signal: context.signal });
-	const split = await client.run([
-		"split-window", "-h", "-P", "-F", "#{pane_id}",
-		"-c", context.target.status.cwd ?? context.cwd,
-		launch.displayCommand,
-	], { timeoutMs: 15_000, signal: context.signal });
-	if (!split.ok) return result(errorText(split.error), true);
-	const id = split.data;
-	if (!id.startsWith("%")) return result(errorText({ code: "TMUX_ERROR", message: `split-window returned no pane id ('${id}').` }), true);
+	// A split activates the new pane, so remember the active pane to re-select when focus is not requested.
+	// A new window opens detached with -d unless focus is requested, so the active pane never changes.
+	const originalPane = layout === "split" && !focus ? await client.run(["display-message", "-p", "#{pane_id}"], { timeoutMs: 5_000, signal: context.signal }) : undefined;
+	const cwd = context.target.status.cwd ?? context.cwd;
+	const create = await client.run(layout === "tab"
+		? ["new-window", ...(focus ? [] : ["-d"]), "-P", "-F", "#{pane_id}", "-c", cwd, launch.displayCommand]
+		: ["split-window", "-h", "-P", "-F", "#{pane_id}", "-c", cwd, launch.displayCommand], { timeoutMs: 15_000, signal: context.signal });
+	const command = layout === "tab" ? "new-window" : "split-window";
+	if (!create.ok) return result(errorText(create.error), true);
+	const id = create.data;
+	if (!id.startsWith("%")) return result(errorText({ code: "TMUX_ERROR", message: `${command} returned no pane id ('${id}').` }), true);
 	if (context.signal?.aborted) {
 		await client.run(["kill-pane", "-t", id], { timeoutMs: 5_000 });
 		return result(errorText({ code: "TIMEOUT", message: `tmux inspector open was aborted.` }), true);
@@ -164,7 +167,7 @@ export async function openTmuxInspector(
 		await client.run(["kill-pane", "-t", id], { timeoutMs: 5_000 });
 		throw error;
 	}
-	return result(`Opened read-only tmux inspector pane ${id} for async run ${context.target.runId}. Closing the pane does not stop the run.\nControls inside the pane: steer <message>, stop, status. Ctrl-C closes the pane.`);
+	return result(`Opened read-only tmux inspector ${layout === "tab" ? "tab (window)" : "pane"} ${id} for async run ${context.target.runId}. Closing the pane does not stop the run.\nControls inside the pane: steer <message>, stop, status. Ctrl-C closes the pane.`);
 }
 
 export async function statusTmuxInspector(context: InspectorContext, client: TmuxClient): Promise<AgentToolResult<Details>> {
