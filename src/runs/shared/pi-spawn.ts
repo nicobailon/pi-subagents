@@ -54,26 +54,22 @@ export function resolveHostDependencyPiPackageRoot(entry = process.argv[1]): str
 	let dir = path.dirname(canonicalEntry);
 	for (;;) {
 		const root = path.join(dir, "node_modules", PI_CODING_AGENT_PACKAGE);
-		let present = false;
 		try {
 			fs.lstatSync(root);
-			present = true;
 		} catch (error) {
 			// ENOTDIR: a file named node_modules is not a candidate, so keep walking like Node's resolver.
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+			const parent = path.dirname(dir);
+			if (parent === dir) return undefined;
+			dir = parent;
+			continue;
 		}
-		if (present) {
-			// The nearest candidate is authoritative, even with a broken link or manifest.
-			const canonicalRoot = fs.realpathSync(root);
-			readPiPackageJson(path.join(canonicalRoot, "package.json"));
-			return canonicalRoot;
-		}
-		const parent = path.dirname(dir);
-		if (parent === dir) break;
-		dir = parent;
+		// The nearest candidate is authoritative, even with a broken link or manifest.
+		const canonicalRoot = fs.realpathSync(root);
+		readPiPackageJson(path.join(canonicalRoot, "package.json"));
+		return canonicalRoot;
 	}
-	return undefined;
 }
 
 /** One SDK root for foreground imports and detached peer aliases; never retry a selected root. */
@@ -155,33 +151,14 @@ function readPiPackageJson(
 	return pkg as PiPackageJson;
 }
 
-function resolvePiCliScriptFromPackageJson(
-	packageJsonPath: string,
-	readFileSync: (filePath: string, encoding: "utf-8") => string,
-	existsSync: (filePath: string) => boolean,
-): string | undefined {
-	const packageJson = readPiPackageJson(packageJsonPath, readFileSync);
-	const binField = packageJson.bin;
-	const binPath =
-		typeof binField === "string"
-			? binField
-			: (binField?.pi ?? Object.values(binField ?? {})[0]);
-	if (!binPath) return undefined;
-	const candidate = path.resolve(path.dirname(packageJsonPath), binPath);
-	return isRunnableNodeScript(candidate, existsSync) ? candidate : undefined;
-}
-
-interface PiPackageSelection {
-	root: string;
-	cliScript?: string;
-	authoritative: boolean;
-}
+type PiPackageSelection =
+	| { root: string; cliScript: string }
+	| { root: string; packageJson: PiPackageJson; authoritative: boolean };
 
 /** Preserve direct JS launches; extensionless .bin/pi launchers must honor explicit roots first. */
 function selectPiPackage(deps: PiSpawnDeps): PiPackageSelection | undefined {
 	const existsSync = deps.existsSync ?? fs.existsSync;
 	const realpathSync = deps.realpathSync ?? fs.realpathSync;
-	const readFileSync = deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
 	const argv1 = deps.argv1 ?? process.argv[1];
 	const env = deps.env ?? process.env;
 
@@ -192,7 +169,7 @@ function selectPiPackage(deps: PiSpawnDeps): PiPackageSelection | undefined {
 				const canonicalArgvPath = realpathSync(argvPath);
 				const root = isRunnableNodeScript(canonicalArgvPath, existsSync)
 					? findPiPackageRootFromEntry(canonicalArgvPath) : undefined;
-				if (root) return { root, cliScript: canonicalArgvPath, authoritative: true };
+				if (root) return { root, cliScript: canonicalArgvPath };
 			} catch {
 				// Ownership probing is best-effort; an unverified host entry is not a Pi CLI.
 			}
@@ -203,10 +180,7 @@ function selectPiPackage(deps: PiSpawnDeps): PiPackageSelection | undefined {
 		?? (env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined)
 		?? resolvePiPackageRoot(argv1)
 		?? resolveHostDependencyPiPackageRoot(argv1);
-	if (root) {
-		readPiPackageJson(path.join(root, "package.json"), readFileSync);
-		return { root, authoritative: true };
-	}
+	if (root) return { root, packageJson: readPiPackageJson(path.join(root, "package.json"), deps.readFileSync), authoritative: true };
 
 	// Only extension-relative discovery is best-effort, for both SDK and CLI consumers.
 	const packageJsonCandidates: Array<() => string | undefined> = [];
@@ -221,8 +195,7 @@ function selectPiPackage(deps: PiSpawnDeps): PiPackageSelection | undefined {
 		try {
 			const packageJsonPath = candidatePackageJson();
 			if (!packageJsonPath) continue;
-			readPiPackageJson(packageJsonPath, readFileSync);
-			return { root: path.dirname(packageJsonPath), authoritative: false };
+			return { root: path.dirname(packageJsonPath), packageJson: readPiPackageJson(packageJsonPath, deps.readFileSync), authoritative: false };
 		} catch {
 			// No authoritative host root was found; keep probing the extension install.
 		}
@@ -233,21 +206,13 @@ function selectPiPackage(deps: PiSpawnDeps): PiPackageSelection | undefined {
 export function resolvePiCliScript(deps: PiSpawnDeps = {}): string | undefined {
 	const selection = selectPiPackage(deps);
 	if (!selection) return undefined;
-	if (selection.cliScript) return selection.cliScript;
-	try {
-		const cli = resolvePiCliScriptFromPackageJson(
-			path.join(selection.root, "package.json"),
-			deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding)),
-			deps.existsSync ?? fs.existsSync,
-		);
-		if (!cli && selection.authoritative) {
-			throw new Error(`Selected Pi package at ${selection.root} has no runnable CLI script`);
-		}
-		return cli;
-	} catch (error) {
-		if (selection.authoritative) throw error;
-		return undefined;
-	}
+	if ("cliScript" in selection) return selection.cliScript;
+	const binField = selection.packageJson.bin;
+	const binPath = typeof binField === "string" ? binField : (binField?.pi ?? Object.values(binField ?? {})[0]);
+	const cli = binPath ? path.resolve(selection.root, binPath) : undefined;
+	if (cli && isRunnableNodeScript(cli, deps.existsSync ?? fs.existsSync)) return cli;
+	if (selection.authoritative) throw new Error(`Selected Pi package at ${selection.root} has no runnable CLI script`);
+	return undefined;
 }
 
 export function getPiSpawnCommand(

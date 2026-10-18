@@ -34,12 +34,9 @@ export function readWorkflowChildRunModel(
 export function withWorkflowChildRunModel<T extends { runId?: string; model?: string; thinking?: string }>(workflowAsyncDir: string, child: T): T {
 	if (child.model && child.thinking) return child;
 	const reported = readWorkflowChildRunModel(workflowAsyncDir, { async: true, runId: child.runId });
-	if (!reported) return child;
-	return {
-		...child,
-		...(child.model ?? reported.model ? { model: child.model ?? reported.model } : {}),
-		...(child.thinking ?? reported.thinking ? { thinking: child.thinking ?? reported.thinking } : {}),
-	};
+	const model = child.model ?? reported?.model;
+	const thinking = child.thinking ?? reported?.thinking;
+	return { ...child, ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) };
 }
 
 export type WorkflowChildProcessEvidence =

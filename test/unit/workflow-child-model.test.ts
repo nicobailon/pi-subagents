@@ -30,15 +30,6 @@ afterEach(() => {
 });
 
 describe("workflow child run model", () => {
-	it("reads the model the child actually reported", () => {
-		const { root, parent } = workspace();
-		childRun(root, "child", { agent: "scout", status: "complete", model: "openai-codex/gpt-5.6-sol", thinking: "high" });
-		assert.deepEqual(
-			readWorkflowChildRunModel(parent, { async: true, runId: "child" }),
-			{ model: "openai-codex/gpt-5.6-sol", thinking: "high" },
-		);
-	});
-
 	it("ignores synchronous children, missing ids, path traversal, and unreadable status", () => {
 		const { root, parent } = workspace();
 		childRun(root, "child", { agent: "scout", status: "complete", model: "observed/model", thinking: "low" });

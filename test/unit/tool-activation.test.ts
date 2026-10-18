@@ -360,16 +360,19 @@ describe("toolActivation modes", () => {
 		assert.ok(unaffected.active().includes("subagent"), "unaffected: subagent");
 	});
 
-	it("keeps bg_wait exactly as the transcript recorded it, and recognises an unload without it", async () => {
-		const cases: Array<[string, any[], boolean]> = [
-			["recorded", [declared(["read", "subagents_enable", "bg_wait"])], true],
-			["never declared", [declared(["read", "subagents_enable"])], false],
-			["warm, never declared", [declared(["read", "subagent", "contact_supervisor"])], false],
+	it("keeps bg_wait and subagent_supervisor as a resumed transcript recorded them, and recognises an unload without bg_wait", async () => {
+		const cases: Array<[string, string[], boolean, boolean]> = [
+			["cold, bg_wait only", ["read", "subagents_enable", "bg_wait"], true, false],
+			["cold, neither", ["read", "subagents_enable"], false, false],
+			["cold, both", ["read", "subagents_enable", "bg_wait", "subagent_supervisor"], true, true],
+			["warm, no bg_wait", ["read", "subagent", "contact_supervisor", "subagent_supervisor"], false, true],
 		];
-		for (const [label, messages, expected] of cases) {
-			const runtime = createRuntime(messages, [], [], { model: COMPATIBLE });
+		for (const [label, tools, wait, supervisor] of cases) {
+			const runtime = createRuntime([declared(tools)], [], [], { model: COMPATIBLE });
 			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
-			assert.equal((await startAgent(runtime)).includes("bg_wait"), expected, label);
+			const selected = await startAgent(runtime);
+			assert.equal(selected.includes("bg_wait"), wait, `${label}: bg_wait`);
+			assert.equal(selected.includes("subagent_supervisor"), supervisor, `${label}: subagent_supervisor`);
 		}
 
 		// A cold session that never declared bg_wait: its unload removes the loader, and a new process brings it back.
@@ -379,6 +382,10 @@ describe("toolActivation modes", () => {
 		assert.ok((await startAgent(unloaded)).includes("subagents_enable"), "unload: loader restored");
 		assert.equal(unloaded.active().includes("bg_wait"), false, "unload: bg_wait stays undeclared");
 		assert.ok(unloaded.active().includes("subagent_supervisor"), "unload: subagent_supervisor restored");
+
+		const eager = createRuntime([], [], [], { config: { toolActivation: "eager" } });
+		await eager.emit("session_start", { type: "session_start", reason: "startup" });
+		assert.ok((await startAgent(eager)).includes("subagent_supervisor"), "eager");
 	});
 
 	it("declares bg_wait without subagent once a background-work provider is registered", async () => {
@@ -420,22 +427,6 @@ describe("toolActivation modes", () => {
 		} finally {
 			fs.rmSync(channelDir, { recursive: true, force: true });
 		}
-	});
-
-	it("keeps subagent_supervisor as a resumed transcript recorded it, and declared in eager mode", async () => {
-		const cases: Array<[string, any[], boolean]> = [
-			["declared before this version", [declared(["read", "subagents_enable", "bg_wait", "subagent_supervisor"])], true],
-			["never declared", [declared(["read", "subagents_enable", "bg_wait"])], false],
-			["declared with subagent", [declared(["read", "subagent", "contact_supervisor", "subagent_supervisor"])], true],
-		];
-		for (const [label, messages, expected] of cases) {
-			const runtime = createRuntime(messages, [], [], { model: COMPATIBLE });
-			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
-			assert.equal((await startAgent(runtime)).includes("subagent_supervisor"), expected, label);
-		}
-		const eager = createRuntime([], [], [], { config: { toolActivation: "eager" } });
-		await eager.emit("session_start", { type: "session_start", reason: "startup" });
-		assert.ok((await startAgent(eager)).includes("subagent_supervisor"), "eager");
 	});
 });
 
