@@ -11,7 +11,7 @@ import {
 	shouldEmitOpenToolAttention,
 	shouldNotifyControlEvent,
 } from "../../src/runs/shared/subagent-control.ts";
-import { didMutatingToolFail, isMutatingTool, nextLongRunningTrigger } from "../../src/runs/shared/long-running-guard.ts";
+import { didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, resolveCurrentPath } from "../../src/runs/shared/long-running-guard.ts";
 
 const config = resolveControlConfig(undefined, {
 	needsAttentionAfterMs: 300,
@@ -42,6 +42,22 @@ describe("mutating tool supervision", () => {
 		assert.equal(didMutatingToolFail({ isError: true, content: [{ type: "text", text: "No exact match found" }] }), true);
 		assert.equal(didMutatingToolFail({ isError: "true" }), false);
 		assert.equal(didMutatingToolFail({ content: [{ type: "text", text: "error" }] }), false);
+	});
+
+	it("reports the file a bash command writes, not an fd duplication or /dev/null", () => {
+		assert.equal(resolveCurrentPath("bash", { command: "npm test > /tmp/t.log 2>&1; tail /tmp/t.log" }), "/tmp/t.log");
+		assert.equal(resolveCurrentPath("bash", { command: "grep -rn x src 2>/dev/null >out.txt" }), "out.txt");
+		assert.equal(resolveCurrentPath("bash", { command: "npm test 2>&1; echo done" }), undefined);
+		assert.equal(resolveCurrentPath("bash", { command: "grep x index.ts &>/dev/null" }), undefined);
+		assert.equal(resolveCurrentPath("bash", { command: "npm test 2>&1>out.log" }), "out.log");
+		assert.equal(resolveCurrentPath("bash", { command: "npm test >'test-results(1).log'" }), "test-results(1).log");
+		assert.equal(resolveCurrentPath("bash", { command: 'npm test > "my log.txt" 2>&1' }), "my log.txt");
+		assert.equal(resolveCurrentPath("bash", { command: "printf 'value > label' >out.log" }), "out.log");
+		assert.equal(resolveCurrentPath("bash", { command: 'echo "a > b" && echo \\> c' }), undefined);
+		assert.equal(resolveCurrentPath("bash", { command: "npm test | tee -a run.log" }), "run.log");
+		assert.equal(resolveCurrentPath("bash", { command: "npm test | tee /dev/null run.log" }), "run.log");
+		assert.equal(resolveCurrentPath("bash", { command: "npm test | tee /dev/null\necho done >out.log" }), "out.log");
+		assert.equal(resolveCurrentPath("bash", { command: 'echo hi >"my\\_file \\"x\\".log"' }), 'my\\_file "x".log');
 	});
 });
 

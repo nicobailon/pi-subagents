@@ -50,8 +50,59 @@ export function resolveCurrentPath(toolName: string | undefined, args: Record<st
 	if (toolName === "bash") {
 		const command = typeof args.command === "string" ? args.command : undefined;
 		if (!command) return undefined;
-		const redirect = command.match(/(?:>|>>|tee\s+)(\S+)/);
-		if (redirect?.[1]) return redirect[1];
+		return firstWrittenFile(command);
+	}
+	return undefined;
+}
+
+// Reads one shell word starting at `start`, removing quotes and escapes.
+function readShellWord(command: string, start: number): { word: string; end: number } {
+	let word = "";
+	let quote: string | undefined;
+	let i = start;
+	for (; i < command.length; i++) {
+		const char = command[i]!;
+		if (quote) {
+			if (char === quote) quote = undefined;
+			// Inside double quotes a backslash escapes only $ ` " \ and newline; elsewhere it stays.
+			else if (char === "\\" && quote === '"' && /[$`"\\\n]/.test(command[i + 1] ?? "")) word += command[++i];
+			else word += char;
+			continue;
+		}
+		if (char === "'" || char === '"') quote = char;
+		else if (char === "\\" && i + 1 < command.length) word += command[++i];
+		else if (/[\s;&|()<>]/.test(char)) break;
+		else word += char;
+	}
+	return { word, end: i };
+}
+
+// First file an unquoted `>`, `>>`, or `tee` writes, skipping fd duplications (`>&1`) and /dev/null.
+function firstWrittenFile(command: string): string | undefined {
+	let quote: string | undefined;
+	for (let i = 0; i < command.length; i++) {
+		const char = command[i]!;
+		if (quote) {
+			if (char === quote) quote = undefined;
+			else if (char === "\\" && quote === '"') i++;
+			continue;
+		}
+		if (char === "'" || char === '"') { quote = char; continue; }
+		if (char === "\\") { i++; continue; }
+		const isTee = command.startsWith("tee", i) && (i === 0 || /[\s|;&(]/.test(command[i - 1]!)) && /\s/.test(command[i + 3] ?? "");
+		if (char !== ">" && !isTee) continue;
+		let cursor = isTee ? i + 3 : command[i + 1] === ">" ? i + 2 : i + 1;
+		for (;;) {
+			// A newline ends the command, so arguments never continue onto the next line.
+			while (cursor < command.length && /[ \t]/.test(command[cursor]!)) cursor++;
+			if (command[cursor] === "&") break;
+			const { word, end } = readShellWord(command, cursor);
+			cursor = end;
+			if (word && word !== "/dev/null" && !(isTee && word.startsWith("-"))) return word;
+			// tee takes several files and flags; a redirect takes one target.
+			if (!isTee || !word) break;
+		}
+		i = cursor - 1;
 	}
 	return undefined;
 }
