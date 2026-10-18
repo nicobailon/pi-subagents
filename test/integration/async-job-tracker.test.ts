@@ -687,15 +687,15 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("keeps a workflow lane's recorded model and fills its missing thinking level from the child run", () => {
+	it("keeps a workflow lane's recorded model and fills its missing thinking level from the child run", async () => {
 		const asyncRoot = createTempDir("pi-async-job-workflow-child-model-");
 		try {
 			const runDir = path.join(asyncRoot, "workflow-run");
 			fs.mkdirSync(runDir, { recursive: true });
-			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
-				runId: "workflow-run", mode: "workflow", state: "running", sessionId: "session-workflow", startedAt: 1000, lastUpdate: 2000,
-				steps: [{ agent: "scout", status: "running", async: true, runId: "child-run", model: "launch/model" }],
+			const writeWorkflow = (lastUpdate: number, step: Record<string, unknown>) => fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "workflow-run", mode: "workflow", state: "running", sessionId: "session-workflow", startedAt: 1000, lastUpdate, steps: [step],
 			}), "utf-8");
+			writeWorkflow(2000, { agent: "scout", status: "pending" });
 			fs.mkdirSync(path.join(asyncRoot, "child-run"));
 			fs.writeFileSync(path.join(asyncRoot, "child-run", "status.json"), JSON.stringify({
 				runId: "child-run", mode: "single", state: "running", startedAt: 1000,
@@ -706,9 +706,10 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			state.currentSessionId = "session-workflow";
 			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 60_000 });
 			tracker.restoreActiveJobs();
-			const step = state.asyncJobs.get("workflow-run")?.steps?.[0];
-			assert.equal(step?.model, "launch/model");
-			assert.equal(step?.thinking, "low");
+			// The tracker's own status refresh, not the restore projection, feeds the widget lane.
+			writeWorkflow(3000, { agent: "scout", status: "running", async: true, runId: "child-run", model: "launch/model" });
+			await waitForCondition(() => state.asyncJobs.get("workflow-run")?.steps?.[0]?.model === "launch/model", "workflow lane refresh", 1000);
+			assert.equal(state.asyncJobs.get("workflow-run")?.steps?.[0]?.thinking, "low");
 			tracker.resetJobs();
 		} finally {
 			removeTempDir(asyncRoot);
