@@ -687,6 +687,34 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("keeps a workflow lane's recorded model and fills its missing thinking level from the child run", () => {
+		const asyncRoot = createTempDir("pi-async-job-workflow-child-model-");
+		try {
+			const runDir = path.join(asyncRoot, "workflow-run");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "workflow-run", mode: "workflow", state: "running", sessionId: "session-workflow", startedAt: 1000, lastUpdate: 2000,
+				steps: [{ agent: "scout", status: "running", async: true, runId: "child-run", model: "launch/model" }],
+			}), "utf-8");
+			fs.mkdirSync(path.join(asyncRoot, "child-run"));
+			fs.writeFileSync(path.join(asyncRoot, "child-run", "status.json"), JSON.stringify({
+				runId: "child-run", mode: "single", state: "running", startedAt: 1000,
+				steps: [{ agent: "scout", status: "running", model: "observed/model", thinking: "low" }],
+			}), "utf-8");
+			updateActiveRunIndex(runDir, "running");
+			const state = createState();
+			state.currentSessionId = "session-workflow";
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 60_000 });
+			tracker.restoreActiveJobs();
+			const step = state.asyncJobs.get("workflow-run")?.steps?.[0];
+			assert.equal(step?.model, "launch/model");
+			assert.equal(step?.thinking, "low");
+			tracker.resetJobs();
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("refreshes newly started runs when status appears after the run directory", async () => {
 		const asyncRoot = createTempDir("pi-async-job-late-status-");
 		try {
