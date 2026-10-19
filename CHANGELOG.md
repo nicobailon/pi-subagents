@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Fresh children launched with `systemPromptMode: replace` (every builtin except `delegate`) received the operator's `APPEND_SYSTEM.md`, because Pi fills an empty append-prompt slot from that file. They now start without it, like append-mode children and like the operator's global `AGENTS.md`. To give a child instructions from it, put them in the agent's prompt or an `agentOverrides` `systemPrompt`. ([#2960](https://github.com/nicobailon/pi-subagents/issues/2960))
+- Local children launched with `systemPromptMode: replace` (every builtin except `delegate`) received the operator's `APPEND_SYSTEM.md`, because Pi fills an empty append-prompt slot from that file. They now start without it, like append-mode children and like the operator's global `AGENTS.md`. To give a child instructions from it, put them in the agent's prompt or an `agentOverrides` `systemPrompt`. Pane-native remote children are unchanged: they still start from the remote Pi's assembled prompt. Thanks to [@scnbln](https://github.com/scnbln) for [#2961](https://github.com/nicobailon/pi-subagents/pull/2961) ([#2960](https://github.com/nicobailon/pi-subagents/issues/2960)).
 
 ## [0.79.1] - 2026-10-17
 
