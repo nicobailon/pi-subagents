@@ -4,12 +4,15 @@ import type { Details } from "../shared/types.ts";
 export const INSPECTOR_ACTIONS = ["inspector.open", "inspector.command", "inspector.status", "inspector.close"] as const;
 export type InspectorAction = typeof INSPECTOR_ACTIONS[number];
 
+export type InspectorLayout = "split" | "float";
+
 export interface InspectorParams {
 	id?: string;
 	runId?: string;
 	dir?: string;
 	index?: number;
 	focus?: boolean;
+	layout?: InspectorLayout;
 }
 
 export interface InspectorTarget {
@@ -45,6 +48,8 @@ export interface InspectorPlugin {
 	readonly name: string;
 	available(context: InspectorContext): Promise<boolean> | boolean;
 	owns(context: InspectorContext): boolean;
+	/** Set only by plugins whose open honors layout "float"; other plugins are skipped for float requests. */
+	readonly supportsFloat?: boolean;
 	open(context: InspectorContext, launch: InspectorLaunch, params: InspectorParams): Promise<AgentToolResult<Details>>;
 	status?(context: InspectorContext): Promise<AgentToolResult<Details>>;
 	close?(context: InspectorContext): Promise<AgentToolResult<Details>>;

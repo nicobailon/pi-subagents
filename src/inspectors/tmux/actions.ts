@@ -3,8 +3,8 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { Details } from "../../shared/types.ts";
-import type { InspectorContext, InspectorLaunch, InspectorTarget } from "../types.ts";
-import type { TmuxClient, TmuxErrorCode } from "./client.ts";
+import type { InspectorContext, InspectorLaunch, InspectorLayout, InspectorTarget } from "../types.ts";
+import type { TmuxClient, TmuxErrorCode, TmuxResult } from "./client.ts";
 
 export interface TmuxInspectorBinding {
 	schemaVersion: 1;
@@ -19,6 +19,8 @@ export interface TmuxInspectorBinding {
 	missionId?: string;
 	missionPath?: string;
 	command: string;
+	/** Missing on bindings written before float existed; those are split. */
+	layout?: InspectorLayout;
 }
 
 export function bindingPath(asyncDir: string, index?: number): string {
@@ -36,7 +38,8 @@ function parse(value: unknown): TmuxInspectorBinding | undefined {
 		|| typeof binding.paneId !== "string"
 		|| (binding.serverPid !== undefined && typeof binding.serverPid !== "string")
 		|| typeof binding.openedAt !== "string"
-		|| typeof binding.command !== "string") return undefined;
+		|| typeof binding.command !== "string"
+		|| (binding.layout !== undefined && binding.layout !== "split" && binding.layout !== "float")) return undefined;
 	return binding as TmuxInspectorBinding;
 }
 
@@ -98,18 +101,63 @@ async function probePane(client: TmuxClient, binding: TmuxInspectorBinding, sign
 	return { state: "alive" };
 }
 
+const FLOAT_MAX_COLUMNS = 120;
+const FLOAT_MAX_ROWS = 40;
+/** The new-pane usage flags that place a pane at a width, height, x-position and y-position. */
+const NEW_PANE_GEOMETRY_FLAGS = ["-x", "-y", "-X", "-Y"];
+
+interface FloatPlacement {
+	targetPane: string;
+	width: number;
+	height: number;
+	x: number;
+	y: number;
+}
+
+/** Probe native new-pane geometry and the target window before any pane exists; a version string is not proof. */
+async function probeFloat(client: TmuxClient, targetPane: string, signal?: AbortSignal): Promise<TmuxResult<FloatPlacement>> {
+	const usage = await client.run(["list-commands", "new-pane"], { timeoutMs: 5_000, signal });
+	if (!usage.ok) return { ok: false, error: { code: usage.error.code, message: `layout float needs tmux new-pane geometry flags; tmux list-commands failed: ${usage.error.message}` } };
+	const words = new Set(usage.data.split(/\s+/).map((word) => word.replace(/^\[/, "")));
+	if (!NEW_PANE_GEOMETRY_FLAGS.every((flag) => words.has(flag))) {
+		return { ok: false, error: { code: "TMUX_ERROR", message: "layout float needs new-pane geometry flags -x, -y, -X and -Y, which this tmux does not list." } };
+	}
+	const size = await client.run(["display-message", "-p", "-t", targetPane, "#{window_width} #{window_height}"], { timeoutMs: 5_000, signal });
+	if (!size.ok) return size;
+	const [windowWidth = 0, windowHeight = 0] = size.data.split(/\s+/).map(Number);
+	if (!Number.isInteger(windowWidth) || !Number.isInteger(windowHeight) || windowWidth <= 0 || windowHeight <= 0) {
+		return { ok: false, error: { code: "TMUX_ERROR", message: `layout float could not read the size of pane ${targetPane} ('${size.data}').` } };
+	}
+	// 80% of the window, centered; integer math keeps the sizes exact.
+	const width = Math.min(FLOAT_MAX_COLUMNS, Math.floor((windowWidth * 4) / 5));
+	const height = Math.min(FLOAT_MAX_ROWS, Math.floor((windowHeight * 4) / 5));
+	return { ok: true, data: { targetPane, width, height, x: Math.floor((windowWidth - width) / 2), y: Math.floor((windowHeight - height) / 2) } };
+}
+
+/** Read the active pane of the float target window; list-panes marks it with pane_active 1. */
+async function activePane(client: TmuxClient, targetPane: string, signal?: AbortSignal): Promise<TmuxResult<string>> {
+	const listed = await client.run(["list-panes", "-t", targetPane, "-F", "#{pane_active} #{pane_id}"], { timeoutMs: 5_000, signal });
+	if (!listed.ok) return listed;
+	const id = listed.data.split(/\r?\n/).map((line) => line.trim().split(" ")).find(([active]) => active === "1")?.[1];
+	if (!id?.startsWith("%")) return { ok: false, error: { code: "TMUX_ERROR", message: `layout float found no active pane in the window of ${targetPane}.` } };
+	return { ok: true, data: id };
+}
+
 export async function openTmuxInspector(
 	context: InspectorContext,
 	launch: InspectorLaunch,
-	focus: boolean,
+	options: { focus: boolean; layout: InspectorLayout },
 	client: TmuxClient,
 ): Promise<AgentToolResult<Details>> {
+	const { focus, layout } = options;
 	const detected = await client.run(["-V"], { timeoutMs: 3_000, signal: context.signal });
 	if (!detected.ok) return result(errorText(detected.error), true);
 	const existing = readTmuxInspectorBindingForTarget(context.target);
 	if (existing) {
 		const probe = await probePane(client, existing, context.signal);
 		if (probe.state === "alive") {
+			const existingLayout = existing.layout ?? "split";
+			if (existingLayout !== layout) return result(errorText({ code: "TMUX_ERROR", message: `tmux inspector pane ${existing.paneId} is open with layout ${existingLayout}. Use inspector.close first, then open layout ${layout} again.` }), true);
 			if (focus) {
 				const refocus = await client.run(["select-pane", "-t", existing.paneId], { timeoutMs: 5_000, signal: context.signal });
 				if (!refocus.ok) return result(errorText(refocus.error), true);
@@ -119,23 +167,44 @@ export async function openTmuxInspector(
 		// A gone or stale binding falls through to a fresh split; other failures must not open a duplicate.
 		if (probe.state === "error") return result(errorText(probe.error), true);
 	}
-	// The split activates the new pane; when focus is not requested, remember the
-	// active pane so it can be re-selected after the split.
-	const originalPane = focus ? undefined : await client.run(["display-message", "-p", "#{pane_id}"], { timeoutMs: 5_000, signal: context.signal });
-	const split = await client.run([
-		"split-window", "-h", "-P", "-F", "#{pane_id}",
-		"-c", context.target.status.cwd ?? context.cwd,
-		launch.displayCommand,
-	], { timeoutMs: 15_000, signal: context.signal });
+	// Float resolves its geometry before any pane exists, so a failed probe never leaves a pane behind.
+	let placement: FloatPlacement | undefined;
+	if (layout === "float") {
+		const targetPane = context.env.TMUX_PANE;
+		if (!targetPane) return result(errorText({ code: "TMUX_ERROR", message: "layout float needs TMUX_PANE to name the pane whose window hosts the inspector." }), true);
+		const probed = await probeFloat(client, targetPane, context.signal);
+		if (!probed.ok) return result(errorText(probed.error), true);
+		placement = probed.data;
+	}
+	// The split or float activates the new pane. Without focus, remember the pane to re-select.
+	let restorePane: string | undefined;
+	if (!focus) {
+		if (placement) {
+			const active = await activePane(client, placement.targetPane, context.signal);
+			if (!active.ok) return result(errorText(active.error), true);
+			restorePane = active.data;
+		} else {
+			const current = await client.run(["display-message", "-p", "#{pane_id}"], { timeoutMs: 5_000, signal: context.signal });
+			if (current.ok && current.data) restorePane = current.data;
+		}
+	}
+	const cwd = context.target.status.cwd ?? context.cwd;
+	const created = placement
+		? ["new-pane", "-P", "-F", "#{pane_id}", "-c", cwd, "-t", placement.targetPane, "-x", String(placement.width), "-y", String(placement.height), "-X", String(placement.x), "-Y", String(placement.y), launch.displayCommand]
+		: ["split-window", "-h", "-P", "-F", "#{pane_id}", "-c", cwd, launch.displayCommand];
+	// Float checks abort before tmux creates the pane; cleanup below still runs after creation.
+	if (placement && context.signal?.aborted) return result(errorText({ code: "TIMEOUT", message: "tmux inspector open was aborted before the float pane was created." }), true);
+	// A float pane created during an abort must still return its id, so the abort check below can kill it.
+	const split = await client.run(created, { timeoutMs: 15_000, signal: placement ? undefined : context.signal });
 	if (!split.ok) return result(errorText(split.error), true);
 	const id = split.data;
-	if (!id.startsWith("%")) return result(errorText({ code: "TMUX_ERROR", message: `split-window returned no pane id ('${id}').` }), true);
+	if (!id.startsWith("%")) return result(errorText({ code: "TMUX_ERROR", message: `${created[0]} returned no pane id ('${id}').` }), true);
 	if (context.signal?.aborted) {
 		await client.run(["kill-pane", "-t", id], { timeoutMs: 5_000 });
 		return result(errorText({ code: "TIMEOUT", message: `tmux inspector open was aborted.` }), true);
 	}
-	if (originalPane?.ok && originalPane.data) {
-		await client.run(["select-pane", "-t", originalPane.data], { timeoutMs: 5_000, signal: context.signal });
+	if (restorePane) {
+		await client.run(["select-pane", "-t", restorePane], { timeoutMs: 5_000, signal: context.signal });
 	}
 	// Stamp and cleanup run without the signal: aborting mid-stamp must not orphan an unstamped pane.
 	const stamp = await client.run(["set-option", "-p", "-t", id, OWNER_OPTION, ownerTag(context.target.runId, context.target.index)], { timeoutMs: 5_000 });
@@ -156,6 +225,7 @@ export async function openTmuxInspector(
 		tmuxVersion: detected.data,
 		...(launch.mission ? { missionId: launch.mission.id, missionPath: launch.mission.path } : {}),
 		command: launch.displayCommand,
+		layout,
 	};
 	try {
 		writeAtomicJson(bindingPath(context.target.asyncDir, context.target.index), binding);

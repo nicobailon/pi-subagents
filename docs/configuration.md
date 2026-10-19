@@ -130,7 +130,7 @@ Removes feature groups you do not use from the `subagent` tool. Each listed feat
 |---|---|---|
 | `agent-management` | `config` | `create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset`, `refine`, `refine.show`, `refine.rollback` |
 | `watchdog` | `scope`, `target`, `thinking` | `watchdog.status`, `watchdog.check`, `watchdog.configure`, `watchdog.recommend-model` |
-| `panes` | `focus` | `inspector.*`, `project.*` |
+| `panes` | `focus`, `layout` | `inspector.*`, `project.*` |
 | `missions` | `mission`, `missionUpdate`, `missionStatus`, `missionScope`, `missionId`, `runMode`, `runStatus`, `summary` | `mission.*` |
 | `lane-management` | `handoffPath`, `laneId`, `merge`, `supersession`, `repo`, `planId` | `lane.status`, `lane.recordMerge`, `lane.recordSupersession`, `worktree.discard`, `worktree.cleanup` |
 | `spawn-budget-grants` | `additional` | `grant-spawn-budget` |

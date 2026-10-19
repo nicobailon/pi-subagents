@@ -194,6 +194,7 @@ const SubagentParamProperties = {
 	scope: Type.Optional(Type.String({ enum: ["session", "user", "project"], description: "watchdog.configure scope; default session, persistent only if explicit." })),
 	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Watchdog target." })),
 	focus: Type.Optional(Type.Boolean({ description: "Focus inspector.open/project.open pane." })),
+	layout: Type.Optional(Type.String({ enum: ["split", "float"], description: "inspector.open pane layout: split (default) or float, a centered tmux pane that needs new-pane geometry support." })),
 	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean" }], description: "watchdog.configure only: off/minimal/low/medium/high/xhigh/max, inherit, false=off; true invalid. Dispatch ignores this; use model suffix." })),
 	at: Type.Optional(Type.String({ description: "Delay/ISO or local HH:mm." })),
 	every: Type.Optional(Type.String({ description: "Duration or day/week." })),

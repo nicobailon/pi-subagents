@@ -658,3 +658,13 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		}
 	});
 });
+
+describe("SubagentParams inspector layout", { skip: !schemasAvailable || !CompileSchema ? "typebox compiler not available" : undefined }, () => {
+	it("accepts layout split or float on inspector.open and rejects other values", () => {
+		assert.ok(SubagentParams);
+		const validator = CompileSchema!(SubagentParams);
+		assert.equal(validator.Check({ action: "inspector.open", id: "run-1", layout: "float" }), true);
+		assert.equal(validator.Check({ action: "inspector.open", id: "run-1", layout: "split" }), true);
+		assert.equal(validator.Check({ action: "inspector.open", id: "run-1", layout: "popup" }), false);
+	});
+});

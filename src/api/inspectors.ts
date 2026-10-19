@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { InspectorPlugin } from "../inspectors/types.ts";
 
-export type { InspectorContext, InspectorLaunch, InspectorParams, InspectorPlugin, InspectorTarget } from "../inspectors/types.ts";
+export type { InspectorContext, InspectorLaunch, InspectorLayout, InspectorParams, InspectorPlugin, InspectorTarget } from "../inspectors/types.ts";
 
 export const INSPECTOR_REGISTER_EVENT = "pi-subagents:inspector-register:v1";
 

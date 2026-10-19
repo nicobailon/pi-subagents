@@ -20,7 +20,7 @@ const GROUPS: Array<{ name: string; config: ExtensionConfig; setting: string; pa
 	...([
 		["agent-management", ["config"], ["create", "update", "delete", "eject", "disable", "enable", "reset", "refine", "refine.show", "refine.rollback"]],
 		["watchdog", ["scope", "target", "thinking"], ["watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model"]],
-		["panes", ["focus"], ["inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close"]],
+		["panes", ["focus", "layout"], ["inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close"]],
 		["missions", ["mission", "missionUpdate", "missionStatus", "missionScope", "missionId", "runMode", "runStatus", "summary"], ["mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close"]],
 		["lane-management", ["handoffPath", "laneId", "merge", "supersession", "repo", "planId"], ["lane.status", "lane.recordMerge", "lane.recordSupersession", "worktree.discard", "worktree.cleanup"]],
 		["spawn-budget-grants", ["additional"], ["grant-spawn-budget"]],
@@ -114,6 +114,12 @@ describe("disabled feature groups", () => {
 			assert.equal(result.details.mode, param === "workflow" ? "workflow" : "single");
 		});
 	}
+
+	it("panes: rejects layout with the setting name", async () => {
+		const result = await createExecutor({ disabledFeatures: ["panes"] }).executePublic("disabled-layout", { agent: "worker", task: "scan", layout: "float" }, new AbortController().signal, undefined, ctx());
+		assert.equal(result.isError, true);
+		assert.equal(resultText(result), `subagent option 'layout' is disabled by config disabledFeatures "panes".`);
+	});
 });
 
 describe("disabled feature execution boundaries", () => {

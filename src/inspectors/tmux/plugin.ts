@@ -12,9 +12,10 @@ export function createTmuxInspectorPlugin(deps: TmuxPluginDeps = {}): InspectorP
 	const client = deps.client ?? createTmuxClient();
 	return {
 		name: "tmux",
+		supportsFloat: true,
 		available: (context) => platform !== "win32" && Boolean(context.env.TMUX),
 		owns: (context) => readTmuxInspectorBindingForTarget(context.target) !== undefined,
-		open: (context, launch, params) => openTmuxInspector(context, launch, params.focus === true, client),
+		open: (context, launch, params) => openTmuxInspector(context, launch, { focus: params.focus === true, layout: params.layout ?? "split" }, client),
 		status: (context) => statusTmuxInspector(context, client),
 		close: (context) => closeTmuxInspector(context, client),
 	};

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `inspector.open` accepts `layout: "float"` in tmux. It opens a centered pane at 80% of the window, capped at 120 by 40. It fails without opening a pane when tmux lacks `new-pane` geometry flags. The default stays `split`, and `panes` disables `layout` with `focus`.
+
 ## [0.79.1] - 2026-10-17
 
 ### Highlights

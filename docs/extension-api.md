@@ -510,7 +510,7 @@ An `InspectorPlugin` supplies:
 
 - `name`: 1–128 letters, digits, dots, underscores, or hyphens, starting with a letter or digit.
 - `available(context)`: whether this terminal host can open an inspector; may be async.
-- `open(context, launch, params)`: open the supplied inspector command and return an `AgentToolResult<Details>`, like the built-in plugins. `launch.executable` and `launch.argv` carry the existing runner, target, trusted session roots, and steer/stop permission flags. Preserve these arguments and respect `params.focus`.
+- `open(context, launch, params)`: open the supplied inspector command and return an `AgentToolResult<Details>`, like the built-in plugins. `launch.executable` and `launch.argv` carry the existing runner, target, trusted session roots, and steer/stop permission flags. Preserve these arguments and respect `params.focus`. Set `supportsFloat: true` only when `open` honors `params.layout === "float"`; the dispatcher skips other plugins for float requests.
 - `owns(context)`: synchronously check whether the provider owns an inspector binding for this target.
 - Optional `status(context)` and `close(context)`: inspect or close that binding, returning the same result type. Closing an inspector must not stop the subagent.
 

@@ -158,10 +158,19 @@ export async function handleInspectorAction(action: InspectorAction, params: Ins
 		// The wait may end with the lease in the same tick the caller cancelled; never act for a cancelled caller.
 		if (deps.signal?.aborted) return result(`Inspector ${action} for async run ${target.runId}${label} was cancelled while waiting for another inspector open or close to finish.`, true);
 		if (action === "inspector.open") {
+			// Float never falls back to a split: only plugins that honor it may open the pane.
+			const float = params.layout === "float";
 			for (const plugin of plugins) {
-				if (await plugin.available(context)) return await plugin.open(context, launchFor(target, deps), params);
+				if (float && plugin.supportsFloat !== true) continue;
+				if (!(await plugin.available(context))) continue;
+				// A float request must not open a second inspector beside another plugin's existing one.
+				const foreign = float ? plugins.find((other) => other !== plugin && other.owns(context)) : undefined;
+				if (foreign) return result(`Inspector plugin '${foreign.name}' already owns async run ${target.runId}${label}. Use inspector.close first, then open layout float again.`, true);
+				return await plugin.open(context, launchFor(target, deps), params);
 			}
-			return result("No inspector plugin is available. Start a supported inspector host, or use inspector.command for a standalone command.", true);
+			return float
+				? result("No inspector plugin is available for layout float. Float needs a tmux host with new-pane geometry support.", true)
+				: result("No inspector plugin is available. Start a supported inspector host, or use inspector.command for a standalone command.", true);
 		}
 		const owner = plugins.find((plugin) => plugin.owns(context));
 		if (!owner) return result(`No inspector plugin owns this binding for async run ${target.runId}.`);

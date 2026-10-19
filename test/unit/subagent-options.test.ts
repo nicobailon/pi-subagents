@@ -18,7 +18,7 @@ const OPTION_SAMPLES: Record<string, unknown> = {
 	extensionBindings: { "pkg/1": {} }, capabilities: true, name: "nightly", dir: "/tmp/run", handoffPath: "handoff.json",
 	repo: "/repo", planId: "plan-1", laneId: "lane-1", merge: {}, supersession: {}, index: 0, childId: "child-1",
 	toolCallId: "call-1", view: "transcript", lines: 5, topic: "workflows", mode: "follow_up", steeringRecovery: false,
-	additional: 1, scope: "session", target: "children", focus: true, thinking: "low", at: "10m", every: "1h",
+	additional: 1, scope: "session", target: "children", focus: true, layout: "float", thinking: "low", at: "10m", every: "1h",
 	sessionOnly: true, quiet: true, on: ["mon"], timezone: "UTC", overlap: "skip", catchUp: "none", missionId: "mission-1",
 	mission: false, missionUpdate: {}, missionStatus: "open", missionScope: "project", runMode: "single", runStatus: "running",
 	summary: "done", config: { name: "reviewer" }, globalConcurrencyLimit: 2, maxSubagentSpawnsPerRun: 3,
