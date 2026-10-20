@@ -72,7 +72,8 @@ describe("async widget layout", () => {
 			widget.click();
 			const folded = widget.lines();
 			assert.equal(folded.length, 1, `${layout}: ${folded.join("\n")}`);
-			assert.match(folded[0]!, /^ \S subagents \(4\/4 running\)$/);
+			// The fold line appends the running round's elapsed time, starting at 0s for a fresh mount.
+			assert.match(folded[0]!, /^ \S subagents \(4\/4 running 0s\)$/);
 			widget.click();
 			assert.deepEqual(widget.lines(), unfolded, `${layout}: a second click restores the layout`);
 

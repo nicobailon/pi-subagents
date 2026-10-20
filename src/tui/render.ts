@@ -2563,12 +2563,42 @@ function widgetHeaderCounts(jobs: AsyncJobState[]): { running: AsyncJobState[]; 
 	};
 }
 
-function buildSingleLineWidgetLines(jobs: AsyncJobState[], theme: Theme, width: number, frame?: number): string[] {
+// Round elapsed tracking for the collapsed one-line widget, keyed per mounted ui.
+// A "round" starts when the widget first observes a running job and ends when it
+// observes none. Timing is snapshot-based (renderWidget/container.render
+// observations), not a lifecycle-event clock, so sub-debounce transitions may be
+// merged by the caller. State is intentionally not cleared in component.dispose():
+// compaction can temporarily unmount the widget without ending the round.
+interface WidgetRoundState {
+	startedAt: number;
+}
+const roundStateByUi = new WeakMap<object, WidgetRoundState>();
+function trackSubagentsRound(ui: object, jobs: readonly AsyncJobState[], now: number): void {
+	if (jobs.some((job) => job.status === "running")) {
+		if (!roundStateByUi.has(ui)) roundStateByUi.set(ui, { startedAt: now });
+		return;
+	}
+	roundStateByUi.delete(ui);
+}
+function roundElapsedSuffix(ui: object, now: number): string {
+	const state = roundStateByUi.get(ui);
+	return state ? ` ${formatRoundElapsed(now - state.startedAt)}` : "";
+}
+function formatRoundElapsed(ms: number): string {
+	const total = Math.max(0, Math.floor(ms / 1000));
+	const hours = Math.floor(total / 3600);
+	const minutes = Math.floor((total % 3600) / 60);
+	const seconds = total % 60;
+	if (hours > 0) return `${hours}h${minutes}m${seconds}s`;
+	if (minutes > 0) return `${minutes}m${seconds}s`;
+	return `${seconds}s`;
+}
+function buildSingleLineWidgetLines(jobs: AsyncJobState[], theme: Theme, width: number, frame?: number, elapsedSuffix = ""): string[] {
 	const counts = widgetHeaderCounts(jobs);
 	const hasActive = counts.running.length > 0 || counts.queued.length > 0;
 	const glyph = counts.running.length > 0 ? runningGlyph(animatedSeed(widgetJobsRunningSeed(counts.running), frame)) : hasActive ? "●" : "○";
 	const parts: string[] = [];
-	if (counts.running.length > 0) parts.push(`${counts.running.length}/${jobs.length} running`);
+	if (counts.running.length > 0) parts.push(`${counts.running.length}/${jobs.length} running${elapsedSuffix}`);
 	if (counts.queued.length > 0) parts.push(`${counts.queued.length} queued`);
 	if (counts.failed.length > 0) parts.push(`${counts.failed.length} failed`);
 	if (counts.stopped.length > 0) parts.push(`${counts.stopped.length} stopped`);
@@ -2703,9 +2733,9 @@ function progressiveHiddenLine(hiddenJobs: AsyncJobState[], theme: Theme, width:
 	return truncLine(theme.fg("dim", `  +${hiddenJobs.length} more${parts.length ? ` (${parts.join(", ")})` : ""}`), width);
 }
 
-function buildProgressiveWidgetLines(jobs: AsyncJobState[], theme: Theme, width: number, lockedRows: number, previousKeys: string[], frame?: number, projectionFor: WorkflowWidgetProjectionLookup = workflowWidgetProjectionLookup()): { lines: string[]; visibleJobKeys: string[]; contentRows: number } {
+function buildProgressiveWidgetLines(jobs: AsyncJobState[], theme: Theme, width: number, lockedRows: number, previousKeys: string[], frame?: number, projectionFor: WorkflowWidgetProjectionLookup = workflowWidgetProjectionLookup(), elapsedSuffix = ""): { lines: string[]; visibleJobKeys: string[]; contentRows: number } {
 	const rowCount = Math.max(1, lockedRows);
-	if (rowCount === 1) return { lines: buildSingleLineWidgetLines(jobs, theme, width, frame), visibleJobKeys: [], contentRows: 1 };
+	if (rowCount === 1) return { lines: buildSingleLineWidgetLines(jobs, theme, width, frame, elapsedSuffix), visibleJobKeys: [], contentRows: 1 };
 
 	const bodyRows = rowCount - 1;
 	let visibleJobKeys = selectProgressiveJobKeys(jobs, previousKeys, bodyRows);
@@ -2762,7 +2792,7 @@ function fitWidgetLineBudget(lines: string[], theme: Theme, width: number, expan
 	return [...lines.slice(0, visibleLines), truncLine(theme.fg("dim", hint), width)];
 }
 
-function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[], theme: Theme, width: number, expanded: boolean, frame?: number, projectionFor?: WorkflowWidgetProjectionLookup, layout: AsyncWidgetLayout = "adaptive"): string[] {
+function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[], theme: Theme, width: number, expanded: boolean, frame?: number, projectionFor?: WorkflowWidgetProjectionLookup, layout: AsyncWidgetLayout = "adaptive", elapsedSuffix = ""): string[] {
 	if (expanded) {
 		resetWidgetLayoutSession();
 		return fitWidgetLineBudget(buildLines(), theme, width, true);
@@ -2774,18 +2804,18 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 	const availableRows = estimateAvailableWidgetRows();
 
 	if (hasMatchingSession && widgetLayoutSession?.tier === "single-line") {
-		return buildSingleLineWidgetLines(jobs, theme, width, frame);
+		return buildSingleLineWidgetLines(jobs, theme, width, frame, elapsedSuffix);
 	}
 
 	if (hasMatchingSession && widgetLayoutSession?.tier === "progressive" && widgetLayoutSession.lockedRows !== undefined) {
 		const session = widgetLayoutSession;
 		const lockedRows = widgetLayoutSession.lockedRows;
-		let rendered = buildProgressiveWidgetLines(jobs, theme, width, lockedRows, session.visibleJobKeys, frame, projectionFor);
+		let rendered = buildProgressiveWidgetLines(jobs, theme, width, lockedRows, session.visibleJobKeys, frame, projectionFor, elapsedSuffix);
 		// The height stays fixed across content-only updates (#186). It grows when a new job would be hidden while the cap
 		// has room, and shrinks to content only when root jobs leave, so finished jobs leave no blank rows.
 		const capRows = Math.min(availableRows, collapsedWidgetLineBudget(rows));
 		if (rendered.visibleJobKeys.length < jobs.length && lockedRows < capRows) {
-			rendered = buildProgressiveWidgetLines(jobs, theme, width, capRows, session.visibleJobKeys, frame, projectionFor);
+			rendered = buildProgressiveWidgetLines(jobs, theme, width, capRows, session.visibleJobKeys, frame, projectionFor, elapsedSuffix);
 			session.lockedRows = Math.max(lockedRows, rendered.contentRows);
 		} else if (jobs.length < (session.rootJobCount ?? 0)) {
 			session.lockedRows = rendered.contentRows;
@@ -2809,11 +2839,11 @@ function fitAdaptiveWidgetLines(jobs: AsyncJobState[], buildLines: () => string[
 
 	if (availableRows <= 2) {
 		widgetLayoutSession = { expanded, rows, columns, tier: "single-line", visibleJobKeys: [] };
-		return buildSingleLineWidgetLines(jobs, theme, width, frame);
+		return buildSingleLineWidgetLines(jobs, theme, width, frame, elapsedSuffix);
 	}
 
 	// Lock to the rows the content fills so the fixed-height card has no blank padding.
-	const rendered = buildProgressiveWidgetLines(jobs, theme, width, Math.min(availableRows, collapsedWidgetLineBudget(rows)), [], frame, projectionFor);
+	const rendered = buildProgressiveWidgetLines(jobs, theme, width, Math.min(availableRows, collapsedWidgetLineBudget(rows)), [], frame, projectionFor, elapsedSuffix);
 	const lockedRows = rendered.contentRows;
 	widgetLayoutSession = { expanded, rows, columns, tier: "progressive", lockedRows, rootJobCount: jobs.length, visibleJobKeys: rendered.visibleJobKeys };
 	return rendered.lines.slice(0, lockedRows);
@@ -2950,6 +2980,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"],
 		container.render = (renderWidth: number): string[] => {
 			const now = Date.now();
 			const frame = Math.floor(now / WIDGET_ANIMATION_INTERVAL_MS);
+			trackSubagentsRound(ui, jobs, now);
 			const expanded = ui.getToolsExpanded?.() ?? false;
 			const coverage = inlineWorkflowCoverage.get(ui);
 			const covered = new Set<string>();
@@ -2984,9 +3015,10 @@ function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"],
 			cachedRenderWidth = renderWidth;
 			cachedFrame = frame;
 			cachedExpanded = expanded;
+			const elapsedSuffix = roundElapsedSuffix(ui, now);
 			cachedLines = (collapsed
-				? buildSingleLineWidgetLines(jobs, theme, width, frame)
-				: fitAdaptiveWidgetLines(roots, buildLines, theme, width, expanded, frame, projectionFor, layout)
+				? buildSingleLineWidgetLines(jobs, theme, width, frame, elapsedSuffix)
+				: fitAdaptiveWidgetLines(roots, buildLines, theme, width, expanded, frame, projectionFor, layout, elapsedSuffix)
 			).map((line) => paddedWidgetLine(line, renderWidth));
 			return cachedLines;
 		};
@@ -3089,6 +3121,9 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
  * Render the async jobs widget
  */
 export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[], initiallyCollapsed = false, layout: AsyncWidgetLayout = "adaptive"): void {
+	// Advance round tracking on every widget update, including the empty-jobs
+	// cleanup path below, which never reaches container.render.
+	trackSubagentsRound(ctx.ui, jobs, Date.now());
 	if (jobs.length === 0) {
 		resetWidgetLayoutSession();
 		asyncWidgetUpdates.delete(ctx.ui);
