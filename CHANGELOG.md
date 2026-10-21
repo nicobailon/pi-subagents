@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Pi could exit at session start on Windows when security software stopped it from launching `git` (`spawn EPERM`), because that error escaped the watchdog's diff baseline capture unhandled. The watchdog now starts without a diff baseline in that case, as it already did when `git` was missing. Thanks to [@advaitpaliwal](https://github.com/advaitpaliwal) for reporting [#2978](https://github.com/nicobailon/pi-subagents/issues/2978).
+
 ## [0.79.2] - 2026-10-20
 
 ### Highlights
