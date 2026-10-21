@@ -47,6 +47,11 @@ describe("watchdog diff tool", () => {
 		fs.rmSync(empty, { recursive: true, force: true });
 	});
 
+	it("has no baseline when git cannot be spawned at all", async () => {
+		// A NUL byte makes execFile throw synchronously, the same path as Windows spawn EPERM.
+		assert.equal(await startWatchdogDiffBaselineCapture(`${repo}\0`), undefined);
+	});
+
 	it("shows tracked changes since the baseline, including later commits, and lists untracked paths", async () => {
 		const baseline = captureWatchdogDiffBaseline(repo)!;
 		fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 2;\n", "utf-8");

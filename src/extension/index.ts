@@ -293,6 +293,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const asyncByDefault = resolveAsyncByDefault(config);
 	const fleetViewEnabled = config.fleetView !== false;
+	const slashCommandsEnabled = config.enableSlashCommands !== false;
+	// The detach shortcut is registered with the slash commands; a card must not advertise it when it is not.
+	const foregroundDetachShortcut = slashCommandsEnabled ? config.foregroundDetachShortcut : undefined;
 	const fleetViewPlacement = resolveFleetViewPlacement(config.fleetViewPlacement);
 	const asyncWidgetEnabled = config.asyncWidget !== false;
 	const asyncWidgetCollapsed = config.asyncWidgetCollapsed === true;
@@ -356,7 +359,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		parentWake,
 	});
 	const waitSubscriptionManager = createWaitSubscriptionManager(wakingPi, state);
-	const mainWatchdog = registerMainWatchdog(pi);
+	const mainWatchdog = registerMainWatchdog(pi, { slashCommand: slashCommandsEnabled });
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
 	const completionNotifier = registerSubagentNotify(wakingPi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
 	// Ended async runs whose result has not reached the notifier yet.
@@ -609,7 +612,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			options,
 			theme,
 			config.mainWindowRenderer,
-			config.foregroundDetachShortcut,
+			foregroundDetachShortcut,
 			() => state.lastUiContext?.ui.theme ?? theme,
 		);
 	});
@@ -714,7 +717,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			const renderedResult = { ...result, isError: context.isError };
 			return summaryInlineToolDisplay
 				? renderSubagentSummary(renderedResult, options, theme)
-				: renderSubagentResult(renderedResult, options, theme, undefined, config.mainWindowRenderer, config.foregroundDetachShortcut);
+				: renderSubagentResult(renderedResult, options, theme, undefined, config.mainWindowRenderer, foregroundDetachShortcut);
 		},
 
 	};
@@ -746,7 +749,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			if (ctx.hasUI && ctx.signal?.aborted) {
 				parentWake.userAborted();
 				const active = activeAsyncJobCount();
-				if (active > 0) ctx.ui.notify(`${active} background subagent run${active === 1 ? " is" : "s are"} still active · /subagents-stop`, "info");
+				if (active > 0) ctx.ui.notify(`${active} background subagent run${active === 1 ? " is" : "s are"} still active${slashCommandsEnabled ? " · /subagents-stop" : ""}`, "info");
 			}
 			// A headless host may dispose the session as soon as this turn settles, so hand
 			// finished results to Pi now; Pi runs the queued completion turn after agent_end.
@@ -775,11 +778,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	const disposeSlashCommands = registerSlashCommands(pi, state, {
+	const disposeSlashCommands = slashCommandsEnabled ? registerSlashCommands(pi, state, {
 		fleetKeybindings: config.fleetKeybindings,
-		foregroundDetachShortcut: config.foregroundDetachShortcut,
+		foregroundDetachShortcut,
 		workflowScriptsDisabled: disabledFeatures.features.has("workflow-scripts"),
-	});
+	}) : { dispose: () => {} };
 
 	let visibleControlNotices = new Set<string>();
 	const activeHerdrRuns = () => projectActiveHerdrRuns(state);

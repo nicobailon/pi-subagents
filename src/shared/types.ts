@@ -2722,6 +2722,8 @@ export interface ExtensionConfig {
 	toolActivation?: ToolActivationMode;
 	/** Keep a resumed session on the pi-subagents tool definitions and prompt text it already declared. Defaults to true. */
 	pinToolDeclarations?: boolean;
+	/** Register the pi-subagents slash commands and the foreground-detach shortcut. Defaults to true. */
+	enableSlashCommands?: boolean;
 	/** Opt-in feature groups removed from the subagent tool schema and rejected at every execution boundary. */
 	disabledFeatures?: SubagentFeature[];
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */

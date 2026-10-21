@@ -16,6 +16,8 @@ import { createWatchdogWarningMessage } from "./warning-format.ts";
 interface RegisterMainWatchdogOptions {
 	runtime?: MainWatchdogRuntime;
 	review?: WatchdogReviewFunction;
+	/** config.enableSlashCommands: false leaves out /subagents-watchdog. */
+	slashCommand?: boolean;
 }
 
 function sendSlashText(pi: ExtensionAPI, text: string): void {
@@ -382,7 +384,7 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 		displayClarification: (content) => pi.sendMessage({ customType: "subagent_watchdog_clarification", content, display: true }, { deliverAs: "steer", triggerTurn: true }),
 	});
 
-	pi.registerCommand("subagents-watchdog", {
+	if (options.slashCommand !== false) pi.registerCommand("subagents-watchdog", {
 		description: "Show or toggle the default-off subagent watchdog",
 		handler: (args, ctx) => {
 			rememberContext(ctx);
