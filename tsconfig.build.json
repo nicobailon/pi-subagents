@@ -5,9 +5,7 @@
     "outDir": "dist-pkg",
     "rootDir": ".",
     "rewriteRelativeImportExtensions": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true
+    "declaration": true
   },
   "exclude": ["test", "dist-pkg", "node_modules"]
 }

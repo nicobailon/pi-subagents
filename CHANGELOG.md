@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The npm package no longer ships source maps. They pointed at TypeScript sources the package does not include, so they could not be used, and they were 646 of its 1,339 files: the unpacked install drops from 12.1 MB to 6.8 MB and the download from 2.5 MB to 1.6 MB. Thanks to [@tututuhehehe](https://github.com/tututuhehehe) for reporting it in [#2980](https://github.com/nicobailon/pi-subagents/issues/2980).
+
 ## [0.79.2] - 2026-10-20
 
 ### Highlights
