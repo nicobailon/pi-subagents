@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Children on a custom provider that speaks the Codex Responses wire under its own api id, such as `pi-cliproxyapi`'s `cliproxyapi-codex-responses`, had their tool-call ids rewritten, and DeepSeek rejected the second tool turn with a misleading "`reasoning_text` ... must be passed back" error. Any `*-codex-responses` api now keeps its ids the way `openai-codex-responses` does. Thanks to [@xspeed1989](https://github.com/xspeed1989) for reporting [#2981](https://github.com/nicobailon/pi-subagents/issues/2981).
+
 ## [0.79.2] - 2026-10-20
 
 ### Highlights
