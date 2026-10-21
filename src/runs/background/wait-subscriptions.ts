@@ -6,7 +6,7 @@ import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { formatResumeFirstFailedRunDetail } from "./resume-guidance.ts";
 import { readCompletionReplay } from "./completion-replay.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { COMPLETION_ACTION } from "../../shared/parent-wake.ts";
+import { COMPLETION_ACTION, STATUS_ACTION } from "../../shared/parent-wake.ts";
 import {
 	DIRS,
 	INTERCOM_DETACH_REQUEST_EVENT,
@@ -21,6 +21,8 @@ import {
 } from "../../shared/types.ts";
 
 const SUBSCRIPTION_VERSION = 1;
+// Outcomes that report no saved results, so the notice points the parent at the run status instead.
+const STATUS_OUTCOMES = new Set(["timed out", "could not be reconciled", "needs attention", "reconciliation failed"]);
 const RECONCILE_INTERVAL_MS = 1_000;
 /**
  * How often the subscriptions directory is re-scanned for expired records left
@@ -191,7 +193,7 @@ export function createWaitSubscriptionManager(
 		try {
 			pi.sendMessage({
 				customType: "subagent-wait-subscription",
-				content: `Wait subscription ${record.token} fired for run ${record.runId}: ${outcome}. ${detail}\n\nParent action: ${COMPLETION_ACTION}`,
+				content: `Wait subscription ${record.token} fired for run ${record.runId}: ${outcome}. ${detail}\n\nParent action: ${STATUS_OUTCOMES.has(outcome) ? STATUS_ACTION : COMPLETION_ACTION}`,
 				display: true,
 				details: {
 					token: record.token,

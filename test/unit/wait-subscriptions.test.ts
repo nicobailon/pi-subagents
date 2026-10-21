@@ -492,7 +492,7 @@ describe("non-blocking wait subscriptions", () => {
 			manager.arm({ targetKind: "async", runId: "run-timeout", requestedId: "run-timeout", timeoutMs: 100 });
 			now = 1_101;
 			manager.reconcile();
-			assert.match(sent.shift() ?? "", /timed out/);
+			assert.match(sent.shift() ?? "", /timed out[\s\S]*Parent action: Check the run status/, "a wait with no saved results points at the run status");
 			assert.equal(state.asyncJobs.size, 0);
 			assert.equal(state.waitSubscriptions?.size, 0);
 		} finally {

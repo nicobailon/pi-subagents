@@ -1117,7 +1117,7 @@ export default function registerSubagentNotify(
 			queuedWakes.set(sessionManager, { sessionId, wakes, unansweredCompletions, notices });
 			updateSettleSubscription();
 			// A new process on this session: resend notices the previous one recorded at shutdown.
-			// Deferred past session_start: a wake sent from inside it appended the notice but started no turn (Pi 1.0.4).
+			// Deferred past session_start so the resend starts its run after Pi has finished binding the session.
 			// Only the active branch: a resend recorded on an abandoned branch never reached this one.
 			if (firstBind && typeof sessionManager.getBranch === "function") {
 				const pendingNotices = unreplayedPendingNotices(sessionManager.getBranch() as NotifyEntry[]);

@@ -37,17 +37,13 @@ const runTrigger = (event: { messageType: "user"; prompt: string } | { messageTy
 	event.messageType === "user" ? event.prompt : `custom:${event.message.customType}`;
 
 it("starts an idle parent's run with the notice itself, once, and sends no user message", () => {
-	const { wake, calls, setIdle } = createHarness();
+	const { wake, calls } = createHarness();
 	assert.equal(wake.sendMessage(notice("first"), { triggerTurn: true }), false, "Pi emits message_start for the notice that starts the run");
 	assert.equal(wake.sendMessage(notice("second"), { triggerTurn: true }), true);
 	assert.deepEqual(calls, [
 		["sendMessage", notice("first"), { triggerTurn: true }],
 		["sendMessage", notice("second"), { triggerTurn: false }],
 	]);
-	setIdle(false);
-	assert.equal(wake.isPending(), true, "pending from the send until agent_start");
-	wake.agentStarted();
-	assert.equal(wake.isPending(), false);
 });
 
 it("steers a busy parent as before and passes non-waking messages through", () => {

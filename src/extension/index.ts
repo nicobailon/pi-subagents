@@ -1094,9 +1094,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (event.reason !== "manual") suspendWidgetsForCompaction();
 	});
 
-	// Pi emits session_compact before it clears its compaction state, and a parent that is still
-	// compacting can only be woken without before_agent_start (earendil-works/pi#5581). Wait for the
-	// parent to go idle so the resume takes parentWake's prompt() path. A run that starts first cancels the pending resume.
+	// Pi emits session_compact before it clears its compaction state. sendMessage's run path has no
+	// compaction guard (only prompt() refuses), so wait for the parent to go idle before the resume notice
+	// starts a run. A run that starts first cancels the pending resume.
 	pi.on("session_compact", (event) => {
 		if (event.reason !== "manual") return;
 		if (activeAsyncJobCount() === 0 || !withLastUiContext(() => true)) return;

@@ -10,7 +10,7 @@
 
 ### Changed
 
-- pi-subagents now needs Pi 1.2.0 or newer. Pi 0.86.1 and 1.0.0 are no longer supported: the peer range starts at 1.2.0, CI tests 1.2.0, and the supported standalone target is the official Pi 1.2.0 Linux x64 release. Pi 1.2.0 runs `before_agent_start` for a run started by an extension message, so an idle parent is now woken by the subagent notice itself, and the transcript no longer gets a user-role "Inspect subagent updates above" line on every wake. Each waking notice ends with the instruction that line used to carry. Thanks to [@summer-tt](https://github.com/summer-tt) for [#2976](https://github.com/nicobailon/pi-subagents/issues/2976).
+- pi-subagents now needs Pi 1.2.0 or newer. Pi 0.86.1 and 1.0.0 are no longer supported: the peer range starts at 1.2.0, CI tests 1.2.0, and the supported standalone target is the official Pi 1.2.0 Linux x64 release. Pi 1.2.0 runs `before_agent_start` for a run started by an extension message, so an idle parent is now woken by the subagent notice itself, and the transcript no longer gets a user-role "Inspect subagent updates above" line on every wake. The notices now say what the parent should do. Thanks to [@summer-tt](https://github.com/summer-tt) for [#2976](https://github.com/nicobailon/pi-subagents/issues/2976).
 - The npm package no longer ships source maps. They pointed at TypeScript sources the package does not include, so they could not be used, and they were 646 of its 1,339 files: the unpacked install drops from 12.1 MB to 6.8 MB and the download from 2.5 MB to 1.6 MB. Thanks to [@tututuhehehe](https://github.com/tututuhehehe) for reporting it in [#2980](https://github.com/nicobailon/pi-subagents/issues/2980).
 
 ### Fixed

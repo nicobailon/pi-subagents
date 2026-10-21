@@ -34,7 +34,7 @@ export default function registerSmoke(pi: ExtensionAPI) {
 				target.sendMessage(args[0], { ...args[1], triggerTurn: false });
 				if (args[0].customType === "subagent-notify") { notifications++; notify(args[0]); }
 			};
-			// An idle parent is woken with a user prompt; drop it so the parent never takes a turn.
+			// Drop user messages too, so nothing starts a parent turn.
 			if (key === "sendUserMessage") return () => {};
 			return Reflect.get(target, key);
 		},

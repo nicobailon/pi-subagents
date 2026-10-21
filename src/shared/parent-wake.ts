@@ -1,10 +1,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-/** What a woken parent should do with the notices that woke it; turn-triggering notices end with it. */
+
+/** Ends a waking notice that reports results. */
 export const COMPLETION_ACTION = "Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";
+/** Ends a waking notice that reports a problem or a run state rather than results. */
+export const STATUS_ACTION = "Check the run status and details above, then resume the already-authorized parent task or report the problem. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";
 
-
-// A wake whose run never starts emits no agent_start. Past this deadline an idle parent's
-// wake counts as abandoned: its notices are already in the session, only the turn is lost.
+// A wake whose run never starts emits no agent_start; past this deadline an idle parent's wake counts as abandoned.
+// Pi persists the waking notice only when its run reaches message_end, so a run that never starts loses it;
+// notify.ts records undelivered subagent-notify notices at shutdown and replays them at the next start.
 const WAKE_PENDING_MS = 10_000;
 
 // Reload replaces extension instances, not Pi's session manager or a wake still starting.

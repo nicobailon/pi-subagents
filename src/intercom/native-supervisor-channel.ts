@@ -854,7 +854,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 						replyHint: supervisorReplyHint(request.id),
 					},
 				}, { triggerTurn: true });
-				// parentWake returns false when Pi steered the notice into a busy run or started an idle run with it: track it until its message_start.
+				// false: Pi emits message_start for the notice (steered into a busy run, or starting an idle one); track it until then.
 				if (appended === false && started && pending.has(request.id)) {
 					queuedNotices.add(request.id);
 					updateDeliverySubscription();
