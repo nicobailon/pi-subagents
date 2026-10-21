@@ -44,9 +44,14 @@ export function captureWatchdogDiffBaseline(cwd: string): WatchdogDiffBaseline |
 /** HEAD at session start, so later child commits still show in the diff. Does not block the event loop. */
 export function startWatchdogDiffBaselineCapture(cwd: string): Promise<WatchdogDiffBaseline | undefined> {
 	return new Promise((resolve) => {
-		execFile("git", ["-C", cwd, ...BASELINE_ARGS], { encoding: "utf-8", windowsHide: true }, (error, stdout) => {
-			resolve(error ? undefined : parseBaseline(stdout));
-		});
+		// Node throws spawn errors such as EPERM synchronously instead of passing them to the callback.
+		try {
+			execFile("git", ["-C", cwd, ...BASELINE_ARGS], { encoding: "utf-8", windowsHide: true }, (error, stdout) => {
+				resolve(error ? undefined : parseBaseline(stdout));
+			});
+		} catch {
+			resolve(undefined);
+		}
 	});
 }
 
