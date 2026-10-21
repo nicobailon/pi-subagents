@@ -737,7 +737,8 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		const forkedAt = config.forkCacheKey ? Date.parse(ctx?.sessionManager?.getHeader()?.timestamp ?? "") : Number.NaN;
 		const messages = stripParentOnlySubagentMessages(event.messages, {
 			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
-			preserveBoundedCompositeToolIds: ctx?.model?.api === "openai-codex-responses",
+			// Providers that reuse the Codex Responses wire under their own api id (e.g. cliproxyapi-codex-responses) split call_id|item_id the same way.
+			preserveBoundedCompositeToolIds: ctx?.model?.api?.endsWith("-codex-responses") === true,
 			preserveFanoutToolHistory: config.fanoutChild,
 			...(Number.isFinite(forkedAt) ? { inheritedBefore: forkedAt } : {}),
 		});

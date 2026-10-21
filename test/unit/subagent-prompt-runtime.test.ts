@@ -1256,6 +1256,13 @@ describe("subagent prompt runtime", () => {
 			});
 		}
 
+		it("preserves composite ids for a custom provider on the Codex Responses wire", () => {
+			// DeepSeek's Responses endpoint rejects a call_id that is not shaped like the one it issued.
+			const messages = history("call_00_ET_9AVPsTo5MNbdb2i4IbPv5443|0a48e5ac-df6b-47c9-a133-4da6b380fa82");
+			assert.ok(contextHandler);
+			assert.equal(contextHandler({ messages }, { model: { ...model, api: "cliproxyapi-codex-responses" } } as never), undefined);
+		});
+
 		for (const [label, toolCallId] of [
 			["65-character call half", `${"a".repeat(65)}|fc_item`],
 			["65-character item half", `call_read|fc_${"b".repeat(62)}`],
