@@ -2574,8 +2574,10 @@ interface WidgetRoundState {
 }
 const roundStateByUi = new WeakMap<object, WidgetRoundState>();
 function trackSubagentsRound(ui: object, jobs: readonly AsyncJobState[], now: number): void {
-	if (jobs.some((job) => job.status === "running")) {
-		if (!roundStateByUi.has(ui)) roundStateByUi.set(ui, { startedAt: now });
+	const running = jobs.filter((job) => job.status === "running");
+	if (running.length > 0) {
+		// Seed from the oldest running job so a round restored after a session resume matches the job rows.
+		if (!roundStateByUi.has(ui)) roundStateByUi.set(ui, { startedAt: Math.min(now, ...running.map((job) => job.startedAt ?? now)) });
 		return;
 	}
 	roundStateByUi.delete(ui);

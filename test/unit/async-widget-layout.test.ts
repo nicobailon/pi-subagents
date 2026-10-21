@@ -96,4 +96,56 @@ describe("async widget layout", () => {
 			assert.deepEqual(widget.lines(), unfolded, `${layout}: collapsing restores the layout`);
 		}
 	});
+
+	describe("running round elapsed on the folded line", () => {
+		let clock = 0;
+		beforeEach(() => {
+			clock = 1_000_000;
+			Date.now = () => clock;
+		});
+		const job = (asyncId: string, status: AsyncJobState["status"], startedAt?: number): AsyncJobState => ({ asyncId, asyncDir: `/tmp/${asyncId}`, status, mode: "single", agents: ["scout"], startedAt });
+		function foldedWidget() {
+			let widget: Widget | undefined;
+			const ctx = { hasUI: true, mode: "tui", ui: { getToolsExpanded: () => false, setWidget: (_key: string, factory: WidgetFactory | undefined) => { widget = factory?.({ requestRender() {} }, theme); } } };
+			// SAFETY: the TUI path only reads hasUI, mode, and the supplied widget/expansion methods.
+			return (shown: AsyncJobState[]) => {
+				renderWidget(ctx as never, shown, true);
+				return widget!.render(120)[0]!.trimEnd();
+			};
+		}
+
+		it("counts up from the start of the round", () => {
+			const show = foldedWidget();
+			assert.match(show([job("a", "running")]), /\(1\/1 running 0s\)$/);
+			clock += 5_000;
+			assert.match(show([job("a", "running")]), /\(1\/1 running 5s\)$/);
+			clock += 3_600_000;
+			assert.match(show([job("a", "running")]), /\(1\/1 running 1h0m5s\)$/);
+		});
+
+		it("drops the elapsed time when the round ends and restarts it for the next round", () => {
+			const show = foldedWidget();
+			show([job("a", "running")]);
+			clock += 10_000;
+			assert.match(show([job("a", "running")]), /running 10s\)$/);
+			assert.match(show([job("a", "complete")]), /\(1\/1 done\)$/);
+			clock += 7_000;
+			assert.match(show([job("a", "complete"), job("b", "running")]), /\(1\/2 running 0s\)$/);
+			clock += 4_000;
+			assert.match(show([job("a", "complete"), job("b", "running")]), /\(1\/2 running 4s\)$/);
+		});
+
+		it("keeps a separate clock per mounted widget", () => {
+			const first = foldedWidget();
+			first([job("a", "running")]);
+			clock += 20_000;
+			const second = foldedWidget();
+			assert.match(second([job("b", "running")]), /running 0s\)$/);
+			assert.match(first([job("a", "running")]), /running 20s\)$/);
+		});
+
+		it("starts a restored round at the oldest running job's start", () => {
+			assert.match(foldedWidget()([job("a", "running", clock - 12 * 60_000)]), /\(1\/1 running 12m0s\)$/);
+		});
+	});
 });

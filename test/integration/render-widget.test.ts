@@ -169,7 +169,7 @@ describe("subagent async widget rendering", () => {
 					const lines = renderWidgetLines(widgets[0], 100);
 					const text = lines.join("\n");
 					if (rows === 12) {
-						assert.match(text, status === "queued" ? /2\/3 running, 1 queued/ : /1\/2 running/);
+						assert.match(text, status === "queued" ? /2\/3 running [\dhms]+, 1 queued/ : /1\/2 running [\dhms]+\)/);
 						assert.equal(lines.length, 1);
 					} else {
 						assert.equal(text.match(new RegExp(`${runningGlyphPattern} live-worker`, "g"))?.length, 1, text);
@@ -1425,7 +1425,7 @@ describe("subagent async widget rendering", () => {
 
 			const lines = renderWidgetLines(ui.widgets.at(-1));
 			assert.equal(lines.length, 1);
-			assert.match(lines[0] ?? "", /subagents \(1\/1 running\)/);
+			assert.match(lines[0] ?? "", /subagents \(1\/1 running [\dhms]+\)/);
 		});
 		resetWidgetLayout();
 	});
@@ -1452,7 +1452,7 @@ describe("subagent async widget rendering", () => {
 			assert.match(text, /async subagent parallel · background/);
 			assert.match(text, /parallel group · 1 agent running · 0\/1 done/);
 			assert.match(text, /reviewer · running/);
-			assert.doesNotMatch(text, /subagents \(1\/1 running\)/);
+			assert.doesNotMatch(text, /subagents \(1\/1 running/);
 		});
 		resetWidgetLayout();
 	});
@@ -1481,7 +1481,7 @@ describe("subagent async widget rendering", () => {
 			expanded = true;
 			const expandedText = component.render(180).join("\n");
 
-			assert.match(collapsed, /subagents \(1\/1 running\)/);
+			assert.match(collapsed, /subagents \(1\/1 running [\dhms]+\)/);
 			assert.doesNotMatch(collapsed, /parallel group · 1 agent running/);
 			assert.match(expandedText, /parallel group · 1 agent running · 0\/1 done/);
 			assert.match(expandedText, /reviewer · running/);

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- The folded async widget line now shows how long the current stretch of running work has lasted, for example `subagents (1/1 running 13s)`. It counts from the oldest running job, so it also stays right after a session resume, and it disappears once nothing is running. Thanks to [@summer-tt](https://github.com/summer-tt) for [#2979](https://github.com/nicobailon/pi-subagents/pull/2979).
+
 ## [0.79.2] - 2026-10-20
 
 ### Highlights
