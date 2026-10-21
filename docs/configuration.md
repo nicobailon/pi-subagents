@@ -194,6 +194,16 @@ With `"summary"`, a tool result looks like this:
 ✓ reviewer · completed
 ```
 
+## `enableSlashCommands`
+
+```json
+{ "enableSlashCommands": false }
+```
+
+Set to `false` to register none of the pi-subagents slash commands (`/run`, `/subagents`, `/subagents-fleet`, `/subagents-watchdog`, `/prompt-workflow`, and the rest) and no [`foregroundDetachShortcut`](#foregrounddetachshortcut). The `subagent` tool, RPC, the async widget, and the extension's other features are unchanged. Prompt templates whose frontmatter has `chain:` launch through `/prompt-workflow`, so they stop working too. Defaults to `true`. Restart Pi or run `/reload` after changing it.
+
+The package's prompt shortcuts, such as `/parallel-review` and `/review-loop`, are Pi prompt templates, not commands, so this setting leaves them alone. Pi's package filter removes them: `{ "packages": [{ "source": "npm:pi-subagents", "prompts": [] }] }` in Pi's `settings.json`, or `pi config`.
+
 ## `foregroundDetachShortcut`
 
 ```json

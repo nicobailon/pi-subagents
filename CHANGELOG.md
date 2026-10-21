@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `enableSlashCommands: false` in the extension config keeps the `subagent` tool and drops every pi-subagents slash command and the foreground-detach shortcut, for setups that delegate only through the model or that want fewer global commands. Prompt shortcuts such as `/parallel-review` are Pi prompt templates; Pi's package filter (`"prompts": []`) already removes them. See [configuration](docs/configuration.md#enableslashcommands). Thanks to [@khavronin-artem](https://github.com/khavronin-artem) for requesting it in [#2977](https://github.com/nicobailon/pi-subagents/issues/2977).
+
 ### Fixed
 
 - Pi could exit at session start on Windows when security software stopped it from launching `git` (`spawn EPERM`), because that error escaped the watchdog's diff baseline capture unhandled. The watchdog now starts without a diff baseline in that case, as it already did when `git` was missing. Thanks to [@advaitpaliwal](https://github.com/advaitpaliwal) for reporting [#2978](https://github.com/nicobailon/pi-subagents/issues/2978).
