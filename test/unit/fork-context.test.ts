@@ -211,7 +211,7 @@ describe("createForkContextResolver", () => {
 		}
 	});
 
-	it("fails clearly for an unflushed user-only parent", () => {
+	it("fails clearly when the parent session file is missing", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-fork-user-only-"));
 		try {
 			const sessionDir = path.join(tempDir, "sessions");
@@ -222,7 +222,8 @@ describe("createForkContextResolver", () => {
 
 			assert.ok(parentSessionFile);
 			assert.ok(leafId);
-			assert.equal(fs.existsSync(parentSessionFile), false);
+			// Pi 1.2 persists a user-only parent at once, so remove the file to reach the missing-parent path.
+			fs.rmSync(parentSessionFile);
 
 			const resolver = createForkContextResolver(parent, "fork", { runDirName: () => "child-run" });
 			assert.throws(

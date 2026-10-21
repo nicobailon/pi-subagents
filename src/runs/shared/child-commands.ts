@@ -146,7 +146,8 @@ export function createChildCommandRuntime(channelDir: string) {
 						if (job.snapshot.state === "running") onUpdate?.(update);
 					}, ctx)).then((result) => {
 						job.snapshot.output = text(result);
-						job.snapshot.state = "completed";
+						// Pi 1.2 reports a non-zero exit as an isError result instead of throwing.
+						job.snapshot.state = result.isError ? "failed" : "completed";
 						const fullOutputPath = (result.details as { fullOutputPath?: string } | undefined)?.fullOutputPath;
 						if (fullOutputPath) job.snapshot.fullOutputPath = fullOutputPath;
 						return result;

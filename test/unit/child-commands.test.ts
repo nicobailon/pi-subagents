@@ -76,7 +76,10 @@ describe("child commands using Pi's real bash backend", () => {
 		const commands = createChildCommandRuntime(dir);
 		const bash = commands.wrap(createBashToolDefinition(dir));
 		try {
-			await assert.rejects(bash.execute("fail", { command: "exit 7" }, undefined, undefined, ctx), /code 7/);
+			const failed = await bash.execute("fail", { command: "exit 7" }, undefined, undefined, ctx);
+			assert.equal(failed.isError, true);
+			assert.match(failed.content[0].text, /code 7/);
+			assert.equal(commands.operate("status", "fail").commands[0].state, "failed");
 			await assert.rejects(bash.execute("timeout", { command: "sleep 10", timeout: 0.05 }, undefined, undefined, ctx), /timed out/);
 			assert.equal(commands.operate("status", "timeout").commands[0].state, "failed");
 			const result = await bash.execute("recover", { command: "printf recovered" }, undefined, undefined, ctx);

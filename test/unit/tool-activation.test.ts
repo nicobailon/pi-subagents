@@ -93,15 +93,6 @@ afterEach(async () => {
 });
 
 describe("subagent tool activation", () => {
-	it("keeps subagent eager unless the host provides the complete dynamic-tool API", async () => {
-		for (const missing of ["getAllTools", "getActiveTools", "setActiveTools"]) {
-			const runtime = createRuntime([], [], [missing], DYNAMIC);
-			await runtime.emit("session_start", { type: "session_start", reason: "startup" });
-			assert.ok(runtime.active().includes("subagent"), `${missing} must fail closed to eager subagent`);
-			assert.equal(runtime.tools.has("subagents_enable"), false);
-		}
-	});
-
 	it("starts fresh parents with a compact self-service loader and declares bg_wait and subagent_supervisor only with subagent", async () => {
 		const runtime = createRuntime([], [], [], DYNAMIC);
 		await runtime.emit("session_start", { type: "session_start", reason: "startup" });

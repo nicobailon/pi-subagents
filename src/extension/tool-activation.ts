@@ -20,7 +20,6 @@ const WAIT_NAME = "bg_wait";
 // PARENT_SUPERVISOR_NAME (answering this session's children) is declared with subagent too, unless the session already
 // declared it: a changed tool set would miss the prompt cache. The channel declares it when a child request arrives.
 const UNLOAD_SENTINELS = new Set([LOADER_NAME, SUBAGENT_NAME, WAIT_NAME]);
-let warnedUnsupportedHost = false;
 
 type ToolSelectionMessage = {
 	role: string;
@@ -137,13 +136,6 @@ export function registerSubagentToolActivation(
 	const mode = options.mode ?? "auto";
 	// Same as --exclude-tools subagents_enable: without the loader, subagent stays active.
 	if (mode === "eager") return;
-	if (typeof pi.getAllTools !== "function" || typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") {
-		if (!warnedUnsupportedHost) {
-			warnedUnsupportedHost = true;
-			console.warn("[pi-subagents] Dynamic tool activation requires Pi 0.86.1 or newer; keeping subagent eagerly available.");
-		}
-		return;
-	}
 
 	// Takes no arguments, but a stray one (DeepSeek sends `{ action: "enable" }`) must not fail validation.
 	const parameters = Type.Object({});
