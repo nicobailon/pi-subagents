@@ -319,8 +319,8 @@ describe("session liveness through result delivery", () => {
 				registrations: 2, // reload actually bound the replacement producer
 				isIdle: true,
 				pendingMessageCount: 0, // Pi's deferred settled action is not counted as a pending message
-				noticeAppended: true, // the idle parent gets the notice now and a prompt that wakes it
-				activeAfterReload: true, // the retained wake prompt owns liveness until its deferred run starts
+				noticeAppended: false, // the notice starts the run Pi deferred past agent_settled, so it is not in the session yet
+				activeAfterReload: true, // the retained wake owns liveness until that deferred run starts
 			});
 			assert.equal(provider?.isActive(), false, "the woken run releases the retained wake");
 			assert.equal(session.getLastAssistantText(), "Processed completion after reload.");

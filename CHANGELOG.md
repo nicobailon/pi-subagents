@@ -10,7 +10,7 @@
 
 ### Changed
 
-- pi-subagents now needs Pi 1.2.0 or newer. Pi 0.86.1 and 1.0.0 are no longer supported: the peer range starts at 1.2.0, CI tests 1.2.0, and the supported standalone target is the official Pi 1.2.0 Linux x64 release. See [#2976](https://github.com/nicobailon/pi-subagents/issues/2976).
+- pi-subagents now needs Pi 1.2.0 or newer. Pi 0.86.1 and 1.0.0 are no longer supported: the peer range starts at 1.2.0, CI tests 1.2.0, and the supported standalone target is the official Pi 1.2.0 Linux x64 release. Pi 1.2.0 runs `before_agent_start` for a run started by an extension message, so an idle parent is now woken by the subagent notice itself, and the transcript no longer gets a user-role "Inspect subagent updates above" line on every wake. Each waking notice ends with the instruction that line used to carry. Thanks to [@summer-tt](https://github.com/summer-tt) for [#2976](https://github.com/nicobailon/pi-subagents/issues/2976).
 - The npm package no longer ships source maps. They pointed at TypeScript sources the package does not include, so they could not be used, and they were 646 of its 1,339 files: the unpacked install drops from 12.1 MB to 6.8 MB and the download from 2.5 MB to 1.6 MB. Thanks to [@tututuhehehe](https://github.com/tututuhehehe) for reporting it in [#2980](https://github.com/nicobailon/pi-subagents/issues/2980).
 
 ### Fixed
@@ -18,6 +18,7 @@
 - Pi could exit at session start on Windows when security software stopped it from launching `git` (`spawn EPERM`), because that error escaped the watchdog's diff baseline capture unhandled. The watchdog now starts without a diff baseline in that case, as it already did when `git` was missing. Thanks to [@advaitpaliwal](https://github.com/advaitpaliwal) for reporting [#2978](https://github.com/nicobailon/pi-subagents/issues/2978).
 - Children on a custom provider that speaks the Codex Responses wire under its own api id, such as `pi-cliproxyapi`'s `cliproxyapi-codex-responses`, had their tool-call ids rewritten, and DeepSeek rejected the second tool turn with a misleading "`reasoning_text` ... must be passed back" error. Any `*-codex-responses` api now keeps its ids the way `openai-codex-responses` does. Thanks to [@xspeed1989](https://github.com/xspeed1989) for reporting [#2981](https://github.com/nicobailon/pi-subagents/issues/2981).
 - Subagent cards said "Configure the expand key for live detail" whenever Pi's app keybindings were not loaded in the process, for example in an HTML session export, although the key was bound (`ctrl+o` by default). The hint now reads "Press the expand key for live detail" there, as the `[subagent]` chat messages already fall back to "click". In RPC mode the status line of slash-command launches such as `/run` no longer shows an empty key (`3 tools |  live detail`). Thanks to [@JohannesBertens](https://github.com/JohannesBertens) for [#2983](https://github.com/nicobailon/pi-subagents/pull/2983) ([#2982](https://github.com/nicobailon/pi-subagents/issues/2982)).
+- On Pi 1.2, a child's bash command that exited non-zero showed as `completed` in `subagent_command` status, because Pi 1.2 returns an error result instead of throwing. It now shows as `failed`.
 
 ## [0.79.2] - 2026-10-20
 

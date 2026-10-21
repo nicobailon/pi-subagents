@@ -174,8 +174,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	for (const { name, asyncByDefault, id, reason } of [
-		{ name: "foreground", asyncByDefault: false, id: "workflow-foreground-sibling-stop", reason: /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Subagent stopped before completion\.\nStatus: workflow finished$/ },
-		{ name: "async", asyncByDefault: true, id: "workflow-sibling-stop", reason: /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Workflow stopped before async child completed\.\nStatus: workflow finished$/ },
+		{ name: "foreground", asyncByDefault: false, id: "workflow-foreground-sibling-stop", reason: /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Subagent stopped before completion\.\nStatus: workflow finished\n\nParent action: Read the saved results above/ },
+		{ name: "async", asyncByDefault: true, id: "workflow-sibling-stop", reason: /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Workflow stopped before async child completed\.\nStatus: workflow finished\n\nParent action: Read the saved results above/ },
 	]) {
 		it(`reports ${name} workflow siblings stopped by a failed script as stopped`, { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 			// hangUntilAbort still emits agent_settled first, which lets the 1s final-drain grace finish the sibling as failed before the stop lands.

@@ -8,7 +8,7 @@ import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, c
 import { Type } from "typebox";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { currentCompletionOwnerId } from "../../src/shared/completion-owner.ts";
-import { createParentWake, PARENT_WAKE_TEXT } from "../../src/shared/parent-wake.ts";
+import { createParentWake } from "../../src/shared/parent-wake.ts";
 import { createNativeSupervisorChannel } from "../../src/intercom/native-supervisor-channel.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, type SubagentState } from "../../src/shared/types.ts";
@@ -17,31 +17,37 @@ function createHarness(sessionManager: { getSessionId(): string } = SessionManag
 	const calls: unknown[][] = [];
 	let idle = true;
 	let time = 0;
+	// No sendUserMessage: a wake that sent a user message would throw here.
 	const wake = createParentWake({
 		sendMessage: (...args: unknown[]) => { calls.push(["sendMessage", ...args]); },
-		sendUserMessage: (...args: unknown[]) => { calls.push(["sendUserMessage", ...args]); },
 	} as never, () => time);
 	wake.bindSession({ isIdle: () => idle, sessionManager } as never);
 	return {
 		wake,
 		calls,
-		wakes: () => calls.filter(([method]) => method === "sendUserMessage").length,
+		wakes: () => calls.filter((call) => (call[2] as { triggerTurn?: boolean } | undefined)?.triggerTurn === true).length,
 		setIdle(value: boolean) { idle = value; },
 		advance(ms: number) { time += ms; },
 	};
 }
 
 const notice = (content: string) => ({ customType: "subagent-test", content, display: true });
+// Each run's trigger: a user prompt's text, or the type of the custom message that started it.
+const runTrigger = (event: { messageType: "user"; prompt: string } | { messageType: "custom"; message: { customType: string } }) =>
+	event.messageType === "user" ? event.prompt : `custom:${event.message.customType}`;
 
-it("appends a notice to an idle parent and wakes it once through a user prompt", () => {
-	const { wake, calls } = createHarness();
-	assert.equal(wake.sendMessage(notice("first"), { triggerTurn: true }), true);
+it("starts an idle parent's run with the notice itself, once, and sends no user message", () => {
+	const { wake, calls, setIdle } = createHarness();
+	assert.equal(wake.sendMessage(notice("first"), { triggerTurn: true }), false, "Pi emits message_start for the notice that starts the run");
 	assert.equal(wake.sendMessage(notice("second"), { triggerTurn: true }), true);
 	assert.deepEqual(calls, [
-		["sendMessage", notice("first"), { triggerTurn: false }],
-		["sendUserMessage", PARENT_WAKE_TEXT, { deliverAs: "steer" }],
+		["sendMessage", notice("first"), { triggerTurn: true }],
 		["sendMessage", notice("second"), { triggerTurn: false }],
 	]);
+	setIdle(false);
+	assert.equal(wake.isPending(), true, "pending from the send until agent_start");
+	wake.agentStarted();
+	assert.equal(wake.isPending(), false);
 });
 
 it("steers a busy parent as before and passes non-waking messages through", () => {
@@ -142,7 +148,7 @@ it("shares one idle wake per session with other extensions, such as pi-intercom"
 	const { wake, wakes, advance } = createHarness(manager);
 	reservations.set(manager, { sessionId: manager.getSessionId(), sentAt: 0 });
 	wake.sendMessage(notice("during the other wake's preflight"), { triggerTurn: true });
-	assert.equal(wakes(), 0, "a second wake prompt in that preflight throws in Pi");
+	assert.equal(wakes(), 0, "the other extension's wake is starting the run; a second wake must not start another");
 	wake.agentStarted();
 	advance(1);
 	wake.sendMessage(notice("after start"), { triggerTurn: true });
@@ -150,40 +156,49 @@ it("shares one idle wake per session with other extensions, such as pi-intercom"
 	assert.equal(reservations.get(manager)?.sentAt, 1, "other extensions see this wake");
 });
 
-it("abandons a real SDK wake that an input handler consumes", { timeout: 30_000 }, async () => {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parent-wake-handled-"));
+it("wakes a real SDK parent with the notice itself and holds the wake until the run starts", { timeout: 30_000 }, async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-parent-wake-notice-"));
 	const agentDir = path.join(root, "agent");
 	fs.mkdirSync(agentDir);
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
-	let time = 0;
+	const faux = fauxProvider({ provider: "parent-wake-notice", models: [{ id: "local" }], tokensPerSecond: 100_000 });
+	faux.setResponses([() => fauxAssistantMessage("Handled the notice.")]);
 	let wake: ReturnType<typeof createParentWake> | undefined;
-	const inputs: string[] = [];
-	let starts = 0;
+	const triggers: string[] = [];
+	const started: string[] = [];
+	let pendingAtStart: boolean | undefined;
+	let settled = () => {};
+	const settledOnce = new Promise<void>((resolve) => { settled = resolve; });
 	const settingsManager = SettingsManager.inMemory({});
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: root, agentDir, settingsManager,
 		noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
 		extensionFactories: [(api) => {
-			wake = createParentWake(api, () => time);
+			api.registerProvider(faux.provider);
+			wake = createParentWake(api);
 			api.on("session_start", (_event, ctx) => wake!.bindSession(ctx));
-			api.on("agent_start", () => { starts++; wake!.agentStarted(); });
-			api.on("input", (event) => { inputs.push(event.text); return { action: "handled" }; });
+			api.on("before_agent_start", (event) => { triggers.push(runTrigger(event)); });
+			api.on("agent_start", () => { pendingAtStart = wake!.isPending(); wake!.agentStarted(); });
+			api.on("message_start", (event) => { if (event.message.role === "custom") started.push(event.message.customType); });
+			api.on("agent_settled", () => settled());
 		}],
 	});
 	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
 	try {
 		await resourceLoader.reload();
 		const modelRuntime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: path.join(agentDir, "models.json"), allowModelNetwork: false });
-		({ session } = await createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader, modelRuntime, sessionManager: SessionManager.inMemory(root), noTools: "builtin" }));
+		({ session } = await createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader, modelRuntime, model: faux.getModel("local"), sessionManager: SessionManager.inMemory(root), noTools: "builtin" }));
 		await session.bindExtensions({});
-		wake!.sendMessage({ customType: "subagent-test", content: "Needs the parent.", display: true }, { triggerTurn: true });
-		await new Promise((resolve) => setImmediate(resolve));
-		assert.deepEqual(inputs, [PARENT_WAKE_TEXT]);
-		assert.equal(starts, 0);
+		assert.equal(wake!.sendMessage({ customType: "subagent-test", content: "Needs the parent.", display: true }, { triggerTurn: true }), false);
+		assert.equal(session.isIdle, false, "Pi counts the session busy before sendMessage returns");
 		assert.equal(wake!.isPending(), true);
-		time = 10_000;
-		assert.equal(wake!.isPending(), false, "no run will start, so the wake must not hold the session forever");
+		await settledOnce;
+		assert.deepEqual(triggers, ["custom:subagent-test"], "the notice starts the run through before_agent_start");
+		assert.deepEqual(started, ["subagent-test"], "Pi emits message_start for the notice");
+		assert.equal(pendingAtStart, true, "the wake stays pending until agent_start");
+		assert.equal(wake!.isPending(), false);
+		assert.deepEqual(session.messages.filter((message) => message.role === "user"), [], "no user-role wake message");
 	} finally {
 		session?.dispose();
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -221,7 +236,7 @@ for (const emptyResponse of [false, true]) it(`starts an idle parent's completio
 				id: "idle-child", sessionId, completionOwnerId: currentCompletionOwnerId(), success: false, summary: "The child needs the parent.",
 			});
 			api.on("before_agent_start", (event) => {
-				prompts.push(event.prompt);
+				prompts.push(runTrigger(event));
 				event.systemPromptOptions.sections.probe = "Hook-set section.";
 			});
 			api.on("agent_settled", () => { if (++runs === 2) settled(); });
@@ -240,7 +255,8 @@ for (const emptyResponse of [false, true]) it(`starts an idle parent's completio
 		assert.equal(session.isIdle, true);
 		emitCompletion();
 		await settledAgain;
-		assert.deepEqual(prompts, ["Start a child.", PARENT_WAKE_TEXT]);
+		assert.deepEqual(prompts, ["Start a child.", "custom:subagent-notify"]);
+		assert.equal(session.messages.filter((message) => message.role === "user").length, 1, "only the operator's prompt is a user message");
 		const removals = session.messages.filter((message) => message.role === "system"
 			&& Object.values((message as { sections?: Record<string, unknown> }).sections ?? {}).some((value) => value === null));
 		assert.deepEqual(removals, [], "the woken run's second request must not drop hook-set sections");
@@ -279,7 +295,7 @@ for (const stopWith of ["abort", "compact"] as const) it(`${stopWith === "abort"
 		extensionFactories: [registerSubagentExtension, (api) => {
 			api.registerProvider(faux.provider);
 			emit = (event, data) => api.events.emit(event, data);
-			api.on("before_agent_start", (event) => { prompts.push(event.prompt); });
+			api.on("before_agent_start", (event) => { prompts.push(runTrigger(event)); });
 			api.on("session_before_compact", (event) => ({
 				compaction: { summary: "Compacted.", firstKeptEntryId: event.preparation.firstKeptEntryId, tokensBefore: event.preparation.tokensBefore },
 			}));
@@ -309,8 +325,8 @@ for (const stopWith of ["abort", "compact"] as const) it(`${stopWith === "abort"
 		emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "still-running", sessionId, asyncDir: path.join(root, "still-running"), agent: "worker", task: "Keep going." });
 		await session.prompt("Start.");
 		if (stopWith === "compact") {
-			for (let waited = 0; waited < 2_000 && !prompts.includes(PARENT_WAKE_TEXT); waited += 50) await settle();
-			assert.deepEqual(prompts, ["Start.", PARENT_WAKE_TEXT], "the compaction resume must wake the parent");
+			for (let waited = 0; waited < 2_000 && prompts.length < 2; waited += 50) await settle();
+			assert.deepEqual(prompts, ["Start.", "custom:subagent-compaction-resume"], "the compaction resume must wake the parent");
 			return;
 		}
 		assert.equal(session.isIdle, true);
@@ -325,7 +341,7 @@ for (const stopWith of ["abort", "compact"] as const) it(`${stopWith === "abort"
 		await session.prompt("Continue.");
 		emit(SUBAGENT_ASYNC_COMPLETE_EVENT, completion("later-child"));
 		await settle();
-		assert.deepEqual(prompts, ["Start.", "Continue.", PARENT_WAKE_TEXT], "a completed run does not hold wakes");
+		assert.deepEqual(prompts, ["Start.", "Continue.", "custom:subagent-notify"], "a completed run does not hold wakes");
 		assert.match(notice("later-child"), /Parent action: Read the saved results above and resume the already-authorized parent task/);
 	} finally {
 		if (session) await (session.extensionRunner as unknown as { emit(event: unknown): Promise<unknown> }).emit({ type: "session_shutdown", reason: "quit" });

@@ -127,6 +127,7 @@ import { getInspectorPlugins } from "../../inspectors/plugins.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
 import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowChildSettledNotification, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
 import { formatIncrementalChildCompletion, incrementalChildCompletionTriggersTurn } from "../background/notify.ts";
+import { COMPLETION_ACTION } from "../../shared/parent-wake.ts";
 import { appendWorkflowChildJournal, findWorkflowReuseSource, matchWorkflowReuse, readNamedWorkflowReuseSource, workflowChildFingerprint, workflowRuntimeReplacedRelaunchNotice, workflowScriptDigest, workflowStopCause } from "../../workflows/workflow-reuse.ts";
 import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "../../workflows/host-command.ts";
 import { buildWorkflowReceipt, readWorkflowReceipt, workflowReceiptPath, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
@@ -5713,7 +5714,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						(deps.parentWake ?? deps.pi).sendMessage(
 							{
 								customType: "subagent-workflow-result-write-failed",
-								content: message,
+								content: `${message}\n\nParent action: ${COMPLETION_ACTION}`,
 								display: true,
 							},
 							{ triggerTurn: true },
@@ -6235,15 +6236,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									workflowRunning: notification.workflowRunning,
 								});
 								try {
+									const triggerTurn = incrementalChildCompletionTriggersTurn(notification, requestParams.scheduleOrigin);
+									const content = formatIncrementalChildCompletion(notification);
 									(deps.parentWake ?? deps.pi).sendMessage(
 										{
 											customType: "subagent-incremental-child-notify",
-											content: formatIncrementalChildCompletion(notification),
+											content: triggerTurn ? `${content}\n\nParent action: ${COMPLETION_ACTION}` : content,
 											display: notification.outcome !== "completed",
 											// Render-only: Pi does not send details to the model.
 											details: { childKey: notification.childKey, outcome: notification.outcome },
 										},
-										{ triggerTurn: incrementalChildCompletionTriggersTurn(notification, requestParams.scheduleOrigin) },
+										{ triggerTurn },
 									);
 								} catch (sendError) {
 									console.error(`Failed to send incremental child completion notification for '${notification.childKey}':`, sendError);

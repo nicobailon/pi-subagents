@@ -62,8 +62,8 @@ describe("async compaction resume", () => {
 			if (sent.length !== 0 || userMessages.length !== 0) throw new Error("woke the parent while it was still compacting: " + JSON.stringify({ sent, userMessages }));
 			idle = true;
 			await sleep(150);
-			if (sent.length !== 1 || sent[0].options?.triggerTurn !== false || sent[0].message?.customType !== "subagent-compaction-resume") throw new Error(JSON.stringify(sent));
-			if (userMessages.length !== 1 || userMessages[0].options?.deliverAs !== "steer") throw new Error(JSON.stringify(userMessages));
+			if (sent.length !== 1 || sent[0].options?.triggerTurn !== true || sent[0].message?.customType !== "subagent-compaction-resume") throw new Error(JSON.stringify(sent));
+			if (userMessages.length !== 0) throw new Error("the resume notice starts the run itself: " + JSON.stringify(userMessages));
 			for (const handler of handlers.get("agent_start")) await handler();
 			idle = false;
 

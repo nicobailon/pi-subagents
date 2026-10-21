@@ -96,20 +96,19 @@ it("keeps wakes accepted before the first session bind", async () => {
 	replacement.dispose();
 });
 
-it("does not wait for message_start on a completion appended to an idle parent", async () => {
+it("holds a completion that wakes an idle parent until Pi starts its message", async () => {
 	const owner = SessionManager.inMemory();
 	const sessionId = owner.getSessionId();
 	const calls: unknown[][] = [];
-	const parentWake = createParentWake({
-		sendMessage: (...args: unknown[]) => { calls.push(args); },
-		sendUserMessage: (...args: unknown[]) => { calls.push(args); },
-	} as never);
+	const parentWake = createParentWake({ sendMessage: (...args: unknown[]) => { calls.push(args); } } as never);
 	parentWake.bindSession({ isIdle: () => true, sessionManager: owner } as never);
 	const notifier = registerSubagentNotify({ events: createEventBus(), sendMessage: parentWake.sendMessage, isHeld: parentWake.isHeld }, { currentSessionId: sessionId, completionOwnerId: COMPLETION_OWNER_ID }, { batchConfig: { enabled: false } });
 	notifier.bindSession(owner);
 	await notifier.deliver({ id: "idle-wake-result", sessionId, completionOwnerId: COMPLETION_OWNER_ID, success: false, summary: "Needs attention" });
-	assert.deepEqual(calls.map((call) => call[1]), [{ triggerTurn: false }, { deliverAs: "steer" }]);
-	assert.equal(notifier.hasPendingDelivery(), false, "Pi emits no message_start for an appended notice; the wake prompt holds liveness");
+	assert.deepEqual(calls.map((call) => call[1]), [{ triggerTurn: true }], "one turn-triggering notice, no user message");
+	assert.equal(notifier.hasPendingDelivery(), true, "the notice that starts the run is pending until its message_start");
+	notifier.messageStarted({ role: "custom", ...(calls[0]![0] as object) } as never);
+	assert.equal(notifier.hasPendingDelivery(), false);
 	notifier.dispose();
 });
 

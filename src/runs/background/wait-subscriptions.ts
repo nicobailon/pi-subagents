@@ -6,6 +6,7 @@ import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { formatResumeFirstFailedRunDetail } from "./resume-guidance.ts";
 import { readCompletionReplay } from "./completion-replay.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { COMPLETION_ACTION } from "../../shared/parent-wake.ts";
 import {
 	DIRS,
 	INTERCOM_DETACH_REQUEST_EVENT,
@@ -190,7 +191,7 @@ export function createWaitSubscriptionManager(
 		try {
 			pi.sendMessage({
 				customType: "subagent-wait-subscription",
-				content: `Wait subscription ${record.token} fired for run ${record.runId}: ${outcome}. ${detail}`,
+				content: `Wait subscription ${record.token} fired for run ${record.runId}: ${outcome}. ${detail}\n\nParent action: ${COMPLETION_ACTION}`,
 				display: true,
 				details: {
 					token: record.token,

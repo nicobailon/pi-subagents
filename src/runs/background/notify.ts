@@ -19,7 +19,7 @@ import {
 } from "./completion-batcher.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ChildWatchdogProgress, type ChildWatchdogWarningSummary, type ParallelHandoffReference, type ScheduleOrigin, type SubagentState } from "../../shared/types.ts";
 import { safeTerminalText } from "../../shared/display-text.ts";
-import type { ParentWake } from "../../shared/parent-wake.ts";
+import { COMPLETION_ACTION, type ParentWake } from "../../shared/parent-wake.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { capSummaryOutputs } from "../shared/single-output.ts";
@@ -658,7 +658,6 @@ export function unreplayedPendingNotices(entries: readonly NotifyEntry[]): Subag
 	return [...pending.values()];
 }
 
-const COMPLETION_ACTION = "Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";
 const HELD_COMPLETION_ACTION = "The user stopped the parent turn. Report these results at the user's next prompt and do not resume the stopped task unless asked.";
 function sendCompletion(pi: Pick<ParentWake, "sendMessage" | "isHeld">, items: PendingCompletion[], unstartedWakes: string[], unansweredCompletions: Map<string, { reminded: boolean }>, updateSettleSubscription: () => void, queuedNotices: Map<string, SubagentNotifyMessage>): boolean {
 	if (items.length === 0) return true;
@@ -687,7 +686,7 @@ function sendCompletion(pi: Pick<ParentWake, "sendMessage" | "isHeld">, items: P
 	}
 	try {
 		const appended = pi.sendMessage(message, { triggerTurn });
-		// An idle parent's appended notice gets no message_start; its wake prompt holds liveness instead.
+		// A notice only appended (held, or joining another extension's starting wake) gets no message_start.
 		if (appended && tracked) unstartedWakes.splice(unstartedWakes.lastIndexOf(content), 1);
 		if (tracked && !unstartedWakes.includes(content)) queuedNotices.delete(content);
 		return true;
