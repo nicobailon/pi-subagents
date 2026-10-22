@@ -6,7 +6,7 @@ import {
 	type WorkflowResourcePermit,
 } from "../shared/workflow-child-permit.ts";
 import type { WorkflowResourceProvenance } from "../shared/types.ts";
-import { buildStructuredWorkflowScript, isPlainRecord } from "./structured-workflow-scripts.ts";
+import { buildStructuredWorkflowScript, isPlainRecord, TOP_LEVEL_CONTROLS_HINT } from "./structured-workflow-scripts.ts";
 
 const RESOURCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export const MAX_ARGS_BYTES = 16 * 1024;
@@ -163,7 +163,7 @@ function resolveRunCi(args: Readonly<Record<string, unknown>>): ReturnType<Workf
 
 function resolveParallel(args: Readonly<Record<string, unknown>>): ReturnType<WorkflowResourceDefinition["resolve"]> {
 	const unsupported = Object.keys(args).filter((key) => key !== "tasks");
-	if (unsupported.length > 0) return { error: `workflow 'parallel' args contain unsupported fields: ${unsupported.join(", ")}. Pass args.tasks: [{ agent, task, cwd?, model? }, ...].` };
+	if (unsupported.length > 0) return { error: `workflow 'parallel' args contain unsupported fields: ${unsupported.join(", ")}. Pass args.tasks: [{ agent, task, cwd?, model? }, ...].${TOP_LEVEL_CONTROLS_HINT}` };
 	try {
 		return { script: buildStructuredWorkflowScript("tasks", args.tasks, undefined) };
 	} catch (error) {

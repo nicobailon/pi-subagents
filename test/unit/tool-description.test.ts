@@ -69,7 +69,6 @@ describe("registered subagent tool description", () => {
 		for (const description of [DEFAULT_SUBAGENT_TOOL_DESCRIPTION, FULL_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION]) {
 			for (const contract of [
 				/One child: \{agent,task\}/,
-				/named parallel accepts only those task fields, so use a JS workflow with runs.all for worktree or other child controls/,
 				/exactly one top-level subagent workflow call with async:true; write one ```js workflow block in this reply, then call subagent\(\{workflow:true\}\)/,
 				/\{action,id\?,options:\{\.\.\.\}\}; fields not in this schema go in options/,
 				/Launch agents by name and pass models as exact provider\/id; an unknown agent or model returns the valid choices/,

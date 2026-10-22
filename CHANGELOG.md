@@ -10,6 +10,7 @@
 ### Changed
 
 - A native Pi child with an `outputSchema` that ends its run without calling `structured_output` now gets one follow-up turn in the same session asking it to call `structured_output` without repeating the work. Before, the run failed at once with "Missing structured_output call" and all of the child's work was lost. If the child still does not call it, the run fails with the same error as before. The extra turn counts toward the run's usage and is still bounded by the run's timeout. A call that `structured_output` rejects does not get this turn, because the tool already returns the validation error to the child. Thanks to [@legendtang](https://github.com/legendtang) for [#2997](https://github.com/nicobailon/pi-subagents/issues/2997).
+- When the `parallel` workflow's args or tasks, a `tasks` item, or a chain step include `worktree` or another unsupported child control, the rejection now says to put it on the `subagent` call itself, where it applies to every child. The tool description is unchanged, so this costs no tokens on ordinary requests. Thanks to [@jinglebiscuits](https://github.com/jinglebiscuits) for [#3009](https://github.com/nicobailon/pi-subagents/issues/3009) and #3010.
 
 ### Fixed
 
