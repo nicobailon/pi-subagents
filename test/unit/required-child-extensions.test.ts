@@ -3,11 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, snapshotRequiredChildExtensions } from "../../src/shared/required-child-extensions.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
+import { createDefaultChildSessionFactory, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 
 function fixture() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-required-ext-"));
@@ -85,6 +87,212 @@ describe("required child extension host policy", () => {
 			assert.deepEqual(nested.launchResolvedExtensions.required, ["nested-provider"]);
 		} finally { fs.rmSync(dir, { recursive: true, force: true }); }
 	});
+});
+
+describe("required child extension ordering", () => {
+	for (const host of ["parent", "runner"] as const) {
+		for (const required of [true, false, "case variant"]) {
+			it(`keeps ${required ? `${required === true ? "aliased" : required} required paths before the boundary` : "ordinary paths in loader order"} in the ${host} loader`, async (t) => {
+				const { dir } = fixture();
+				const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+				const cwd = path.join(dir, "project");
+				const agentDir = path.join(dir, "agent");
+				fs.mkdirSync(agentDir);
+				fs.mkdirSync(path.join(cwd, ".pi", "extensions"), { recursive: true });
+				const extensionDir = path.join(dir, "extensions");
+				const aliasDir = path.join(dir, "extension-alias");
+				fs.mkdirSync(extensionDir);
+				fs.symlinkSync(extensionDir, aliasDir, "junction");
+				const files = ["required-b.mjs", "ordinary-a.mjs", "required-a.mjs", "ordinary-b.mjs"].map((name) => path.join(aliasDir, name));
+				const ambient = path.join(cwd, ".pi", "extensions", "ambient.ts");
+				for (const file of [...files, ambient]) fs.writeFileSync(file, "export default (pi) => { pi.on('tool_call', () => {}); };\n");
+				const extensionPaths = required === "case variant" ? files.map((file) => path.join(path.dirname(file), path.basename(file).replace("required", "REQUIRED"))) : files;
+				if (required === "case variant" && !fs.existsSync(extensionPaths[0]!)) {
+					fs.rmSync(dir, { recursive: true, force: true });
+					t.skip("case-sensitive filesystem");
+					return;
+				}
+				const [requiredB, ordinaryA, requiredA, ordinaryB] = extensionPaths;
+				const requiredExtensions = required ? [{ id: "a", path: fs.realpathSync(files[2]!) }, { id: "b", path: fs.realpathSync(files[0]!) }] : [];
+				const input = { cwd, subagentOnlyExtensions: extensionPaths, requiredExtensions, projectTrusted: true, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false };
+				const launch = host === "parent"
+					? buildInProcessChildLaunch({ ...baseInput("ordering"), ...input })
+					: buildRunnerChildLaunch({ agent: "worker", task: "test", ...input }, { cwd, id: "run", flatIndex: 0, projectTrusted: true }, { sessionEnabled: false, watchdogStatus() {} });
+				let order: string[] = [];
+				// SAFETY: real Pi resource loading stops at createAgentSession; no other SDK members are used.
+				const pi = {
+					ModelRuntime: { create: async () => ({}) }, SettingsManager, DefaultResourceLoader,
+					SessionManager: { inMemory: () => ({}) },
+					createAgentSession: async ({ resourceLoader }: { resourceLoader: DefaultResourceLoader }) => {
+						const result = resourceLoader.getExtensions();
+						assert.deepEqual(result.errors, []);
+						order = result.extensions.map(({ path }) => path);
+						throw new Error("captured extensions");
+					},
+				} as PiCodingAgentModule;
+				const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+				try {
+					await assert.rejects(() => factory.create({ ...launch.session, hooks: [...launch.session.hooks, { name: "late", factory() {} }] }), /captured extensions/);
+					assert.deepEqual(order, [
+						"<inline:pi-subagents:prompt-runtime>",
+						...(required ? [ordinaryA, ordinaryB] : [requiredB, ordinaryA, requiredA, ordinaryB]),
+						...(host === "runner" ? [ambient] : []),
+						"<inline:late>",
+						...(required ? [requiredB, requiredA] : []),
+						...(required === "case variant" ? requiredExtensions.map(({ path }) => path) : []),
+						"<inline:pi-subagents:prompt-boundary>",
+					]);
+				} finally {
+					await factory.dispose();
+					if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+					else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			});
+		}
+	}
+});
+
+describe("aliased required child extension failures", () => {
+	for (const host of ["parent", "runner"] as const) {
+		for (const [failure, source, expected] of [
+			["load", "throw new Error('load failed');", /Required child extension failed to load:.*load failed/],
+			["provider", "pi.registerProvider('bad', {});", /Required child extension provider registration failed.*bad provider/],
+			["native provider", "pi.registerProvider({ id: 'bad' });", /Required child extension provider registration failed.*bad provider/],
+			["virtual model", "pi.registerVirtualModel({ provider: 'bad', id: 'bad', route() {} });", /Required child extension virtual model registration failed.*bad provider/],
+			["startup", "pi.on('session_start', () => { throw new Error('startup failed'); });", /Required child extension failed during startup:.*startup failed/],
+		] as const) {
+			it(`rejects an aliased ${failure} failure in the ${host} loader`, async () => {
+				const { dir, file } = fixture();
+				const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+				const agentDir = path.join(dir, "agent");
+				const aliasDir = path.join(dir, "alias");
+				fs.mkdirSync(agentDir);
+				fs.symlinkSync(dir, aliasDir, "junction");
+				fs.writeFileSync(file, `export default (pi) => { ${source} };\n`);
+				const alias = path.join(aliasDir, "required.mjs");
+				const input = { cwd: dir, subagentOnlyExtensions: [alias], requiredExtensions: [{ id: "policy", path: fs.realpathSync(file) }], inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false };
+				const launch = host === "parent"
+					? buildInProcessChildLaunch({ ...baseInput("failure"), ...input })
+					: buildRunnerChildLaunch({ agent: "worker", task: "test", ...input }, { cwd: dir, id: "run", flatIndex: 0 }, { sessionEnabled: false, watchdogStatus() {} });
+				let disposed = false;
+				// SAFETY: real Pi loading supplies errors/queues; only model registration and session binding are scripted.
+				const pi = {
+					ModelRuntime: { create: async () => ({ registerProvider() { throw new Error("bad provider"); }, registerNativeProvider() { throw new Error("bad provider"); }, registerVirtualModel() { throw new Error("bad provider"); }, refresh: async () => {} }) },
+					SettingsManager, DefaultResourceLoader, SessionManager: { inMemory: () => ({}) },
+					createAgentSession: async ({ resourceLoader }: { resourceLoader: DefaultResourceLoader }) => ({ session: {
+						bindExtensions: async ({ onError }: { onError: (error: { extensionPath: string; event: string; error: string }) => void }) => {
+							for (const extension of resourceLoader.getExtensions().extensions) {
+								for (const handler of extension.handlers.get("session_start") ?? []) {
+									try { await handler(); } catch (error) { onError({ extensionPath: extension.path, event: "session_start", error: String(error) }); }
+								}
+							}
+						},
+						dispose() { disposed = true; }, abort: async () => {},
+						extensionRunner: { hasHandlers: () => false },
+					} }),
+				} as PiCodingAgentModule;
+				const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+				try {
+					await assert.rejects(() => factory.create(launch.session), expected);
+					assert.equal(disposed, failure === "startup");
+				} finally {
+					await factory.dispose();
+					if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+					else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			});
+		}
+	}
+});
+
+describe("required child extension loaded identities", () => {
+	for (const host of ["parent", "runner"] as const) {
+		for (const scenario of ["removed alias", "Unicode collision", "load failure", "provider failure", "startup failure", "ordering", "repeated entries"]) {
+			it(`checks ${scenario} using Pi's loaded identity in the ${host} loader`, async () => {
+				const dir = fs.realpathSync(fixture().dir);
+				const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+				const agentDir = path.join(dir, "agent");
+				const realDir = path.join(dir, "real");
+				const asciiDir = path.join(dir, "policy dir");
+				const nbspDir = path.join(dir, "policy\u00a0dir");
+				for (const directory of [agentDir, realDir]) fs.mkdirSync(directory);
+				let requiredFile = path.join(realDir, "policy.mjs");
+				let alias = path.join(nbspDir, "policy.mjs");
+				if (scenario === "removed alias" || scenario === "Unicode collision") {
+					const aliasDir = scenario === "removed alias" ? path.join(dir, "alias") : nbspDir;
+					fs.symlinkSync(realDir, aliasDir, "junction");
+					alias = path.join(aliasDir, "policy.mjs");
+					fs.mkdirSync(asciiDir);
+					fs.writeFileSync(path.join(asciiDir, "policy.mjs"), "export default () => {};\n");
+				} else {
+					fs.mkdirSync(nbspDir);
+					fs.writeFileSync(alias, "export default () => {};\n");
+					if (scenario === "repeated entries") {
+						fs.mkdirSync(asciiDir);
+						requiredFile = path.join(asciiDir, "policy.mjs");
+					} else fs.symlinkSync(realDir, asciiDir, "junction");
+				}
+				const marker = path.join(dir, "invoked");
+				const action = scenario === "removed alias" ? `fs.rmSync(${JSON.stringify(path.dirname(alias))}); throw new Error('alias removed');`
+					: scenario === "load failure" ? "throw new Error('load failed');"
+					: scenario === "provider failure" ? "pi.registerProvider('bad', {});"
+					: scenario === "startup failure" ? "pi.on('session_start', () => { throw new Error('startup failed'); });" : "";
+				fs.writeFileSync(requiredFile, `import fs from 'node:fs'; export default (pi) => { if (!fs.existsSync(${JSON.stringify(marker)})) { fs.writeFileSync(${JSON.stringify(marker)}, 'x'); ${action} } };\n`);
+				const ordinary = path.join(dir, "ordinary.mjs");
+				fs.writeFileSync(ordinary, "export default () => {};\n");
+				const requiredPath = fs.realpathSync(requiredFile);
+				const requiredExtensions = [{ id: "policy", path: requiredPath }];
+				if (scenario === "Unicode collision") {
+					const otherRequired = path.join(realDir, "other.mjs");
+					fs.writeFileSync(otherRequired, "export default () => {};\n");
+					requiredExtensions.push({ id: "other", path: otherRequired });
+				}
+				const input = { cwd: dir, subagentOnlyExtensions: [alias, ordinary], requiredExtensions, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false };
+				const launch = host === "parent" ? buildInProcessChildLaunch({ ...baseInput("loaded"), ...input })
+					: buildRunnerChildLaunch({ agent: "worker", task: "test", ...input }, { cwd: dir, id: "run", flatIndex: 0 }, { sessionEnabled: false, watchdogStatus() {} });
+				let disposed = false;
+				// SAFETY: Pi supplies real loaded paths and queues; session binding only invokes its loaded startup handlers.
+				const pi = {
+					ModelRuntime: { create: async () => ({ registerProvider() { throw new Error("bad provider"); }, refresh: async () => {} }) },
+					SettingsManager, DefaultResourceLoader, SessionManager: { inMemory: () => ({}) },
+					createAgentSession: async ({ resourceLoader }: { resourceLoader: DefaultResourceLoader }) => {
+						const entries = resourceLoader.getExtensions().extensions;
+						if (scenario === "ordering" || scenario === "repeated entries") {
+							assert.deepEqual(entries.map(({ path }) => path), ["<inline:pi-subagents:prompt-runtime>", ordinary,
+								...(scenario === "ordering" ? [alias, requiredPath] : [requiredPath, requiredPath]), "<inline:pi-subagents:prompt-boundary>"]);
+							throw new Error("captured order");
+						}
+						return { session: {
+							bindExtensions: async ({ onError }: { onError: (error: { extensionPath: string; event: string; error: string }) => void }) => {
+								for (const entry of entries) for (const handler of entry.handlers.get("session_start") ?? []) {
+									try { await handler(); } catch (error) { onError({ extensionPath: entry.path, event: "session_start", error: String(error) }); }
+								}
+							},
+							dispose() { disposed = true; }, abort: async () => {}, extensionRunner: { hasHandlers: () => false },
+						} };
+					},
+				} as PiCodingAgentModule;
+				const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+				process.env.PI_CODING_AGENT_DIR = agentDir;
+				try {
+					const expected = scenario === "ordering" || scenario === "repeated entries" ? /captured order/
+						: scenario === "startup failure" ? /Required child extension failed during startup/
+						: scenario === "provider failure" ? /Required child extension provider registration failed/ : /Required child extension failed to load/;
+					await assert.rejects(() => factory.create(launch.session), expected);
+					assert.equal(disposed, scenario === "startup failure");
+				} finally {
+					await factory.dispose();
+					if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+					else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			});
+		}
+	}
 });
 
 describe("require-for-all-runners admission", () => {

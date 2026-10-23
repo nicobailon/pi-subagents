@@ -193,14 +193,39 @@ function inheritParentProviders(modelRuntime: ModelRuntimeInstance, parentProvid
 const CHILD_PROMPT_RUNTIME_EXTENSION_PATH = "<inline:pi-subagents:prompt-runtime>";
 const CHILD_PROMPT_BOUNDARY_EXTENSION_PATH = "<inline:pi-subagents:prompt-boundary>";
 
+function childExtensionFileIdentity(extensionPath: string): string | undefined {
+	if (!path.isAbsolute(extensionPath)) return undefined;
+	try {
+		const stat = fs.statSync(extensionPath, { bigint: true });
+		return stat.isFile() ? `${stat.dev}:${stat.ino}` : undefined;
+	} catch { return undefined; }
+}
+
+function createRequiredChildExtensionIdentity(requiredPaths: ReadonlySet<string>): (extensionPath: string) => string | undefined {
+	const aliases = new Map([...requiredPaths].map((extensionPath) => [extensionPath, childExtensionFileIdentity(extensionPath) ?? extensionPath]));
+	const identities = new Set(aliases.values());
+	return (extensionPath) => {
+		const known = aliases.get(extensionPath);
+		if (known !== undefined || identities.size === 0) return known;
+		const identity = childExtensionFileIdentity(extensionPath);
+		if (identity === undefined || !identities.has(identity)) return undefined;
+		// Retain the alias even if the extension removes its file before reporting a failure.
+		aliases.set(extensionPath, identity);
+		return identity;
+	};
+}
+
 /** The prompt runtime filters parent-only context before ambient extensions inspect
  *  the child prompt, and the boundary hook appends the child boundary after every
- *  extension has added its prompt sections. Every other extension keeps its order. */
-function orderChildPromptHooks<T extends { extensions: Array<{ path: string }> }>(result: T): T {
+ *  extension has added its prompt sections. Host-required extensions run just before
+ *  the boundary; relative order within the ordinary and required groups is preserved. */
+function orderChildPromptHooks<T extends { extensions: Array<{ path: string; resolvedPath: string }> }>(result: T, requiredExtensionIdentity: (extensionPath: string) => string | undefined): T {
 	const runtime = result.extensions.filter(({ path }) => path === CHILD_PROMPT_RUNTIME_EXTENSION_PATH);
 	const boundary = result.extensions.filter(({ path }) => path === CHILD_PROMPT_BOUNDARY_EXTENSION_PATH);
-	const others = result.extensions.filter(({ path }) => path !== CHILD_PROMPT_RUNTIME_EXTENSION_PATH && path !== CHILD_PROMPT_BOUNDARY_EXTENSION_PATH);
-	return { ...result, extensions: [...runtime, ...others, ...boundary] };
+	const required = result.extensions.filter(({ resolvedPath }) => requiredExtensionIdentity(resolvedPath) !== undefined);
+	const requiredEntries = new Set(required);
+	const others = result.extensions.filter((extension) => extension.path !== CHILD_PROMPT_RUNTIME_EXTENSION_PATH && extension.path !== CHILD_PROMPT_BOUNDARY_EXTENSION_PATH && !requiredEntries.has(extension));
+	return { ...result, extensions: [...runtime, ...others, ...required, ...boundary] };
 }
 
 /** Ambient bash overrides keep their original backend and priority. */
@@ -339,7 +364,7 @@ function missingBuiltinMcpTools(session: { getAllTools(): Array<{ name: string }
 	return names.filter((name) => !active.has(name) || !direct.has(name));
 }
 
-function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]>, modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined, requiredPaths: ReadonlySet<string>): { claimedProviderIds: Set<string>; registered: boolean } {
+function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]>, modelRuntime: ModelRuntimeInstance, onError: ((error: ChildSessionExtensionError) => void) | undefined, isRequiredSource: (extensionPath: string) => boolean): { claimedProviderIds: Set<string>; registered: boolean } {
 	const claimedProviderIds = new Set<string>();
 	if (!("getExtensions" in loader) || typeof loader.getExtensions !== "function") return { claimedProviderIds, registered: false };
 	const { runtime } = loader.getExtensions();
@@ -351,7 +376,7 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
 			registered = true;
 		} catch (error) {
 			onError?.({ extensionPath, event: "register_provider", error });
-			if (requiredPaths.has(extensionPath)) throw new Error(`Required child extension provider registration failed for '${extensionPath}': ${error instanceof Error ? error.message : String(error)}`);
+			if (isRequiredSource(extensionPath)) throw new Error(`Required child extension provider registration failed for '${extensionPath}': ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 	if (Array.isArray(runtime.pendingProviderRegistrations)) runtime.pendingProviderRegistrations = [];
@@ -362,7 +387,7 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
 			registered = true;
 		} catch (error) {
 			onError?.({ extensionPath, event: "register_provider", error });
-			if (requiredPaths.has(extensionPath)) throw new Error(`Required child extension provider registration failed for '${extensionPath}': ${error instanceof Error ? error.message : String(error)}`);
+			if (isRequiredSource(extensionPath)) throw new Error(`Required child extension provider registration failed for '${extensionPath}': ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 	if (Array.isArray(runtime.pendingNativeProviderRegistrations)) runtime.pendingNativeProviderRegistrations = [];
@@ -381,7 +406,7 @@ function flushQueuedProviderRegistrations(loader: InstanceType<PiCodingAgentModu
 			registered = true;
 		} catch (error) {
 			onError?.({ extensionPath, event: "register_virtual_model", error });
-			if (requiredPaths.has(extensionPath)) throw new Error(`Required child extension virtual model registration failed for '${extensionPath}': ${error instanceof Error ? error.message : String(error)}`);
+			if (isRequiredSource(extensionPath)) throw new Error(`Required child extension virtual model registration failed for '${extensionPath}': ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 	if (Array.isArray(virtualModelQueue.pendingVirtualModelRegistrations)) virtualModelQueue.pendingVirtualModelRegistrations = [];
@@ -491,6 +516,12 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					},
 				})) }]
 				: [];
+			const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
+			const requiredExtensionIdentity = createRequiredChildExtensionIdentity(requiredPaths);
+			const resolvedExtensionPaths = new Map<string, string>();
+			// Pi reports failures by source, without resolvedPath. Unclassified failures cannot prove required loading succeeded.
+			const isRequiredSource = (extensionPath: string) => requiredPaths.size > 0 &&
+				(!resolvedExtensionPaths.has(extensionPath) || requiredExtensionIdentity(resolvedExtensionPaths.get(extensionPath)!) !== undefined);
 			const loader = new pi.DefaultResourceLoader({
 				cwd: launch.cwd,
 				agentDir,
@@ -507,7 +538,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					api.registerTool(commands.wrap(pi.createBashTool(launch.cwd, { commandPrefix: settingsManager.getShellCommandPrefix(), shellPath: settingsManager.getShellPath() }) as unknown as ToolDefinition));
 					api.registerTool(commands.tool());
 				} }] : []), ...codemode, ...(builtinMcp ? [builtinMcp] : [])],
-				extensionsOverride: (result) => orderChildPromptHooks(prioritizeChildCommandRuntime(result)),
+				extensionsOverride: (result) => orderChildPromptHooks(prioritizeChildCommandRuntime(result), requiredExtensionIdentity),
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				// An empty list stops Pi from filling the slot with the operator's APPEND_SYSTEM.md (#2960).
 				appendSystemPrompt: launch.appendSystemPrompt !== undefined ? [launch.appendSystemPrompt] : [],
@@ -530,14 +561,19 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			};
 			let inheritedProviders = new Set<string>();
 			const open = async () => {
-				const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
 				applyProcessEnv(launch.processEnv);
 				if (!resetExtensionCacheOnReload(loader) && (launch.ambientExtensions || launch.extensionPaths.length)) launch.onExtensionError?.({ extensionPath: "<loader>", event: "load", error: new Error("pi's extension cache reset is unavailable; extensions loaded into this child share module state with other sessions in this process.") });
 				await loader.reload();
+				if (requiredPaths.size > 0) for (const extension of loader.getExtensions().extensions) resolvedExtensionPaths.set(extension.path, extension.resolvedPath);
 				const loadErrors = requiredPaths.size > 0
-					? loader.getExtensions().errors.filter(({ path }) => requiredPaths.has(path)) : [];
+					? loader.getExtensions().errors.filter(({ path }) => isRequiredSource(path)) : [];
 				if (loadErrors.length > 0) throw new Error(`Required child extension failed to load: ${loadErrors.map(({ path, error }) => `${path}: ${error}`).join("; ")}`);
-				const queued = flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError, requiredPaths);
+				const queued = flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError, isRequiredSource);
+				if (requiredPaths.size > 0) {
+					const loadedIdentities = new Set(loader.getExtensions().extensions.map(({ resolvedPath }) => requiredExtensionIdentity(resolvedPath)));
+					const missing = [...requiredPaths].filter((extensionPath) => !loadedIdentities.has(requiredExtensionIdentity(extensionPath)));
+					if (missing.length) throw new Error(`Required child extension failed to load: missing loaded identities for ${missing.join(", ")}`);
+				}
 				if (launch.parentProviderRegistry) inheritedProviders = inheritParentProviders(modelRuntime, launch.parentProviderRegistry, queued.claimedProviderIds, launch.onExtensionError);
 				if (queued.registered || inheritedProviders.size > 0) {
 					try {
@@ -585,7 +621,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					await session.bindExtensions({
 						mode: "print",
 						onError: (error) => {
-							if (binding && requiredPaths.has(error.extensionPath)) requiredStartupErrors.push(`${error.extensionPath} (${error.event}): ${error.error}`);
+							if (binding && isRequiredSource(error.extensionPath)) requiredStartupErrors.push(`${error.extensionPath} (${error.event}): ${error.error}`);
 							launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error });
 						},
 					});

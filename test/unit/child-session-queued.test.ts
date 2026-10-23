@@ -122,7 +122,7 @@ describe("default factory queued-message probe", () => {
 		const createFactory = (failingPath: string) => createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
 			ModelRuntime: { create: async () => ({ refresh: async () => {} }) },
 			SettingsManager: { create: () => ({}) },
-			DefaultResourceLoader: class { async reload() {} getExtensions() { return { extensions: [], errors: [], runtime: { pendingProviderRegistrations: [], pendingNativeProviderRegistrations: [] } }; } },
+			DefaultResourceLoader: class { async reload() {} getExtensions() { return { extensions: [{ path: requiredPath, resolvedPath: requiredPath }, { path: ordinaryPath, resolvedPath: ordinaryPath }], errors: [], runtime: { pendingProviderRegistrations: [], pendingNativeProviderRegistrations: [] } }; } },
 			SessionManager: { inMemory: () => ({}) },
 			resolveCliModel: () => ({}),
 			createAgentSession: async () => ({
