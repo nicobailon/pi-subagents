@@ -304,6 +304,21 @@ describe("skills filesystem fallback", () => {
 		assert.equal(resolved[0]?.source, "project-package");
 	});
 
+	it("skips settings package entries that name a single extension file", () => {
+		fs.mkdirSync(path.join(tempDir, ".pi", "extensions"), { recursive: true });
+		fs.writeFileSync(path.join(tempDir, ".pi", "extensions", "my-extension.ts"), "export default () => {};\n", "utf-8");
+		fs.writeFileSync(
+			path.join(tempDir, ".pi", "settings.json"),
+			JSON.stringify({ packages: ["./extensions/my-extension.ts"] }, null, 2),
+			"utf-8",
+		);
+		makeProjectSkill(tempDir, "project-skill", "Project skill.");
+
+		const { resolved, missing } = resolveSkills(["project-skill"], tempDir);
+		assert.deepEqual(missing, []);
+		assert.equal(resolved.length, 1);
+	});
+
 	it("discovers skills from project settings npm package sources", () => {
 		const packageRoot = path.join(tempDir, ".pi", "npm", "node_modules", "@scope", "skill-package");
 		makePackageSkill(
