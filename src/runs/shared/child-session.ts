@@ -192,6 +192,8 @@ function inheritParentProviders(modelRuntime: ModelRuntimeInstance, parentProvid
 
 const CHILD_PROMPT_RUNTIME_EXTENSION_PATH = "<inline:pi-subagents:prompt-runtime>";
 const CHILD_PROMPT_BOUNDARY_EXTENSION_PATH = "<inline:pi-subagents:prompt-boundary>";
+/** Same class as UNICODE_SPACES in pi-coding-agent dist/utils/paths.js, which resolvePath(..., { normalizeUnicodeSpaces: true }) replaces with a space. */
+const PI_UNICODE_SPACES = new RegExp("[\\u00A0\\u2000-\\u200A\\u202F\\u205F\\u3000]", "g");
 
 function childExtensionFileIdentity(extensionPath: string): string | undefined {
 	if (!path.isAbsolute(extensionPath)) return undefined;
@@ -217,15 +219,12 @@ function createRequiredChildExtensionIdentity(requiredPaths: ReadonlySet<string>
 
 /** The prompt runtime filters parent-only context before ambient extensions inspect
  *  the child prompt, and the boundary hook appends the child boundary after every
- *  extension has added its prompt sections. Host-required extensions run just before
- *  the boundary; relative order within the ordinary and required groups is preserved. */
-function orderChildPromptHooks<T extends { extensions: Array<{ path: string; resolvedPath: string }> }>(result: T, requiredExtensionIdentity: (extensionPath: string) => string | undefined): T {
+ *  extension has added its prompt sections. Every other extension keeps its order. */
+function orderChildPromptHooks<T extends { extensions: Array<{ path: string }> }>(result: T): T {
 	const runtime = result.extensions.filter(({ path }) => path === CHILD_PROMPT_RUNTIME_EXTENSION_PATH);
 	const boundary = result.extensions.filter(({ path }) => path === CHILD_PROMPT_BOUNDARY_EXTENSION_PATH);
-	const required = result.extensions.filter(({ resolvedPath }) => requiredExtensionIdentity(resolvedPath) !== undefined);
-	const requiredEntries = new Set(required);
-	const others = result.extensions.filter((extension) => extension.path !== CHILD_PROMPT_RUNTIME_EXTENSION_PATH && extension.path !== CHILD_PROMPT_BOUNDARY_EXTENSION_PATH && !requiredEntries.has(extension));
-	return { ...result, extensions: [...runtime, ...others, ...required, ...boundary] };
+	const others = result.extensions.filter(({ path }) => path !== CHILD_PROMPT_RUNTIME_EXTENSION_PATH && path !== CHILD_PROMPT_BOUNDARY_EXTENSION_PATH);
+	return { ...result, extensions: [...runtime, ...others, ...boundary] };
 }
 
 /** Ambient bash overrides keep their original backend and priority. */
@@ -519,9 +518,12 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
 			const requiredExtensionIdentity = createRequiredChildExtensionIdentity(requiredPaths);
 			const resolvedExtensionPaths = new Map<string, string>();
-			// Pi reports failures by source, without resolvedPath. Unclassified failures cannot prove required loading succeeded.
-			const isRequiredSource = (extensionPath: string) => requiredPaths.size > 0 &&
-				(!resolvedExtensionPaths.has(extensionPath) || requiredExtensionIdentity(resolvedExtensionPaths.get(extensionPath)!) !== undefined);
+			// Pi reports failures by source path, without resolvedPath. A source Pi never loaded is classified by the
+			// file it names, after Pi's Unicode-space normalization. A required extension that failed under an
+			// unmatched spelling is still rejected by the missing-identity check after loading.
+			const isRequiredSource = (extensionPath: string) => requiredPaths.size > 0 && requiredExtensionIdentity(
+				resolvedExtensionPaths.get(extensionPath) ?? (path.isAbsolute(extensionPath) ? extensionPath.replace(PI_UNICODE_SPACES, " ") : extensionPath),
+			) !== undefined;
 			const loader = new pi.DefaultResourceLoader({
 				cwd: launch.cwd,
 				agentDir,
@@ -538,7 +540,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					api.registerTool(commands.wrap(pi.createBashTool(launch.cwd, { commandPrefix: settingsManager.getShellCommandPrefix(), shellPath: settingsManager.getShellPath() }) as unknown as ToolDefinition));
 					api.registerTool(commands.tool());
 				} }] : []), ...codemode, ...(builtinMcp ? [builtinMcp] : [])],
-				extensionsOverride: (result) => orderChildPromptHooks(prioritizeChildCommandRuntime(result), requiredExtensionIdentity),
+				extensionsOverride: (result) => orderChildPromptHooks(prioritizeChildCommandRuntime(result)),
 				...(launch.systemPrompt !== undefined ? { systemPrompt: launch.systemPrompt } : {}),
 				// An empty list stops Pi from filling the slot with the operator's APPEND_SYSTEM.md (#2960).
 				appendSystemPrompt: launch.appendSystemPrompt !== undefined ? [launch.appendSystemPrompt] : [],
