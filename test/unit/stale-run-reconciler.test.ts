@@ -110,6 +110,52 @@ describe("async stale-run reconciliation", () => {
 		}
 	});
 
+	it("records when the dead owner last updated a workflow and puts the stop cause in the repaired result", () => {
+		const root = tempRoot("pi-stale-run-owner-exited-at-");
+		try {
+			const resultsDir = path.join(root, "results");
+			const repair = (runId: string, extra: Record<string, unknown>, kill: () => boolean) => {
+				const asyncDir = path.join(root, runId);
+				writeStatus(asyncDir, {
+					runId,
+					sessionId: "session-owner",
+					mode: "workflow",
+					state: "running",
+					pid: 4242,
+					startedAt: 1000,
+					steps: [{ agent: "echo", status: "running", startedAt: 1000 }],
+					workflow: { trace: [], emits: [], console: [], scriptDigest: "digest" },
+					...extra,
+				});
+				reconcileAsyncRun(asyncDir, { resultsDir, now: () => 90_000, kill, staleAlivePidMs: 500 });
+				return {
+					status: JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")),
+					result: JSON.parse(fs.readFileSync(path.join(resultsDir, `${runId}.json`), "utf-8")),
+				};
+			};
+			const dead = () => { throw errno("ESRCH"); };
+
+			const updated = repair("wf-updated", { lastUpdate: 5000 }, dead);
+			assert.equal(updated.status.workflow.ownerExitedAt, 5000);
+			assert.equal(updated.status.endedAt, 90_000);
+			assert.deepEqual(updated.result.workflow, { stopCause: "owner-exited" });
+
+			const neverUpdated = repair("wf-never-updated", {}, dead);
+			assert.equal(neverUpdated.status.workflow.ownerExitedAt, 1000);
+			assert.deepEqual(neverUpdated.result.workflow, { stopCause: "owner-exited" });
+
+			const staleAlive = repair("wf-stale-alive", { lastUpdate: 5000 }, () => true);
+			assert.equal(staleAlive.status.workflow.ownerExitedAt, undefined);
+			assert.equal(staleAlive.result.workflow, undefined);
+
+			const single = repair("single-dead", { mode: "single", workflow: undefined, lastUpdate: 5000 }, dead);
+			assert.equal(single.status.workflow, undefined);
+			assert.equal(single.result.workflow, undefined);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("repairs a recent Linux zombie only with a verified PID namespace", { skip: process.platform !== "linux", timeout: 10_000 }, async () => {
 		const root = tempRoot("pi-stale-run-zombie-");
 		const script = String.raw`

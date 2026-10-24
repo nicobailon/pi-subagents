@@ -150,6 +150,7 @@ import {
 	type WorkflowResourcePermit,
 } from "../../shared/workflow-child-permit.ts";
 import { deepFreezeWorkflowArgs, normalizeWorkflowArgs, resolveStructuredWorkflowResource, resolveWorkflowResource } from "../../workflows/workflow-resources.ts";
+import { writeWorkflowLaunchRecord, type WorkflowLaunchRecord } from "../../workflows/workflow-launch-record.ts";
 import { stableJsonDigest } from "../../shared/launch-contract.ts";
 import {
 	cleanupWorktrees,
@@ -5404,6 +5405,27 @@ function createScheduledOwnerState(source: SubagentState, ownerSessionId: string
 	};
 }
 
+/** Public launch captured by executePublic for launch.json; never built from the internal request. */
+type PublicWorkflowLaunch =
+	| { source: "script"; params: Record<string, unknown> }
+	| { source: "resource"; params: Record<string, unknown>; resourceName: string }
+	| { source: "structured" };
+
+/** Drops the fields that tie a launch to one run: a relaunch sets its own reuse and origin. */
+function savedWorkflowLaunchParams(params: SubagentParamsLike): Record<string, unknown> {
+	const { reuseFrom: _reuseFrom, scheduleOrigin: _scheduleOrigin, resumeOrigin: _resumeOrigin, action: _action, ...saved } = params as SubagentParamsLike & { scheduleOrigin?: unknown; resumeOrigin?: unknown };
+	return saved;
+}
+
+function workflowLaunchRecord(launch: PublicWorkflowLaunch, cwd: string, scriptDigest: string): WorkflowLaunchRecord {
+	if (launch.source === "structured") return { version: 1, source: "structured", scriptDigest };
+	// The resolved cwd is saved: a relative one would resolve against a later session's cwd.
+	const params = { ...launch.params, cwd };
+	return launch.source === "resource"
+		? { version: 1, source: "resource", params, scriptDigest, resourceName: launch.resourceName }
+		: { version: 1, source: "script", params, scriptDigest };
+}
+
 export function createSubagentExecutor(deps: ExecutorDeps): {
 	execute: (
 		id: string,
@@ -5448,6 +5470,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const delegatedExecutions = new WeakSet<object>();
 	const publicExecutions = new WeakSet<object>();
 	const workflowResourcePermits = new WeakMap<object, WorkflowResourcePermit>();
+	const publicWorkflowLaunches = new WeakMap<object, PublicWorkflowLaunch>();
 	const workflowPermitContexts = new WeakMap<object, { root: WorkflowChildPermit } | { child: WorkflowChildPermitContext }>();
 	const warnedArtifactPackageDirs = new Set<string>();
 	const scheduledOwnerExecutors = new Map<string | null, Map<string, { state: SubagentState; executor: ReturnType<typeof createSubagentExecutor> }>>();
@@ -5483,6 +5506,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const delegatedExecution = delegatedExecutions.has(params);
 		const publicExecution = publicExecutions.has(params);
 		const workflowResourcePermit = workflowResourcePermits.get(params);
+		const publicWorkflowLaunch = publicWorkflowLaunches.get(params);
 		const workflowPermitContext = workflowPermitContexts.get(params);
 		const delegatedWorkflowPermit = workflowPermitContext && "root" in workflowPermitContext ? workflowPermitContext.root : undefined;
 		const workflowChildPermitLaunch = workflowPermitContext && "child" in workflowPermitContext ? workflowPermitContext.child : undefined;
@@ -5700,6 +5724,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				try {
 					fs.mkdirSync(asyncDir, { recursive: true });
 					writeRunFanoutBudgetDescriptor(asyncDir, workflowFanoutBudget);
+					if (topLevelAsyncWorkflow && publicWorkflowLaunch) writeWorkflowLaunchRecord(asyncDir, workflowLaunchRecord(publicWorkflowLaunch, workflowCwd, workflowScriptSourceDigest));
 					fs.mkdirSync(DIRS.results, { recursive: true });
 				} catch (error) {
 					workflowCapacity?.rollback();
@@ -8196,6 +8221,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const errorResult = (text: string): Promise<AgentToolResult<Details>> => Promise.resolve({ content: [{ type: "text", text }], isError: true, details: { mode: publicParams.action ? "management" : "workflow", results: [] } });
 		// Models tend to put script text in the workflow string; say how to pass it instead.
 		const scriptTextHint = " A workflow string is a named workflow resource or a script file path. To run script text, write it in one ```js workflow block in the same reply and call subagent({ workflow: true }).";
+		let workflowLaunch: PublicWorkflowLaunch | undefined;
 		if (publicParams.tasks !== undefined || publicParams.chain !== undefined) {
 			// Normalization admits chain/tasks only with workflow scripts disabled; the original input was checked above.
 			const kind = publicParams.tasks !== undefined ? "tasks" : "chain";
@@ -8204,10 +8230,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const { tasks: _tasks, chain: _chain, task: _task, ...withoutStructuredInput } = publicParams;
 			publicParams = { ...withoutStructuredInput, workflowScript: resolved.resource.script };
 			workflowResourcePermits.set(publicParams, resolved.resource.permit);
+			workflowLaunch = { source: "structured" };
 		} else if (typeof workflow === "string" && !isWorkflowScriptPath(workflow)) {
 			const resolved = resolveWorkflowResource(workflow, publicParams.args, ctx.sessionManager.getSessionId() ?? undefined);
 			if (!resolved.ok) return Promise.resolve({ content: [{ type: "text", text: resolved.error + scriptTextHint }], isError: true, details: { mode: "workflow", results: [] } });
 			const { workflow: _workflow, args: _args, ...withoutResourceInput } = publicParams;
+			// Saved by name: the runs.host permit cannot be saved, so a relaunch resolves the resource again.
+			workflowLaunch = { source: "resource", resourceName: workflow, params: savedWorkflowLaunchParams(publicParams) };
 			publicParams = { ...withoutResourceInput, workflowScript: resolved.resource.script };
 			workflowResourcePermits.set(publicParams, resolved.resource.permit);
 		} else if (workflow !== undefined || publicParams.workflowScript !== undefined) {
@@ -8223,7 +8252,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			const { workflow: _workflow, ...withoutWorkflowSource } = publicParams;
 			publicParams = { ...withoutWorkflowSource, workflowScript, args: "error" in normalizedArgs ? publicParams.args : deepFreezeWorkflowArgs(normalizedArgs.args) };
+			// The script is saved inline: a reply block or a script file cannot be read again later.
+			workflowLaunch = { source: "script", params: savedWorkflowLaunchParams(publicParams) };
 		}
+		if (workflowLaunch && publicParams.action === undefined) publicWorkflowLaunches.set(publicParams, workflowLaunch);
 		publicExecutions.add(publicParams);
 		return executeWithSingleDispatchGuard(id, publicParams, signal, onUpdate, ctx);
 	};

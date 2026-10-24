@@ -2003,6 +2003,106 @@ Answer only from the supplied synthetic text.
 		fs.rmSync(resultPath, { force: true });
 	});
 
+	describe("saving an async workflow's launch", () => {
+		const skip = !createSubagentExecutor ? "executor not importable" : undefined;
+		const readLaunch = (runId: string) => JSON.parse(fs.readFileSync(path.join(DIRS.async, runId, "launch.json"), "utf-8"));
+		const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+		const launchAndSettle = async (executor: ReturnType<typeof makeExecutor>, id: string, params: Record<string, unknown>, ctx = makeMinimalCtx(tempDir)) => {
+			const started = await executor.executePublic(id, { async: true, mission: false, ...params }, new AbortController().signal, undefined, ctx);
+			assert.equal(started.isError, undefined, started.content[0]?.text ?? "workflow launch failed");
+			const runId = started.details.asyncId!;
+			await waitForAsyncState(runId, (status) => status.state === "complete", 15_000);
+			await waitForAsyncResultFile(runId, 15_000);
+			return runId;
+		};
+
+		it("saves a raw script inline with an absolute cwd and without per-run fields", { timeout: 30_000, skip }, async () => {
+			const script = "return args;";
+			const cwd = path.join(tempDir, "sub");
+			fs.mkdirSync(cwd);
+			// An interrupted run of the same script to reuse, so reuseFrom is accepted.
+			const sourceId = `launch-source-${Date.now().toString(36)}`;
+			fs.mkdirSync(path.join(DIRS.async, sourceId), { recursive: true });
+			fs.writeFileSync(path.join(DIRS.async, sourceId, "status.json"), JSON.stringify({
+				runId: sourceId, sessionId: "session-123", mode: "workflow", state: "failed", startedAt: 1, endedAt: 2, cwd,
+				workflow: { trace: [], emits: [], console: [], scriptDigest: sha256(script), stopCause: "runtime-replaced" },
+			}));
+			const runId = await launchAndSettle(makeExecutor([makeAgent("echo")]), "launch-raw", {
+				workflowScript: script, args: { n: 1 }, cwd: "sub", reuseFrom: sourceId, scheduleOrigin: { id: "schedule-1" }, resumeOrigin: { sourceRunId: sourceId, attempt: 1 },
+			});
+			assert.deepEqual(readLaunch(runId), {
+				version: 1,
+				source: "script",
+				params: { async: true, mission: false, workflowScript: script, args: { n: 1 }, cwd },
+				scriptDigest: sha256(script),
+			});
+		});
+
+		it("saves the reply's workflow block inline", { timeout: 30_000, skip }, async () => {
+			const block = "return { task: args.task };";
+			const ctx = makeMinimalCtx(tempDir);
+			const reply = { type: "message", message: { role: "assistant", content: [
+				{ type: "text", text: `\`\`\`js workflow\n${block}\n\`\`\`` },
+				{ type: "toolCall", id: "launch-reply", name: "subagent", arguments: { workflow: true } },
+			] } };
+			const runId = await launchAndSettle(makeExecutor([makeAgent("echo")]), "launch-reply", { workflow: true, args: { task: "t" } }, { ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => [reply] } });
+			const launch = readLaunch(runId);
+			assert.equal(launch.source, "script");
+			assert.equal(launch.params.workflow, undefined);
+			assert.equal(launch.params.workflowScript, block);
+			assert.equal(launch.scriptDigest, sha256(block));
+		});
+
+		it("saves a named resource by name and args, not its script", { timeout: 30_000, skip }, async () => {
+			const ctx = makeMinimalCtx(tempDir);
+			const script = "return args.x;";
+			const registration = registerWorkflowResource({ sessionId: ctx.sessionManager.getSessionId(), definition: { name: "test.launch", version: 1, resolve: () => ({ script }) } });
+			try {
+				const runId = await launchAndSettle(makeExecutor([makeAgent("echo")]), "launch-resource", { workflow: "test.launch", args: { x: 2 } }, ctx);
+				assert.deepEqual(readLaunch(runId), {
+					version: 1,
+					source: "resource",
+					params: { async: true, mission: false, workflow: "test.launch", args: { x: 2 }, cwd: tempDir },
+					scriptDigest: sha256(script),
+					resourceName: "test.launch",
+				});
+			} finally { registration.dispose(); }
+		});
+
+		it("saves a launch for an async workflow but not for a foreground one", { timeout: 30_000, skip }, async () => {
+			const launchFiles = () => fs.existsSync(DIRS.async) ? fs.readdirSync(DIRS.async).filter((entry) => fs.existsSync(path.join(DIRS.async, entry, "launch.json"))) : [];
+			const before = launchFiles();
+			const executor = makeExecutor([makeAgent("echo")]);
+			const result = await executor.executePublic("launch-foreground", { workflowScript: "return 1;", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			const asyncRunId = await launchAndSettle(executor, "launch-background", { workflowScript: "return 1;" });
+			assert.deepEqual(launchFiles().sort(), [...before, asyncRunId].sort());
+		});
+
+		it("fails the launch and frees its capacity slot when the launch cannot be saved", { timeout: 30_000, skip }, async (t) => {
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => `launch-capacity-${Date.now().toString(36)}`;
+			const executor = makeExecutor([makeAgent("echo")], { maxActiveAsyncRunsPerSession: 1 });
+			const originalRenameSync = fsDefault.renameSync;
+			t.mock.method(fsDefault, "renameSync", ((from: fs.PathLike, to: fs.PathLike) => {
+				if (path.basename(String(to)) === "launch.json") throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+				return originalRenameSync(from, to);
+			}) as typeof fsDefault.renameSync);
+			syncBuiltinESMExports();
+			let failed: Awaited<ReturnType<typeof executor.executePublic>>;
+			try {
+				failed = await executor.executePublic("launch-unsaved", { workflowScript: "return 1;", async: true, mission: false }, new AbortController().signal, undefined, ctx);
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+			}
+			assert.equal(failed.isError, true);
+			assert.match(failed.content[0]?.text ?? "", /^Failed to create async workflow storage: no space left/);
+			// The only slot was released, so the next launch is admitted.
+			await launchAndSettle(executor, "launch-after-unsaved", { workflowScript: "return 2;" }, ctx);
+		});
+	});
+
 	describe("relaunching a runtime-replaced workflow", () => {
 		const terminalStates = ["complete", "failed", "partial", "paused", "stopped", "rejected"];
 		// SAFETY: the executor and runner write these status.json files from AsyncStatus values.

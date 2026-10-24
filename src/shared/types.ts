@@ -1543,6 +1543,10 @@ export interface Details {
 		stopCause?: "runtime-replaced" | "owner-exited";
 		/** Interrupted workflow run whose finished children this run reused. */
 		reusedFrom?: string;
+		/** Owner-exited runs: the last time the dead Pi process updated the run (epoch ms), not the repair time. */
+		ownerExitedAt?: number;
+		/** Set on a run that resumes an interrupted one; `attempt` counts resumes that followed Pi exits. */
+		resumeOrigin?: { sourceRunId: string; attempt: number };
 		resource?: WorkflowResourceProvenance;
 		preflightWarnings?: string[];
 		trace: Array<{

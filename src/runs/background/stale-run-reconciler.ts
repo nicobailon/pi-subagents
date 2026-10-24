@@ -311,7 +311,8 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 		lastUpdate: now,
 		endedAt: now,
 		steps: repairedSteps,
-		...(exitedWorkflow ? { workflow: { ...exitedWorkflow, stopCause: WORKFLOW_STOP_CAUSE_OWNER_EXITED } } : {}),
+		// Read from the pre-repair status: the repair time would make an old crash look new.
+		...(exitedWorkflow ? { workflow: { ...exitedWorkflow, stopCause: WORKFLOW_STOP_CAUSE_OWNER_EXITED, ownerExitedAt: status.lastUpdate ?? status.startedAt } } : {}),
 	};
 	const resultAgent = repairedSteps[status.currentStep ?? 0]?.agent ?? repairedSteps[0]?.agent ?? "subagent";
 	return {
@@ -321,6 +322,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 			id: runId,
 			agent: resultAgent,
 			mode: status.mode,
+			...(exitedWorkflow ? { workflow: { stopCause: WORKFLOW_STOP_CAUSE_OWNER_EXITED } } : {}),
 			...(status.completionOwnerId ? { completionOwnerId: status.completionOwnerId } : {}),
 			...(status.parentWorkflowRunId ? { parentWorkflowRunId: status.parentWorkflowRunId } : {}),
 			...(status.workflowKey ? { workflowKey: status.workflowKey } : {}),
