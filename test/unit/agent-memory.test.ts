@@ -206,6 +206,20 @@ describe("readMemoryFile", () => {
 		assert.equal(readMemoryFile(dir), null);
 	});
 
+	it("skips a FIFO with no writer without blocking", { skip: process.platform === "win32" }, () => {
+		const dir = mkdtemp("pi-subagents-mem-fifo-");
+		execFileSync("mkfifo", [path.join(dir, AGENT_MEMORY_FILE)]);
+		// Isolate the synchronous read so a regression cannot hang the test runner.
+		const moduleUrl = new URL("../../src/agents/agent-memory.ts", import.meta.url).href;
+		const source = `import { readMemoryFile } from ${JSON.stringify(moduleUrl)};
+console.log(readMemoryFile(process.argv[1]));`;
+		const output = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", source, dir], {
+			encoding: "utf8",
+			timeout: 5_000,
+		});
+		assert.equal(output.trim(), "null");
+	});
+
 	it("reads contents and reports byte capping", () => {
 		const dir = mkdtemp("pi-subagents-mem-dir-");
 		writeMemoryFile(dir, "line one\nline two\n");
