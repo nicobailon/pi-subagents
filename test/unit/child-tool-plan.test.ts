@@ -151,6 +151,26 @@ describe("child tool plan declared tools", () => {
 		assert.deepEqual(plan.requiredChildTools, ["read", "bash"]);
 	});
 
+	it("rejects Pi tool modifier entries instead of planning them as tool names", () => {
+		assert.throws(() => resolvePiLaunchToolPlan({ tools: ["+codemode"], agentName: "modifier-repro" }), {
+			message: "Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: +codemode. A child's `tools` list is the complete set of tools it gets, so +name and -name entries are not supported; name every tool the child needs, or omit `tools` and use `excludeTools` to drop one.",
+		});
+		for (const { input, rejected } of [
+			{ input: { tools: ["-write"], agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: -write\. .*use `excludeTools` to drop one\.$/ },
+			{ input: { tools: ["read", "+codemode"], agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. / },
+			{ input: { tools: ["+codemode"], requireReadTool: true, agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. / },
+			{ input: { tools: ["+codemode", "read", "-write"] }, rejected: /^Subagent lists Pi tool modifier entries in `tools`: \+codemode, -write\. / },
+		]) {
+			assert.throws(() => resolvePiLaunchToolPlan(input), { message: rejected });
+		}
+	});
+
+	it("still plans a plain tool list whose names contain hyphens", () => {
+		const plan = resolvePiLaunchToolPlan({ tools: ["bash", "codemode", "fixture-search"], requireReadTool: true, agentName: "modifier-repro" });
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "bash", "codemode", "fixture-search"]);
+		assert.deepEqual(plan.requiredChildTools, ["read", "bash", "codemode", "fixture-search"]);
+	});
+
 	it("preserves arbitrary non-core requirements without inferring their child providers", () => {
 		const tools = ["read", "fixture_search", "__proto__", "ipython"];
 		for (const configuration of [

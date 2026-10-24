@@ -200,6 +200,21 @@ export function formatRuntimeSnapshotMcpServersError(agentName: string | undefin
 	return `${subject} selects MCP tools from servers that exist only in pi-mcp-adapter's runtime snapshot (${serverNames.join(", ")}). MCP servers from the runtime snapshot cannot be provided to in-process children; MCP tools must come from an ambient adapter extension in a background child (\`async: true\`), so add the server to the adapter's configuration file instead.`;
 }
 
+/** Same rule as Pi's `isToolModifier`: a `+name` or `-name` entry edits Pi's default tool selection. */
+function isPiToolModifier(entry: string): boolean {
+	return entry.startsWith("+") || entry.startsWith("-");
+}
+
+/**
+ * A child's `tools` list is a complete allowlist. Read as names, Pi's modifier
+ * entries would become required tools no child has, or mix with the names the
+ * plan adds into a list Pi rejects.
+ */
+function formatToolModifierEntriesError(agentName: string | undefined, entries: readonly string[]): string {
+	const subject = agentName ? `Agent '${agentName}'` : "Subagent";
+	return `${subject} lists Pi tool modifier ${entries.length === 1 ? "entry" : "entries"} in \`tools\`: ${entries.join(", ")}. A child's \`tools\` list is the complete set of tools it gets, so +name and -name entries are not supported; name every tool the child needs, or omit \`tools\` and use \`excludeTools\` to drop one.`;
+}
+
 export function projectLaunchResolvedChildExtensions(
 	toolPlan: Pick<
 		PiLaunchToolPlan,
@@ -306,6 +321,10 @@ export function resolvePiLaunchToolPlan(
 			(tool) =>
 				!(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")),
 		) ?? [];
+	const toolModifierEntries = requestedBuiltinTools.filter(isPiToolModifier);
+	if (toolModifierEntries.length > 0) {
+		throw new Error(formatToolModifierEntriesError(input.agentName, toolModifierEntries));
+	}
 	if (input.requireReadTool && allowedToolSet && !allowedToolSet.has("read")) {
 		throw new Error(
 			`Capability ceiling from ${capabilityCeiling?.sources.join(", ") || "unknown source"} excludes required tool 'read' for lazy skill loading.`,
