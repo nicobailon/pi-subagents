@@ -9,7 +9,7 @@ import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, 
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
-import { createDefaultChildSessionFactory, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
+import { createDefaultChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 
 function fixture() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-required-ext-"));
@@ -20,6 +20,21 @@ function fixture() {
 
 function baseInput(sessionId: string) {
 	return { parentSessionId: sessionId, sessionEnabled: false, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, cwd: process.cwd(), childAgentName: "worker", childIndex: 0, host: "parent" as const };
+}
+
+/** Expects the child session to be refused with `pi` and PI_CODING_AGENT_DIR=`agentDir`; then restores the variable and removes `dir`. */
+async function rejectsChildCreate(dir: string, agentDir: string, pi: PiCodingAgentModule, session: ChildSessionLaunch, expected: RegExp): Promise<void> {
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		await assert.rejects(() => factory.create(session), expected);
+	} finally {
+		await factory.dispose();
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 describe("required child extension host policy", () => {
@@ -93,7 +108,6 @@ describe("ordinary extension failures next to required child extensions", () => 
 	for (const [host, failure] of [["runner", "broken ambient"], ["parent", "missing agent extension"], ["runner", "missing agent extension"]] as const) {
 		it(`starts the child despite a ${failure} in the ${host} loader`, async () => {
 			const { dir, file } = fixture();
-			const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 			const cwd = path.join(dir, "project");
 			const agentDir = path.join(dir, "agent");
 			fs.mkdirSync(agentDir);
@@ -115,17 +129,8 @@ describe("ordinary extension failures next to required child extensions", () => 
 					throw new Error("reached session creation");
 				},
 			} as PiCodingAgentModule;
-			const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
-			process.env.PI_CODING_AGENT_DIR = agentDir;
-			try {
-				await assert.rejects(() => factory.create(launch.session), /reached session creation/);
-				assert.deepEqual(errors, [failure === "broken ambient" ? broken : missing]);
-			} finally {
-				await factory.dispose();
-				if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-				else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-				fs.rmSync(dir, { recursive: true, force: true });
-			}
+			await rejectsChildCreate(dir, agentDir, pi, launch.session, /reached session creation/);
+			assert.deepEqual(errors, [failure === "broken ambient" ? broken : missing]);
 		});
 	}
 });
@@ -141,7 +146,6 @@ describe("aliased required child extension failures", () => {
 		] as const) {
 			it(`rejects an aliased ${failure} failure in the ${host} loader`, async () => {
 				const { dir, file } = fixture();
-				const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 				const agentDir = path.join(dir, "agent");
 				const aliasDir = path.join(dir, "alias");
 				fs.mkdirSync(agentDir);
@@ -169,17 +173,8 @@ describe("aliased required child extension failures", () => {
 						extensionRunner: { hasHandlers: () => false },
 					} }),
 				} as PiCodingAgentModule;
-				const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
-				process.env.PI_CODING_AGENT_DIR = agentDir;
-				try {
-					await assert.rejects(() => factory.create(launch.session), expected);
-					assert.equal(disposed, failure === "startup");
-				} finally {
-					await factory.dispose();
-					if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-					else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-					fs.rmSync(dir, { recursive: true, force: true });
-				}
+				await rejectsChildCreate(dir, agentDir, pi, launch.session, expected);
+				assert.equal(disposed, failure === "startup");
 			});
 		}
 	}
@@ -190,7 +185,6 @@ describe("required child extension loaded identities", () => {
 		for (const scenario of ["removed alias", "Unicode collision", "load failure", "provider failure", "startup failure", "Unicode alias loaded", "repeated entries"]) {
 			it(`checks ${scenario} using Pi's loaded identity in the ${host} loader`, async () => {
 				const dir = fs.realpathSync(fixture().dir);
-				const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 				const agentDir = path.join(dir, "agent");
 				const realDir = path.join(dir, "real");
 				const asciiDir = path.join(dir, "policy dir");
@@ -248,20 +242,11 @@ describe("required child extension loaded identities", () => {
 						} };
 					},
 				} as PiCodingAgentModule;
-				const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
-				process.env.PI_CODING_AGENT_DIR = agentDir;
-				try {
-					const expected = scenario === "Unicode alias loaded" || scenario === "repeated entries" ? /reached session creation/
-						: scenario === "startup failure" ? /Required child extension failed during startup/
-						: scenario === "provider failure" ? /Required child extension provider registration failed/ : /Required child extension failed to load/;
-					await assert.rejects(() => factory.create(launch.session), expected);
-					assert.equal(disposed, scenario === "startup failure");
-				} finally {
-					await factory.dispose();
-					if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-					else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-					fs.rmSync(dir, { recursive: true, force: true });
-				}
+				const expected = scenario === "Unicode alias loaded" || scenario === "repeated entries" ? /reached session creation/
+					: scenario === "startup failure" ? /Required child extension failed during startup/
+					: scenario === "provider failure" ? /Required child extension provider registration failed/ : /Required child extension failed to load/;
+				await rejectsChildCreate(dir, agentDir, pi, launch.session, expected);
+				assert.equal(disposed, scenario === "startup failure");
 			});
 		}
 	}

@@ -289,33 +289,25 @@ describe("quoted names in tool and extension lists", () => {
 		assert.equal(description.frontmatter.description, 'Review \\"a\\", then continue');
 	});
 
-	it("loads quoted tools and extension paths as plain names", () => {
-		const previous = process.env.PI_CODING_AGENT_DIR;
-		const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-quoted-name-"));
+	it("loads quoted tools and extension paths as plain names", () => withTempHome(() => {
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-quoted-project-"));
-		tempDirs.push(home, project);
-		process.env.PI_CODING_AGENT_DIR = home;
-		try {
-			const agentFile = path.join(project, ".pi", "agents", "reviewer.md");
-			writeAgent(agentFile, [
-				"---",
-				"name: reviewer",
-				"description: Reviews with quoted tools",
-				'tools: "read", "bash"',
-				`extensions: "./ext/a.ts", './ext/b.ts'`,
-				"---",
-				"Review.",
-				"",
-			].join("\n"));
-			const agent = discoverAgents(project, "project").agents.find((item) => item.name === "reviewer");
-			assert.deepEqual(agent?.tools, ["read", "bash"]);
-			const agentDir = path.dirname(agentFile);
-			assert.deepEqual(agent?.extensions, [path.resolve(agentDir, "ext/a.ts"), path.resolve(agentDir, "ext/b.ts")]);
-		} finally {
-			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previous;
-		}
-	});
+		tempDirs.push(project);
+		const agentFile = path.join(project, ".pi", "agents", "reviewer.md");
+		writeAgent(agentFile, [
+			"---",
+			"name: reviewer",
+			"description: Reviews with quoted tools",
+			'tools: "read", "bash"',
+			`extensions: "./ext/a.ts", './ext/b.ts'`,
+			"---",
+			"Review.",
+			"",
+		].join("\n"));
+		const agent = discoverAgents(project, "project").agents.find((item) => item.name === "reviewer");
+		assert.deepEqual(agent?.tools, ["read", "bash"]);
+		const agentDir = path.dirname(agentFile);
+		assert.deepEqual(agent?.extensions, [path.resolve(agentDir, "ext/a.ts"), path.resolve(agentDir, "ext/b.ts")]);
+	}));
 });
 
 describe("frontmatter comments", () => {

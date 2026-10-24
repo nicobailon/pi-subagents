@@ -208,7 +208,7 @@ function createRequiredChildExtensionIdentity(requiredPaths: ReadonlySet<string>
 	const identities = new Set(aliases.values());
 	return (extensionPath) => {
 		const known = aliases.get(extensionPath);
-		if (known !== undefined || identities.size === 0) return known;
+		if (known !== undefined) return known;
 		const identity = childExtensionFileIdentity(extensionPath);
 		if (identity === undefined || !identities.has(identity)) return undefined;
 		// Retain the alias even if the extension removes its file before reporting a failure.
@@ -522,7 +522,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			// file it names, after Pi's Unicode-space normalization. A required extension that failed under an
 			// unmatched spelling is still rejected by the missing-identity check after loading.
 			const isRequiredSource = (extensionPath: string) => requiredPaths.size > 0 && requiredExtensionIdentity(
-				resolvedExtensionPaths.get(extensionPath) ?? (path.isAbsolute(extensionPath) ? extensionPath.replace(PI_UNICODE_SPACES, " ") : extensionPath),
+				resolvedExtensionPaths.get(extensionPath) ?? extensionPath.replace(PI_UNICODE_SPACES, " "),
 			) !== undefined;
 			const loader = new pi.DefaultResourceLoader({
 				cwd: launch.cwd,
@@ -574,7 +574,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				if (requiredPaths.size > 0) {
 					const loadedIdentities = new Set(loader.getExtensions().extensions.map(({ resolvedPath }) => requiredExtensionIdentity(resolvedPath)));
 					const missing = [...requiredPaths].filter((extensionPath) => !loadedIdentities.has(requiredExtensionIdentity(extensionPath)));
-					if (missing.length) throw new Error(`Required child extension failed to load: missing loaded identities for ${missing.join(", ")}`);
+					if (missing.length) throw new Error(`Required child extension failed to load: ${missing.join(", ")}`);
 				}
 				if (launch.parentProviderRegistry) inheritedProviders = inheritParentProviders(modelRuntime, launch.parentProviderRegistry, queued.claimedProviderIds, launch.onExtensionError);
 				if (queued.registered || inheritedProviders.size > 0) {
