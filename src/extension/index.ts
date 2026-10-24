@@ -77,9 +77,9 @@ import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./
 import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
 import { formatWorkflowPreflightSummary, normalizeWorkflowPreflight } from "../workflows/workflow-preflight.ts";
 import { runtimeReplacedAbortReason } from "../workflows/workflow-reuse.ts";
-import { autoResumeFailureText, planWorkflowAutoResumes, WORKFLOW_AUTO_RESUME_MESSAGE_TYPE } from "../workflows/workflow-auto-resume.ts";
+import { autoResumeFailureText, cancelPendingWorkflowAutoResumes, finishWorkflowAutoResume, planWorkflowAutoResumes, startPendingWorkflowAutoResume, WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, type PendingWorkflowAutoResume } from "../workflows/workflow-auto-resume.ts";
 import { recordWorkflowResumeRefusal, releaseWorkflowResumeClaim } from "../workflows/workflow-resume-claim.ts";
-import { workflowResumeLaunched, workflowResumeRefusal, type PreparedWorkflowResume } from "../workflows/workflow-resume.ts";
+import { workflowResumeLaunched, workflowResumeRefusal } from "../workflows/workflow-resume.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { flattenSubagentToolOptions } from "./subagent-options.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
@@ -666,23 +666,31 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	// Each session start claims its interrupted workflows synchronously, then launches them here, off
 	// session start. A launch from a runtime that was cleaned up or reset since gives its claim back.
 	let autoResumeGeneration = 0;
-	const launchWorkflowAutoResume = async (prepared: PreparedWorkflowResume, ctx: ExtensionContext, generation: number): Promise<void> => {
+	// Names this runtime's planned auto-resumes in the process-global registry.
+	const autoResumeOwner = {};
+	const launchWorkflowAutoResume = async (entry: PendingWorkflowAutoResume, ctx: ExtensionContext, generation: number): Promise<void> => {
+		const { prepared } = entry;
 		try {
 			// Let the rest of session start (agent advertisement, other handlers) run first.
 			await new Promise((resolve) => setImmediate(resolve));
 			await waitForAdvertisement();
-			if (runtimeCleaned || generation !== autoResumeGeneration) {
-				releaseWorkflowResumeClaim(prepared.sourceAsyncDir, prepared.newRunId);
-				return;
-			}
-			const outcome = await (await getExecutor()).executeWorkflowResume(randomUUID(), prepared, new AbortController().signal, ctx);
+			const executor = await getExecutor();
+			// The last check before the launch: cleanup or a later session start cancels a launch that has not started.
+			if (runtimeCleaned || generation !== autoResumeGeneration) cancelPendingWorkflowAutoResumes((candidate) => candidate === entry);
+			if (!startPendingWorkflowAutoResume(entry)) return;
+			const outcome = await executor.executeWorkflowResume(randomUUID(), prepared, new AbortController().signal, ctx);
+			// A run launched by a runtime that was cleaned up meanwhile would keep running through its stale context.
+			if (outcome.launched && runtimeCleaned) state.workflowControllers?.get(prepared.newRunId)?.abort(runtimeReplacedAbortReason());
 			if (outcome.launched || !outcome.refusal) return;
 			pi.sendMessage({ customType: WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, content: autoResumeFailureText(prepared.sourceRunId, outcome.refusal), display: true }, { triggerTurn: false });
 		} catch (error) {
+			// A cancelled launch already gave its claim back.
+			if (entry.state === "cancelled") return;
 			const message = error instanceof Error ? error.message : String(error);
 			console.error(`Failed to auto-resume workflow ${prepared.sourceRunId}:`, error);
 			try {
 				if (workflowResumeLaunched(prepared)) return;
+				entry.state = "cancelled";
 				releaseWorkflowResumeClaim(prepared.sourceAsyncDir, prepared.newRunId);
 				const refusal = workflowResumeRefusal("launch-failed", `launch failed: ${message}`, prepared.sourceRunId);
 				recordWorkflowResumeRefusal(prepared.sourceAsyncDir, { reason: refusal.reason, byHand: refusal.byHand, newRunId: prepared.newRunId });
@@ -690,6 +698,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			} catch (cleanupError) {
 				console.error(`Failed to give back the auto-resume claim of workflow ${prepared.sourceRunId}:`, cleanupError);
 			}
+		} finally {
+			finishWorkflowAutoResume(entry);
 		}
 	};
 	const executeSubagentCollapsed = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
@@ -997,8 +1007,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		phaseStartedAt = Date.now();
 		const autoResumeLaunchGeneration = ++autoResumeGeneration;
 		if (recovering && config.autoResume !== false) {
-			for (const prepared of planWorkflowAutoResumes({ asyncDirRoot: DIRS.async, currentSessionId: state.currentSessionId, now: Date.now() })) {
-				void launchWorkflowAutoResume(prepared, ctx, autoResumeLaunchGeneration);
+			for (const entry of planWorkflowAutoResumes({ asyncDirRoot: DIRS.async, currentSessionId: state.currentSessionId, now: Date.now(), owner: autoResumeOwner })) {
+				void launchWorkflowAutoResume(entry, ctx, autoResumeLaunchGeneration);
 			}
 		}
 		logSlowPhase("workflow-auto-resume", phaseStartedAt);
@@ -1027,6 +1037,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		cleanup(shutdownReason) {
 			if (runtimeCleaned) return;
 			runtimeCleaned = true;
+			// Synchronously, so a reload's new runtime finds these runs unclaimed when it scans.
+			cancelPendingWorkflowAutoResumes((entry) => entry.owner === autoResumeOwner);
 			programStatus.dispose(shutdownReason);
 			releaseHostSessionLiveness();
 			releaseHostSessionLiveness = () => {};

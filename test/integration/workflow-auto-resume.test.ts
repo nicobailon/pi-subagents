@@ -13,6 +13,7 @@ import { DIRS, type AsyncStatus } from "../../src/shared/types.ts";
 import { writeWorkflowLaunchRecord, type WorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
 import { readWorkflowResumeClaim } from "../../src/workflows/workflow-resume-claim.ts";
 import { resolveWorkflowResource } from "../../src/workflows/workflow-resources.ts";
+import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
 import { createEventBus, makeMinimalCtx } from "../support/helpers.ts";
 import { available, createSubagentExecutor, installSingleExecutionHooks, mockPi, tempDir } from "../support/single-execution-fixture.ts";
 
@@ -60,12 +61,13 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify(config));
 	};
 	const sessionFileFor = (sessionId: string) => path.join(tempDir, `${sessionId}.jsonl`);
+	type StartedRuntime = { shutDownNow: (reason: string) => Promise<unknown> };
 
 	/**
 	 * One extension runtime. The session_start handlers are called together and `atSessionStart` runs
 	 * right after they return synchronously, before any launch they started could have run.
 	 */
-	const startRuntime = async (reason: string, sessionId: string, options: { previousSessionFile?: string; atSessionStart?: () => void } = {}) => {
+	const startRuntime = async (reason: string, sessionId: string, options: { previousSessionFile?: string; atSessionStart?: (runtime: StartedRuntime) => void } = {}) => {
 		const handlers = new Map<string, Handler[]>();
 		const sent: SentMessage[] = [];
 		let tool: Tool | undefined;
@@ -89,7 +91,10 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			if (previousChildEnv !== undefined) process.env[SUBAGENT_CHILD_ENV] = previousChildEnv;
 		}
 		const started = (handlers.get("session_start") ?? []).map((handler) => handler({ reason, ...(options.previousSessionFile ? { previousSessionFile: options.previousSessionFile } : {}) }, ctx));
-		options.atSessionStart?.();
+		// Pi's reload runs session_shutdown, whose cleanup is synchronous; calling every handler at once
+		// keeps that cleanup inside the caller's synchronous step.
+		const shutDownNow = (shutdownReason: string) => Promise.all((handlers.get("session_shutdown") ?? []).map((handler) => handler({ reason: shutdownReason }, ctx)));
+		options.atSessionStart?.({ shutDownNow });
 		await Promise.all(started);
 		assert.ok(tool, "subagent tool registered");
 		const autoResumeMessages = () => sent.filter((entry) => entry.message.customType === "subagent-auto-resume");
@@ -113,7 +118,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 	};
 	const scriptLaunch = (script: string): WorkflowLaunchRecord => ({ version: 1, source: "script", params: { workflowScript: script, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256(script) });
 
-	it("relaunches a workflow replaced by /reload once, reusing its finished child and re-attaching its running one", { timeout: 90_000 }, async () => {
+	it("relaunches a workflow replaced by /reload once, reusing its finished child and re-attaching its running one", { timeout: 30_000 }, async () => {
 		writeAgents();
 		const nonce = `auto-reload-${Date.now()}`;
 		const sessionId = `session-${nonce}`;
@@ -138,7 +143,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		assert.equal(readWorkflowResumeClaim(path.join(DIRS.async, sourceId))?.trigger, "auto");
 		await waitUntil("stage2 re-attached", () => readStatusFile(resumedId)?.steps?.find((step) => step.workflowKey === "stage2")?.runId);
 		fs.writeFileSync(release, "go");
-		const done = await waitUntil("the resumed run to finish", () => { const status = readStatusFile(resumedId); return status && terminalStates.includes(status.state) ? status : undefined; }, 30_000);
+		const done = await waitUntil("the resumed run to finish", () => { const status = readStatusFile(resumedId); return status && terminalStates.includes(status.state) ? status : undefined; }, 15_000);
 		assert.equal(done.state, "complete", done.error);
 		assert.deepEqual(done.workflow?.value, ["stage one done", "stage two done", "stage three done"]);
 		assert.equal(done.steps?.find((step) => step.workflowKey === "stage1")?.reused, true);
@@ -155,7 +160,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		await third.shutDown("quit");
 	});
 
-	it("resumes a run whose Pi exited, once, without delaying session start; leaves one older than 24 hours", { timeout: 60_000 }, async () => {
+	it("resumes a run whose Pi exited, once, without delaying session start; leaves one older than 24 hours", { timeout: 30_000 }, async () => {
 		writeAgents();
 		const nonce = `auto-exit-${Date.now()}`;
 		const sessionId = `session-${nonce}`;
@@ -177,7 +182,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const resumedId = await waitUntil("the resumed run", () => resumedRuns(recentId)[0]);
 		assert.equal(resumedId, atStart.claimed);
 		assert.deepEqual(readStatusFile(resumedId)?.workflow?.resumeOrigin, { sourceRunId: recentId, attempt: 1 });
-		const done = await waitUntil("the resumed run to finish", () => { const status = readStatusFile(resumedId); return status && terminalStates.includes(status.state) ? status : undefined; }, 30_000);
+		const done = await waitUntil("the resumed run to finish", () => { const status = readStatusFile(resumedId); return status && terminalStates.includes(status.state) ? status : undefined; }, 15_000);
 		assert.equal(done.state, "complete", done.error);
 
 		assert.equal(readStatusFile(oldId)?.workflow?.stopCause, "owner-exited");
@@ -187,7 +192,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		await runtime.shutDown("quit");
 	});
 
-	it("does not resume another session's runs after /new, or when autoResume is off", { timeout: 60_000 }, async () => {
+	it("does not resume another session's runs after /new, or when autoResume is off", { timeout: 30_000 }, async () => {
 		writeAgents();
 		const nonce = `auto-skip-${Date.now()}`;
 		const script = `return "${nonce}";`;
@@ -215,7 +220,69 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		await reopenedOld.shutDown("quit");
 	});
 
-	it("reports a launch that cannot start once, records why, and does not retry it", { timeout: 60_000 }, async () => {
+	it("resumes the run from the new runtime when /reload lands between the session-start claim and the launch", { timeout: 30_000 }, async () => {
+		writeAgents();
+		const nonce = `auto-window-${Date.now()}`;
+		const sessionId = `session-${nonce}`;
+		const script = `const only = await runs.run("only", { agent: "echo", task: "Only ${nonce}" }); return only.output;`;
+		mockPi.onCall({ matchArgIncludes: `Only ${nonce}`, output: "only done" });
+		const sourceId = writeCrashedRun(sessionId, scriptLaunch(script), Date.now() - 60_000);
+		const sourceDir = path.join(DIRS.async, sourceId);
+
+		let firstClaim: string | undefined;
+		let secondClaim: string | undefined;
+		let oldShutdown: Promise<unknown> | undefined;
+		let reloaded: ReturnType<typeof startRuntime> | undefined;
+		const first = await startRuntime("startup", sessionId, {
+			atSessionStart: ({ shutDownNow }) => {
+				firstClaim = readWorkflowResumeClaim(sourceDir)?.newRunId;
+				// The reload happens before the first runtime's launch step runs.
+				oldShutdown = shutDownNow("reload");
+				reloaded = startRuntime("reload", sessionId, { atSessionStart: () => { secondClaim = readWorkflowResumeClaim(sourceDir)?.newRunId; } });
+			},
+		});
+		await oldShutdown;
+		const second = await reloaded!;
+		assert.ok(firstClaim, "the first session start claimed the run");
+		assert.ok(secondClaim, "the reloaded session start claimed it again");
+		assert.notEqual(secondClaim, firstClaim);
+
+		const resumedId = await waitUntil("the resumed run", () => resumedRuns(sourceId)[0]);
+		assert.equal(resumedId, secondClaim, "the new runtime launched it");
+		const done = await waitUntil("the resumed run to finish", () => { const status = readStatusFile(resumedId); return status && terminalStates.includes(status.state) ? status : undefined; }, 15_000);
+		assert.equal(done.state, "complete", done.error);
+		assert.deepEqual(resumedRuns(sourceId), [resumedId], "exactly one run continues it");
+		assert.equal(fs.existsSync(path.join(sourceDir, "resume-refused.json")), false);
+		assert.deepEqual(claimFiles(sourceId).map((name) => name.replace(/released.*/, "released")), ["resumed-by.1.json.released", "resumed-by.2.json"]);
+		assert.deepEqual([...first.autoResumeMessages(), ...second.autoResumeMessages()], []);
+		await second.shutDown("quit");
+	});
+
+	it("aborts a resumed run whose launch finishes after its runtime was cleaned up", { timeout: 30_000 }, async () => {
+		writeAgents();
+		const nonce = `auto-stale-${Date.now()}`;
+		const sessionId = `session-${nonce}`;
+		const resourceName = "test.cleaned-during-launch";
+		const script = `const only = await runs.run("only", { agent: "echo", task: "Only ${nonce}" }); return only.output;`;
+		// Long enough to outlast the test's checks, short enough that a run nothing aborts still ends.
+		mockPi.onCall({ matchArgIncludes: `Only ${nonce}`, delay: 10_000, output: "late" });
+		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", resourceName, params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256(script) }, Date.now() - 60_000);
+		// The launch resolves the resource after its last check; cleaning the runtime there is "cleaned while launching".
+		let cleanUpDuringLaunch: (() => void) | undefined;
+		const registration = registerWorkflowResource({ sessionId, definition: { name: resourceName, version: 1, resolve: () => { cleanUpDuringLaunch?.(); return { script }; } } });
+		try {
+			await startRuntime("startup", sessionId, {
+				atSessionStart: ({ shutDownNow }) => { cleanUpDuringLaunch = () => { cleanUpDuringLaunch = undefined; void shutDownNow("reload"); }; },
+			});
+			const resumedId = await waitUntil("the resumed run", () => resumedRuns(sourceId)[0]);
+			const stopped = await waitUntil("the resumed run to stop", () => { const status = readStatusFile(resumedId); return status && terminalStates.includes(status.state) ? status : undefined; }, 15_000);
+			assert.equal(stopped.workflow?.stopCause, "runtime-replaced", stopped.error);
+		} finally {
+			registration.dispose();
+		}
+	});
+
+	it("reports a launch that cannot start once, records why, and does not retry it", { timeout: 30_000 }, async () => {
 		writeAgents();
 		const nonce = `auto-fail-${Date.now()}`;
 		const sessionId = `session-${nonce}`;
