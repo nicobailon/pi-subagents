@@ -246,7 +246,7 @@ const SubagentParamProperties = {
 	usageBudget: Type.Optional(UsageBudgetOverride),
 	agentScope: Type.Optional(Type.String({ description: "user/project/both (default); project wins collisions." })),
 	cwd: Type.Optional(Type.String({ description: "Execution/project-pane directory." })),
-	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label; runs an external CLI agent there. A Rex host named in settings runs a Pi child there. cwd then means the directory on that machine. \"local\" runs a Pi child in a Rex pane here." })),
+	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label (runs an external CLI agent), a Rex host named in settings (runs a Pi child), or \"local\" (a Pi child in a Rex pane here). On another machine, cwd is a directory there." })),
 	artifacts: Type.Optional(Type.Boolean({ description: "Debug artifacts; default true." })),
 	includeProgress: Type.Optional(Type.Boolean({ description: "Full result progress; default false." })),
 	share: Type.Optional(Type.Boolean({ description: "Upload session to GitHub Gist; default false." })),
