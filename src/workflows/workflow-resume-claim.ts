@@ -21,7 +21,7 @@ const MAX_CLAIM_ROUNDS = 8;
  * n+1, so claims below it are never judged again. Only the owner launches; once the claimed new
  * run's status.json exists the claim is permanent.
  */
-export interface WorkflowResumeClaim {
+interface WorkflowResumeClaim {
 	version: 1;
 	pid: number;
 	pidNamespaceScope?: string;
@@ -31,7 +31,7 @@ export interface WorkflowResumeClaim {
 	trigger: "auto" | "manual" | "reuse";
 }
 
-export interface WorkflowResumeRefusal {
+interface WorkflowResumeRefusal {
 	version: 1;
 	reason: string;
 	byHand: string;
@@ -221,7 +221,7 @@ export function recordWorkflowResumeRefusal(asyncDir: string, refusal: Omit<Work
 	writeAtomicJson(path.join(asyncDir, REFUSAL_FILE), { version: 1, ...refusal, refusedAt: now } satisfies WorkflowResumeRefusal);
 }
 
-export function readWorkflowResumeRefusal(asyncDir: string): WorkflowResumeRefusal | undefined {
+function readWorkflowResumeRefusal(asyncDir: string): WorkflowResumeRefusal | undefined {
 	try {
 		const value = JSON.parse(fs.readFileSync(path.join(asyncDir, REFUSAL_FILE), "utf-8")) as Partial<WorkflowResumeRefusal>;
 		return value?.version === 1 && typeof value.reason === "string" && typeof value.byHand === "string" && typeof value.refusedAt === "number"

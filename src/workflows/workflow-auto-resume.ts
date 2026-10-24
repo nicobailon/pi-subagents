@@ -71,7 +71,6 @@ export function finishWorkflowAutoResume(entry: PendingWorkflowAutoResume): void
 export function planWorkflowAutoResumes(input: { asyncDirRoot: string; currentSessionId: string; now: number; owner: object }): PendingWorkflowAutoResume[] {
 	const { asyncDirRoot, currentSessionId, now } = input;
 	cancelPendingWorkflowAutoResumes((entry) => entry.sessionId === currentSessionId);
-	// A launch cancelled before it started keeps its run id, so the run is claimed again under it.
 	const reusableRunIds = new Map<string, string>();
 	for (const entry of pendingAutoResumes) {
 		if (entry.sessionId !== currentSessionId || entry.state !== "cancelled") continue;
@@ -95,8 +94,7 @@ export function planWorkflowAutoResumes(input: { asyncDirRoot: string; currentSe
 			const at = interruptedAt(status);
 			if (at === undefined || now - at > AUTO_RESUME_MAX_AGE_MS) continue;
 			if (workflowResumeClaimState(asyncDir).kind !== "none" || hasWorkflowResumeRefusal(asyncDir)) continue;
-			const reusedRunId = reusableRunIds.get(runId);
-			const preparation = prepareWorkflowResume({ asyncDirRoot, sourceRunId: runId, trigger: "auto", now, currentSessionId, ...(reusedRunId ? { newRunId: reusedRunId } : {}) });
+			const preparation = prepareWorkflowResume({ asyncDirRoot, sourceRunId: runId, trigger: "auto", now, currentSessionId, newRunId: reusableRunIds.get(runId) });
 			if (preparation.ok) {
 				const entry: PendingWorkflowAutoResume = { sessionId: currentSessionId, owner: input.owner, prepared: preparation.prepared, state: "pending" };
 				pendingAutoResumes.add(entry);

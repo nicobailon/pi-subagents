@@ -5467,7 +5467,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		signal: AbortSignal,
 		ctx: ExtensionContext,
 	) => Promise<AgentToolResult<Details>>;
-	/** Relaunches a stopped workflow claimed by prepareWorkflowResume (resume by id and auto-resume). */
+	/** Relaunches a stopped workflow claimed by prepareWorkflowResume (resume by id and auto-resume); a launch that did not start gives up its claim. */
 	executeWorkflowResume: (
 		id: string,
 		prepared: PreparedWorkflowResume,
@@ -5484,7 +5484,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const publicExecutions = new WeakSet<object>();
 	const workflowResourcePermits = new WeakMap<object, WorkflowResourcePermit>();
 	const publicWorkflowLaunches = new WeakMap<object, PublicWorkflowLaunch>();
-	// Private seam for resume by id: the run id claimed in advance, and the origin the new run records.
 	const workflowResumeLaunches = new WeakMap<object, WorkflowResumeLaunch>();
 	const workflowPermitContexts = new WeakMap<object, { root: WorkflowChildPermit } | { child: WorkflowChildPermitContext }>();
 	const warnedArtifactPackageDirs = new Set<string>();
@@ -7310,7 +7309,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
 			}
 			if (action === "resume") {
-				// No message on a stopped top-level workflow: relaunch it from its saved launch.
 				const workflowResumeSourceId = workflowResumeTargetId(DIRS.async, paramsWithResolvedCwd);
 				if (workflowResumeSourceId) return resumeWorkflowById(_id, workflowResumeSourceId, signal, ctx);
 				return resumeAsyncRun(omitUndefinedProperties({
@@ -8312,7 +8310,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		return executeWithSingleDispatchGuard(id, publicParams, signal, onUpdate, ctx);
 	};
 
-	/** Relaunches a stopped workflow from its prepared resume; a launch that did not start gives up its claim. */
 	const executeWorkflowResume = async (
 		id: string,
 		prepared: PreparedWorkflowResume,

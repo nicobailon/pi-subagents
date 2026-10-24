@@ -826,7 +826,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 	const reconciledFromDetachedChild = typeof result.reconciledFromDetachedChild === "string" ? result.reconciledFromDetachedChild : undefined;
 	const asyncDir = nonemptyPath(result.asyncDir);
 	// Read here, once per delivery; a re-render parses the line back instead of reading the run again.
-	const stopCause = result.workflow && typeof result.workflow === "object" ? (result.workflow as { stopCause?: unknown }).stopCause : undefined;
+	const stopCause = (result.workflow as { stopCause?: unknown } | null | undefined)?.stopCause;
 	const resumeNotice = workflowRunId && asyncDir && isReusableWorkflowStopCause(stopCause) ? describeWorkflowResume(asyncDir, workflowRunId) : undefined;
 	const watchdogBlockers: SubagentNotifyWatchdogBlocker[] = [];
 	const watchdogConcerns: string[] = [];

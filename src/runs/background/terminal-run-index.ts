@@ -117,14 +117,10 @@ function sessionDirs(asyncDirRoot: string, sessionId: string | undefined): strin
 	}
 }
 
-function markerEndedAt(name: string): number {
-	return Number(name.slice(0, TIMESTAMP_WIDTH));
-}
-
 function recentMarkerFiles(dirs: string[], limit: number, endedAfter?: number): string[] {
 	return dirs.flatMap(markerFiles)
 		// The name starts with the run's end time, so an old run is skipped without reading its marker.
-		.filter((marker) => endedAfter === undefined || !(markerEndedAt(marker.name) < endedAfter))
+		.filter((marker) => endedAfter === undefined || !(Number(marker.name.slice(0, TIMESTAMP_WIDTH)) < endedAfter))
 		.sort((left, right) => right.name.localeCompare(left.name))
 		.slice(0, limit)
 		.map((marker) => path.join(marker.dir, marker.name));

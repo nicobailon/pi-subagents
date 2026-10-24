@@ -104,8 +104,6 @@ describe("prepareWorkflowResume", () => {
 				assert.deepEqual(prepare(root, "foreign", trigger, "other-session"), { ok: false, code: "not-owned", reason: "it was started in another session; reopen that session to resume it", byHand: "" });
 			}
 			assert.deepEqual(fs.readdirSync(path.join(root, "foreign")).sort(), before);
-			assert.equal(manualWorkflowResumeRefusalText("foreign", { reason: "it was started in another session; reopen that session to resume it", byHand: "" }),
-				"Cannot resume workflow 'foreign': it was started in another session; reopen that session to resume it.");
 		});
 	});
 

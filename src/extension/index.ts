@@ -678,7 +678,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			await new Promise((resolve) => setImmediate(resolve));
 			await waitForAdvertisement();
 			const executor = await getExecutor();
-			// The last check before the launch: a cancelled launch never starts.
 			if (!startPendingWorkflowAutoResume(entry)) return;
 			const outcome = await executor.executeWorkflowResume(randomUUID(), prepared, new AbortController().signal, ctx);
 			// The executor has given back the claim and recorded any refusal; nothing below may replace them.
@@ -1010,7 +1009,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		const interruptedElsewhere = ctx.hasUI && state.currentSessionId
 			? createInterruptedElsewhereCollector({ currentSessionId: state.currentSessionId, cwd: ctx.cwd, now: Date.now() })
 			: undefined;
-		restoreForegroundRunHistory(state, { resultsDir: DIRS.results, ...(interruptedElsewhere ? { observeForeign: interruptedElsewhere.observeForegroundRun } : {}) });
+		restoreForegroundRunHistory(state, { resultsDir: DIRS.results, observeForeign: interruptedElsewhere?.observeForegroundRun });
 		logSlowPhase("foreground-history", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		restoreActiveJobs(ctx, interruptedElsewhere?.observeStatus);

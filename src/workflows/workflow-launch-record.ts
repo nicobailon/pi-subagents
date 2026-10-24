@@ -51,9 +51,8 @@ export function readWorkflowLaunchRecord(asyncDir: string): WorkflowLaunchRecord
 	if (!isPlainObject(value)) return invalid("launch.json must be a JSON object");
 	if (value.version !== 1) return invalid("launch.json version must be 1");
 	if (typeof value.scriptDigest !== "string" || !value.scriptDigest) return invalid("launch.json scriptDigest must be a non-empty string");
-	const scriptDigest = value.scriptDigest;
-	if (value.source === "structured") return { ok: true, record: { version: 1, source: "structured", scriptDigest } };
+	if (value.source === "structured") return { ok: true, record: { version: 1, source: "structured", scriptDigest: value.scriptDigest } };
 	if (value.source !== "script" && value.source !== "resource") return invalid("launch.json source must be \"script\", \"resource\", or \"structured\"");
 	if (!isPlainObject(value.params)) return invalid("launch.json params must be an object");
-	return { ok: true, record: { version: 1, source: value.source, params: value.params, scriptDigest } };
+	return { ok: true, record: { version: 1, source: value.source, params: value.params, scriptDigest: value.scriptDigest } };
 }

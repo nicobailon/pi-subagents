@@ -568,10 +568,9 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 				owned = stored !== null;
 			}
 			// Only a run this session owns may adopt the caller's completion owner.
-			const adoptCompletionOwnerId = owned ? options.adoptCompletionOwnerId : undefined;
 			const reconciliation = options.reconcile === false
 				? undefined
-				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now, ...(adoptCompletionOwnerId ? { adoptCompletionOwnerId } : {}) }, observeStatus);
+				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now, adoptCompletionOwnerId: owned ? options.adoptCompletionOwnerId : undefined }, observeStatus);
 			status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
 			if (options.reconcile === false) observeStatus?.(status);
 		} catch (error) {

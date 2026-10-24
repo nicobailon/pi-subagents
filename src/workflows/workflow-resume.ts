@@ -13,7 +13,7 @@ import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_OWNER_EXITED } from ".
 /** A run may be resumed again after at most this many resumes that followed Pi exits (auto-resume only). */
 const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
 
-export type WorkflowResumeTrigger = "auto" | "manual";
+type WorkflowResumeTrigger = "auto" | "manual";
 
 export type WorkflowResumeRefusalCode =
 	| "not-owned" | "not-interrupted" | "claim-busy" | "claim-resumed"
