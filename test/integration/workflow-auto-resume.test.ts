@@ -83,12 +83,18 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 	const startRuntime = async (reason: string, sessionId: string, options: { previousSessionFile?: string; atSessionStart?: (runtime: StartedRuntime) => void } = {}) => {
 		const handlers = new Map<string, Handler[]>();
 		const sent: SentMessage[] = [];
+		const staleSends: SentMessage[] = [];
+		let stale = false;
 		let tool: Tool | undefined;
 		const pi = new Proxy({
 			events: createEventBus(),
 			on(event: string, handler: Handler) { handlers.set(event, [...(handlers.get(event) ?? []), handler]); },
 			registerTool(definition: Tool & { name: string }) { if (definition.name === "subagent") tool = definition; },
-			sendMessage(message: SentMessage["message"], sendOptions?: SentMessage["options"]) { sent.push({ message, options: sendOptions }); },
+			sendMessage(message: SentMessage["message"], sendOptions?: SentMessage["options"]) {
+				// Pi makes a runtime's pi stale once its session shuts down.
+				if (stale) { staleSends.push({ message, options: sendOptions }); throw new Error("This extension ctx is stale after session replacement or reload."); }
+				sent.push({ message, options: sendOptions });
+			},
 			getSessionName() { return undefined; },
 		}, { get: (target, prop) => prop in target ? target[prop as keyof typeof target] : () => undefined });
 		const ctx = {
@@ -106,12 +112,12 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const started = (handlers.get("session_start") ?? []).map((handler) => handler({ reason, ...(options.previousSessionFile ? { previousSessionFile: options.previousSessionFile } : {}) }, ctx));
 		// Pi's reload runs session_shutdown, whose cleanup is synchronous; calling every handler at once
 		// keeps that cleanup inside the caller's synchronous step.
-		const shutDownNow = (shutdownReason: string) => Promise.all((handlers.get("session_shutdown") ?? []).map((handler) => handler({ reason: shutdownReason }, ctx)));
+		const shutDownNow = (shutdownReason: string) => { stale = true; return Promise.all((handlers.get("session_shutdown") ?? []).map((handler) => handler({ reason: shutdownReason }, ctx))); };
 		options.atSessionStart?.({ shutDownNow });
 		await Promise.all(started);
 		assert.ok(tool, "subagent tool registered");
 		const autoResumeMessages = () => sent.filter((entry) => entry.message.customType === "subagent-auto-resume");
-		return { tool, ctx, sent, autoResumeMessages, shutDown: async (shutdownReason: string) => { for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: shutdownReason }, ctx); } };
+		return { tool, ctx, sent, staleSends: () => staleSends, autoResumeMessages, shutDown: async (shutdownReason: string) => { stale = true; for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: shutdownReason }, ctx); } };
 	};
 
 	/** What a killed Pi leaves behind: a running status under a dead pid, its saved launch, and the active-run marker. */
@@ -271,10 +277,10 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const second = await reloaded!;
 		assert.ok(firstClaim, "the first session start claimed the run");
 		assert.ok(secondClaim, "the reloaded session start claimed it again");
-		assert.notEqual(secondClaim, firstClaim);
+		assert.equal(secondClaim, firstClaim, "the reload claimed it again under the same new run id");
 
 		const resumedId = await waitUntil("the resumed run", () => resumedRuns(sourceId)[0]);
-		assert.equal(resumedId, secondClaim, "the new runtime launched it");
+		assert.equal(resumedId, firstClaim, "the new runtime launched it under the first claim's id, so `Auto-resumed as <id>.` stays true");
 		const done = await waitUntil("the resumed run to finish", () => { const status = readStatusFile(resumedId); return status && terminalStates.includes(status.state) ? status : undefined; }, 15_000);
 		assert.equal(done.state, "complete", done.error);
 		assert.deepEqual(resumedRuns(sourceId), [resumedId], "exactly one run continues it");
@@ -347,6 +353,32 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			await reloaded.shutDown("quit");
 		} finally {
 			fs.writeFileSync(release, "go");
+		}
+	});
+
+	it("keeps the launch's own refusal when it fails after a /reload during the launch", { timeout: 30_000 }, async () => {
+		writeAgents();
+		const nonce = `auto-stale-fail-${Date.now()}`;
+		const sessionId = `session-${nonce}`;
+		const resourceName = "test.gone-during-launch";
+		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", resourceName, params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256("return 1;") }, Date.now() - 60_000);
+		// The launch resolves the resource after its last check: a reload there, then the resource is gone.
+		let reloadDuringLaunch: (() => void) | undefined;
+		const registration = registerWorkflowResource({ sessionId, definition: { name: resourceName, version: 1, resolve: () => { reloadDuringLaunch?.(); throw new Error("the resource is gone"); } } });
+		try {
+			const runtime = await startRuntime("startup", sessionId, {
+				atSessionStart: ({ shutDownNow }) => { reloadDuringLaunch = () => { reloadDuringLaunch = undefined; void shutDownNow("reload"); }; },
+			});
+			// Written by the launch itself; its follow-up runs before this poll sees the file.
+			const refusal = await waitUntil("the refusal", () => { try { return JSON.parse(fs.readFileSync(path.join(DIRS.async, sourceId, "resume-refused.json"), "utf-8")) as { reason: string; byHand: string }; } catch { return undefined; } });
+			const resolved = resolveWorkflowResource(resourceName, undefined, sessionId);
+			assert.equal(resolved.ok, false);
+			assert.equal(refusal.reason, `workflow resource '${resourceName}' can no longer be resolved: ${resolved.ok ? "" : resolved.error}`);
+			assert.equal(refusal.byHand, `Relaunch it by hand with options: { reuseFrom: "${sourceId}" }.`);
+			assert.equal(readWorkflowResumeClaim(path.join(DIRS.async, sourceId)), undefined, "the claim was given back");
+			assert.deepEqual([...runtime.autoResumeMessages(), ...runtime.staleSends()], [], "the cleaned-up runtime posts nothing");
+		} finally {
+			registration.dispose();
 		}
 	});
 

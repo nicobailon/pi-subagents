@@ -670,6 +670,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const autoResumeOwner = {};
 	const launchWorkflowAutoResume = async (entry: PendingWorkflowAutoResume, ctx: ExtensionContext, generation: number): Promise<void> => {
 		const { prepared } = entry;
+		let executed = false;
 		try {
 			// Let the rest of session start (agent advertisement, other handlers) run first.
 			await new Promise((resolve) => setImmediate(resolve));
@@ -679,13 +680,25 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			if (runtimeCleaned || generation !== autoResumeGeneration) cancelPendingWorkflowAutoResumes((candidate) => candidate === entry);
 			if (!startPendingWorkflowAutoResume(entry)) return;
 			const outcome = await executor.executeWorkflowResume(randomUUID(), prepared, new AbortController().signal, ctx);
+			// The executor has given back the claim and recorded any refusal; nothing below may replace them.
+			executed = true;
 			// A run launched by a runtime that was cleaned up meanwhile would keep running through its stale context.
 			if (outcome.launched && runtimeCleaned) state.workflowControllers?.get(prepared.newRunId)?.abort(runtimeReplacedAbortReason());
-			if (outcome.launched || !outcome.refusal) return;
-			pi.sendMessage({ customType: WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, content: autoResumeFailureText(prepared.sourceRunId, outcome.refusal), display: true }, { triggerTurn: false });
+			// A cleaned-up runtime's pi can no longer post; the refusal stays in the run for its notice.
+			if (outcome.launched || !outcome.refusal || runtimeCleaned) return;
+			try {
+				pi.sendMessage({ customType: WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, content: autoResumeFailureText(prepared.sourceRunId, outcome.refusal), display: true }, { triggerTurn: false });
+			} catch (error) {
+				console.error(`Failed to post the auto-resume failure of workflow ${prepared.sourceRunId}:`, error);
+			}
 		} catch (error) {
 			// A cancelled launch already gave its claim back.
 			if (entry.state === "cancelled") return;
+			// Once the executor returned, it handled the launch's failure itself.
+			if (executed) {
+				console.error(`Failed to finish the auto-resume of workflow ${prepared.sourceRunId}:`, error);
+				return;
+			}
 			const message = error instanceof Error ? error.message : String(error);
 			console.error(`Failed to auto-resume workflow ${prepared.sourceRunId}:`, error);
 			try {

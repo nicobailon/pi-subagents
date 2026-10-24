@@ -87,8 +87,9 @@ export function nextWorkflowResumeAttempt(workflow: Pick<NonNullable<AsyncStatus
 /**
  * Checks a stopped workflow run can be resumed and claims it for a new run id. Synchronous and
  * cheap: the launch itself happens in the executor.
+ * `newRunId` presets the new run's id: a reload claims a run again under the id of the launch it cancelled.
  */
-export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId: string; trigger: WorkflowResumeTrigger; now: number; currentSessionId: string }): WorkflowResumePreparation {
+export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId: string; trigger: WorkflowResumeTrigger; now: number; currentSessionId: string; newRunId?: string }): WorkflowResumePreparation {
 	const { asyncDirRoot, sourceRunId, trigger } = input;
 	const refuse = (code: WorkflowResumeRefusalCode, reason: string): WorkflowResumePreparation => ({ ok: false, ...workflowResumeRefusal(code, reason, sourceRunId) });
 	const sourceAsyncDir = path.join(asyncDirRoot, sourceRunId);
@@ -111,7 +112,7 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 	}
 	const normalized = normalizePublicSubagentExecution(record.params);
 	if (!normalized.ok) return refuse("launch-invalid", `launch.json is invalid: ${normalized.error}`);
-	const newRunId = randomUUID();
+	const newRunId = input.newRunId ?? randomUUID();
 	const claim = claimWorkflowResume(sourceAsyncDir, { newRunId, trigger, now: input.now });
 	if (claim.kind === "resumed") return refuse("claim-resumed", `resumed as ${claim.newRunId}; wait on it or stop it`);
 	if (claim.kind === "busy") return refuse("claim-busy", `being resumed by pid ${claim.pid}`);

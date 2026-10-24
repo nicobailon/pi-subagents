@@ -250,7 +250,7 @@ Workflow script calls use background execution when the request omits `async`. S
 { "autoResume": false }
 ```
 
-Default `true`. When a session is reopened (`pi -c`, `pi --session`, `/resume`) or reloaded (`/reload`), its own top-level async workflows that stopped because Pi exited or the runtime was replaced in the last 24 hours are resumed once, the same way as `subagent({ action: "resume", id })`. Session start does not wait for the relaunch and starts no turn. A relaunch that cannot start is reported in one message and is not tried again; the run can still be resumed by hand. `/new` and forks do not resume the runs of the session they replaced. Set `autoResume` to `false` to resume by hand only.
+Default `true`. When a session is reopened (`pi -c`, `pi --session`, `/resume`) or reloaded (`/reload`), its own top-level async workflows that stopped because Pi exited or the runtime was replaced in the last 24 hours are resumed once, the same way as `subagent({ action: "resume", id })`. Session start does not wait for the relaunch and starts no turn. A run that cannot be relaunched is named in its notice (`Not auto-resumed: …`); a launch that fails after session start also posts one `Auto-resume of workflow <id> failed: …` message. Either way it is not tried again, and the run can still be resumed by hand. `/new` and forks do not resume the runs of the session they replaced. Set `autoResume` to `false` to resume by hand only.
 
 ## `runnerLaunchers`
 
