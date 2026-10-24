@@ -59,6 +59,21 @@ export function parseFrontmatterList(raw: string | undefined): string[] | undefi
 		.filter(Boolean);
 }
 
+function unquoteName(value: string): string {
+	if (value.length >= 2 && ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"')))) {
+		return value.slice(1, -1);
+	}
+	return value;
+}
+
+/** `false` and `none` mean an empty list, not a tool or extension name. */
+export function parseNamedList(raw: string | undefined): string[] | undefined {
+	if (raw === undefined) return undefined;
+	const whole = unquoteName(raw.trim());
+	if (whole === "false" || whole === "none") return [];
+	return parseFrontmatterList(raw)?.map(unquoteName).filter((item) => item !== "false" && item !== "none");
+}
+
 /**
  * Parse YAML frontmatter from agent/chain files.
  * Handles both flat (key: value) and nested block (key: \n  sub: val) values.
@@ -125,7 +140,11 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 			const [key, rawValueValue] = match.slice(1);
 			if (key === undefined || rawValueValue === undefined) continue;
 			const rawValue = rawValueValue.trim();
-			const isQuoted = (rawValue.startsWith('"') && rawValue.endsWith('"')) || (rawValue.startsWith("'") && rawValue.endsWith("'"));
+			const quote = rawValue[0];
+			const nameList = key === "tools" || key === "excludeTools" || key === "mutationTools" || key === "extensions" || key === "subagentOnlyExtensions";
+			// `"false", "none"` starts and ends with a quote, but it is a list. Keep those item quotes for the splitter.
+			const quotedList = nameList && (quote === '"' || quote === "'") && (rawValue.includes(`${quote},`) || rawValue.includes(`, ${quote}`));
+			const isQuoted = !quotedList && ((rawValue.startsWith('"') && rawValue.endsWith('"')) || (rawValue.startsWith("'") && rawValue.endsWith("'")));
 			const value = isQuoted ? rawValue.slice(1, -1) : rawValue;
 			const isFolded = !isQuoted && (rawValue === ">" || rawValue === ">-");
 			const isLiteral = !isQuoted && (rawValue === "|" || rawValue === "|-");

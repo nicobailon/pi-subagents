@@ -27,7 +27,7 @@ import { discoverAvailableSkills, resolveSkills } from "./skills.ts";
 import {
 	buildProactiveSkillSubagentRecommendationLines,
 } from "./proactive-skills.ts";
-import { parseFrontmatter, parseFrontmatterList } from "./frontmatter.ts";
+import { parseFrontmatter, parseNamedList } from "./frontmatter.ts";
 import { resolveEffectiveThinking, toModelInfo } from "../shared/model-info.ts";
 import { resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-resolution.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
@@ -244,9 +244,9 @@ function withDeclaredExtensionPaths(config: AgentConfig, filePath: string): Agen
 	const { extensions: _extensions, subagentOnlyExtensions: _subagentOnlyExtensions, ...withoutResolvedExtensions } = config;
 	return {
 		...withoutResolvedExtensions,
-		...(frontmatter.extensions !== undefined ? { extensions: parseFrontmatterList(frontmatter.extensions) } : {}),
+		...(frontmatter.extensions !== undefined ? { extensions: parseNamedList(frontmatter.extensions) } : {}),
 		...(frontmatter.subagentOnlyExtensions !== undefined
-			? { subagentOnlyExtensions: parseFrontmatterList(frontmatter.subagentOnlyExtensions) }
+			? { subagentOnlyExtensions: parseNamedList(frontmatter.subagentOnlyExtensions) }
 			: {}),
 	};
 }

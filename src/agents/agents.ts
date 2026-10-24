@@ -20,7 +20,7 @@ import { parseChain, parseJsonChain } from "./chain-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
 import { projectScopeRequiresTrustMessage } from "./agent-scope.ts";
 import { closestMatch } from "../shared/edit-distance.ts";
-import { parseFrontmatter, parseFrontmatterList } from "./frontmatter.ts";
+import { parseFrontmatter, parseFrontmatterList, parseNamedList } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
 export { BUILTIN_AGENT_NAMES } from "./builtin-names.ts";
@@ -2190,11 +2190,11 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			else if (frontmatter.advertise === "false") advertise = false;
 			else throw new Error(`Agent '${localName}' has invalid advertise frontmatter; expected true or false.`);
 		}
-		const rawTools = parseFrontmatterList(frontmatter.tools);
+		const rawTools = parseNamedList(frontmatter.tools);
 		const parsedTools = splitToolList(rawTools);
 		const tools = parsedTools.tools ?? [];
 		const mcpDirectTools = parsedTools.mcpDirectTools ?? [];
-		const excludeTools = parseFrontmatterList(frontmatter.excludeTools);
+		const excludeTools = parseNamedList(frontmatter.excludeTools);
 		const parsedAllowedAgents = parseFrontmatterList(frontmatter.allowedAgents);
 		const allowedAgents = parsedAllowedAgents === undefined ? undefined : normalizeCapabilityCeilingAllowedAgents(parsedAllowedAgents);
 		const defaultReads = parseFrontmatterList(frontmatter.defaultReads);
@@ -2260,9 +2260,9 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			else throw new Error(`Agent '${localName}' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.`);
 		}
 
-		const extensions = resolveAgentRelativeExtensionPaths(parseFrontmatterList(frontmatter.extensions), filePath);
-		const subagentOnlyExtensions = resolveAgentRelativeExtensionPaths(parseFrontmatterList(frontmatter.subagentOnlyExtensions), filePath);
-		const mutationTools = parseFrontmatterList(frontmatter.mutationTools);
+		const extensions = resolveAgentRelativeExtensionPaths(parseNamedList(frontmatter.extensions), filePath);
+		const subagentOnlyExtensions = resolveAgentRelativeExtensionPaths(parseNamedList(frontmatter.subagentOnlyExtensions), filePath);
+		const mutationTools = parseNamedList(frontmatter.mutationTools);
 		let fast: boolean | undefined;
 		if (frontmatter.fast !== undefined) {
 			if (frontmatter.fast === "true") fast = true;

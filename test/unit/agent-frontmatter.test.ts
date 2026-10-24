@@ -8,7 +8,7 @@ import { handleManagementAction } from "../../src/agents/agent-management.ts";
 import { serializeAgent } from "../../src/agents/agent-serializer.ts";
 import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts";
 import { discoverAgents, discoverAgentsAll, inspectAgentDefinitionDirectory, type AgentConfig } from "../../src/agents/agents.ts";
-import { parseFrontmatter, parseFrontmatterList } from "../../src/agents/frontmatter.ts";
+import { parseFrontmatter, parseFrontmatterList, parseNamedList } from "../../src/agents/frontmatter.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { applyThinkingSuffix } from "../../src/runs/shared/child-tool-plan.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
@@ -273,6 +273,56 @@ body`);
 
 		assert.equal(afterIndented.frontmatter.description, "normal\n  code\n\nnext");
 		assert.equal(beforeIndented.frontmatter.description, "normal\n\n  code\nnext");
+	});
+});
+
+describe("false is not a name", () => {
+	it("treats false as an empty tool or extension list", () => {
+		assert.deepEqual(parseNamedList("false"), []);
+		assert.deepEqual(parseNamedList("none"), []);
+		assert.deepEqual(parseNamedList('read, "false", bash'), ["read", "bash"]);
+		assert.equal(parseNamedList(undefined), undefined);
+		const quotedList = parseFrontmatter('---\ntools: "false", "none"\nname: worker\n---\nbody');
+		assert.deepEqual(parseNamedList(quotedList.frontmatter.tools), []);
+		const description = parseFrontmatter('---\ndescription: "Review \\"a\\", then continue"\nname: worker\n---\nbody');
+		assert.equal(description.frontmatter.description, 'Review \\"a\\", then continue');
+	});
+
+	it("does not load an extension or tool named false", () => {
+		const previous = process.env.PI_CODING_AGENT_DIR;
+		const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-false-name-"));
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-false-project-"));
+		tempDirs.push(home, project);
+		process.env.PI_CODING_AGENT_DIR = home;
+		try {
+			writeAgent(path.join(project, ".pi", "agents", "reviewer.md"), [
+				"---",
+				"name: reviewer",
+				"description: Reviews without a false tool",
+				"tools: read, false",
+				"extensions: false",
+				"---",
+				"Review.",
+				"",
+			].join("\n"));
+			const agent = discoverAgents(project, "project").agents.find((item) => item.name === "reviewer");
+			assert.deepEqual(agent?.tools, ["read"]);
+			assert.deepEqual(agent?.extensions, []);
+			writeAgent(path.join(project, ".pi", "agents", "plain.md"), [
+				"---",
+				"name: plain",
+				"description: Inherits tools",
+				"---",
+				"Work.",
+				"",
+			].join("\n"));
+			const plain = discoverAgents(project, "project").agents.find((item) => item.name === "plain");
+			assert.equal(plain?.tools, undefined);
+			assert.equal(plain?.extensions, undefined);
+		} finally {
+			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previous;
+		}
 	});
 });
 
