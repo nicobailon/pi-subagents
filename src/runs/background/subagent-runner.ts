@@ -2268,6 +2268,7 @@ export async function runSubagent(
 			sessionId: config.sessionId,
 			completionOwnerId: config.completionOwnerId,
 			completionOwnerProcess: config.completionOwnerProcess,
+			parentWorkflowRunId: config.parentWorkflowRunId,
 			sessionFile: statusPayload.sessionFile ?? latestSessionFile,
 		}), (filePath, payload) => publishRunResult(filePath, () => writePendingAsyncResultFile(filePath, payload as Record<string, unknown>)));
 	};

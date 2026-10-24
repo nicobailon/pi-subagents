@@ -559,9 +559,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				if (isTerminalJobStatus(job.status)) {
 					let publication = terminalPublications.get(job.asyncId);
 					if (!publication && status.mode !== "workflow" && status.processTerminal?.state === "pending"
-						&& status.runId === job.asyncId && status.sessionId === state.currentSessionId
-						&& status.completionOwnerId && (status.completionOwnerId === state.completionOwnerId
-							|| options.deliveryOwnerId?.(status.sessionId, status.completionOwnerId, status.completionOwnerProcess, status.parentWorkflowRunId) === OWNING_SESSION_COMPLETION_OWNER)) {
+						&& status.runId === job.asyncId && status.completionOwnerId
+						&& ((status.sessionId === state.currentSessionId && status.completionOwnerId === state.completionOwnerId)
+							// Also covers a session inherited after /new or /resume: deliveryOwnerId checks run ownership.
+							|| (typeof status.sessionId === "string"
+								&& options.deliveryOwnerId?.(status.sessionId, status.completionOwnerId, status.completionOwnerProcess, status.parentWorkflowRunId) === OWNING_SESSION_COMPLETION_OWNER))) {
 						publication = { instanceId: status.processTerminal.runnerProcessInstanceId, pending: true };
 						terminalPublications.set(job.asyncId, publication);
 					}
