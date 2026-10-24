@@ -31,6 +31,8 @@ import { withWorkflowChildRunModel } from "./workflow-terminal-proof.ts";
 import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { readProcessTerminal } from "./process-terminal.ts";
 import { withCachedUiContext } from "../../shared/extension-context.ts";
+import { OWNING_SESSION_COMPLETION_OWNER } from "../../shared/completion-owner.ts";
+import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -43,6 +45,8 @@ interface AsyncJobTrackerOptions {
 	platform?: NodeJS.Platform;
 	onJobTerminal?: (job: AsyncJobState) => void;
 	onJobCleanup?: (asyncId: string) => void;
+	/** Lets a run whose launching Pi exited hold its publication in the session that owns it. */
+	deliveryOwnerId?: ResultDeliveryOwnership["deliveryOwnerId"];
 	watch?: typeof fs.watch;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
@@ -556,7 +560,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					let publication = terminalPublications.get(job.asyncId);
 					if (!publication && status.mode !== "workflow" && status.processTerminal?.state === "pending"
 						&& status.runId === job.asyncId && status.sessionId === state.currentSessionId
-						&& status.completionOwnerId && status.completionOwnerId === state.completionOwnerId) {
+						&& status.completionOwnerId && (status.completionOwnerId === state.completionOwnerId
+							|| options.deliveryOwnerId?.(status.sessionId, status.completionOwnerId, status.completionOwnerProcess, status.parentWorkflowRunId) === OWNING_SESSION_COMPLETION_OWNER)) {
 						publication = { instanceId: status.processTerminal.runnerProcessInstanceId, pending: true };
 						terminalPublications.set(job.asyncId, publication);
 					}

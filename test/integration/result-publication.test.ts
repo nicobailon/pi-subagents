@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { createAsyncJobTracker } from "../../src/runs/background/async-job-tracker.ts";
+import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
+import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
+import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { makeAgent } from "../support/helpers.ts";
@@ -237,6 +241,50 @@ describe("native runner result publication", { skip: !available ? "pi packages u
 			assert.equal(state.cleanupTimers.size, 0);
 		});
 	}
+	it("keeps a restored run whose launching Pi exited until its late result is published", (t) => {
+		const id = "restored-dead-owner";
+		const asyncDir = path.join(ASYNC_DIR, id);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		const state = publicationState("session", "owner-reopened");
+		const exitedPid = spawnSync(process.execPath, ["-e", ""]).pid;
+		const status = {
+			runId: id, sessionId: "session", completionOwnerId: "owner-exited", completionOwnerProcess: { pid: exitedPid },
+			mode: "single", startedAt: Date.now(), steps: [{ agent: "worker", status: "running" }],
+		};
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ ...status, state: "running" }));
+		updateActiveRunIndex(asyncDir, "running");
+		let tick!: () => void;
+		let refreshes = 0;
+		const tracker = createAsyncJobTracker({ events: { emit() {} } }, state, ASYNC_DIR, {
+			platform: "darwin", widgetEnabled: false, resultsDir: RESULTS_DIR, pollIntervalMs: 0,
+			deliveryOwnerId: createResultDeliveryOwnership(state).deliveryOwnerId,
+			onJobTerminal: () => { refreshes++; },
+		});
+		const interval = t.mock.method(globalThis, "setInterval", ((handler: () => void) => {
+			tick = handler;
+			return { unref() {} } as ReturnType<typeof setInterval>;
+		}) as typeof setInterval);
+		try {
+			tracker.restoreActiveJobs();
+			interval.mock.restore();
+			assert.equal(state.asyncJobs.get(id)?.status, "running");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				...status, state: "failed", steps: [{ agent: "worker", status: "failed" }],
+				processTerminal: { version: 1, state: "pending", runId: id, runnerProcessInstanceId: "instance" },
+			}));
+			tick();
+			assert.equal(state.asyncJobs.get(id)?.status, "failed");
+			assert.equal(state.cleanupTimers.has(id), false, "kept while its result is not published yet");
+			assert.equal(refreshes, 1);
+			writeAsyncResultFile(path.join(RESULTS_DIR, `${id}.json`), { id, sessionId: "session", completionOwnerId: "owner-exited", success: false, state: "failed", summary: "late" });
+			tick();
+			assert.equal(refreshes, 2, "publication triggers a delivery scan");
+			assert.equal(state.cleanupTimers.has(id), true);
+		} finally {
+			tracker.resetJobs();
+			fs.rmSync(path.join(RESULTS_DIR, `${id}.json`), { force: true });
+		}
+	});
 	it("watches the canonical barrier directory through a path alias", async (t) => {
 		const directory = path.join(tempDir, "barrier-directory");
 		const alias = path.join(tempDir, "barrier-alias");
