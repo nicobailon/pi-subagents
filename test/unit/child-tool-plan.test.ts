@@ -160,10 +160,14 @@ describe("child tool plan declared tools", () => {
 			{ input: { tools: ["read", "+codemode"], agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. / },
 			{ input: { tools: ["+codemode"], requireReadTool: true, agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. / },
 			{ input: { tools: ["+codemode", "read", "-write"] }, rejected: /^Subagent lists Pi tool modifier entries in `tools`: \+codemode, -write\. / },
-			{ input: { tools: ["read", "-tools/fixture.ts"], agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: -tools\/fixture\.ts\. / },
 		]) {
 			assert.throws(() => resolvePiLaunchToolPlan(input), { message: rejected });
 		}
+	});
+
+	it("leaves a path-like entry that starts with a hyphen to the extension loader", () => {
+		const plan = resolvePiLaunchToolPlan({ tools: ["read", "-tools/fixture.ts"], agentName: "modifier-repro" });
+		assert.deepEqual(plan.requiredChildTools, ["read"]);
 	});
 
 	it("still plans a plain tool list whose names contain hyphens", () => {

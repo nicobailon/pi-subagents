@@ -205,6 +205,11 @@ function isPiToolModifier(entry: string): boolean {
 	return entry.startsWith("+") || entry.startsWith("-");
 }
 
+/** Path-like entries load extensions instead of naming tools, so Pi never reads them as modifiers. */
+function isToolExtensionPath(entry: string): boolean {
+	return entry.includes("/") || entry.endsWith(".ts") || entry.endsWith(".js");
+}
+
 /**
  * A child's `tools` list is a complete allowlist. Read as names, Pi's modifier
  * entries would become required tools no child has, or mix with the names the
@@ -212,7 +217,7 @@ function isPiToolModifier(entry: string): boolean {
  * agent definition itself, so it checks that list with this too.
  */
 export function assertNoToolModifierEntries(agentName: string | undefined, tools: readonly string[]): void {
-	const entries = tools.filter(isPiToolModifier);
+	const entries = tools.filter((entry) => isPiToolModifier(entry) && !isToolExtensionPath(entry));
 	if (entries.length === 0) return;
 	const subject = agentName ? `Agent '${agentName}'` : "Subagent";
 	throw new Error(`${subject} lists Pi tool modifier ${entries.length === 1 ? "entry" : "entries"} in \`tools\`: ${entries.join(", ")}. A child's \`tools\` list is the complete set of tools it gets, so +name and -name entries are not supported; name every tool the child needs, or omit \`tools\` and use \`excludeTools\` to drop one.`);
@@ -324,7 +329,7 @@ export function resolvePiLaunchToolPlan(
 			(tool) =>
 				!(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")),
 		) ?? [];
-	assertNoToolModifierEntries(input.agentName, input.tools ?? []);
+	assertNoToolModifierEntries(input.agentName, requestedBuiltinTools);
 	if (input.requireReadTool && allowedToolSet && !allowedToolSet.has("read")) {
 		throw new Error(
 			`Capability ceiling from ${capabilityCeiling?.sources.join(", ") || "unknown source"} excludes required tool 'read' for lazy skill loading.`,
