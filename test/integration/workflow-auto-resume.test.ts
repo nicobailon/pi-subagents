@@ -437,7 +437,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const historyDir = path.join(DIRS.results, "foreground-history");
 		const writeForegroundRecord = (sessionId: string, runId: string) => {
 			fs.mkdirSync(historyDir, { recursive: true });
-			fs.writeFileSync(path.join(historyDir, `${runId}.json`), JSON.stringify({ runId, mode: "single", cwd: tempDir, sessionId: sessionFileFor(sessionId), updatedAt: now - 60_000, ownerPid: deadPid(), children: [{ agent: "echo", index: 0, status: "running" }] }));
+			fs.writeFileSync(path.join(historyDir, `${runId}.json`), JSON.stringify({ runId, mode: "single", cwd: tempDir, sessionId: sessionFileFor(sessionId), updatedAt: now - 60_000, owner: { pid: deadPid() }, children: [{ agent: "echo", index: 0, status: "running" }] }));
 		};
 		// A session id is its file path; a saved session file starts with the header that names its id.
 		const headerIds = new Map<string, string>();

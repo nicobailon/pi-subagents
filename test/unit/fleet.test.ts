@@ -1026,7 +1026,7 @@ describe("native subagent fleet", () => {
 			fs.writeFileSync(sessionFile, "{}\n", "utf-8");
 			const exited = spawnSync(process.execPath, ["-e", ""]).pid;
 			assert.ok(exited);
-			const running = (runId: string, owner: { ownerPid: number; ownerPidNamespaceScope?: string; ownerBootId?: string }) => ({
+			const running = (runId: string, owner: { pid: number; pidNamespaceScope?: string; bootId?: string }) => ({
 				runId,
 				mode: "single" as const,
 				cwd: root,
@@ -1034,15 +1034,14 @@ describe("native subagent fleet", () => {
 				updatedAt: 100,
 				parentWorkflowRunId: "workflow-parent",
 				children: [{ agent: "worker", index: 0, status: "running" as const, activityState: "active" as const, currentTool: "bash", sessionFile, resumeContract: { outputMode: "inline" as const } }],
-				ownerPidNamespaceScope: currentPidNamespaceScope(),
-				...owner,
+				owner: { pidNamespaceScope: currentPidNamespaceScope(), ...owner },
 			});
-			persistForegroundRun(running("owner-dead", { ownerPid: exited }), { resultsDir });
-			persistForegroundRun(running("owner-alive", { ownerPid: process.pid, ownerBootId: "boot-now" }), { resultsDir });
+			persistForegroundRun(running("owner-dead", { pid: exited }), { resultsDir });
+			persistForegroundRun(running("owner-alive", { pid: process.pid, bootId: "boot-now" }), { resultsDir });
 			// This test process is alive, so only the boot id can say this owner is gone.
-			persistForegroundRun(running("owner-rebooted", { ownerPid: process.pid, ownerBootId: "boot-before" }), { resultsDir });
-			persistForegroundRun(running("owner-other-namespace", { ownerPid: exited, ownerPidNamespaceScope: "pid:[container]" }), { resultsDir });
-			assert.deepEqual([...savedForegroundRuns(resultsDir).values()].map((run) => [run.runId, run.children[0]?.status, run.ownerPid !== undefined]).sort(), [
+			persistForegroundRun(running("owner-rebooted", { pid: process.pid, bootId: "boot-before" }), { resultsDir });
+			persistForegroundRun(running("owner-other-namespace", { pid: exited, pidNamespaceScope: "pid:[container]" }), { resultsDir });
+			assert.deepEqual([...savedForegroundRuns(resultsDir).values()].map((run) => [run.runId, run.children[0]?.status, run.owner !== undefined]).sort(), [
 				["owner-alive", "running", true], ["owner-dead", "running", true], ["owner-other-namespace", "running", true], ["owner-rebooted", "running", true],
 			]);
 
@@ -1057,7 +1056,7 @@ describe("native subagent fleet", () => {
 			assert.deepEqual([...restored.foregroundRuns!.keys()].sort(), ["owner-dead", "owner-rebooted"]);
 			const stopped = restored.foregroundRuns!.get("owner-dead")!;
 			assert.deepEqual(stopped.children[0], { agent: "worker", index: 0, status: "stopped", exitCode: 1, error: FOREGROUND_OWNER_EXITED_STOP_ERROR, finalOutput: FOREGROUND_OWNER_EXITED_STOP_ERROR, sessionFile, resumeContract: { outputMode: "inline" } });
-			assert.equal(stopped.ownerPid, undefined);
+			assert.equal(stopped.owner, undefined);
 			assert.equal(stopped.parentWorkflowRunId, "workflow-parent");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -1070,7 +1069,7 @@ describe("native subagent fleet", () => {
 			const resultsDir = path.join(root, "results");
 			const exited = spawnSync(process.execPath, ["-e", ""]).pid;
 			assert.ok(exited);
-			const run = (runId: string, ownerPid?: number): ForegroundResumeRun => ({ runId, mode: "single", cwd: root, sessionId: "session-current", updatedAt: 100, ...(ownerPid ? { ownerPid } : {}), children: [{ agent: "worker", index: 0, status: ownerPid ? "running" : "completed" }] });
+			const run = (runId: string, ownerPid?: number): ForegroundResumeRun => ({ runId, mode: "single", cwd: root, sessionId: "session-current", updatedAt: 100, ...(ownerPid ? { owner: { pid: ownerPid } } : {}), children: [{ agent: "worker", index: 0, status: ownerPid ? "running" : "completed" }] });
 			// The two oldest files are running records: one whose owner is alive (its final save will
 			// replace it later) and one left by a Pi process that died.
 			for (const [index, [runId, ownerPid]] of ([["running-live", process.pid], ["running-dead", exited], ["final-1", undefined], ["final-2", undefined]] as const).entries()) {
@@ -1090,13 +1089,11 @@ describe("native subagent fleet", () => {
 			const resultsDir = path.join(root, "results");
 			const run = (runId: string, extra: Partial<ForegroundResumeRun> = {}): ForegroundResumeRun => ({ runId, mode: "single", cwd: root, sessionId: "session-current", updatedAt: 100, children: [{ agent: "worker", index: 0, status: "completed" }], ...extra });
 			// Run A belongs to another Pi process: this process's state never held it.
-			persistForegroundRun(run("run-a", { ownerPid: process.pid + 1, children: [{ agent: "worker", index: 0, status: "running" }] }), { resultsDir });
+			persistForegroundRun(run("run-a", { owner: { pid: process.pid + 1 }, children: [{ agent: "worker", index: 0, status: "running" }] }), { resultsDir });
 			const fileA = foregroundHistoryFile(resultsDir, "run-a");
 			fs.utimesSync(fileA, 1_000, 1_000);
 			const bytesA = fs.readFileSync(fileA, "utf-8");
-			const state = stateForTest();
-			state.foregroundRuns!.set("run-b", run("run-b"));
-			persistForegroundRun(state.foregroundRuns!.get("run-b")!, { resultsDir });
+			persistForegroundRun(run("run-b"), { resultsDir });
 			assert.equal(fs.readFileSync(fileA, "utf-8"), bytesA);
 			assert.equal(fs.statSync(fileA).mtimeMs, 1_000_000, "run A's file was not rewritten");
 			assert.deepEqual([...savedForegroundRuns(resultsDir).keys()].sort(), ["run-a", "run-b"]);
@@ -1130,7 +1127,7 @@ describe("native subagent fleet", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-foreground-running-discard-"));
 		try {
 			const resultsDir = path.join(root, "results");
-			const running = (runId: string, ownerPid: number) => ({ runId, mode: "single" as const, cwd: root, sessionId: "session-current", updatedAt: 100, ownerPid, children: [{ agent: "worker", index: 0, status: "running" as const }] });
+			const running = (runId: string, ownerPid: number) => ({ runId, mode: "single" as const, cwd: root, sessionId: "session-current", updatedAt: 100, owner: { pid: ownerPid }, children: [{ agent: "worker", index: 0, status: "running" as const }] });
 			persistForegroundRun(running("threw", process.pid), { resultsDir });
 			persistForegroundRun(running("other-owner", process.pid + 1), { resultsDir });
 			discardRunningForegroundRun("threw", { resultsDir });

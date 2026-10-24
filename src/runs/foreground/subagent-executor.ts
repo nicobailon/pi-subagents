@@ -101,8 +101,7 @@ import { dismissRecoveredWorkflow } from "./async-dismiss-action.ts";
 import { inheritedSessionIds } from "../../shared/session-succession.ts";
 import { promotePausedWorkflowIfSettled, reconcileDetachedWorkflowChildCompletion } from "./workflow-detach-reconcile.ts";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
-import { currentBootId } from "../background/boot-id.ts";
-import { currentPidNamespaceScope } from "../background/pid-namespace.ts";
+import { currentRecordedPid } from "../background/boot-id.ts";
 import { resolveAsyncRootResultPath, waitForImportedAsyncRoot } from "../background/chain-root-attachment.ts";
 import { awaitExistingAsyncRun, claimWorkflowAwaitedResult } from "../background/await-async-run.ts";
 import { fallbackResultPayloadPathForSessionRun, resultFilePath, retireResultSnapshot, writeAsyncResultFile } from "../background/result-files.ts";
@@ -871,8 +870,8 @@ function rememberRunningForegroundRun(input: RememberedForegroundRunInput & { ch
 			...(input.sessionId ? { sessionId: input.sessionId } : {}),
 			updatedAt,
 			children: [rememberedForegroundChild(input, input.child, 0, "running", updatedAt)],
-			ownerPid: process.pid,
-			...omitUndefinedProperties({ ownerPidNamespaceScope: currentPidNamespaceScope(), ownerBootId: currentBootId(), parentWorkflowRunId: input.parentWorkflowRunId }),
+			owner: currentRecordedPid(),
+			...(input.parentWorkflowRunId ? { parentWorkflowRunId: input.parentWorkflowRunId } : {}),
 		});
 	} catch (error) {
 		console.error("Failed to persist running foreground run:", error);
@@ -5793,8 +5792,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					cwd: workflowCwd,
 					...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}),
 					...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}),
-					pid: process.pid,
-					...omitUndefinedProperties({ pidNamespaceScope: currentPidNamespaceScope(), bootId: currentBootId() }),
+					...currentRecordedPid(),
 					...(workflowCapabilityCeiling ? { admissionCapabilityCeiling: workflowCapabilityCeiling } : {}),
 					steps: [],
 					...(workflowPreflight ? { preflight: workflowPreflight } : {}),

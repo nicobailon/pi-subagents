@@ -2,8 +2,6 @@ import * as fs from "node:fs";
 import { readStatus } from "../../shared/utils.ts";
 import { workflowAwaitedAsyncResultPath } from "./async-execution.ts";
 import { waitForImportedAsyncRoot, type ImportedAsyncRootResult } from "./chain-root-attachment.ts";
-import { currentBootId } from "./boot-id.ts";
-import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { resultPayloadPathForSessionRun, resultSnapshotReplaced, withResultRunLease, type ResultSnapshot } from "./result-files.ts";
 import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
 
@@ -20,7 +18,7 @@ function runnerExitedWithoutResult(asyncDir: string, runId: string, resultPath: 
 	const status = readStatus(asyncDir);
 	if (!status || (status.state !== "running" && status.state !== "queued") || typeof status.pid !== "number") return false;
 	// A pid from another namespace never reads as dead here, so the runner is not presumed gone.
-	if (checkRecordedPidLiveness({ pid: status.pid, pidNamespaceScope: status.pidNamespaceScope, bootId: status.bootId }, { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() }) !== "dead") return false;
+	if (checkRecordedPidLiveness({ pid: status.pid, pidNamespaceScope: status.pidNamespaceScope, bootId: status.bootId }) !== "dead") return false;
 	return !fs.existsSync(resultPath) && !(status.sessionId && resultPayloadPathForSessionRun(asyncDir, status.sessionId, runId));
 }
 

@@ -964,7 +964,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		const release = path.join(tempDir, `${nonce}.release`);
 		mockPi.onCall({ matchArgIncludes: `Single ${nonce}`, waitForPath: release, output: "single done" });
 		mockPi.onCall({ matchArgIncludes: `Workflow child ${nonce}`, waitForPath: release, output: "child done" });
-		type HistoryRun = { runId: string; updatedAt: number; ownerPid?: number; ownerPidNamespaceScope?: string; ownerBootId?: string; parentWorkflowRunId?: string; children: Array<{ status: string; sessionFile?: string }> };
+		type HistoryRun = { runId: string; updatedAt: number; owner?: { pid: number; pidNamespaceScope?: string; bootId?: string }; parentWorkflowRunId?: string; children: Array<{ status: string; sessionFile?: string }> };
 		const historyRuns = () => savedForegroundRuns<HistoryRun>();
 		const waitForRecord = async (label: string, predicate: (run: HistoryRun) => boolean): Promise<HistoryRun> => {
 			for (const deadline = Date.now() + 15_000; Date.now() < deadline; await new Promise((resolve) => setTimeout(resolve, 20))) {
@@ -981,23 +981,23 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.ok(workflowRunId, workflow.content[0]?.text);
 		try {
 			const running = await waitForRecord("the single run's running record", (run) => run.updatedAt >= startedAt && run.parentWorkflowRunId === undefined && run.children[0]?.status === "running");
-			assert.equal(running.ownerPid, process.pid);
-			assert.equal(running.ownerPidNamespaceScope, currentPidNamespaceScope());
-			assert.equal(running.ownerBootId, currentBootId());
+			assert.equal(running.owner?.pid, process.pid);
+			assert.equal(running.owner?.pidNamespaceScope, currentPidNamespaceScope());
+			assert.equal(running.owner?.bootId, currentBootId());
 			assert.match(running.children[0]?.sessionFile ?? "", /\.jsonl$/, "the record points at the child's transcript");
 			const workflowChild = await waitForRecord("the workflow child's running record", (run) => run.parentWorkflowRunId === workflowRunId);
 			assert.equal(workflowChild.children[0]?.status, "running");
-			assert.equal(workflowChild.ownerPid, process.pid);
+			assert.equal(workflowChild.owner?.pid, process.pid);
 
 			fs.writeFileSync(release, "go");
 			const result = await single;
 			assert.equal(result.isError, undefined, result.content[0]?.text);
 			const finished = historyRuns().find((run) => run.runId === running.runId);
 			assert.equal(finished?.children[0]?.status, "completed");
-			assert.equal(finished?.ownerPid, undefined);
+			assert.equal(finished?.owner, undefined);
 			const childFinished = await waitForRecord("the workflow child's final record", (run) => run.runId === workflowChild.runId && run.children[0]?.status !== "running");
 			assert.equal(childFinished.children[0]?.status, "completed");
-			assert.equal(childFinished.ownerPid, undefined);
+			assert.equal(childFinished.owner, undefined);
 		} finally {
 			fs.writeFileSync(release, "go");
 			await single.catch(() => undefined);

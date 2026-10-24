@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import { currentPidNamespaceScope } from "./pid-namespace.ts";
+import type { RecordedPid } from "./stale-run-reconciler.ts";
 
 function readBootIdFromOs(): string | undefined {
 	try {
@@ -15,10 +17,7 @@ function readBootIdFromOs(): string | undefined {
 
 // Process-wide, so the bundled extension and the compiled runner modules share one value.
 const BOOT_ID_KEY = Symbol.for("pi-subagents.boot-id.v1");
-
-type BootIdGlobal = typeof globalThis & {
-	[BOOT_ID_KEY]?: { value: string | undefined };
-};
+const runtime = globalThis as typeof globalThis & { [BOOT_ID_KEY]?: { value: string | undefined } };
 
 let reader: () => string | undefined = readBootIdFromOs;
 
@@ -27,7 +26,6 @@ let reader: () => string | undefined = readBootIdFromOs;
  * different boot id cannot still be running. Undefined when the platform has none.
  */
 export function currentBootId(): string | undefined {
-	const runtime = globalThis as BootIdGlobal;
 	const cached = runtime[BOOT_ID_KEY];
 	if (cached) return cached.value;
 	const value = reader();
@@ -35,13 +33,20 @@ export function currentBootId(): string | undefined {
 	return value;
 }
 
+/** This process as a recorded pid, without the fields the platform does not have. */
+export function currentRecordedPid(): RecordedPid {
+	const pidNamespaceScope = currentPidNamespaceScope();
+	const bootId = currentBootId();
+	return { pid: process.pid, ...(pidNamespaceScope ? { pidNamespaceScope } : {}), ...(bootId ? { bootId } : {}) };
+}
+
 /** Fixes the boot id without reading the OS; runners take Pi's value from their config. */
 export function primeBootId(value: string | undefined): void {
-	(globalThis as BootIdGlobal)[BOOT_ID_KEY] = { value };
+	runtime[BOOT_ID_KEY] = { value };
 }
 
 /** Clears the cache so the next read calls `nextReader` (default: the OS reader). */
 export function resetBootIdForTesting(nextReader?: () => string | undefined): void {
 	reader = nextReader ?? readBootIdFromOs;
-	delete (globalThis as BootIdGlobal)[BOOT_ID_KEY];
+	delete runtime[BOOT_ID_KEY];
 }

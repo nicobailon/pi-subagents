@@ -2,9 +2,7 @@ import { ownsRun } from "../shared/run-ownership.ts";
 import { inheritedSessionIds } from "../../shared/session-succession.ts";
 import { OWNING_SESSION_COMPLETION_OWNER } from "../../shared/completion-owner.ts";
 import type { SubagentState } from "../../shared/types.ts";
-import { currentBootId } from "./boot-id.ts";
-import { currentPidNamespaceScope } from "./pid-namespace.ts";
-import { checkRecordedPidLiveness, type RecordedPid } from "./stale-run-reconciler.ts";
+import { checkRecordedPidLiveness, isRecordedPid } from "./stale-run-reconciler.ts";
 
 type ResultDeliveryState = Pick<SubagentState, "currentSessionId" | "completionOwnerId">;
 
@@ -21,14 +19,6 @@ export interface ResultDeliveryOwnership {
 
 // A dead process cannot come back, so only that verdict is kept.
 const deadCompletionOwnerIds = new Set<string>();
-
-function isRecordedPid(value: unknown): value is RecordedPid {
-	if (!value || typeof value !== "object") return false;
-	const { pid, pidNamespaceScope, bootId } = value as Record<string, unknown>;
-	return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0
-		&& (pidNamespaceScope === undefined || typeof pidNamespaceScope === "string")
-		&& (bootId === undefined || typeof bootId === "string");
-}
 
 export function createResultDeliveryOwnership(state: ResultDeliveryState): ResultDeliveryOwnership {
 	const currentOwner = (): string | undefined => typeof state.completionOwnerId === "string" && state.completionOwnerId
@@ -48,9 +38,7 @@ export function createResultDeliveryOwnership(state: ResultDeliveryState): Resul
 				|| completionOwnerId === OWNING_SESSION_COMPLETION_OWNER || parentWorkflowRunId
 				|| !ownsRun(state.currentSessionId, sessionId)) return completionOwnerId;
 			if (!deadCompletionOwnerIds.has(completionOwnerId)) {
-				if (!isRecordedPid(ownerProcess)) return completionOwnerId;
-				const liveness = checkRecordedPidLiveness(ownerProcess, { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() });
-				if (liveness !== "dead") return completionOwnerId;
+				if (!isRecordedPid(ownerProcess) || checkRecordedPidLiveness(ownerProcess) !== "dead") return completionOwnerId;
 				deadCompletionOwnerIds.add(completionOwnerId);
 			}
 			return OWNING_SESSION_COMPLETION_OWNER;

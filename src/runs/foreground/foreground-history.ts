@@ -6,9 +6,7 @@ import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { utf8Tail } from "../../shared/utf8.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
 import { validateModelResponseAliases } from "../../shared/model-response-aliases.ts";
-import { checkRecordedPidLiveness } from "../background/stale-run-reconciler.ts";
-import { currentPidNamespaceScope } from "../background/pid-namespace.ts";
-import { currentBootId } from "../background/boot-id.ts";
+import { checkRecordedPidLiveness, isRecordedPid } from "../background/stale-run-reconciler.ts";
 import { encodeIndexSegment } from "../background/index-segment.ts";
 
 export const MAX_REMEMBERED_FOREGROUND_RUNS = 50;
@@ -77,13 +75,9 @@ function hasRunningChild(run: Pick<ForegroundResumeRun, "children">): boolean {
 	return run.children.some((child) => child.status === "running");
 }
 
-function isOwnerPid(value: unknown): value is number {
-	return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
-
 /** A `running` record is kept only for a single run whose owning Pi process can be probed later. */
 function isAdmittedChildStatus(run: Partial<ForegroundResumeRun>, status: unknown): boolean {
-	return isRestorableForegroundStatus(status) || (status === "running" && run.mode === "single" && isOwnerPid(run.ownerPid));
+	return isRestorableForegroundStatus(status) || (status === "running" && run.mode === "single" && isRecordedPid(run.owner));
 }
 
 function isRestorableResumeContract(value: unknown): boolean {
@@ -115,9 +109,7 @@ function compactRun(run: ForegroundResumeRun): ForegroundResumeRun | undefined {
 		sessionId: run.sessionId,
 		updatedAt: run.updatedAt,
 		children: run.children.map(compactChild),
-		...(running ? { ownerPid: run.ownerPid } : {}),
-		...(running && run.ownerPidNamespaceScope ? { ownerPidNamespaceScope: run.ownerPidNamespaceScope } : {}),
-		...(running && run.ownerBootId ? { ownerBootId: run.ownerBootId } : {}),
+		...(running ? { owner: run.owner } : {}),
 		...(run.parentWorkflowRunId ? { parentWorkflowRunId: run.parentWorkflowRunId } : {}),
 	};
 }
@@ -150,18 +142,13 @@ function isRestorableRun(value: unknown): value is ForegroundResumeRun {
 		&& typeof run.updatedAt === "number" && Number.isFinite(run.updatedAt)
 		&& Array.isArray(run.children)
 		&& run.children.length > 0
-		&& (run.ownerPidNamespaceScope === undefined || typeof run.ownerPidNamespaceScope === "string")
-		&& (run.ownerBootId === undefined || typeof run.ownerBootId === "string")
+		&& (run.owner === undefined || isRecordedPid(run.owner))
 		&& (run.parentWorkflowRunId === undefined || typeof run.parentWorkflowRunId === "string")
-		&& run.children.every((child) => Boolean(child && typeof child === "object" && !Array.isArray(child)
-			&& typeof (child as Partial<ForegroundResumeChild>).agent === "string"
-			&& typeof (child as Partial<ForegroundResumeChild>).index === "number"
-			&& isRestorableResumeContract((child as Partial<ForegroundResumeChild>).resumeContract)
-			&& isAdmittedChildStatus(run, (child as Partial<ForegroundResumeChild>).status)));
-}
-
-function sortAndBound(runs: ForegroundResumeRun[], limit: number): ForegroundResumeRun[] {
-	return [...runs].sort((left, right) => right.updatedAt - left.updatedAt).slice(0, limit);
+		&& run.children.every((child: Partial<ForegroundResumeChild>) => Boolean(child && typeof child === "object" && !Array.isArray(child)
+			&& typeof child.agent === "string"
+			&& typeof child.index === "number"
+			&& isRestorableResumeContract(child.resumeContract)
+			&& isAdmittedChildStatus(run, child.status)));
 }
 
 /** Deletes the oldest final run files beyond the cap; running records stay, so the cap can be exceeded while runs are live. */
@@ -213,19 +200,19 @@ export function persistForegroundRun(run: ForegroundResumeRun, options: { result
 export function discardRunningForegroundRun(runId: string, options: { resultsDir?: string } = {}): void {
 	const filePath = runHistoryPath(options.resultsDir ?? DIRS.results, runId);
 	const run = readRunFile(filePath);
-	if (run && hasRunningChild(run) && run.ownerPid === process.pid) fs.rmSync(filePath, { force: true });
+	if (run && hasRunningChild(run) && run.owner?.pid === process.pid) fs.rmSync(filePath, { force: true });
 }
 
 /** For a record with a `running` child: its owning Pi process is gone. */
 export function ownerConfirmedDead(run: ForegroundResumeRun): boolean {
-	// readRunFile admits a running child only with a valid ownerPid.
-	return checkRecordedPidLiveness({ pid: run.ownerPid!, pidNamespaceScope: run.ownerPidNamespaceScope, bootId: run.ownerBootId }, { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() }) === "dead";
+	// readRunFile admits a running child only with a valid owner.
+	return checkRecordedPidLiveness(run.owner!) === "dead";
 }
 
 /** A run whose owning Pi process is gone loads as stopped and resumable; one whose owner may be alive is not loaded. */
 function restoreInterruptedRun(run: ForegroundResumeRun): ForegroundResumeRun | undefined {
 	if (!ownerConfirmedDead(run)) return undefined;
-	const { ownerPid: _ownerPid, ownerPidNamespaceScope: _ownerPidNamespaceScope, ownerBootId: _ownerBootId, ...rest } = run;
+	const { owner: _owner, ...rest } = run;
 	return {
 		...rest,
 		children: run.children.map((child) => {
@@ -257,7 +244,7 @@ export function restoreForegroundRunHistory(state: SubagentState, options: { res
 	const saved = historyFiles(dir).flatMap((name) => readRunFile(path.join(dir, name)) ?? []);
 	// Other sessions' records that may have been cut off, for a read-only pointer to them.
 	if (options.observeForeign) for (const run of saved) if (run.sessionId !== sessionId && hasRunningChild(run)) options.observeForeign(run);
-	const runs = sortAndBound(saved.filter((run) => run.sessionId === sessionId), options.limit ?? MAX_REMEMBERED_FOREGROUND_RUNS);
+	const runs = saved.filter((run) => run.sessionId === sessionId).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, options.limit ?? MAX_REMEMBERED_FOREGROUND_RUNS);
 	state.foregroundRuns ??= new Map();
 	let restored = 0;
 	for (const run of runs) {

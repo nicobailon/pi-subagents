@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
-import { currentBootId } from "../runs/background/boot-id.ts";
+import { currentBootId, currentRecordedPid } from "../runs/background/boot-id.ts";
 import { currentPidNamespaceScope } from "../runs/background/pid-namespace.ts";
-import { checkRecordedPidLiveness, type PidLiveness } from "../runs/background/stale-run-reconciler.ts";
+import { checkRecordedPidLiveness, isRecordedPid, type PidLiveness, type RecordedPid } from "../runs/background/stale-run-reconciler.ts";
 import { readWorkflowLaunchRecord } from "./workflow-launch-record.ts";
 
 const CLAIM_FILE_PATTERN = /^resumed-by\.([1-9][0-9]*)\.json$/;
@@ -21,11 +21,8 @@ const MAX_CLAIM_ROUNDS = 8;
  * n+1, so claims below it are never judged again. Only the owner launches; once the claimed new
  * run's status.json exists the claim is permanent.
  */
-interface WorkflowResumeClaim {
+interface WorkflowResumeClaim extends RecordedPid {
 	version: 1;
-	pid: number;
-	pidNamespaceScope?: string;
-	bootId?: string;
 	claimedAt: number;
 	newRunId: string;
 	trigger: "auto" | "manual" | "reuse";
@@ -64,12 +61,9 @@ function claimFilePath(asyncDir: string, generation: number): string {
 }
 
 function isClaim(value: unknown): value is WorkflowResumeClaim {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	if (!isRecordedPid(value) || Array.isArray(value)) return false;
 	const claim = value as Partial<WorkflowResumeClaim>;
 	return claim.version === 1
-		&& typeof claim.pid === "number" && Number.isSafeInteger(claim.pid) && claim.pid > 0
-		&& (claim.pidNamespaceScope === undefined || typeof claim.pidNamespaceScope === "string")
-		&& (claim.bootId === undefined || typeof claim.bootId === "string")
 		&& typeof claim.claimedAt === "number"
 		&& typeof claim.newRunId === "string" && claim.newRunId.length > 0
 		&& (claim.trigger === "auto" || claim.trigger === "manual" || claim.trigger === "reuse");
@@ -136,9 +130,7 @@ function claimantLiveness(filePath: string, claim: WorkflowResumeClaim, liveness
 	// A reload keeps the pid, so this process's own claim counts only while one of its runtimes holds
 	// it. The same pid in another pid namespace (a container sharing the temp root) is another process.
 	if (claim.pid === process.pid && claim.bootId === currentBootId() && claim.pidNamespaceScope === currentPidNamespaceScope()) return heldClaims.has(filePath) ? "alive" : "dead";
-	return liveness
-		? liveness(claim)
-		: checkRecordedPidLiveness({ pid: claim.pid, pidNamespaceScope: claim.pidNamespaceScope, bootId: claim.bootId }, { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() });
+	return liveness ? liveness(claim) : checkRecordedPidLiveness(claim);
 }
 
 /** Read-only view for reuse readers and auto-resume: a dead, corrupt, or missing claim blocks nothing. */
@@ -173,9 +165,7 @@ function createClaimFile(filePath: string, claim: WorkflowResumeClaim): boolean 
 export function claimWorkflowResume(asyncDir: string, input: { newRunId: string; trigger: WorkflowResumeClaim["trigger"]; now?: number; liveness?: ClaimLiveness }): WorkflowResumeClaimOutcome {
 	const claim: WorkflowResumeClaim = {
 		version: 1,
-		pid: process.pid,
-		...(currentPidNamespaceScope() !== undefined ? { pidNamespaceScope: currentPidNamespaceScope() } : {}),
-		...(currentBootId() !== undefined ? { bootId: currentBootId() } : {}),
+		...currentRecordedPid(),
 		claimedAt: input.now ?? Date.now(),
 		newRunId: input.newRunId,
 		trigger: input.trigger,

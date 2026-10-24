@@ -3,8 +3,6 @@ import type { AsyncStatus, ForegroundResumeRun } from "../../shared/types.ts";
 import { ownerConfirmedDead } from "../foreground/foreground-history.ts";
 import { ownerSessionIds } from "../shared/run-ownership.ts";
 import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
-import { currentBootId } from "./boot-id.ts";
-import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
 
 /** Runs interrupted longer ago than this are not pointed to. */
@@ -51,7 +49,7 @@ export function createInterruptedElsewhereCollector(input: { currentSessionId: s
 			if (status.parentWorkflowRunId !== undefined || status.cwd !== input.cwd || !recent(status.lastUpdate ?? status.startedAt)) return;
 			const { pid, pidNamespaceScope, bootId } = status;
 			if (typeof pid !== "number") return;
-			add(status.sessionId, status.runId, () => checkRecordedPidLiveness({ pid, pidNamespaceScope, bootId }, { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() }) === "dead");
+			add(status.sessionId, status.runId, () => checkRecordedPidLiveness({ pid, pidNamespaceScope, bootId }) === "dead");
 		},
 		observeForegroundRun(run) {
 			if (!run.sessionId || run.parentWorkflowRunId !== undefined || run.cwd !== input.cwd || !recent(run.updatedAt)) return;

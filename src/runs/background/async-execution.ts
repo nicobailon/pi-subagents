@@ -83,9 +83,9 @@ import { finalizeProcessTerminal, initializeProcessTerminal, readProcessTerminal
 import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import type { ActiveAsyncCapacityHandle } from "./active-async-capacity.ts";
 import { statusStepDescription } from "./chain-append.ts";
-import { currentBootId } from "./boot-id.ts";
+import { currentBootId, currentRecordedPid } from "./boot-id.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
-import { checkRecordedPidLiveness, type RecordedPid } from "./stale-run-reconciler.ts";
+import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
 import { lookupRunnerLauncher, resolveAgentRunnerLauncher, runnerLauncherPlacementError } from "../shared/runner-launcher.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT, type RunnerLauncher } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
@@ -635,13 +635,6 @@ async function completeRunnerStartupHandshake(
 	}
 }
 
-/** This Pi process, recorded beside its completion owner id so a reopened session can tell it exited. */
-function currentCompletionOwnerProcess(): RecordedPid {
-	const pidNamespaceScope = currentPidNamespaceScope();
-	const bootId = currentBootId();
-	return { pid: process.pid, ...(pidNamespaceScope ? { pidNamespaceScope } : {}), ...(bootId ? { bootId } : {}) };
-}
-
 function persistPreProceedStartupFailure(asyncDir: string, runId: string, runnerProcessInstanceId: string, sessionId: string | undefined, completionOwnerId: string | undefined, message: string): void {
 	try {
 		persistRunnerStartupFailure({ asyncDir, runId, runnerProcessInstanceId, sessionId, completionOwnerId, message });
@@ -711,8 +704,11 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	const runnerProcessInstanceId = randomUUID();
 	const hasRevivalLease = typeof (cfg as { revivalLease?: unknown }).revivalLease === "object";
 	const launchBarrierToken = hasRevivalLease ? undefined : runnerProcessInstanceId;
-	// A launcher may run the runner under another kernel, so only a direct runner shares Pi's boot id.
-	const bootId = (cfg as { launcher?: RunnerLauncher }).launcher ? undefined : currentBootId();
+	// A broker launcher may start the runner outside its own process, even under another kernel, so the
+	// spawned pid is only the wrapper's and only a direct runner shares Pi's boot id. The runner reports
+	// its own identity before it is allowed to proceed.
+	const launcher = (cfg as { launcher?: RunnerLauncher }).launcher;
+	const bootId = launcher ? undefined : currentBootId();
 	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}), ...(bootId ? { bootId } : {}) };
 	writePrivateAtomicJson(cfgPath, launchConfig);
 	const command = binaryHost ?? nodeExecutable;
@@ -733,9 +729,6 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	if (startupAckPath) fs.rmSync(startupAckPath, { force: true });
 	if (startupConfirmPath) fs.rmSync(startupConfirmPath, { force: true });
 	if (startupProceedPath) fs.rmSync(startupProceedPath, { force: true });
-	// A broker launcher may start the runner outside its own process, so the spawned pid is only the
-	// wrapper's. The runner reports its own identity before it is allowed to proceed.
-	const launcher = (launchConfig as { launcher?: RunnerLauncher }).launcher;
 	const identityPath = launcher && launchBarrierToken && launchAsyncDir ? path.join(launchAsyncDir, "runner-startup.json") : undefined;
 	if (identityPath) fs.rmSync(identityPath, { force: true });
 	let runnerIdentity: { pid: number; pidNamespaceScope?: string } | undefined;
@@ -822,7 +815,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 				// The runner may outlive its wrapper; only a confirmed-dead runner in this pid namespace finalizes here,
 				// otherwise status-pid reconciliation does it later.
 				if (!runnerIdentity || runnerIdentity.pidNamespaceScope !== currentPidNamespaceScope()
-					|| checkRecordedPidLiveness(runnerIdentity, { kill: process.kill, observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() }) !== "dead") return;
+					|| checkRecordedPidLiveness(runnerIdentity) !== "dead") return;
 			}
 			finalizeProcessTerminal(asyncDir, runId, {
 				processInstanceId: runnerProcessInstanceId,
@@ -1609,7 +1602,7 @@ export function executeAsyncChain(
 	}
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
-	const completionOwnerProcess = currentCompletionOwnerProcess();
+	const completionOwnerProcess = currentRecordedPid();
 	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
 	try {
 		writeRetainedRequiredChildExtensions(asyncDir, params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(launchParentSessionId ?? undefined));
@@ -2199,7 +2192,7 @@ export function executeAsyncSingle(
 	let spawnResultOrPromise: SpawnRunnerResult | Promise<SpawnRunnerResult> = {};
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
-	const completionOwnerProcess = currentCompletionOwnerProcess();
+	const completionOwnerProcess = currentRecordedPid();
 	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
 	try {
 		spawnResultOrPromise = spawnRunner(

@@ -2243,9 +2243,7 @@ export interface ForegroundResumeRun {
 	updatedAt: number;
 	children: ForegroundResumeChild[];
 	/** Pi process running this run; only on records whose child is `running`. */
-	ownerPid?: number;
-	ownerPidNamespaceScope?: string;
-	ownerBootId?: string;
+	owner?: RecordedPid;
 	/** Workflow that launched this foreground child. */
 	parentWorkflowRunId?: string;
 }

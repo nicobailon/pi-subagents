@@ -450,6 +450,14 @@ export interface RecordedPid {
 	bootId?: string;
 }
 
+export function isRecordedPid(value: unknown): value is RecordedPid {
+	if (!value || typeof value !== "object") return false;
+	const { pid, pidNamespaceScope, bootId } = value as Record<string, unknown>;
+	return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0
+		&& (pidNamespaceScope === undefined || typeof pidNamespaceScope === "string")
+		&& (bootId === undefined || typeof bootId === "string");
+}
+
 export interface RecordedPidObservation {
 	observedScope: string | undefined;
 	observedBootId: string | undefined;
@@ -463,7 +471,7 @@ export interface RecordedPidObservation {
  * probe, but only when both sides are in the same pid namespace or neither records one: a
  * macOS host reading a Linux container's runs must not compare their boot ids.
  */
-export function checkRecordedPidLiveness(recorded: RecordedPid, observation: RecordedPidObservation): PidLiveness {
+export function checkRecordedPidLiveness(recorded: RecordedPid, observation: RecordedPidObservation = { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() }): PidLiveness {
 	const { observedScope, observedBootId } = observation;
 	if (recorded.pidNamespaceScope === observedScope && recorded.bootId && observedBootId && recorded.bootId !== observedBootId) return "dead";
 	// An observer without a scope (macOS/Windows host sharing a container's temp root) cannot match a recorded one.
