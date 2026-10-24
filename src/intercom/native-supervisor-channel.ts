@@ -70,6 +70,8 @@ interface SupervisorReply {
 	requestId: string;
 	createdAt: number;
 	message: string;
+	/** Transport failure, never a supervisor decision or approval. */
+	error?: string;
 }
 
 interface ContactSupervisorParams {
@@ -195,6 +197,7 @@ async function waitForReply(channelDir: string, requestId: string, initialDeadli
 		if (fs.existsSync(file)) {
 			const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<SupervisorReply>;
 			if (parsed.type === "subagent.supervisor.reply" && parsed.requestId === requestId && typeof parsed.message === "string") {
+				if (typeof parsed.error === "string") throw new Error(parsed.error);
 				return parsed as SupervisorReply;
 			}
 		}
@@ -819,6 +822,23 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				seenFiles.add(file);
 				observeRequestLifecycle(request, lifecycle);
 				cleanupRequestLifecycle(request, lifecycle);
+				continue;
+			}
+			if (request.expectsReply && runState(request).blockingWorkflowChildren?.has(request.runId)) {
+				// Pi cannot deliver an ask behind the workflow tool call that awaits this child.
+				// Return a tool error instead of renewing an unreachable ask until the run deadline.
+				try {
+					writePrivateAtomicJson(replyPath(channelDir, request.id), {
+						type: "subagent.supervisor.reply", requestId: request.id, createdAt: now, message: "",
+						error: "Supervisor unavailable: the parent is blocked in an async:false workflow and cannot answer this request. Report the blocker and any partial results, then stop. Relaunch the workflow with async:true to allow supervisor replies.",
+					} satisfies SupervisorReply);
+				} catch (error) {
+					console.error(`Failed to report unreachable supervisor request ${request.id}; will retry:`, error);
+					continue;
+				}
+				seenFiles.add(file);
+				observeRequestLifecycle(request, "resolved");
+				cleanupRequestLifecycle(request, "resolved");
 				continue;
 			}
 			seenFiles.add(file);

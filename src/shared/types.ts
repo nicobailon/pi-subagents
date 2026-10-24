@@ -2410,6 +2410,8 @@ export interface SubagentState {
 	workflowControllers?: Map<string, AbortController>;
 	/** Live in-process workflow child stoppers keyed by parent workflow run id. */
 	workflowChildStops?: Map<string, (childId: string, message?: string) => boolean>;
+	/** Background children awaited by a blocking workflow call: their parent cannot answer supervisor asks. */
+	blockingWorkflowChildren?: Set<string>;
 }
 
 export interface HerdrProjectPaneSnapshot {

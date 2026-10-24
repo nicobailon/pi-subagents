@@ -14,6 +14,8 @@ Packaged `worker` defaults to fresh context so implementation starts from its as
 
 Launch children in the background (`async` follows `asyncByDefault`, normally true) and consume each result at the point a later step depends on it. Native completion wakes the parent session, so the parent returns control instead of sleeping or polling. Use `async: false` only when the parent must block, not for final reviews or gates. When an oracle or advisor reaches an unknown that needs a decision, it asks through supervisor dialogue; use a one-shot oracle call only when one was requested.
 
+A background child awaited by an `async: false` workflow cannot receive a supervisor decision while its parent is blocked in that call. Its native `contact_supervisor` decision or interview request returns a tool error promptly, asking it to report the blocker and partial results and stop. The transport error is not a supervisor reply or approval. Use `async: true` for workflows whose children may need a decision. Progress updates remain non-blocking, and an explicit child `async: true` still returns its launch receipt without being awaited.
+
 Child-safety boundaries are enforced at runtime:
 
 - Child sessions do not receive the bundled `pi-subagents` skill.

@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- A background child awaited by an `async: false` workflow now gets an immediate `contact_supervisor` tool error when it asks a question its blocked parent cannot answer, with guidance to report partial results and use an async workflow. Previously the request could wait until the run deadline, then reach the parent after the child had timed out. Async workflows and explicitly unawaited children still support normal supervisor replies. Thanks to [@XLi-hub](https://github.com/XLi-hub) for #3028 and [@isjiajia01](https://github.com/isjiajia01) for the report in #3018.
+
 - A host-required child extension (`registerRequiredChildExtensions`) is now recognized when Pi loads it under another spelling of its path, such as a symlink, a case variant, or a path with a Unicode space, so its load, provider-registration and startup failures still stop the launch. A required extension that Pi did not load at all now rejects the launch instead of letting the child start without it. Thanks to [@pandalaohe](https://github.com/pandalaohe) for #3012.
 - Skill discovery no longer fails with `ENOTDIR` when a `settings.json` `packages` entry names a single extension file. Thanks to [@tara-marchand](https://github.com/tara-marchand) for #3011.
 - Herdr-placed native Pi children no longer fail their bridge configure step. The bridge read the child's active tools from the event context, which does not carry them, instead of from the Pi API, so it saw no tools and rejected every configuration.

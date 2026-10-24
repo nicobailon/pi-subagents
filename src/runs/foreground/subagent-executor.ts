@@ -6544,6 +6544,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [], ...(workflowResource ? { resource: workflowResource.provenance } : {}) };
 			const childProgress = new Map<string, ReturnType<typeof workflowChildProgress>>();
 			const childLaunches = new Map<string, { agent: string; runId?: string }>();
+			const blockingWorkflowChildren = new Set<string>();
 			let activityTimer: ReturnType<typeof setTimeout> | undefined;
 			let lastProgressAt = 0;
 			let workflowProgressClosed = false;
@@ -6633,6 +6634,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								workflowPermitContexts.set(childRequest, { child: { permit: delegatedWorkflowPermit, workflowRunId: foregroundWorkflowRunId, childKey: key } });
 							}
 							workflowLaunchObservers.set(childRequest, (launch) => {
+								if (launch.async && launch.runId && (childRequest.workflowAwaitAsync === true || childRequest.action === "resume")) {
+									(deps.state.blockingWorkflowChildren ??= new Set()).add(launch.runId);
+									blockingWorkflowChildren.add(launch.runId);
+								}
 								childLaunches.set(key, { agent: launch.agent, ...(launch.runId ? { runId: launch.runId } : {}) });
 								// Telemetry must not decide the child's outcome, as with onTrace in scripted-workflow.
 								try {
@@ -6750,6 +6755,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}, workflowFanoutBudget));
 			} finally {
 				workflowProgressClosed = true;
+				for (const runId of blockingWorkflowChildren) deps.state.blockingWorkflowChildren?.delete(runId);
 				if (activityTimer) clearTimeout(activityTimer);
 				childProgress.clear();
 			}

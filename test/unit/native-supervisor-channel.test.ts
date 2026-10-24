@@ -98,6 +98,63 @@ afterEach(() => {
 });
 
 describe("native supervisor channel", () => {
+	it("keeps blocked-child progress silent and leaves foreign-owner asks untouched", () => {
+		const owner = randomUUID();
+		const runId = randomUUID();
+		const foreignId = randomUUID();
+		const progress = writeRequest({ sessionId: owner, runId, reason: "progress_update" });
+		const foreign = writeRequest({ sessionId: "other-owner", runId: foreignId });
+		const state = makeState(owner, { sessionManager: { getSessionId: () => owner } });
+		state.blockingWorkflowChildren = new Set([runId, foreignId]);
+		const channel = createNativeSupervisorChannel({
+			getAllTools: () => [], registerTool() {}, sendMessage() { assert.fail("neither request should wake the parent"); },
+		} as never, state);
+		try {
+			channel.start();
+			assert.equal(fs.existsSync(requestFile(runId, progress)), false);
+			assert.equal(fs.existsSync(replyFile(runId, progress)), false);
+			assert.equal(fs.existsSync(requestFile(foreignId, foreign)), true);
+			assert.equal(fs.existsSync(replyFile(foreignId, foreign)), false);
+		} finally {
+			channel.dispose();
+		}
+	});
+
+	for (const reason of ["need_decision", "interview_request"] as const) {
+		it(`fails an unanswerable ${reason} ask from an awaited background workflow child`, async () => {
+			const runId = `run-${randomUUID()}`;
+			const owner = `session-${randomUUID()}`;
+			const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+			createdChannels.push(channelDir);
+			const tools = new Map<string, { execute(id: string, params: unknown, signal?: AbortSignal): Promise<unknown> }>();
+			const notices: unknown[] = [];
+			const pi = {
+				getAllTools: () => [...tools.keys()].map(name => ({ name })),
+				registerTool: (tool: { name: string; execute(id: string, params: unknown, signal?: AbortSignal): Promise<unknown> }) => tools.set(tool.name, tool),
+				sendMessage: (message: unknown) => { notices.push(message); return false; },
+			};
+			const state = makeState(owner, { sessionManager: { getSessionId: () => owner } });
+			state.blockingWorkflowChildren = new Set([runId]);
+			registerNativeSupervisorClient(pi as never, { channelDir, runId, agent: "worker", childIndex: 0, orchestratorSessionId: owner });
+			const channel = createNativeSupervisorChannel(pi as never, state);
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 2_000);
+			const ask = tools.get("contact_supervisor")!.execute("ask", { reason, message: "Choose an approach", ...(reason === "interview_request" ? { interview: { questions: [] } } : {}) }, controller.signal);
+			try {
+				channel.start();
+				await assert.rejects(ask, /parent is blocked.*async:false.*Report the blocker.*async:true/s);
+				assert.equal(channel.pending.size, 0);
+				assert.deepEqual(notices, [], "do not queue a question that will be unanswerable when the parent sees it");
+				assert.deepEqual(fs.readdirSync(path.join(channelDir, "requests")), []);
+			} finally {
+				clearTimeout(timeout);
+				controller.abort();
+				await ask.catch(() => {});
+				channel.dispose();
+			}
+		});
+	}
+
 	for (const platform of ["darwin", "win32", "linux"] as const) {
 		it(`bounds coordinator polling to owned channels and stops when idle (${platform})`, async () => {
 			const owner = randomUUID();
