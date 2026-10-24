@@ -12,9 +12,10 @@ export interface ResultDeliveryOwnership {
 	owns(sessionId: string, completionOwnerId: unknown): boolean;
 	/**
 	 * The completion owner a result is delivered under: `owning-session` when its own owner is another Pi
-	 * process that is confirmed dead, so nothing else can ever deliver it; otherwise `completionOwnerId`.
+	 * process that is confirmed dead and this session owns the run, so nothing else can ever deliver it;
+	 * otherwise `completionOwnerId`.
 	 */
-	deliveryOwnerId(completionOwnerId: string | null | undefined, ownerProcess: unknown, parentWorkflowRunId: unknown): string | null | undefined;
+	deliveryOwnerId(sessionId: string | undefined, completionOwnerId: string | null | undefined, ownerProcess: unknown, parentWorkflowRunId: unknown): string | null | undefined;
 	claimedSessionIds(): readonly string[];
 }
 
@@ -40,11 +41,12 @@ export function createResultDeliveryOwnership(state: ResultDeliveryState): Resul
 			if (!owner || (completionOwnerId !== owner && completionOwnerId !== OWNING_SESSION_COMPLETION_OWNER)) return false;
 			return ownsRun(state.currentSessionId, sessionId);
 		},
-		deliveryOwnerId(completionOwnerId, ownerProcess, parentWorkflowRunId) {
+		deliveryOwnerId(sessionId, completionOwnerId, ownerProcess, parentWorkflowRunId) {
 			const owner = currentOwner();
 			// A workflow child is reported by its workflow, which has its own owner-exited notice.
 			if (!owner || typeof completionOwnerId !== "string" || completionOwnerId === owner
-				|| completionOwnerId === OWNING_SESSION_COMPLETION_OWNER || parentWorkflowRunId) return completionOwnerId;
+				|| completionOwnerId === OWNING_SESSION_COMPLETION_OWNER || parentWorkflowRunId
+				|| !ownsRun(state.currentSessionId, sessionId)) return completionOwnerId;
 			if (!deadCompletionOwnerIds.has(completionOwnerId)) {
 				if (!isRecordedPid(ownerProcess)) return completionOwnerId;
 				const liveness = checkRecordedPidLiveness(ownerProcess, { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() });

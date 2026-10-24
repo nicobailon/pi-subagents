@@ -286,6 +286,7 @@ describe("result watcher", () => {
 			write("exited-owner", { completionOwnerId: "owner-exited", completionOwnerProcess: { pid: exitedPid } });
 			write("live-owner", { completionOwnerId: "owner-live", completionOwnerProcess: { pid: process.pid } });
 			write("workflow-child", { completionOwnerId: "owner-exited-workflow", completionOwnerProcess: { pid: exitedPid }, parentWorkflowRunId: "workflow-1" });
+			write("other-session", { sessionId: "session-other", completionOwnerId: "owner-exited-other", completionOwnerProcess: { pid: exitedPid } });
 			try {
 				watcher.primeExistingResults();
 				assert.equal(await waitForPredicate(() => delivered.length === 1), true);
@@ -294,7 +295,8 @@ describe("result watcher", () => {
 				assert.deepEqual(delivered, [{ id: "exited-owner", completionOwnerId: "owning-session" }]);
 				assert.equal(fs.existsSync(path.join(resultsDir, "exited-owner.json")), false);
 				assert.equal(fs.existsSync(path.join(resultsDir, "live-owner.json")), true);
-				assert.equal(fs.existsSync(path.join(resultsDir, "workflow-child.json")), true);
+			assert.equal(fs.existsSync(path.join(resultsDir, "workflow-child.json")), true);
+			assert.equal(fs.existsSync(path.join(resultsDir, "other-session.json")), true);
 			} finally {
 				watcher.stopResultWatcher();
 			}

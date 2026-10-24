@@ -251,8 +251,8 @@ export function createResultWatcher(
 			&& typeof completionOwnerId === "string"
 			&& completionOwnerId === state.completionOwnerId);
 	const claimedSessionIds = () => deps.ownership?.claimedSessionIds() ?? [];
-	const deliveryOwnerId = (completionOwnerId: string | null | undefined, ownerProcess: unknown, parentWorkflowRunId: unknown): string | null | undefined =>
-		deps.ownership?.deliveryOwnerId ? deps.ownership.deliveryOwnerId(completionOwnerId, ownerProcess, parentWorkflowRunId) : completionOwnerId;
+	const deliveryOwnerId = (sessionId: string, completionOwnerId: string | null | undefined, ownerProcess: unknown, parentWorkflowRunId: unknown): string | null | undefined =>
+		deps.ownership?.deliveryOwnerId ? deps.ownership.deliveryOwnerId(sessionId, completionOwnerId, ownerProcess, parentWorkflowRunId) : completionOwnerId;
 
 	const ownsCompletion = (sessionId: string, completionOwnerId: unknown, epoch: number) => {
 		if (!deliveryActive || epoch !== deliveryEpoch) return false;
@@ -343,7 +343,7 @@ export function createResultWatcher(
 		// Missing identity stays on the normal parser path so malformed or legacy
 		// files keep their existing diagnostics and compatibility behavior.
 		if (!identity.sessionId) return true;
-		if (ownsResult(identity.sessionId, deliveryOwnerId(identity.completionOwnerId, identity.completionOwnerProcess, identity.parentWorkflowRunId))) return true;
+		if (ownsResult(identity.sessionId, deliveryOwnerId(identity.sessionId, identity.completionOwnerId, identity.completionOwnerProcess, identity.parentWorkflowRunId))) return true;
 		// Acknowledgment removes the observer index; gating on the mission binding instead
 		// re-ran mission sync for an unowned result on every scan.
 		if (identity.runId && fsApi.existsSync(missionObserverIndexPath(resultsDir, identity.runId))) return true;
@@ -413,7 +413,7 @@ export function createResultWatcher(
 			let data = parseResult(raw);
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const sessionId = data.sessionId;
-			const completionOwnerId = deliveryOwnerId(data.completionOwnerId, data.completionOwnerProcess, data.parentWorkflowRunId);
+			const completionOwnerId = deliveryOwnerId(sessionId, data.completionOwnerId, data.completionOwnerProcess, data.parentWorkflowRunId);
 			const runId = typeof data.runId === "string" && data.runId
 				? data.runId
 				: typeof data.id === "string" && data.id ? data.id : file.replace(/\.json$/i, "");
