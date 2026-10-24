@@ -1194,11 +1194,15 @@ function shouldCollapseSingleChildDetails(job: AsyncJobState, step: AsyncJobStep
 }
 
 function singleChildTask(job: AsyncJobState, step: AsyncJobStep): string | undefined {
+	return stepTaskSummary(step, singleChildAgentName(job, step));
+}
+
+/** A child's task in one line: its label and task, else its session name without the repeated agent name. */
+export function stepTaskSummary(step: { description?: string; label?: string; sessionName?: string }, agentName: string | undefined): string | undefined {
 	const task = compactTaskText(step.description, step.label);
 	if (task) return task;
 	const sessionName = step.sessionName?.trim();
 	if (!sessionName) return undefined;
-	const agentName = singleChildAgentName(job, step);
 	const sessionTask = stripRepeatedAgentPrefix(sessionName, agentName);
 	return sessionTask === agentName ? undefined : compactTaskText(sessionTask);
 }

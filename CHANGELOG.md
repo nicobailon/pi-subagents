@@ -8,6 +8,10 @@
 - A native Pi child can also run in a Rex tab on another Mac over SSH. Name the Mac in your user settings with `subagents.machines.<name>.rex.ssh`, then pass `machine: "<name>"`: the child opens in that Mac's `subagents` Rex session, which pi-subagents creates the first time. Herdr is not needed for these names, and a project's settings cannot name a Rex host. See [docs/agents.md](docs/agents.md#running-a-pi-child-in-a-rex-pane-on-another-mac).
 - Background workflows cut off by Pi exiting, crashing, or reloading now continue on their own when you reopen or reload their session within a day, without redoing the steps that already finished. You can also continue one by hand with `subagent({ action: "resume", id })`, or set `autoResume: false` to continue them only by hand. A stopped workflow is continued only once, and its notice says how it continues. If you start a new Pi in the same folder instead, it tells you which session to reopen. See [docs/workflows.md](docs/workflows.md).
 
+### Changed
+
+- Each background child's row in `/subagents-fleet` now shows its task after the agent name, for example `worker · Fix two Cycode Python SAST findings…`, so children of one run can be told apart without opening each one. The run id is still shown in the selected child's header. Thanks to [@MattDavisRV](https://github.com/MattDavisRV) for #3020.
+
 ### Fixed
 
 - A background run still working when Pi exited or crashed never reported its result, even after you reopened its session. Its result now shows once in the reopened session, right away if the run already finished or as soon as it finishes. While the Pi that started the run is open, other Pi windows on the same session don't receive it.

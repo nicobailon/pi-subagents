@@ -76,6 +76,7 @@ function writeAsyncRun(root: string, input: {
 	contexts?: Array<"fresh" | "fork">;
 	models?: string[];
 	thinking?: string[];
+	descriptions?: string[];
 	output?: string;
 	transcript?: Array<Record<string, unknown>>;
 }): string {
@@ -99,6 +100,7 @@ function writeAsyncRun(root: string, input: {
 			...(input.contexts?.[index] ? { context: input.contexts[index] } : {}),
 			...(input.models?.[index] ? { model: input.models[index] } : {}),
 			...(input.thinking?.[index] ? { thinking: input.thinking[index] } : {}),
+			...(input.descriptions?.[index] ? { description: input.descriptions[index] } : {}),
 			status: input.state === "complete" ? "complete" : input.state === "failed" ? "failed" : index === 0 ? "running" : "pending",
 			startedAt: 100,
 			...(index === 0 ? { sessionFile: path.join(asyncDir, `${agent}.jsonl`), ...(transcriptPath ? { transcriptPath } : {}) } : {}),
@@ -582,6 +584,35 @@ describe("native subagent fleet", () => {
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("names each async child's task on its roster row and keeps the run id in the detail header", (t) => {
+		t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-row-task-"));
+		try {
+			writeAsyncRun(root, {
+				id: "row-task-run",
+				agents: ["worker", "worker"],
+				descriptions: [
+					"Fix login bug",
+					"Fix two Cycode Python SAST findings in entity-gov and add regression tests for both of the reported injection paths",
+				],
+			});
+			const component = new SubagentFleetComponent({ terminal: { rows: 32, columns: 140 }, requestRender() {} } as never, theme as never, stateForTest(), () => {}, { asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000, markdownTheme });
+			try {
+				const lines = component.render(140);
+				const roster = lines.map((line) => line.split("│")[1] ?? "");
+				const short = roster.find((row) => row.includes("worker · Fix login bug"));
+				const long = roster.find((row) => row.includes("worker · Fix two Cycode"));
+				assert.ok(short, `short task row missing:\n${roster.join("\n")}`);
+				assert.ok(long, `long task row missing:\n${roster.join("\n")}`);
+				assert.ok(long.includes("..."), "a long task is cut to the row");
+				assert.ok(!long.includes("injection paths"));
+				assert.equal(visibleWidth(long), visibleWidth(short), "both rows keep the roster width");
+				assert.ok(!short.includes("row-task"), "the row shows the task instead of the run id");
+				assert.ok(lines.some((line) => (line.split("│")[2] ?? "").includes("row-task")), "the detail header still shows the run id");
+			} finally { component.dispose(); }
+		} finally { fs.rmSync(root, { recursive: true, force: true }); }
 	});
 
 	it("colors running Fleet rows by their child's recorded level, and whole runs by the main session's", () => {
