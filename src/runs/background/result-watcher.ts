@@ -24,7 +24,6 @@ import { resolveWatchPath } from "../../shared/utils.ts";
 import { FileLeaseBusyError } from "../../shared/file-lease.ts";
 import { recordWaitCompletion } from "./wait-completions.ts";
 import { syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
-import { corruptRecordPath, shouldReportCorruptRecord } from "../../shared/corrupt-record-diagnostic.ts";
 import { acknowledgeMissionObserverSnapshot, missionObserverIndexPath, missionObserverResultCandidateFiles, promotePendingResultFile, readResultPayload, resultCandidateFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, resultSnapshotReplaced, retireResultSnapshot, withResultRunLease, writeAsyncResultFile, writeResultIndexForData, type ResultSnapshot } from "./result-files.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
@@ -234,6 +233,9 @@ export function createResultWatcher(
 	// While deliverPendingResults runs, completions skip the batch delay.
 	let deliveringPending = 0;
 	const identityCache = new Map<string, { signature: string; identity: ResultFileIdentity }>();
+	// Result file -> last logged mission-sync error. A failed sync is retried
+	// every pass, so the same error is logged once per result file.
+	const reportedMissionSyncFailures = new Map<string, string>();
 	let deliveryActive = true;
 	let deliveryEpoch = 0;
 	let resultScanTimer: ReturnType<typeof setInterval> | null = null;
@@ -426,10 +428,12 @@ export function createResultWatcher(
 			let observerSucceeded = true;
 			try {
 				syncMissionFromAsyncCompletion({ ...data, runId });
+				reportedMissionSyncFailures.delete(file);
 			} catch (error) {
 				observerSucceeded = false;
-				const corruptPath = corruptRecordPath(error);
-				if (!corruptPath || shouldReportCorruptRecord(corruptPath)) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (reportedMissionSyncFailures.get(file) !== message) {
+					reportedMissionSyncFailures.set(file, message);
 					console.error(`Mission completion sync failed for '${resultPath}':`, error);
 				}
 			}

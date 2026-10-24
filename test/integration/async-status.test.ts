@@ -914,6 +914,47 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("logs a corrupt active status once per file and outcome across polls", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-corrupt-repeat-"));
+		const originalError = console.error;
+		const diagnostics: string[] = [];
+		try {
+			console.error = (...args: unknown[]) => diagnostics.push(args.map(String).join(" "));
+			const corruptDir = path.join(root, "bad-run");
+			const statusPath = path.join(corruptDir, "status.json");
+			const markerPath = path.join(root, ACTIVE_RUN_INDEX_DIR, "bad-run");
+			const corrupt = Buffer.from([0, 0, 0]);
+			fs.mkdirSync(corruptDir, { recursive: true });
+			fs.writeFileSync(statusPath, corrupt);
+			fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+			fs.writeFileSync(markerPath, "", "utf-8");
+			const list = (now?: number) => listAsyncRuns(root, { states: ["running"], reconcile: false, ...(now === undefined ? {} : { now: () => now }) });
+			const lines = () => diagnostics.filter((message) => message.includes("Skipping corrupt active async run"));
+
+			list();
+			list();
+			assert.equal(lines().length, 1);
+			assert.match(lines()[0]!, /active marker retained/);
+
+			fs.writeFileSync(statusPath, JSON.stringify({ runId: "bad-run", mode: "single", state: "running", startedAt: 100, sessionId: "session-a", steps: [{ agent: "worker", status: "running" }] }), "utf-8");
+			list();
+			fs.writeFileSync(statusPath, corrupt);
+			fs.utimesSync(statusPath, new Date(5_000), new Date(5_000));
+			list();
+			assert.equal(lines().length, 2, "the same corrupt bytes written again are logged again");
+			assert.equal(lines()[1], lines()[0]);
+
+			list(Date.now() + DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS + 60_000);
+			assert.equal(fs.existsSync(markerPath), false);
+			assert.equal(lines().length, 3, "a marker release on unchanged bytes is still logged");
+			assert.match(lines()[2]!, /stale active marker released/);
+			assert.deepEqual(fs.readFileSync(statusPath), corrupt);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("isolates active status validation failures while preserving ordinary validation errors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-invalid-active-"));
 		const originalError = console.error;

@@ -514,21 +514,20 @@ describe("result watcher", () => {
 			const resultPath = path.join(resultsDir, "corrupt-binding.json");
 			writeIndexedResult(resultPath, { id: "corrupt-binding", runId: "corrupt-binding", sessionId: "session-current", asyncDir, state: "complete", success: true });
 			console.error = (...args: unknown[]) => { errors.push(args); };
+			const syncFailures = (file: string) => errors.filter((args) => String(args[0]).includes("Mission completion sync failed") && String(args[0]).includes(file)).length;
 			const state = createState();
 			state.currentSessionId = "session-current";
 			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
 				notifier: { deliver: async () => true },
 			});
 			try {
-				watcher.primeExistingResults();
-				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 200));
-				assert.equal(errors.filter((args) => String(args[0]).includes("Mission completion sync failed")).length, 1);
+				await watcher.deliverPendingResults();
+				await watcher.deliverPendingResults();
+				assert.equal(syncFailures("corrupt-binding.json"), 1);
 				assert.equal(fs.existsSync(resultPath), true, "corrupt mission completion stays unacknowledged and retryable");
 				assert.deepEqual(fs.readFileSync(bindingPath), corruptBinding);
-				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 150));
-				assert.equal(errors.filter((args) => String(args[0]).includes("Mission completion sync failed")).length, 1, "unchanged corrupt binding emits one diagnostic across retries");
+				await watcher.deliverPendingResults();
+				assert.equal(syncFailures("corrupt-binding.json"), 1, "unchanged corrupt binding emits one diagnostic across retries");
 				assert.equal(fs.existsSync(resultPath), true, "retry behavior remains fail-closed");
 				const validBinding = JSON.stringify({
 					schemaVersion: 1,
@@ -553,14 +552,12 @@ describe("result watcher", () => {
 					notifier: { deliver: async () => true },
 				});
 				try {
-					missionRetryWatcher.primeExistingResults();
-					await new Promise((resolve) => setTimeout(resolve, 150));
-					assert.equal(errors.filter((args) => String(args[0]).includes("Mission completion sync failed")).length, 2, "corrupt mission record is diagnosed");
+					await missionRetryWatcher.deliverPendingResults();
+					assert.equal(syncFailures("corrupt-mission-record.json"), 1, "corrupt mission record is diagnosed");
 					assert.equal(fs.existsSync(missionResultPath), true, "corrupt record remains retryable");
 					assert.deepEqual(fs.readFileSync(missionPath), corruptMission);
-					missionRetryWatcher.primeExistingResults();
-					await new Promise((resolve) => setTimeout(resolve, 150));
-					assert.equal(errors.filter((args) => String(args[0]).includes("Mission completion sync failed")).length, 2, "unchanged corrupt mission record warning is bounded");
+					await missionRetryWatcher.deliverPendingResults();
+					assert.equal(syncFailures("corrupt-mission-record.json"), 1, "unchanged corrupt mission record warning is bounded");
 					fs.writeFileSync(missionPath, JSON.stringify(originalMission));
 					missionRetryWatcher.primeExistingResults();
 					assert.equal(await waitForPredicate(() => !fs.existsSync(missionResultPath)), true, "repaired record retries and is reconciled");

@@ -29,7 +29,6 @@ import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../wor
 import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 import { childWatchdogProgressForModel } from "../../watchdog/child-status.ts";
 import { ownerSessionIds } from "../shared/run-ownership.ts";
-import { shouldReportCorruptRecord } from "../../shared/corrupt-record-diagnostic.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -186,6 +185,10 @@ function isAsyncStatusIsolationError(asyncDir: string, error: unknown): boolean 
 		|| /^(workflowChildren|Invalid workflowChildren)/.test(message);
 }
 
+// Status path -> last logged signature. A corrupt run is re-scanned on every
+// status poll, so the line repeats only when the file or the outcome changes.
+const reportedCorruptStatus = new Map<string, string>();
+
 function isolateCorruptActiveRun(asyncDir: string, runId: string, error: unknown, now?: () => number): void {
 	const statusPath = path.join(asyncDir, "status.json");
 	const processTerminal = readProcessTerminal(asyncDir, { runId });
@@ -208,9 +211,18 @@ function isolateCorruptActiveRun(asyncDir: string, runId: string, error: unknown
 			markerAction = `failed to release active marker: ${getErrorMessage(releaseError)}`;
 		}
 	}
-	if (shouldReportCorruptRecord(statusPath)) {
-		console.error(`[pi-subagents] Skipping corrupt active async run '${runId}' at '${statusPath}': ${getErrorMessage(error)}; ${markerAction}.`);
+	const line = `[pi-subagents] Skipping corrupt active async run '${runId}' at '${statusPath}': ${getErrorMessage(error)}; ${markerAction}.`;
+	let fileSignature = "";
+	try {
+		const stat = fs.statSync(statusPath);
+		fileSignature = `${stat.size}:${stat.mtimeMs}`;
+	} catch {
+		// A missing file still gets the line once; its message carries the cause.
 	}
+	const signature = `${fileSignature}\n${line}`;
+	if (reportedCorruptStatus.get(statusPath) === signature) return;
+	reportedCorruptStatus.set(statusPath, signature);
+	console.error(line);
 }
 
 function isNotFoundError(error: unknown): boolean {
