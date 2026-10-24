@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -439,22 +439,32 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			fs.mkdirSync(historyDir, { recursive: true });
 			fs.writeFileSync(path.join(historyDir, `${runId}.json`), JSON.stringify({ runId, mode: "single", cwd: tempDir, sessionId: sessionFileFor(sessionId), updatedAt: now - 60_000, ownerPid: deadPid(), children: [{ agent: "echo", index: 0, status: "running" }] }));
 		};
-		const session = (name: string, saved = true) => { const id = `session-${nonce}-${name}`; if (saved) fs.writeFileSync(sessionFileFor(id), "{}\n"); return id; };
+		// A session id is its file path; a saved session file starts with the header that names its id.
+		const headerIds = new Map<string, string>();
+		const session = (name: string, file: "header" | "no-header" | "none" = "header") => {
+			const id = `session-${nonce}-${name}`;
+			headerIds.set(id, randomUUID());
+			if (file !== "none") fs.writeFileSync(sessionFileFor(id), file === "header" ? `${JSON.stringify({ type: "session", version: 3, id: headerIds.get(id), cwd: tempDir })}\n` : "{}\n");
+			return id;
+		};
 
 		// Two runs (an async workflow and a foreground run; the same run seen from both sources counts once).
 		const foreign = session("foreign");
 		const foreignRun = writeCrashedRun(foreign, scriptLaunch(script), now - 60_000);
 		writeForegroundRecord(foreign, `fg-${nonce}`);
 		writeForegroundRecord(foreign, foreignRun);
-		// One run, in a session whose path needs quoting.
+		// One run each, in sessions whose paths a shell would quote or expand.
 		const spaced = session("with space");
-		const foreignRuns = [foreignRun, writeCrashedRun(spaced, scriptLaunch(script), now - 60_000)];
-		// Not pointed to: a live owner, another folder, older than a day, a session that cannot be reopened, an inherited session.
+		const dollar = session("with $demo");
+		const foreignRuns = [foreignRun, writeCrashedRun(spaced, scriptLaunch(script), now - 60_000), writeCrashedRun(dollar, scriptLaunch(script), now - 60_000)];
+		// Not pointed to: a live owner, another folder, older than a day, a session that cannot be reopened (no file, or no
+		// header id), an inherited session.
 		foreignRuns.push(
 			writeCrashedRun(session("alive"), scriptLaunch(script), now - 60_000, { pid: process.pid }),
 			writeCrashedRun(session("elsewhere"), scriptLaunch(script), now - 60_000, { cwd: path.join(tempDir, "other") }),
 			writeCrashedRun(session("old"), scriptLaunch(script), now - 25 * 60 * 60 * 1000),
-			writeCrashedRun(session("unsaved", false), scriptLaunch(script), now - 60_000),
+			writeCrashedRun(session("unsaved", "none"), scriptLaunch(script), now - 60_000),
+			writeCrashedRun(session("headerless", "no-header"), scriptLaunch(script), now - 60_000),
 		);
 		const inherited = session("inherited");
 		writeCrashedRun(inherited, scriptLaunch(script), now - 60_000);
@@ -473,12 +483,13 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const elsewhere = (runtime: { notifications: Array<{ text: string; level: string }> }) => runtime.notifications.filter((notice) => notice.text.includes("in another session"));
 
 		const withUi = await startRuntime("new", current, { previousSessionFile: sessionFileFor(inherited) });
-		// The path with a space is quoted for the platform's shell: single quotes on POSIX, double quotes on Windows.
-		const spacedWord = process.platform === "win32" ? `"${sessionFileFor(spaced)}"` : `'${sessionFileFor(spaced)}'`;
-		assert.deepEqual(elsewhere(withUi).sort((left, right) => left.text.localeCompare(right.text)), [
-			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session ${spacedWord}\``, level: "info" },
-			{ text: `2 subagent runs were interrupted in another session. Reopen it to resume them: \`pi --session ${sessionFileFor(foreign)}\``, level: "info" },
-		]);
+		// Each line names the session by its header id, the same on every platform whatever its path.
+		const byText = (left: { text: string }, right: { text: string }) => left.text.localeCompare(right.text);
+		assert.deepEqual(elsewhere(withUi).sort(byText), [
+			{ text: `2 subagent runs were interrupted in another session. Reopen it to resume them: \`pi --session ${headerIds.get(foreign)}\``, level: "info" },
+			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session ${headerIds.get(spaced)}\``, level: "info" },
+			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session ${headerIds.get(dollar)}\``, level: "info" },
+		].sort(byText));
 		assert.deepEqual(withUi.sent.filter((entry) => String(entry.message.content).includes("in another session")), [], "never sent to the model");
 		await withUi.shutDown("quit");
 		const withoutUi = await startRuntime("startup", headless, { ui: false });

@@ -1,4 +1,4 @@
-import * as fs from "node:fs";
+import { resolvePiSessionId } from "../shared/orca-progress-tabs.ts";
 import type { AsyncStatus, ForegroundResumeRun } from "../../shared/types.ts";
 import { ownerConfirmedDead } from "../foreground/foreground-history.ts";
 import { ownerSessionIds } from "../shared/run-ownership.ts";
@@ -10,17 +10,8 @@ import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
 /** Runs interrupted longer ago than this are not pointed to. */
 const INTERRUPTED_ELSEWHERE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-/**
- * A shell word for `text`, quoted only when it needs quoting: POSIX single quotes, or on Windows
- * double quotes around whitespace or a cmd/PowerShell special character (a Windows path has no `"`).
- */
-function shellQuote(text: string): string {
-	if (process.platform === "win32") return /[\s&|<>^()%!$`';,=@#{}]/.test(text) ? `"${text}"` : text;
-	return /^[A-Za-z0-9_@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, "'\\''")}'`;
-}
-
-function interruptedElsewhereLine(sessionId: string, count: number): string {
-	const command = `\`pi --session ${shellQuote(sessionId)}\``;
+function interruptedElsewhereLine(reopenId: string, count: number): string {
+	const command = `\`pi --session ${reopenId}\``;
 	return count === 1
 		? `1 subagent run was interrupted in another session. Reopen it to resume it: ${command}`
 		: `${count} subagent runs were interrupted in another session. Reopen it to resume them: ${command}`;
@@ -38,8 +29,8 @@ interface InterruptedElsewhereCollector {
 /**
  * Collects runs of other sessions in this folder that were cut off because their Pi died, from what
  * session start reads anyway. Read-only: nothing is written to those runs or sessions. The cheap
- * filters run as records arrive; `lines` checks once per session that its file exists, then probes
- * each candidate's pid once.
+ * filters run as records arrive; `lines` reads each session file's header once, then probes each
+ * candidate's pid once.
  */
 export function createInterruptedElsewhereCollector(input: { currentSessionId: string; cwd: string; now: number }): InterruptedElsewhereCollector {
 	const ownSessions = ownerSessionIds(input.currentSessionId);
@@ -69,11 +60,13 @@ export function createInterruptedElsewhereCollector(input: { currentSessionId: s
 		lines() {
 			const lines: string[] = [];
 			for (const [sessionId, runs] of candidates) {
-				// Only a persisted session can be reopened; its id is then its file path.
-				if (!fs.existsSync(sessionId)) continue;
+				// Only a persisted session can be reopened; its id is then its file path, whose header names
+				// the id `pi --session` resolves, so the command needs no quoting in any shell.
+				const reopenId = resolvePiSessionId(sessionId);
+				if (!reopenId) continue;
 				let interrupted = 0;
 				for (const ownerDead of runs.values()) if (ownerDead()) interrupted += 1;
-				if (interrupted > 0) lines.push(interruptedElsewhereLine(sessionId, interrupted));
+				if (interrupted > 0) lines.push(interruptedElsewhereLine(reopenId, interrupted));
 			}
 			return lines;
 		},
