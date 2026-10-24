@@ -1,4 +1,4 @@
-import { resolvePiSessionId } from "../shared/orca-progress-tabs.ts";
+import { resolvePiSessionId } from "../../shared/session-identity.ts";
 import type { AsyncStatus, ForegroundResumeRun } from "../../shared/types.ts";
 import { ownerConfirmedDead } from "../foreground/foreground-history.ts";
 import { ownerSessionIds } from "../shared/run-ownership.ts";

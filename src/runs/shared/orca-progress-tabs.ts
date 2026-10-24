@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Message } from "@earendil-works/pi-ai";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
 import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
+import { resolvePiSessionId } from "../../shared/session-identity.ts";
 import { TEMP_ROOT_DIR, type OrcaProgressTabsConfig } from "../../shared/types.ts";
 import { extractTextFromContent, extractToolArgsPreview, getAgentDir } from "../../shared/utils.ts";
 
@@ -267,26 +268,6 @@ function reserveTabSequence(root: string, cwd: string): { sequence: number; prev
 			return undefined;
 		}
 	});
-}
-
-export function resolvePiSessionId(sessionFile: string | undefined): string | undefined {
-	if (!sessionFile) return undefined;
-	try {
-		const fd = fs.openSync(sessionFile, "r");
-		try {
-			const buffer = Buffer.alloc(16 * 1024);
-			const bytes = fs.readSync(fd, buffer, 0, buffer.length, 0);
-			const line = buffer.toString("utf-8", 0, bytes).split("\n", 1)[0];
-			if (!line) return undefined;
-			const header = JSON.parse(line) as { type?: unknown; id?: unknown };
-			if (header.type === "session" && typeof header.id === "string" && /^[A-Za-z0-9-]{8,}$/.test(header.id)) return header.id;
-			return undefined;
-		} finally {
-			fs.closeSync(fd);
-		}
-	} catch {
-		return undefined;
-	}
 }
 
 function scheduleCleanup(nodeExecutable: string, paths: string[]): void {
