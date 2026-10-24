@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Updated `undici` from 8.10.2 to 8.12.3, outside the range of [GHSA-xjj6-f33q-929c](https://github.com/advisories/GHSA-xjj6-f33q-929c), so projects that install pi-subagents no longer fail `npm audit` because of it. Thanks to [@setanta00](https://github.com/setanta00) for #3022.
 - A background run still working when Pi exited or crashed never reported its result, even after you reopened its session. Its result now shows once in the reopened session, right away if the run already finished or as soon as it finishes. While the Pi that started the run is open, other Pi windows on the same session don't receive it.
 - A host-required child extension (`registerRequiredChildExtensions`) is now recognized when Pi loads it under another spelling of its path, such as a symlink, a case variant, or a path with a Unicode space, so its load, provider-registration and startup failures still stop the launch. A required extension that Pi did not load at all now rejects the launch instead of letting the child start without it. Thanks to [@pandalaohe](https://github.com/pandalaohe) for #3012.
 - Skill discovery no longer fails with `ENOTDIR` when a `settings.json` `packages` entry names a single extension file. Thanks to [@tara-marchand](https://github.com/tara-marchand) for #3011.

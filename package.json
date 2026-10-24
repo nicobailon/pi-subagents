@@ -105,7 +105,7 @@
     "@js-temporal/polyfill": "0.5.1",
     "acorn": "8.18.0",
     "jiti": "2.7.0",
-    "undici": "8.10.2",
+    "undici": "8.12.3",
     "yaml": "2.8.3"
   },
   "devDependencies": {
