@@ -2489,6 +2489,35 @@ Answer only from the supplied synthetic text.
 			assert.equal(child.state, "stopped");
 		});
 
+		it("stops another session's child re-attached through the relaunch chain when the user stops a plain relaunch", { timeout: 60_000, skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `chain-user-stop-${Date.now()}`;
+			const successor = `session-${nonce}`;
+			const script = `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); await runs.run("stage2", { agent: "bg", task: "Stage two ${nonce}" });`;
+			const args = { nonce };
+			const { launch, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, waitForPath: path.join(tempDir, `${nonce}.never`), output: "never" });
+			// A runs in the default session; its stage2 child keeps running after A is replaced.
+			const firstId = await launch({ workflowScript: script, args });
+			const stage2RunId = (await stopWhenStage2Starts(firstId, runtimeReplacedAbortReason(), awaitedStage2Ready)).steps?.find((step) => step.workflowKey === "stage2")?.runId;
+			assert.ok(stage2RunId);
+			const reattached = (runId: string) => () => {
+				const journalPath = path.join(DIRS.async, runId, "workflow-children.jsonl");
+				return fs.existsSync(journalPath) && fs.readFileSync(journalPath, "utf-8").includes(`"runId":"${stage2RunId}"`);
+			};
+			// B, in another session, re-attaches A's child through reuseFrom and is replaced too.
+			const secondId = await launch({ workflowScript: script, args, reuseFrom: firstId }, successor);
+			await stopWhenStage2Starts(secondId, runtimeReplacedAbortReason(), reattached(secondId));
+			assert.equal(readStatusFile(stage2RunId).state, "running");
+
+			// C relaunches in B's session without reuseFrom; the user stops it.
+			const thirdId = await launch({ workflowScript: script, args }, successor);
+			const third = await stopWhenStage2Starts(thirdId, new Error("Stopped by user."), reattached(thirdId));
+			assert.equal(third.workflow?.reusedFrom, secondId);
+			const child = await waitForAsyncState(stage2RunId, (status) => terminalStates.includes(status.state ?? ""), 10_000);
+			assert.equal(child.state, "stopped");
+		});
+
 		it("launches fresh when a re-attached child fails after the reload", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 			const nonce = `reattach-failed-${Date.now()}`;
 			const release = path.join(tempDir, `${nonce}.release`);

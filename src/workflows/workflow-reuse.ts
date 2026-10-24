@@ -88,8 +88,9 @@ function readWorkflowChildJournal(runId: string, workflowAsyncDir: string): Work
 }
 export const WORKFLOW_REUSE_CHAIN_MAX_LINKS = 16;
 
-function isRunName(runId: string): boolean {
-	return runId === path.basename(runId) && runId !== "." && runId !== "..";
+/** A status file is parsed, not validated, so a corrupt `reusedFrom` may be any JSON value. */
+function isRunName(runId: unknown): runId is string {
+	return typeof runId === "string" && runId === path.basename(runId) && runId !== "." && runId !== "..";
 }
 
 /**
@@ -100,8 +101,8 @@ function isRunName(runId: string): boolean {
 function readWorkflowReuseChain(asyncDirRoot: string, headRunId: string, headStatus: AsyncStatus): WorkflowReuseSource {
 	const source = readWorkflowChildJournal(headRunId, path.join(asyncDirRoot, headRunId));
 	const visited = new Set([headRunId]);
-	let next = headStatus.workflow?.reusedFrom;
-	for (let links = 0; next !== undefined && links < WORKFLOW_REUSE_CHAIN_MAX_LINKS && !visited.has(next) && isRunName(next); links++) {
+	let next: unknown = headStatus.workflow?.reusedFrom;
+	for (let links = 0; isRunName(next) && links < WORKFLOW_REUSE_CHAIN_MAX_LINKS && !visited.has(next); links++) {
 		visited.add(next);
 		const asyncDir = path.join(asyncDirRoot, next);
 		let status: ReturnType<typeof readStatus>;

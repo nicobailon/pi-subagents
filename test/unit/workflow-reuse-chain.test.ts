@@ -68,6 +68,19 @@ describe("workflow reuse across a relaunch chain", () => {
 		}
 	});
 
+	it("stops at a reusedFrom that is not a string, keeping the head's records", () => {
+		for (const reusedFrom of [42, null, { runId: "link" }]) {
+			withRoot((root, writeRun) => {
+				writeRun("head", { head: true, records: [{ key: "head-key", settle: "head-run" }] });
+				const statusPath = path.join(root, "head", "status.json");
+				const status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+				fs.writeFileSync(statusPath, JSON.stringify({ ...status, workflow: { ...status.workflow, reusedFrom } }));
+				const source = readNamedWorkflowReuseSource(root, "head", "digest", CWD);
+				assert.equal(matchWorkflowReuse(source, "head-key", "fp")?.kind, "settled", JSON.stringify(reusedFrom));
+			});
+		}
+	});
+
 	it("ends on a cycle and after 16 links", () => {
 		withRoot((root, writeRun) => {
 			writeRun("x", { reusedFrom: "y", records: [{ key: "x-key", settle: "x-run" }] });
