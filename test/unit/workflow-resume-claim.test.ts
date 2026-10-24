@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { currentBootId } from "../../src/runs/background/boot-id.ts";
 import { claimWorkflowResume, readWorkflowResumeClaim, releaseWorkflowResumeClaim, workflowResumeClaimState } from "../../src/workflows/workflow-resume-claim.ts";
+import { claimedWorkflowRunRefusal } from "../../src/workflows/workflow-reuse.ts";
 
 describe("workflow resume claim", () => {
 	const withRun = (body: (asyncDir: string, files: () => string[]) => void) => {
@@ -98,13 +99,24 @@ describe("workflow resume claim", () => {
 		withRun((asyncDir, files) => {
 			// A directory in the claim's place: reading it fails with EISDIR, not ENOENT.
 			fs.mkdirSync(path.join(asyncDir, "resumed-by.1.json"));
-			assert.deepEqual(claimWorkflowResume(asyncDir, { newRunId: "second-run", trigger: "manual", liveness: () => "dead" }), { kind: "busy", pid: 0 });
-			assert.equal(workflowResumeClaimState(asyncDir).kind, "busy");
+			assert.deepEqual(claimWorkflowResume(asyncDir, { newRunId: "second-run", trigger: "manual", liveness: () => "dead" }), { kind: "unreadable" });
+			assert.deepEqual(workflowResumeClaimState(asyncDir), { kind: "unreadable" });
 			assert.deepEqual(files(), ["resumed-by.1.json"]);
+			assert.equal(claimedWorkflowRunRefusal("run-1", { kind: "unreadable" }, false), "Workflow run 'run-1' has a resume claim that cannot be read; wait or remove it.");
+			assert.equal(claimedWorkflowRunRefusal("run-1", { kind: "unreadable" }, true), "options.reuseFrom: workflow run 'run-1' has a resume claim that cannot be read; wait or remove it.");
 		});
 	});
 
-	it("releases only this process's own current claim", () => {
+	it("judges a claim with this pid in another pid namespace by its liveness, not as this process's own", () => {
+		withRun((asyncDir) => {
+			writeClaim(asyncDir, 1, { ...foreignClaim, pid: process.pid, ...(currentBootId() ? { bootId: currentBootId() } : {}), pidNamespaceScope: "pid:[another-container]" });
+			assert.deepEqual(workflowResumeClaimState(asyncDir, { liveness: () => "alive" }), { kind: "busy", pid: process.pid, newRunId: "first-run" });
+			assert.deepEqual(claimWorkflowResume(asyncDir, { newRunId: "second-run", trigger: "manual", liveness: () => "alive" }), { kind: "busy", pid: process.pid });
+			assert.deepEqual(claimWorkflowResume(asyncDir, { newRunId: "second-run", trigger: "manual", liveness: () => "dead" }), { kind: "owner" });
+		});
+	});
+
+	it("releases only this process's own current claim, and a released claim blocks nothing", () => {
 		withRun((asyncDir, files) => {
 			writeClaim(asyncDir, 1, foreignClaim);
 			releaseWorkflowResumeClaim(asyncDir, "first-run");
@@ -113,10 +125,16 @@ describe("workflow resume claim", () => {
 			releaseWorkflowResumeClaim(asyncDir, "other-run");
 			assert.equal(readWorkflowResumeClaim(asyncDir)?.newRunId, "new-run");
 			releaseWorkflowResumeClaim(asyncDir, "new-run");
-			assert.equal(readWorkflowResumeClaim(asyncDir)?.newRunId, "first-run");
 			assert.deepEqual(files().map((name) => name.replace(/released-.*/, "released-*")), ["resumed-by.1.json", "resumed-by.2.json.released-*"]);
-			assert.deepEqual(claimWorkflowResume(asyncDir, { newRunId: "next-run", trigger: "manual", liveness: () => "dead" }), { kind: "owner" });
+			// Claim 1 is below the released top, so it is not judged again even if its pid is now in use.
+			const probed: string[] = [];
+			const alive = (claim: { newRunId: string }) => { probed.push(claim.newRunId); return "alive" as const; };
+			assert.equal(readWorkflowResumeClaim(asyncDir), undefined);
+			assert.deepEqual(workflowResumeClaimState(asyncDir, { liveness: alive }), { kind: "none" });
+			assert.deepEqual(claimWorkflowResume(asyncDir, { newRunId: "next-run", trigger: "manual", liveness: alive }), { kind: "owner" });
+			assert.deepEqual(probed, []);
 			assert.equal(readWorkflowResumeClaim(asyncDir)?.newRunId, "next-run");
+			assert.deepEqual(files().map((name) => name.replace(/released-.*/, "released-*")), ["resumed-by.1.json", "resumed-by.2.json.released-*", "resumed-by.3.json"]);
 		});
 	});
 });

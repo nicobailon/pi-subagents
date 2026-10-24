@@ -1,7 +1,8 @@
 /** subagent({ action: "resume", id }) with no message relaunches a stopped workflow from its saved launch. */
 
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { DIRS, type AsyncStatus } from "../../src/shared/types.ts";
@@ -136,6 +137,39 @@ describe("resuming a stopped workflow by id", { skip: !available || !createSubag
 		const resumed = await resume(sourceId, successor);
 		assert.equal(resumed.isError, undefined, text(resumed));
 		assert.equal((await settled(resumed.details.asyncId!)).state, "complete");
+	});
+
+	it("gives back a plain relaunch's claim when its storage cannot be created", { timeout: 60_000 }, async (t) => {
+		const nonce = `reuse-storage-${Date.now()}`;
+		const sessionId = `session-${nonce}`;
+		const script = `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); await runs.run("stage2", { agent: "echo", task: "Stage two ${nonce}" }); return "done";`;
+		const { launch, settled, replaceWhen, call } = setup();
+		mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+		mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, hangUntilAbort: true });
+		const sourceId = await launch({ workflowScript: script }, sessionId);
+		await replaceWhen(sourceId, stageStarted("stage2"));
+
+		// The relaunch takes the claim, then fails to create its storage.
+		const originalMkdirSync = fsDefault.mkdirSync;
+		t.mock.method(fsDefault, "mkdirSync", ((target: fs.PathLike, options?: fs.MakeDirectoryOptions) => {
+			if (path.resolve(String(target)) === path.resolve(DIRS.results)) throw new Error("no space left");
+			return originalMkdirSync(target, options);
+		}) as typeof fsDefault.mkdirSync);
+		syncBuiltinESMExports();
+		let failed: Awaited<ReturnType<typeof call>>;
+		try {
+			failed = await call({ async: true, mission: false, workflowScript: script, reuseFrom: sourceId }, sessionId);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+		}
+		assert.equal(failed.isError, true);
+		assert.equal(text(failed), "Failed to create async workflow storage: no space left");
+		assert.equal(readWorkflowResumeClaim(path.join(DIRS.async, sourceId)), undefined, "the claim was given back");
+
+		mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
+		const relaunchId = await launch({ workflowScript: script, reuseFrom: sourceId }, sessionId);
+		assert.equal((await settled(relaunchId)).state, "complete");
 	});
 
 	it("releases the claim when the relaunch is refused for capacity, so a later resume succeeds", { timeout: 90_000 }, async () => {

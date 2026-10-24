@@ -123,6 +123,7 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 	const claim = claimWorkflowResume(sourceAsyncDir, { newRunId, trigger, now: input.now });
 	if (claim.kind === "resumed") return refuse("claim-resumed", `resumed as ${claim.newRunId}; wait on it or stop it`);
 	if (claim.kind === "busy") return refuse("claim-busy", `being resumed by pid ${claim.pid}`);
+	if (claim.kind === "unreadable") return refuse("claim-busy", "its resume claim cannot be read; wait or remove it");
 	return {
 		ok: true,
 		prepared: {

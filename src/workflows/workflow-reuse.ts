@@ -127,16 +127,17 @@ function readWorkflowReuseChain(asyncDirRoot: string, headRunId: string, headSta
 }
 
 /** Why a relaunch of `runId` is refused when another relaunch already continues it. */
-export function claimedWorkflowRunRefusal(runId: string, claim: { kind: "resumed"; newRunId: string } | { kind: "busy"; pid: number }, named: boolean): string {
+export function claimedWorkflowRunRefusal(runId: string, claim: { kind: "resumed"; newRunId: string } | { kind: "busy"; pid: number } | { kind: "unreadable" }, named: boolean): string {
 	const run = `${named ? "options.reuseFrom: workflow" : "Workflow"} run '${runId}'`;
-	return claim.kind === "resumed"
-		? `${run} was resumed as ${claim.newRunId}; wait on it or stop it.`
-		: `${run} is being resumed by pid ${claim.pid}; wait for it.`;
+	if (claim.kind === "resumed") return `${run} was resumed as ${claim.newRunId}; wait on it or stop it.`;
+	if (claim.kind === "busy") return `${run} is being resumed by pid ${claim.pid}; wait for it.`;
+	return `${run} has a resume claim that cannot be read; wait or remove it.`;
 }
 
 function assertWorkflowRunNotClaimed(asyncDir: string, runId: string, named: boolean, claimOwnerRunId?: string): void {
 	const claim = workflowResumeClaimState(asyncDir);
-	if (claim.kind !== "none" && claim.newRunId !== claimOwnerRunId) throw new Error(claimedWorkflowRunRefusal(runId, claim, named));
+	if (claim.kind === "none" || (claim.kind !== "unreadable" && claim.newRunId === claimOwnerRunId)) return;
+	throw new Error(claimedWorkflowRunRefusal(runId, claim, named));
 }
 
 /**
