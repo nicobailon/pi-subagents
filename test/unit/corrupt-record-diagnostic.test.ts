@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
+import fsDefault, * as fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { corruptRecordPath, shouldReportCorruptRecord } from "../../src/shared/corrupt-record-diagnostic.ts";
+import { CORRUPT_RECORD_REVALIDATION_INTERVAL_MS, corruptRecordPath, shouldReportCorruptRecord } from "../../src/shared/corrupt-record-diagnostic.ts";
 import { readMissionBinding } from "../../src/missions/lifecycle.ts";
 import { createMission, missionRecordPath, readMission, resolveMissionStoreLocation } from "../../src/missions/store.ts";
 import { readStatus } from "../../src/shared/utils.ts";
@@ -11,19 +12,83 @@ import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/backg
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 
 describe("corrupt record diagnostics", () => {
-	it("bounds repeated diagnostics by unchanged bytes and retries after repair or change", () => {
+	it("fast-paths unchanged retries, detects changed bytes after the bounded revalidation interval, and preserves originals", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-corrupt-record-"));
+		const originalReadSync = fsDefault.readSync;
+		let reads = 0;
 		try {
+			fsDefault.readSync = ((...args: Parameters<typeof fs.readSync>) => {
+				reads++;
+				return originalReadSync(...args);
+			}) as typeof fsDefault.readSync;
+			syncBuiltinESMExports();
 			const file = path.join(root, "record.json");
-			fs.writeFileSync(file, Buffer.from([0, 0, 0]));
-			assert.equal(shouldReportCorruptRecord(file), true);
-			assert.equal(shouldReportCorruptRecord(file), false);
+			const original = Buffer.from([0, 0, 0]);
+			fs.writeFileSync(file, original);
+			assert.equal(shouldReportCorruptRecord(file, 100), true);
+			const firstReadCount = reads;
+			assert.equal(shouldReportCorruptRecord(file, 200), false);
+			assert.equal(reads, firstReadCount, "rapid retry stats but does not reread/hash the file");
 			fs.writeFileSync(file, "{broken");
-			assert.equal(shouldReportCorruptRecord(file), true);
-			assert.equal(shouldReportCorruptRecord(file), false);
+			assert.equal(shouldReportCorruptRecord(file, 300), true, "changed metadata allows immediate retry");
 			fs.writeFileSync(file, "{}\n");
-			assert.equal(shouldReportCorruptRecord(file), true);
+			assert.equal(shouldReportCorruptRecord(file, 300 + CORRUPT_RECORD_REVALIDATION_INTERVAL_MS), true);
+			assert.deepEqual(fs.readFileSync(file), Buffer.from("{}\n"));
 		} finally {
+			fsDefault.readSync = originalReadSync;
+			syncBuiltinESMExports();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rechecks oversized files by streaming bytes and catches same-metadata changes at the declared interval", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-corrupt-oversized-"));
+		const file = path.join(root, "large.json");
+		const originalStatSync = fsDefault.statSync;
+		try {
+			const content = Buffer.alloc(16 * 1024 * 1024 + 1, 0x61);
+			fs.writeFileSync(file, content);
+			const fixedStat = originalStatSync(file);
+			fsDefault.statSync = ((...args: Parameters<typeof fs.statSync>) => {
+				const actual = originalStatSync(...args);
+				return { ...actual, mtimeMs: fixedStat.mtimeMs, ctimeMs: fixedStat.ctimeMs, ino: fixedStat.ino } as fs.Stats;
+			}) as typeof fsDefault.statSync;
+			syncBuiltinESMExports();
+			assert.equal(shouldReportCorruptRecord(file, 1_000), true);
+			assert.equal(shouldReportCorruptRecord(file, 1_100), false);
+			const fd = fs.openSync(file, "r+");
+			try { fs.writeSync(fd, Buffer.from([0x62]), 0, 1, 0); } finally { fs.closeSync(fd); }
+			assert.equal(shouldReportCorruptRecord(file, 1_999), false, "same-metadata change waits for bounded content recheck");
+			assert.equal(shouldReportCorruptRecord(file, 2_000), true, "same-metadata change is eventually detected");
+			assert.equal(fs.readFileSync(file)[0], 0x62, "same-metadata changed bytes remain untouched");
+		} finally {
+			fsDefault.statSync = originalStatSync;
+			syncBuiltinESMExports();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("bounds the diagnostic fingerprint cache", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-corrupt-cache-bound-"));
+		const originalReadSync = fsDefault.readSync;
+		let reads = 0;
+		try {
+			fsDefault.readSync = ((...args: Parameters<typeof fs.readSync>) => {
+				reads++;
+				return originalReadSync(...args);
+			}) as typeof fsDefault.readSync;
+			syncBuiltinESMExports();
+			const files = Array.from({ length: 513 }, (_, index) => path.join(root, `${index}.json`));
+			for (const file of files) {
+				fs.writeFileSync(file, "bad");
+				assert.equal(shouldReportCorruptRecord(file, 5_000), true);
+			}
+			const beforeEvictedRead = reads;
+			assert.equal(shouldReportCorruptRecord(files[0]!, 5_001), true);
+			assert.ok(reads > beforeEvictedRead, "evicted fingerprint is safely re-read rather than cached permanently");
+		} finally {
+			fsDefault.readSync = originalReadSync;
+			syncBuiltinESMExports();
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
