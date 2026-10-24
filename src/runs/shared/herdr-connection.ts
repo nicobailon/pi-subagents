@@ -4,7 +4,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { HerdrMachineReference } from "../../shared/types.ts";
-import type { PlacementMachineAccess, PlacementSockets } from "./placement-host.ts";
+import type { PlacementCommandResult, PlacementMachineAccess, PlacementSockets } from "./placement-host.ts";
 
 const MAX_DISCOVERY_BYTES = 256 * 1024;
 const MAX_RPC_BYTES = 4 * 1024 * 1024;
@@ -25,8 +25,7 @@ export class HerdrRpcError extends Error {
 }
 export class HerdrTransportError extends Error { constructor(message: string, options?: ErrorOptions) { super(message, options); this.name = "HerdrTransportError"; } }
 export interface HerdrForwardedConnection { endpoint: HerdrEndpoint; socketPath: string; client: HerdrRpcClient; forwardRemoteSocket(remotePath: string, name: string): Promise<{ socketPath: string; close(): Promise<void> }>; close(): Promise<void> }
-/** The only part of a machine reference SSH transport uses. */
-export type SshTarget = Pick<HerdrMachineReference, "target">;
+type SshTarget = Pick<HerdrMachineReference, "target">;
 export function decodeHerdrJsonLine(line: Buffer): unknown { try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(line)) as unknown; } catch { throw new Error("Herdr emitted malformed JSON or UTF-8."); } }
 
 export function shellQuoteRemote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
@@ -36,12 +35,12 @@ function sshEnvCommand(session: string | undefined, command: string): string { c
 
 export function runHerdrRemoteCommand(machine: SshTarget, command: string, options: { sshBin?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number } = {}) { return spawnSync(options.sshBin ?? "ssh", [...herdrSshArgs(options.env), machine.target, command], { encoding: "utf8", env: hardenedSshEnv(options.env), timeout: options.timeout ?? 15_000, maxBuffer: options.maxBuffer ?? MAX_DISCOVERY_BYTES, windowsHide: true }); }
 
-export function runHerdrRemoteCommandAsync(machine: SshTarget, command: string, options: { sshBin?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number } = {}): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
+export function runHerdrRemoteCommandAsync(machine: SshTarget, command: string, options: { sshBin?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number } = {}): Promise<PlacementCommandResult> {
 	return runBoundedCommand(options.sshBin ?? "ssh", [...herdrSshArgs(options.env), machine.target, command], { env: hardenedSshEnv(options.env), timeout: options.timeout, maxBuffer: options.maxBuffer });
 }
 
 /** Spawns one process with bounded output and a SIGTERM-then-SIGKILL timeout; never rejects. */
-export function runBoundedCommand(file: string, args: string[], options: { env: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
+export function runBoundedCommand(file: string, args: string[], options: { env: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }): Promise<PlacementCommandResult> {
 	return new Promise((resolve) => {
 		const child = spawn(file, args, { env: options.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 		const stdout: Buffer[] = [], stderr: Buffer[] = [], maxBuffer = options.maxBuffer ?? MAX_DISCOVERY_BYTES; let stdoutBytes = 0, stderrBytes = 0, error: Error | undefined, settled = false, escalation: NodeJS.Timeout | undefined;

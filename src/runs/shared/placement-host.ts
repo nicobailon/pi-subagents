@@ -20,7 +20,7 @@ export interface PlacementSocketForward { socketPath: string; close(): Promise<v
 /** Unix sockets on the pane machine made reachable from the parent; close() ends every forward opened through it. */
 export interface PlacementSockets { forwardRemoteSocket(remotePath: string, name: string): Promise<PlacementSocketForward>; close(): Promise<void> }
 
-/** Runs commands on, and reaches unix sockets on, the machine that hosts the pane. SSH today; a local implementation runs commands directly and forwards a socket by returning its path unchanged. */
+/** Runs commands on, and reaches unix sockets on, the machine that hosts the pane: over SSH (`sshMachineAccess`) or directly (`localMachineAccess`). */
 export interface PlacementMachineAccess {
 	shellCommand(script: string, args?: string[]): string;
 	run(command: string, options?: PlacementCommandOptions): PlacementCommandResult;
@@ -28,15 +28,15 @@ export interface PlacementMachineAccess {
 	openSockets(): PlacementSockets;
 }
 
-/** Every pane operation a placed native run and its owner need. The connection carries the host's socket forwarding; P is the host's reconnect view of its panes; E is the host's raw pane event. */
-export interface PlacementPaneHost<C extends PlacementSockets = PlacementSockets, P extends object = object, E = unknown> {
+/** Every pane operation a placed native run and its owner need. The connection carries the host's socket forwarding; P is the host's reconnect view of its panes. */
+export interface PlacementPaneHost<C extends PlacementSockets = PlacementSockets, P extends object = object> {
 	connect(machine: PlacementMachineReference): Promise<C>;
 	sessionOf(connection: C): string | null;
 	/** Create the pane and start the agent in it; call onPane after the pane exists and before the agent starts. */
 	launch(connection: C, machine: PlacementMachineReference, runId: string, runtimeDir: string, request: PlacementLaunchRequest, onPane: (owned: PlacementOwnedPane) => Promise<void>, options?: PlacementStartOptions): Promise<{ owned: PlacementOwnedPane; terminalId: string }>;
 	prompt(connection: C, identity: HerdrRunIdentity, text: string): Promise<void>;
-	subscribe(connection: C, paneId: string, listener: (event: E) => void, onDisconnect: (error: Error) => void): Promise<() => void>;
-	paneEvent(event: E, fallback: PlacementRunState): { terminalId: unknown; paneId: unknown; state: PlacementRunState } | undefined;
+	subscribe(connection: C, paneId: string, listener: (event: unknown) => void, onDisconnect: (error: Error) => void): Promise<() => void>;
+	paneEvent(event: unknown, fallback: PlacementRunState): { terminalId: unknown; paneId: unknown; state: PlacementRunState } | undefined;
 	panes(connection: C, identity: HerdrRunIdentity): Promise<P>;
 	reconcile(identity: HerdrRunIdentity, panes: P, proveEvidence: () => PlacementEvidenceProof): PlacementReconnectCheck;
 	closeOwnedPane(connection: C, owned: PlacementOwnedPane, terminalId: string | undefined, agentName: string | undefined): Promise<void>;

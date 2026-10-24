@@ -24,7 +24,7 @@ export function localMachineAccess(options: { env?: NodeJS.ProcessEnv } = {}): P
 			if (spawned.error) result.error = spawned.error;
 			return result;
 		},
-		runAsync: (command, limits = {}) => runBoundedCommand("/bin/sh", ["-c", command], { env, timeout: limits.timeout ?? DEFAULT_TIMEOUT_MS, maxBuffer: limits.maxBuffer ?? DEFAULT_MAX_BUFFER }),
+		runAsync: (command, limits = {}) => runBoundedCommand("/bin/sh", ["-c", command], { env, ...limits }),
 		openSockets: localSockets,
 	};
 }

@@ -57,15 +57,12 @@ export interface ResolveHerdrMachinePlacementInput {
 	herdrBin?: string;
 }
 
-export interface HerdrMachinePlacement {
-	machine: HerdrMachineReference;
-	/** Opt-in `subagents.machines.<name>.env`, exported in front of the remote command. */
-	env?: Record<string, string>;
-}
+export interface HerdrMachinePlacement extends MachinePlacement { machine: HerdrMachineReference }
 
 /** A resolved `machine` value: a Herdr saved machine, or the reserved `local` (a Rex pane on this machine). */
 export interface MachinePlacement {
 	machine: PlacementMachineReference;
+	/** Opt-in `subagents.machines.<name>.env`, exported in front of the remote command. */
 	env?: Record<string, string>;
 }
 
@@ -226,6 +223,14 @@ function findProjectRootForSettings(cwd: string): string {
 	}
 }
 
+/** The child's cwd on a remote machine: an absolute launch cwd, or the launch cwd under the machine's configured root. */
+function remoteMachineCwd(stepCwd: string | undefined, root: string | undefined, name: string): string {
+	const step = stepCwd?.trim();
+	if (step && isRemoteAbsolute(step)) return step;
+	if (!root) throw new Error(`No root for ${name} in this repo. Set subagents.machines.${name}.cwd in .pi/settings.json or pass an absolute cwd on that machine.`);
+	return step ? path.posix.join(root, step) : root;
+}
+
 export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacementInput): HerdrMachinePlacement {
 	const requested = validateMachineName(input.machine);
 	const catalog = input.catalogJson !== undefined
@@ -238,11 +243,7 @@ export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacement
 	if (settings?.env && Object.keys(settings.env).length > 0) {
 		throw new Error(`Saved-machine environment for '${name}' must be configured remotely. Remove machines.${name}.env and configure the remote Herdr/Pi session instead.`);
 	}
-	const stepCwd = input.stepCwd?.trim();
-	let cwd: string;
-	if (stepCwd && isRemoteAbsolute(stepCwd)) cwd = stepCwd;
-	else if (settings?.cwd) cwd = stepCwd ? path.posix.join(settings.cwd, stepCwd) : settings.cwd;
-	else throw new Error(`No root for ${name} in this repo. Set subagents.machines.${name}.cwd in .pi/settings.json or pass an absolute cwd on that machine.`);
+	const cwd = remoteMachineCwd(input.stepCwd, settings?.cwd, name);
 	return {
 		machine: {
 			provider: "herdr",
@@ -264,14 +265,7 @@ export function resolveMachinePlacement(input: ResolveHerdrMachinePlacementInput
 		if (settings?.rex) throw new Error("Machine 'local' is reserved for a Rex pane on this machine; give the Rex SSH host in subagents.machines.local.rex another name.");
 		return { machine: resolveRexLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env: input.env }) };
 	}
-	if (settings?.rex) {
-		const stepCwd = input.stepCwd?.trim();
-		let cwd: string;
-		if (stepCwd && isRemoteAbsolute(stepCwd)) cwd = stepCwd;
-		else if (settings.cwd) cwd = stepCwd ? path.posix.join(settings.cwd, stepCwd) : settings.cwd;
-		else throw new Error(`No root for ${requested} in this repo. Set subagents.machines.${requested}.cwd in .pi/settings.json or pass an absolute cwd on that machine.`);
-		return { machine: { provider: "rex", id: requested, target: settings.rex.ssh, cwd: validateRemoteCwd(cwd, requested) } };
-	}
+	if (settings?.rex) return { machine: { provider: "rex", id: requested, target: settings.rex.ssh, cwd: validateRemoteCwd(remoteMachineCwd(input.stepCwd, settings.cwd, requested), requested) } };
 	return resolveHerdrMachinePlacement(input);
 }
 
@@ -287,7 +281,7 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 	let rex: boolean;
 	try { rex = name === REX_LOCAL_MACHINE || userRexMachine(name); } catch (error) { return error instanceof Error ? error.message : String(error); }
 	if (rex) {
-		if (input.runnerType !== undefined && input.runnerType !== "pi") return `Agent '${input.agentName}' requested machine '${name}', but Rex supports native Pi children only for now. Remove the machine or use a native Pi agent.`;
+		if (input.runnerType !== undefined && input.runnerType !== "pi") return `Agent '${input.agentName}' requested machine '${name}', but Rex supports native Pi children only. Remove the machine or use a native Pi agent.`;
 		if (input.worktree === true) return `Agent '${input.agentName}' requested machine '${name}', but managed worktrees cannot be combined with machine placement.`;
 		if (process.platform === "win32") return `Machine '${name}' runs the child in a Rex pane, which is not supported on Windows.`;
 		return undefined;

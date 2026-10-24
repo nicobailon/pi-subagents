@@ -9,7 +9,7 @@ import type { ChildSessionLaunch } from "../../src/runs/shared/child-session.ts"
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { createPlacementAwareChildSessionFactory, HerdrPiSession } from "../../src/runs/shared/herdr-placed-run.ts";
 import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
-import { resolveRexBinary, rexCommandEnv } from "../../src/runs/shared/rex-machine.ts";
+import { REX_BUNDLE_BIN, resolveRexBinary, rexCommandEnv } from "../../src/runs/shared/rex-machine.ts";
 import { closeOwnedRexPane, connectRex } from "../../src/runs/shared/rex-pane-host.ts";
 import type { RexMachineReference } from "../../src/shared/types.ts";
 
@@ -18,7 +18,7 @@ import type { RexMachineReference } from "../../src/shared/types.ts";
 const enabled = process.env.PI_SUBAGENTS_REX_SMOKE === "1";
 const realHome = os.userInfo().homedir;
 // The test loader isolates HOME, so the Rex server bundle is looked up under the real home directory here.
-const bundleRex = path.join(realHome, "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex");
+const bundleRex = path.join(realHome, REX_BUNDLE_BIN);
 function findRex(): string | undefined { try { return resolveRexBinary(); } catch { return fs.existsSync(bundleRex) ? bundleRex : undefined; } }
 function findPi(): string | undefined { const found = spawnSync("/bin/sh", ["-c", "command -v pi"], { encoding: "utf8" }); return found.status === 0 && found.stdout.trim() ? found.stdout.trim() : undefined; }
 const rexBin = enabled ? findRex() : undefined, piBin = enabled ? findPi() : undefined;

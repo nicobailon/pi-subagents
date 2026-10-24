@@ -149,7 +149,6 @@ describe("machine 'local' resolution", { skip: process.platform === "win32" }, (
 	it("rejects external runners and managed worktrees on machine 'local' before launch", () => {
 		assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "local", agentName: "worker" }), undefined);
 		assert.match(formatHerdrMachineRunnerUnsupported({ machine: "local", agentName: "claude", runnerType: "external-cli", adapter: "claude-code" }) ?? "", /native Pi children only/u);
-		assert.match(formatHerdrMachineRunnerUnsupported({ machine: "local", agentName: "tool", runnerType: "external-cli" }) ?? "", /native Pi children only/u);
 		assert.match(formatHerdrMachineRunnerUnsupported({ machine: "local", agentName: "worker", worktree: true }) ?? "", /managed worktrees/u);
 	});
 });

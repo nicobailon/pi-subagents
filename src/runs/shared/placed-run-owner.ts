@@ -2,21 +2,22 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlacementMachineReference } from "../../shared/types.ts";
 import type { HerdrRunIdentity, HerdrRunSnapshot } from "./herdr-placed-run.ts";
-import type { PlacementLaunchRequest, PlacementMachineAccess, PlacementOwnedPane, PlacementPaneHost, PlacementSockets, PlacementStartOptions } from "./placement-host.ts";
+import type { PlacementCommandOptions, PlacementLaunchRequest, PlacementMachineAccess, PlacementOwnedPane, PlacementPaneHost, PlacementSockets, PlacementStartOptions } from "./placement-host.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 
 export interface PlacedBridgeManifest { socketPath: string; nativeSessionId: string; packageVersion: string; protocol: number }
+/** Prints `$1/manifest.json` when it is a regular file, never through a symlink. */
+export const PLACED_MANIFEST_READ_SCRIPT = 'p="$1/manifest.json"; test -f "$p" && test ! -L "$p" && cat "$p"';
 
 export async function discoverPlacedBridgeManifest(access: PlacementMachineAccess, runId: string, runtimeDir: string, missing = "The placed Pi's pi-subagents bridge manifest is not in its runtime directory; the Pi may have exited."): Promise<PlacedBridgeManifest> {
-	const script = `p="$1/manifest.json"; test -f "$p" && test ! -L "$p" && cat "$p"`;
 	for (let attempt = 0; attempt < 100; attempt++) {
-		const result = await access.runAsync(access.shellCommand(script, [runtimeDir]), { timeout: 5_000, maxBuffer: 64 * 1024 });
+		const result = await access.runAsync(access.shellCommand(PLACED_MANIFEST_READ_SCRIPT, [runtimeDir]), { timeout: 5_000, maxBuffer: 64 * 1024 });
 		if (result.error) throw new Error(`Remote bridge manifest discovery failed: ${result.error.message}`, { cause: result.error });
 		if (result.status === 0 && result.stdout.trim()) {
 			let value: unknown; try { value = JSON.parse(result.stdout) as unknown; } catch { throw new Error("Remote bridge manifest is malformed."); }
 			const p = value as Record<string, unknown>;
 			if (p.runId !== runId || typeof p.socketPath !== "string" || path.posix.dirname(p.socketPath) !== runtimeDir || typeof p.nativeSessionId !== "string" || typeof p.packageVersion !== "string" || typeof p.protocol !== "number") throw new Error("Remote bridge manifest identity is incomplete or outside its owned runtime directory.");
-			return p as unknown as PlacedBridgeManifest;
+			return { socketPath: p.socketPath, nativeSessionId: p.nativeSessionId, packageVersion: p.packageVersion, protocol: p.protocol };
 		}
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
@@ -40,7 +41,7 @@ export class PlacedRunOwner<C extends PlacementSockets, M extends PlacementMachi
 	}
 	journal(identity: HerdrRunIdentity): void { this.identity = identity; this.#snapshot = { ...this.#snapshot, identity }; const journalDir = path.join(getAgentDir(), "pi-subagents", "herdr-run-journal"); fs.mkdirSync(journalDir, { recursive: true, mode: 0o700 }); fs.writeFileSync(path.join(journalDir, `${this.runId}.json`), JSON.stringify({ version: 1, identity, state: "ready", updatedAt: Date.now() }), { mode: 0o600, flag: "wx" }); }
 	get snapshot(): HerdrRunSnapshot { return this.#snapshot; }
-	runRemote(command: string, options: { timeout?: number; maxBuffer?: number } = {}) { return this.access.run(command, options); }
+	runRemote(command: string, options: PlacementCommandOptions = {}) { return this.access.run(command, options); }
 	async replaceConnection(input: { connection: C; unsubscribe: () => void; paneId: string; state: HerdrRunSnapshot["state"] }): Promise<void> { const oldConnection = this.connection, oldUnsubscribe = this.#unsubscribe; this.connection = input.connection; this.#unsubscribe = input.unsubscribe; if (this.identity) this.identity = { ...this.identity, paneId: input.paneId }; this.#snapshot = { connection: "connected", state: input.state, identity: this.identity, revision: this.#snapshot.revision + 1 }; oldUnsubscribe(); await oldConnection.close(); }
 	cleanup(closeStartedPane = true): Promise<void> { return this.#cleanupPromise ??= this.#performCleanup(closeStartedPane); }
 	async #performCleanup(closeStartedPane: boolean): Promise<void> { let failure: unknown; try { if (closeStartedPane && this.owned) await this.host.closeOwnedPane(this.connection, this.owned, this.terminalId, this.agentName); } catch (error) { failure = error; } try { this.#unsubscribe(); await this.connection.close(); this.#removeRuntime(); } catch (error) { failure ??= error; } this.#snapshot = { ...this.#snapshot, connection: "closed", revision: this.#snapshot.revision + 1 }; if (failure) throw failure; }

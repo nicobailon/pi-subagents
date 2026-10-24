@@ -114,7 +114,7 @@ export interface RunChildSessionResult {
 	toolCount: number;
 	durationMs: number;
 	model?: string;
-	nativeMachine?: { provider: import("../../shared/types.ts").PlacementMachineReference["provider"]; machineId: string; initialGit?: import("../../shared/types.ts").HerdrRemoteGitStatus; finalGit?: import("../../shared/types.ts").HerdrRemoteGitStatus };
+	nativeMachine?: import("../../shared/types.ts").SingleResult["nativeMachine"];
 	error?: string;
 	finalOutput: string;
 	outputState: SubagentOutputState;

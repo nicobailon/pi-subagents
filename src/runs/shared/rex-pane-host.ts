@@ -7,11 +7,11 @@ import { remoteShellCommand, sshMachineAccess } from "./herdr-connection.ts";
 import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { localMachineAccess } from "./local-machine-access.ts";
 import { getPiSpawnCommand } from "./pi-spawn.ts";
-import { createPlacedRuntimeDir, PlacedRunOwner, removePlacedRuntimeDir } from "./placed-run-owner.ts";
+import { createPlacedRuntimeDir, PLACED_MANIFEST_READ_SCRIPT, PlacedRunOwner, removePlacedRuntimeDir } from "./placed-run-owner.ts";
 import { withHerdrPaneAllocationLock, type PlacementCommandResult, type PlacementEvidenceProof, type PlacementMachineAccess, type PlacementOwnedPane, type PlacementPaneHost, type PlacementReconnectCheck, type PlacementSockets } from "./placement-host.ts";
-import { isRexLocalMachine, REX_BUNDLE_BIN, REX_EXIT_GONE, REX_EXIT_UNREACHABLE, resolveRexBinary, rexCommandEnv } from "./rex-machine.ts";
+import { isRexLocalMachine, REX_BUNDLE_BIN, REX_CALL_TIMEOUT_MS, REX_EXIT_GONE, REX_EXIT_UNREACHABLE, REX_MAX_OUTPUT, resolveRexBinary, rexCommandEnv, rexGlobalArgs } from "./rex-machine.ts";
 
-const REX_CALL_TIMEOUT_MS = 15_000, REX_MAX_OUTPUT = 1024 * 1024, REX_CLOSE_POLLS = 20, REX_CLOSE_POLL_MS = 50;
+const REX_CLOSE_POLLS = 20, REX_CLOSE_POLL_MS = 50;
 /** On a Rex SSH machine, placed tabs open in the one session with this label. */
 export const REX_SSH_SESSION_LABEL = "subagents";
 const sessionInspection = Compile(Type.Object({ session_id: Type.String() }));
@@ -33,9 +33,8 @@ export interface RexPaneCandidate { present: boolean; foregroundPid?: number; br
 function asRexMachine(machine: PlacementMachineReference): RexMachineReference { if (machine.provider !== "rex") throw new Error("The Rex pane host only places runs on Rex machines."); return machine; }
 
 /** Runs one rex command on the pane machine with --autostart=false, the recorded server, and no inherited Rex selectors; exit 4 always throws. */
-export async function runRex(endpoint: Pick<RexEndpoint, "access" | "bin" | "server">, args: string[], what: string): Promise<PlacementCommandResult & { status: number }> {
-	const globals = endpoint.server ? ["--autostart=false", "-S", endpoint.server] : ["--autostart=false"];
-	const result = await endpoint.access.runAsync(endpoint.access.shellCommand('exec /usr/bin/env -u REX_SESSION -u REX_BLOCK -u REX_SERVER "$@"', [endpoint.bin, ...globals, ...args]), { timeout: REX_CALL_TIMEOUT_MS, maxBuffer: REX_MAX_OUTPUT });
+async function runRex(endpoint: Pick<RexEndpoint, "access" | "bin" | "server">, args: string[], what: string): Promise<PlacementCommandResult & { status: number }> {
+	const result = await endpoint.access.runAsync(endpoint.access.shellCommand('exec /usr/bin/env -u REX_SESSION -u REX_BLOCK -u REX_SERVER "$@"', [endpoint.bin, ...rexGlobalArgs(endpoint.server), ...args]), { timeout: REX_CALL_TIMEOUT_MS, maxBuffer: REX_MAX_OUTPUT });
 	if (result.error) throw new Error(`Rex ${what} failed: ${result.error.message}`, { cause: result.error });
 	if (result.status === REX_EXIT_UNREACHABLE) throw new Error(`The Rex server is unreachable (rex ${what} exited 4); the placed pane's state is unknown.`);
 	if (result.status === null) throw new Error(`Rex ${what} did not finish; the placed pane's state is unknown.`);
@@ -139,7 +138,7 @@ export async function closeOwnedRexPane(connection: RexConnection, owned: Placem
 	if (owned.workspaceId !== connection.session) throw new Error("Refusing Rex cleanup: the owned pane belongs to a different Rex session.");
 	if (await inspectBlock(connection, owned.paneId) === "gone") return;
 	const closed = await runRex(connection, ["block", "close", "-s", connection.session, owned.paneId], "block close");
-	if (closed.status !== 0 && closed.status !== REX_EXIT_GONE) throw new Error(`Rex block close exited with code ${closed.status}: ${closed.stderr.trim().slice(0, 512)}`);
+	if (closed.status !== REX_EXIT_GONE) requireRexSuccess(closed, "block close");
 	for (let poll = 0; poll < REX_CLOSE_POLLS; poll++) {
 		if (await inspectBlock(connection, owned.paneId) === "gone") return;
 		await new Promise((resolve) => setTimeout(resolve, REX_CLOSE_POLL_MS));
@@ -147,7 +146,7 @@ export async function closeOwnedRexPane(connection: RexConnection, owned: Placem
 	throw new Error(`Rex block ${owned.paneId} still exists after close; refusing to report the placed pane closed.`);
 }
 
-export function reconcileRexPlacedRun(identity: HerdrRunIdentity, candidate: RexPaneCandidate, proveEvidence: () => PlacementEvidenceProof): PlacementReconnectCheck {
+function reconcileRexPlacedRun(identity: HerdrRunIdentity, candidate: RexPaneCandidate, proveEvidence: () => PlacementEvidenceProof): PlacementReconnectCheck {
 	if (!candidate.present) return { ok: false, reason: "Owned Rex block is gone." };
 	if (candidate.foregroundPid === undefined || candidate.foregroundPid !== candidate.bridgePid) return { ok: false, reason: "The owned Rex block's foreground process is not the placed Pi." };
 	const proof = proveEvidence(); if (!proof.ok) return proof;
@@ -155,7 +154,7 @@ export function reconcileRexPlacedRun(identity: HerdrRunIdentity, candidate: Rex
 }
 
 async function readBridgePid(connection: RexConnection, runtimeDir: string): Promise<number | undefined> {
-	const manifest = await connection.access.runAsync(connection.access.shellCommand('p="$1/manifest.json"; test -f "$p" && test ! -L "$p" && cat "$p"', [runtimeDir]), { timeout: 5_000, maxBuffer: 64 * 1024 });
+	const manifest = await connection.access.runAsync(connection.access.shellCommand(PLACED_MANIFEST_READ_SCRIPT, [runtimeDir]), { timeout: 5_000, maxBuffer: 64 * 1024 });
 	if (manifest.status !== 0) return undefined;
 	return parseRexJson(manifest.stdout, bridgeManifestPid, "bridge manifest")?.pid;
 }
@@ -199,10 +198,10 @@ async function openRexWindow(connection: RexConnection, label: string, cwd: stri
  * forward), and the reconnect that follows checks the block with `rex block call process` and fails closed.
  */
 export const rexPaneHost = {
-	connect(machine) { return connectRex(machine); },
+	connect: connectRex,
 	sessionOf(connection) { return connection.session; },
 	async launch(connection, machine, runId, _runtimeDir, request, onPane) {
-		if (request.kind !== "pi") throw new Error("Rex supports native Pi children only for now.");
+		if (request.kind !== "pi") throw new Error("Rex supports native Pi children only.");
 		const environment = Object.entries(request.environment ?? {});
 		if (environment.some(([name]) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name))) throw new Error("Rex launch environment names must be shell variable names.");
 		const rex = asRexMachine(machine);
@@ -234,7 +233,7 @@ export const rexPaneHost = {
 		return candidate;
 	},
 	reconcile: reconcileRexPlacedRun,
-	closeOwnedPane(connection, owned) { return closeOwnedRexPane(connection, owned); },
+	closeOwnedPane: closeOwnedRexPane,
 } satisfies PlacementPaneHost<RexConnection, RexPaneCandidate>;
 
 function runtimeDirPresent(access: PlacementMachineAccess, runtimeDir: string): boolean {
