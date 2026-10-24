@@ -5,6 +5,7 @@ import { readRecentTerminalRunIndex } from "../runs/background/terminal-run-inde
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import { readStatus } from "../shared/utils.ts";
 import type { AsyncStatus } from "../shared/types.ts";
+import { workflowResumeClaimState } from "./workflow-resume-claim.ts";
 import { workflowRunParamsFingerprint, type WorkflowScriptChildResult } from "./scripted-workflow.ts";
 import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED, workflowRelaunchReuseHint } from "./workflow-stop-cause.ts";
 
@@ -125,10 +126,23 @@ function readWorkflowReuseChain(asyncDirRoot: string, headRunId: string, headSta
 	return source;
 }
 
+/** Why a relaunch of `runId` is refused when another relaunch already continues it. */
+export function claimedWorkflowRunRefusal(runId: string, claim: { kind: "resumed"; newRunId: string } | { kind: "busy"; pid: number }, named: boolean): string {
+	const text = claim.kind === "resumed"
+		? `workflow run '${runId}' was resumed as ${claim.newRunId}; wait on it or stop it.`
+		: `workflow run '${runId}' is being resumed by pid ${claim.pid}; wait for it.`;
+	return named ? `options.reuseFrom: ${text}` : `W${text.slice(1)}`;
+}
+
+function assertWorkflowRunNotClaimed(asyncDir: string, runId: string, named: boolean, claimOwnerRunId?: string): void {
+	const claim = workflowResumeClaimState(asyncDir);
+	if (claim.kind !== "none" && claim.newRunId !== claimOwnerRunId) throw new Error(claimedWorkflowRunRefusal(runId, claim, named));
+}
 
 /**
  * The newest terminal workflow of this session with the same script and args,
  * when that run stopped because its runtime was replaced or its Pi process exited.
+ * Throws when another relaunch already continues that run.
  */
 export function findWorkflowReuseSource(asyncDirRoot: string, sessionId: string, scriptDigest: string, argsDigest: string | undefined): WorkflowReuseSource | undefined {
 	let runIds: string[];
@@ -146,7 +160,9 @@ export function findWorkflowReuseSource(asyncDirRoot: string, sessionId: string,
 			continue;
 		}
 		if (status?.mode !== "workflow" || status.workflow?.scriptDigest !== scriptDigest || status.workflow.argsDigest !== argsDigest) continue;
-		return isReusableWorkflowStopCause(status.workflow.stopCause) ? readWorkflowReuseChain(asyncDirRoot, runId, status) : undefined;
+		if (!isReusableWorkflowStopCause(status.workflow.stopCause)) return undefined;
+		assertWorkflowRunNotClaimed(asyncDir, runId, false);
+		return readWorkflowReuseChain(asyncDirRoot, runId, status);
 	}
 	return undefined;
 }
@@ -156,7 +172,7 @@ export function findWorkflowReuseSource(asyncDirRoot: string, sessionId: string,
  * must match: each child is still reused only when its key and launch params match. The run is
  * reconciled first, so a run whose Pi process died is marked `owner-exited` before it is read.
  */
-export function readNamedWorkflowReuseSource(asyncDirRoot: string, runId: string, scriptDigest: string, cwd: string): WorkflowReuseSource {
+export function readNamedWorkflowReuseSource(asyncDirRoot: string, runId: string, scriptDigest: string, cwd: string, claimOwnerRunId?: string): WorkflowReuseSource {
 	// A user-supplied id: it must name one run directory, never a path.
 	const runName = isRunName(runId);
 	if (runName) reconcileAsyncRun(path.join(asyncDirRoot, runId));
@@ -166,6 +182,7 @@ export function readNamedWorkflowReuseSource(asyncDirRoot: string, runId: string
 	if (!isReusableWorkflowStopCause(status.workflow?.stopCause)) throw new Error(`options.reuseFrom: workflow run '${runId}' did not stop because its session was replaced or its Pi process exited, so its children cannot be reused.`);
 	if (status.workflow.scriptDigest !== scriptDigest) throw new Error(`options.reuseFrom: workflow run '${runId}' ran a different workflow script.`);
 	if (status.cwd !== cwd) throw new Error(`options.reuseFrom: workflow run '${runId}' ran in '${status.cwd}', not '${cwd}'.`);
+	assertWorkflowRunNotClaimed(path.join(asyncDirRoot, runId), runId, true, claimOwnerRunId);
 	return readWorkflowReuseChain(asyncDirRoot, runId, status);
 }
 
