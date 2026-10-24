@@ -2427,6 +2427,49 @@ Answer only from the supplied synthetic text.
 			assert.equal(relaunched.steps?.find((step) => step.workflowKey === "stage2")?.runId, stage2RunId);
 		});
 
+		it("reuses children from the whole relaunch chain, including keys the middle run never reached", { timeout: 90_000, skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `reuse-chain-${Date.now()}`;
+			const release = path.join(tempDir, `${nonce}.release`);
+			const longKeys = ["long1", "long2", "long3"];
+			// "quick" queues behind long1 when there is one slot.
+			const keys = ["long1", "quick", "long2", "long3"];
+			const script = `const children = await Promise.all(${JSON.stringify(keys)}.map((key) => runs.run(key, key === "quick" ? { agent: "echo", task: "Quick ${nonce}" } : { agent: "bg", task: "Long " + key + " ${nonce}" }))); return children.map((child) => child.output);`;
+			const args = { nonce };
+			const { launch, waitFor, settled, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Quick ${nonce}`, output: "quick once" });
+			for (const key of longKeys) mockPi.onCall({ matchArgIncludes: `Long ${key} ${nonce}`, waitForPath: release, output: `${key} finished` });
+			const callsBefore = mockPi.callCount();
+
+			// A: finishes quick, then is replaced while all three long children run.
+			const firstId = await launch({ workflowScript: script, args });
+			const firstReady = (status: AsyncStatus) => status.steps?.find((step) => step.workflowKey === "quick")?.status === "completed"
+				&& longKeys.every((key) => Boolean(status.steps?.find((step) => step.workflowKey === key && step.async === true)?.runId));
+			const first = await stopWhenStage2Starts(firstId, runtimeReplacedAbortReason(), firstReady);
+			const firstLongRunIds = longKeys.map((key) => first.steps?.find((step) => step.workflowKey === key)?.runId);
+			assert.ok(firstLongRunIds.every(Boolean), JSON.stringify(first.steps));
+			for (const deadline = Date.now() + 15_000; mockPi.callCount() < callsBefore + 4 && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 50));
+			assert.equal(mockPi.callCount(), callsBefore + 4);
+
+			// B: one slot, so long1 re-attaches and holds it while quick, long2 and long3 stay queued.
+			const secondId = await launch({ workflowScript: script, args, globalConcurrencyLimit: 1 });
+			const secondJournal = path.join(DIRS.async, secondId, "workflow-children.jsonl");
+			const journalLines = () => fs.existsSync(secondJournal) ? fs.readFileSync(secondJournal, "utf-8").split("\n").filter(Boolean) : [];
+			const second = await stopWhenStage2Starts(secondId, runtimeReplacedAbortReason(), () => journalLines().length > 0);
+			assert.equal(second.workflow?.stopCause, "runtime-replaced");
+			assert.deepEqual(journalLines().map((line) => { const { type, key, runId } = JSON.parse(line) as { type: string; key: string; runId?: string }; return { type, key, runId }; }), [{ type: "start", key: "long1", runId: firstLongRunIds[0] }]);
+
+			// C: relaunched from B, it finds every key through B and A and launches nothing.
+			const thirdId = await launch({ workflowScript: script, args, reuseFrom: secondId }, "session-chain-successor");
+			await waitFor(thirdId, (status) => longKeys.every((key) => status.steps?.some((step) => step.workflowKey === key && step.runId)));
+			fs.writeFileSync(release, "go");
+			const third = await settled(thirdId);
+			assert.equal(third.state, "complete", third.error);
+			assert.equal(mockPi.callCount(), callsBefore + 4, "C launched no child");
+			assert.deepEqual(third.workflow?.value, ["long1 finished", "quick once", "long2 finished", "long3 finished"]);
+			assert.deepEqual(longKeys.map((key) => third.steps?.find((step) => step.workflowKey === key)?.runId), firstLongRunIds);
+			assert.equal(third.steps?.find((step) => step.workflowKey === "quick")?.reused, true);
+		});
+
 		it("stops another session's re-attached child when the user stops the options.reuseFrom relaunch", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 			const nonce = `reuse-from-user-stop-${Date.now()}`;
 			const script = `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); await runs.run("stage2", { agent: "bg", task: "Stage two ${nonce}" });`;

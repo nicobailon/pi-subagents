@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { readRecentTerminalRunIndex } from "../runs/background/terminal-run-index.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import { readStatus } from "../shared/utils.ts";
+import type { AsyncStatus } from "../shared/types.ts";
 import { workflowRunParamsFingerprint, type WorkflowScriptChildResult } from "./scripted-workflow.ts";
 import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED, workflowRelaunchReuseHint } from "./workflow-stop-cause.ts";
 
@@ -85,6 +86,44 @@ function readWorkflowChildJournal(runId: string, workflowAsyncDir: string): Work
 	}
 	return source;
 }
+export const WORKFLOW_REUSE_CHAIN_MAX_LINKS = 16;
+
+function isRunName(runId: string): boolean {
+	return runId === path.basename(runId) && runId !== "." && runId !== "..";
+}
+
+/**
+ * The head run's journal plus the journals of the runs it was relaunched from (`workflow.reusedFrom`).
+ * A child's start record is written only once it gets a concurrency slot, so a key the head never
+ * reached is still in an earlier run's journal. For each key the newest run that recorded it wins.
+ */
+function readWorkflowReuseChain(asyncDirRoot: string, headRunId: string, headStatus: AsyncStatus): WorkflowReuseSource {
+	const source = readWorkflowChildJournal(headRunId, path.join(asyncDirRoot, headRunId));
+	const visited = new Set([headRunId]);
+	let next = headStatus.workflow?.reusedFrom;
+	for (let links = 0; next !== undefined && links < WORKFLOW_REUSE_CHAIN_MAX_LINKS && !visited.has(next) && isRunName(next); links++) {
+		visited.add(next);
+		const asyncDir = path.join(asyncDirRoot, next);
+		let status: ReturnType<typeof readStatus>;
+		try {
+			status = readStatus(asyncDir);
+		} catch {
+			break;
+		}
+		if (status?.mode !== "workflow" || status.workflow?.scriptDigest !== headStatus.workflow?.scriptDigest) break;
+		const link = readWorkflowChildJournal(next, asyncDir);
+		for (const key of new Set([...link.started.keys(), ...link.settled.keys()])) {
+			if (source.started.has(key) || source.settled.has(key)) continue;
+			const started = link.started.get(key);
+			const settled = link.settled.get(key);
+			if (started) source.started.set(key, started);
+			if (settled) source.settled.set(key, settled);
+		}
+		next = status.workflow?.reusedFrom;
+	}
+	return source;
+}
+
 
 /**
  * The newest terminal workflow of this session with the same script and args,
@@ -106,7 +145,7 @@ export function findWorkflowReuseSource(asyncDirRoot: string, sessionId: string,
 			continue;
 		}
 		if (status?.mode !== "workflow" || status.workflow?.scriptDigest !== scriptDigest || status.workflow.argsDigest !== argsDigest) continue;
-		return isReusableWorkflowStopCause(status.workflow.stopCause) ? readWorkflowChildJournal(runId, asyncDir) : undefined;
+		return isReusableWorkflowStopCause(status.workflow.stopCause) ? readWorkflowReuseChain(asyncDirRoot, runId, status) : undefined;
 	}
 	return undefined;
 }
@@ -118,15 +157,15 @@ export function findWorkflowReuseSource(asyncDirRoot: string, sessionId: string,
  */
 export function readNamedWorkflowReuseSource(asyncDirRoot: string, runId: string, scriptDigest: string, cwd: string): WorkflowReuseSource {
 	// A user-supplied id: it must name one run directory, never a path.
-	const isRunName = runId === path.basename(runId) && runId !== "." && runId !== "..";
-	if (isRunName) reconcileAsyncRun(path.join(asyncDirRoot, runId));
-	const status = isRunName ? readStatus(path.join(asyncDirRoot, runId)) : null;
+	const runName = isRunName(runId);
+	if (runName) reconcileAsyncRun(path.join(asyncDirRoot, runId));
+	const status = runName ? readStatus(path.join(asyncDirRoot, runId)) : null;
 	if (!status) throw new Error(`options.reuseFrom: workflow run '${runId}' was not found.`);
 	if (status.mode !== "workflow") throw new Error(`options.reuseFrom: run '${runId}' is not a workflow run.`);
 	if (!isReusableWorkflowStopCause(status.workflow?.stopCause)) throw new Error(`options.reuseFrom: workflow run '${runId}' did not stop because its session was replaced or its Pi process exited, so its children cannot be reused.`);
 	if (status.workflow.scriptDigest !== scriptDigest) throw new Error(`options.reuseFrom: workflow run '${runId}' ran a different workflow script.`);
 	if (status.cwd !== cwd) throw new Error(`options.reuseFrom: workflow run '${runId}' ran in '${status.cwd}', not '${cwd}'.`);
-	return readWorkflowChildJournal(runId, path.join(asyncDirRoot, runId));
+	return readWorkflowReuseChain(asyncDirRoot, runId, status);
 }
 
 /** A settled match is reusable only when that child succeeded; failed or stopped children run again. */
