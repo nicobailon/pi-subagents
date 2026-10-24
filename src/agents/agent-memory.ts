@@ -232,7 +232,9 @@ export function readMemoryFile(memoryDir: string): MemoryFileResult {
 	let fd: number;
 	try {
 		const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
-		fd = fs.openSync(file, fs.constants.O_RDONLY | noFollow);
+		// A FIFO must not block the launch before fstat can reject non-files.
+		const nonBlock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+		fd = fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
 	} catch (error) {
 		const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
 		return code === "ELOOP" ? "unsafe" : null;
