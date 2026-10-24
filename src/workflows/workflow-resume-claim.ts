@@ -6,13 +6,16 @@ import { currentBootId } from "../runs/background/boot-id.ts";
 import { currentPidNamespaceScope } from "../runs/background/pid-namespace.ts";
 import { checkRecordedPidLiveness, type PidLiveness } from "../runs/background/stale-run-reconciler.ts";
 
-const CLAIM_FILE = "resumed-by.json";
+const CLAIM_FILE_PATTERN = /^resumed-by\.([1-9][0-9]*)\.json$/;
 const REFUSAL_FILE = "resume-refused.json";
-const MAX_CLAIM_ROUNDS = 4;
+const MAX_CLAIM_ROUNDS = 8;
 
 /**
- * Who continues a stopped workflow run. At most one claim file exists per run, and only its
- * owner launches; once the claimed new run's status.json exists the claim is permanent.
+ * Who continues a stopped workflow run. Claims are generation files `resumed-by.<n>.json` in the
+ * stopped run's directory, and the highest n is the current claim. A claimant whose process is dead
+ * is superseded by creating the next generation, so a takeover never moves a file another taker
+ * may have just created. Only the owner launches; once the claimed new run's status.json exists
+ * the claim is permanent.
  */
 export interface WorkflowResumeClaim {
 	version: 1;
@@ -49,8 +52,8 @@ const heldClaimsKey = Symbol.for("pi-subagents.workflow-resume-claims.v1");
 const heldClaimsGlobal = globalThis as typeof globalThis & { [heldClaimsKey]?: Set<string> };
 const heldClaims = heldClaimsGlobal[heldClaimsKey] ?? (heldClaimsGlobal[heldClaimsKey] = new Set<string>());
 
-function claimPath(asyncDir: string): string {
-	return path.join(asyncDir, CLAIM_FILE);
+function claimFilePath(asyncDir: string, generation: number): string {
+	return path.join(asyncDir, `resumed-by.${generation}.json`);
 }
 
 function isClaim(value: unknown): value is WorkflowResumeClaim {
@@ -65,28 +68,48 @@ function isClaim(value: unknown): value is WorkflowResumeClaim {
 		&& (claim.trigger === "auto" || claim.trigger === "manual" || claim.trigger === "reuse");
 }
 
-type ClaimRead = { kind: "missing" } | { kind: "invalid" } | { kind: "claim"; claim: WorkflowResumeClaim };
+/**
+ * The current claim. `unreadable` means a read failed for a reason other than a missing file,
+ * which must fail closed: nothing proves its claimant dead.
+ */
+type TopClaim =
+	| { kind: "none" }
+	| { kind: "unreadable" }
+	| { kind: "invalid"; generation: number }
+	| { kind: "claim"; generation: number; filePath: string; claim: WorkflowResumeClaim };
 
-function readClaimFile(filePath: string): ClaimRead {
+function readTopClaim(asyncDir: string, retries = 3): TopClaim {
+	let generation = 0;
+	try {
+		for (const name of fs.readdirSync(asyncDir)) {
+			const match = CLAIM_FILE_PATTERN.exec(name);
+			if (match) generation = Math.max(generation, Number(match[1]));
+		}
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "none" } : { kind: "unreadable" };
+	}
+	if (generation === 0) return { kind: "none" };
+	const filePath = claimFilePath(asyncDir, generation);
 	let text: string;
 	try {
 		text = fs.readFileSync(filePath, "utf-8");
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
-		// Unreadable is treated like a corrupt body: nothing can prove a live claimant.
-		return { kind: "invalid" };
+		// A release renamed it after the listing: look again.
+		if ((error as NodeJS.ErrnoException).code === "ENOENT" && retries > 0) return readTopClaim(asyncDir, retries - 1);
+		return { kind: "unreadable" };
 	}
 	try {
 		const value = JSON.parse(text) as unknown;
-		return isClaim(value) ? { kind: "claim", claim: value } : { kind: "invalid" };
+		// The file is created whole, so a body that does not parse is corrupt, not half-written.
+		return isClaim(value) ? { kind: "claim", generation, filePath, claim: value } : { kind: "invalid", generation };
 	} catch {
-		return { kind: "invalid" };
+		return { kind: "invalid", generation };
 	}
 }
 
 export function readWorkflowResumeClaim(asyncDir: string): WorkflowResumeClaim | undefined {
-	const read = readClaimFile(claimPath(asyncDir));
-	return read.kind === "claim" ? read.claim : undefined;
+	const top = readTopClaim(asyncDir);
+	return top.kind === "claim" ? top.claim : undefined;
 }
 
 function claimedRunStarted(asyncDir: string, claim: WorkflowResumeClaim): boolean {
@@ -102,13 +125,13 @@ function claimantLiveness(filePath: string, claim: WorkflowResumeClaim, liveness
 		: checkRecordedPidLiveness({ pid: claim.pid, pidNamespaceScope: claim.pidNamespaceScope, bootId: claim.bootId }, { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() });
 }
 
-/** Read-only view for reuse readers: a claim with a dead claimant blocks nothing. */
+/** Read-only view for reuse readers and auto-resume: a dead, corrupt, or missing claim blocks nothing. */
 export function workflowResumeClaimState(asyncDir: string, options: { liveness?: ClaimLiveness } = {}): WorkflowResumeClaimState {
-	const filePath = claimPath(asyncDir);
-	const read = readClaimFile(filePath);
-	if (read.kind !== "claim") return { kind: "none" };
-	if (claimedRunStarted(asyncDir, read.claim)) return { kind: "resumed", newRunId: read.claim.newRunId };
-	return claimantLiveness(filePath, read.claim, options.liveness) === "dead" ? { kind: "none" } : { kind: "busy", pid: read.claim.pid, newRunId: read.claim.newRunId };
+	const top = readTopClaim(asyncDir);
+	if (top.kind === "unreadable") return { kind: "busy", pid: 0, newRunId: "" };
+	if (top.kind !== "claim") return { kind: "none" };
+	if (claimedRunStarted(asyncDir, top.claim)) return { kind: "resumed", newRunId: top.claim.newRunId };
+	return claimantLiveness(top.filePath, top.claim, options.liveness) === "dead" ? { kind: "none" } : { kind: "busy", pid: top.claim.pid, newRunId: top.claim.newRunId };
 }
 
 /** Creates the claim file only if none exists, with its whole body in place at once. */
@@ -127,11 +150,11 @@ function createClaimFile(filePath: string, claim: WorkflowResumeClaim): boolean 
 }
 
 /**
- * Claims the right to continue the stopped run in `asyncDir` as `newRunId`. A claimant whose
- * process is dead is moved aside and the create is retried, so of several takers exactly one wins.
+ * Claims the right to continue the stopped run in `asyncDir` as `newRunId`. A dead claimant is
+ * superseded by the next generation file; of several takers, the one whose exclusive create
+ * succeeds owns the run, and the others see its live claim on their next read.
  */
 export function claimWorkflowResume(asyncDir: string, input: { newRunId: string; trigger: WorkflowResumeClaim["trigger"]; now?: number; liveness?: ClaimLiveness }): WorkflowResumeClaimOutcome {
-	const filePath = claimPath(asyncDir);
 	const claim: WorkflowResumeClaim = {
 		version: 1,
 		pid: process.pid,
@@ -142,44 +165,39 @@ export function claimWorkflowResume(asyncDir: string, input: { newRunId: string;
 		trigger: input.trigger,
 	};
 	for (let round = 0; round < MAX_CLAIM_ROUNDS; round++) {
+		const top = readTopClaim(asyncDir);
+		if (top.kind === "unreadable") return { kind: "busy", pid: 0 };
+		if (top.kind === "claim") {
+			// Already claimed for this exact new run, as a resume does before it launches.
+			if (top.claim.newRunId === input.newRunId && top.claim.pid === process.pid) {
+				heldClaims.add(top.filePath);
+				return { kind: "owner" };
+			}
+			if (claimedRunStarted(asyncDir, top.claim)) return { kind: "resumed", newRunId: top.claim.newRunId };
+			if (claimantLiveness(top.filePath, top.claim, input.liveness) !== "dead") return { kind: "busy", pid: top.claim.pid };
+		}
+		const filePath = claimFilePath(asyncDir, top.kind === "none" ? 1 : top.generation + 1);
 		if (createClaimFile(filePath, claim)) {
 			heldClaims.add(filePath);
 			return { kind: "owner" };
 		}
-		const read = readClaimFile(filePath);
-		if (read.kind === "missing") continue;
-		if (read.kind === "claim") {
-			// Already claimed for this exact new run, as a resume does before it launches.
-			if (read.claim.newRunId === input.newRunId && read.claim.pid === process.pid) {
-				heldClaims.add(filePath);
-				return { kind: "owner" };
-			}
-			if (claimedRunStarted(asyncDir, read.claim)) return { kind: "resumed", newRunId: read.claim.newRunId };
-			if (claimantLiveness(filePath, read.claim, input.liveness) !== "dead") return { kind: "busy", pid: read.claim.pid };
-		}
-		try {
-			fs.renameSync(filePath, `${filePath}.stale-${randomUUID()}`);
-		} catch (error) {
-			// Another taker moved it first; the next create decides who owns it.
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
+		// Another taker created that generation first: decide again from its claim.
 	}
-	// Every round lost a takeover race to another claimant.
-	const last = readClaimFile(filePath);
-	return { kind: "busy", pid: last.kind === "claim" ? last.claim.pid : 0 };
+	const top = readTopClaim(asyncDir);
+	return { kind: "busy", pid: top.kind === "claim" ? top.claim.pid : 0 };
 }
 
 /** Gives up this process's claim on a launch that did not start, so the run can be continued again. */
 export function releaseWorkflowResumeClaim(asyncDir: string, newRunId: string): void {
-	const filePath = claimPath(asyncDir);
-	const read = readClaimFile(filePath);
-	if (read.kind !== "claim" || read.claim.newRunId !== newRunId) return;
+	const top = readTopClaim(asyncDir);
+	if (top.kind !== "claim" || top.claim.newRunId !== newRunId || top.claim.pid !== process.pid) return;
+	// The only rename in the protocol: the owner moves its own claim aside.
 	try {
-		fs.renameSync(filePath, `${filePath}.released-${randomUUID()}`);
+		fs.renameSync(top.filePath, `${top.filePath}.released-${randomUUID()}`);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
-	heldClaims.delete(filePath);
+	heldClaims.delete(top.filePath);
 }
 
 export function recordWorkflowResumeRefusal(asyncDir: string, refusal: Omit<WorkflowResumeRefusal, "version" | "refusedAt">, now = Date.now()): void {

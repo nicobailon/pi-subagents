@@ -6,6 +6,8 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { DIRS, type AsyncStatus } from "../../src/shared/types.ts";
 import { runtimeReplacedAbortReason } from "../../src/workflows/workflow-reuse.ts";
+import { readWorkflowResumeClaim } from "../../src/workflows/workflow-resume-claim.ts";
+import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
 import { waitForAsyncResultFile, waitForAsyncState } from "../support/async-execution-fixture.ts";
 import { makeAgent, makeMinimalCtx } from "../support/helpers.ts";
 import { available, createSubagentExecutor, installSingleExecutionHooks, makeExecutor, mockPi, tempDir } from "../support/single-execution-fixture.ts";
@@ -53,7 +55,7 @@ describe("resuming a stopped workflow by id", { skip: !available || !createSubag
 	const stageStarted = (key: string) => (status: AsyncStatus) => Boolean(status.steps?.find((step) => step.workflowKey === key)?.runId)
 		|| (status.workflow?.trace.some((entry) => entry.key === key && entry.state === "started") ?? false);
 	const asyncStageReady = (key: string) => (status: AsyncStatus) => Boolean(status.steps?.find((step) => step.workflowKey === key && step.async === true)?.runId);
-	const claimOf = (runId: string) => JSON.parse(fs.readFileSync(path.join(DIRS.async, runId, "resumed-by.json"), "utf-8")) as Record<string, unknown>;
+	const claimOf = (runId: string) => readWorkflowResumeClaim(path.join(DIRS.async, runId)) ?? {};
 
 	it("relaunches a runtime-replaced workflow once, reusing its finished child and re-attaching its running one", { timeout: 90_000 }, async () => {
 		const nonce = `resume-by-id-${Date.now()}`;
@@ -105,7 +107,35 @@ describe("resuming a stopped workflow by id", { skip: !available || !createSubag
 		assert.equal((await replaceWhen(sourceId, (status) => Boolean(status.steps?.some((step) => step.status === "running")))).workflow?.stopCause, "runtime-replaced");
 		const refused = await resume(sourceId, sessionId);
 		assert.equal(text(refused), `Cannot resume workflow '${sourceId}': launched from tasks/chain; resume it by hand. Relaunch it by hand with options: { reuseFrom: "${sourceId}" }.`);
-		assert.equal(fs.existsSync(path.join(DIRS.async, sourceId, "resumed-by.json")), false);
+		assert.deepEqual(fs.readdirSync(path.join(DIRS.async, sourceId)).filter((name) => name.startsWith("resumed-by.")), [], "no claim was taken");
+	});
+
+	it("refuses a resume from another session and allows it from a session that replaced the owner", { timeout: 60_000 }, async () => {
+		const nonce = `resume-owner-${Date.now()}`;
+		const ownerSession = `session-${nonce}-owner`;
+		const script = `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); await runs.run("stage2", { agent: "echo", task: "Stage two ${nonce}" }); return "done";`;
+		const { launch, settled, replaceWhen, resume } = setup();
+		mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+		mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, hangUntilAbort: true });
+		const sourceId = await launch({ workflowScript: script }, ownerSession);
+		await replaceWhen(sourceId, stageStarted("stage2"));
+		const sourceDir = path.join(DIRS.async, sourceId);
+		const snapshot = () => (fs.readdirSync(sourceDir, { recursive: true }) as string[]).sort()
+			.map((name) => [name, fs.statSync(path.join(sourceDir, name)).isFile() ? fs.readFileSync(path.join(sourceDir, name), "utf-8") : "<dir>"]);
+		const before = snapshot();
+
+		const foreign = await resume(sourceId, `session-${nonce}-other`);
+		assert.equal(foreign.isError, true);
+		assert.equal(text(foreign), `Cannot resume workflow '${sourceId}': it was started in another session; reopen that session to resume it.`);
+		assert.deepEqual(snapshot(), before, "nothing was written into the other session's run");
+
+		// After /new in the same Pi process the new session owns the runs of the one it replaced.
+		const successor = `session-${nonce}-successor`;
+		recordSessionReplacement(successor, ownerSession);
+		mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
+		const resumed = await resume(sourceId, successor);
+		assert.equal(resumed.isError, undefined, text(resumed));
+		assert.equal((await settled(resumed.details.asyncId!)).state, "complete");
 	});
 
 	it("releases the claim when the relaunch is refused for capacity, so a later resume succeeds", { timeout: 90_000 }, async () => {
@@ -125,8 +155,8 @@ describe("resuming a stopped workflow by id", { skip: !available || !createSubag
 		await waitFor(blockerId, stageStarted("block"));
 		const refused = await resume(sourceId, sessionId);
 		assert.equal(refused.isError, true);
-		assert.match(text(refused), new RegExp(`^Cannot resume workflow '${sourceId}': capacity refused: .+\\.$`));
-		assert.equal(fs.existsSync(path.join(DIRS.async, sourceId, "resumed-by.json")), false, "the claim was released");
+		assert.equal(text(refused), `Cannot resume workflow '${sourceId}': capacity refused: Active async run capacity exhausted: 1/1 used.`);
+		assert.equal(readWorkflowResumeClaim(path.join(DIRS.async, sourceId)), undefined, "the claim was released");
 
 		fs.writeFileSync(release, "go");
 		await settled(blockerId);

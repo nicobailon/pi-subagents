@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizePublicSubagentExecution } from "../extension/public-execution.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
+import { ownsRun } from "../runs/shared/run-ownership.ts";
 import type { AsyncStatus } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { readWorkflowLaunchRecord } from "./workflow-launch-record.ts";
@@ -16,7 +17,7 @@ export const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
 export type WorkflowResumeTrigger = "auto" | "manual";
 
 export type WorkflowResumeRefusalCode =
-	| "not-interrupted" | "claim-busy" | "claim-resumed"
+	| "not-owned" | "not-interrupted" | "claim-busy" | "claim-resumed"
 	| "launch-missing" | "launch-invalid" | "structured" | "digest" | "authority"
 	| "capacity" | "attempts" | "launch-failed";
 
@@ -59,7 +60,8 @@ export function workflowResumeRefusal(code: WorkflowResumeRefusalCode, reason: s
 /** The tool error for a resume by id; the resume form is not repeated to a caller that just tried it. */
 export function manualWorkflowResumeRefusalText(runId: string, refusal: Pick<WorkflowResumeRefusalReason, "reason" | "byHand">): string {
 	const relaunch = refusal.byHand === relaunchByHandText(runId) ? ` ${refusal.byHand}` : "";
-	return `Cannot resume workflow '${runId}': ${refusal.reason}.${relaunch}`;
+	// Some reasons quote a message that already ends in a period.
+	return `Cannot resume workflow '${runId}': ${refusal.reason.replace(/\.$/, "")}.${relaunch}`;
 }
 
 function isRunName(runId: unknown): runId is string {
@@ -94,11 +96,15 @@ export function nextWorkflowResumeAttempt(workflow: Pick<NonNullable<AsyncStatus
  * Checks a stopped workflow run can be resumed and claims it for a new run id. Synchronous and
  * cheap: the launch itself happens in the executor.
  */
-export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId: string; trigger: WorkflowResumeTrigger; now: number }): WorkflowResumePreparation {
+export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId: string; trigger: WorkflowResumeTrigger; now: number; currentSessionId: string }): WorkflowResumePreparation {
 	const { asyncDirRoot, sourceRunId, trigger } = input;
 	const refuse = (code: WorkflowResumeRefusalCode, reason: string): WorkflowResumePreparation => ({ ok: false, ...workflowResumeRefusal(code, reason, sourceRunId) });
 	const sourceAsyncDir = path.join(asyncDirRoot, sourceRunId);
-	// Session start has already reconciled this session's runs; a resume by id may name any run.
+	// Only the session that owns the run (itself or one it replaced) may resume it, and nothing is
+	// written into another session's run, so this comes before the reconcile.
+	const stored = readStatus(sourceAsyncDir);
+	if (stored && !ownsRun(input.currentSessionId, stored.sessionId)) return refuse("not-owned", "it was started in another session; reopen that session to resume it");
+	// Session start has already reconciled this session's runs; a resume by id may come later.
 	if (trigger === "manual") reconcileAsyncRun(sourceAsyncDir);
 	const status = readStatus(sourceAsyncDir);
 	if (!status || status.mode !== "workflow" || !isReusableWorkflowStopCause(status.workflow?.stopCause)) return refuse("not-interrupted", "not interrupted; pass message to revive one of its children");

@@ -34,7 +34,7 @@ describe("prepareWorkflowResume", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	};
-	const prepare = (root: string, runId: string, trigger: "auto" | "manual" = "manual") => prepareWorkflowResume({ asyncDirRoot: root, sourceRunId: runId, trigger, now: 10 });
+	const prepare = (root: string, runId: string, trigger: "auto" | "manual" = "manual", currentSessionId = "session") => prepareWorkflowResume({ asyncDirRoot: root, sourceRunId: runId, trigger, now: 10, currentSessionId });
 
 	it("claims the run and builds the relaunch from the saved launch", () => {
 		withRoot((root, writeRun) => {
@@ -92,6 +92,20 @@ describe("prepareWorkflowResume", () => {
 			assert.equal(manualWorkflowResumeRefusalText("missing", { reason: "launch.json is missing (the run started before launches were saved)", byHand: relaunch("missing") }),
 				`Cannot resume workflow 'missing': launch.json is missing (the run started before launches were saved). Relaunch it by hand with options: { reuseFrom: "missing" }.`);
 			assert.equal(manualWorkflowResumeRefusalText("x", { reason: "capacity refused: full", byHand: 'Resume by hand: subagent({ action: "resume", id: "x" })' }), "Cannot resume workflow 'x': capacity refused: full.");
+			assert.equal(manualWorkflowResumeRefusalText("x", { reason: "capacity refused: 1/1 used.", byHand: "" }), "Cannot resume workflow 'x': capacity refused: 1/1 used.");
+		});
+	});
+
+	it("refuses a run another session started, and writes nothing into it", () => {
+		withRoot((root, writeRun) => {
+			writeRun("foreign");
+			const before = fs.readdirSync(path.join(root, "foreign")).sort();
+			for (const trigger of ["manual", "auto"] as const) {
+				assert.deepEqual(prepare(root, "foreign", trigger, "other-session"), { ok: false, code: "not-owned", reason: "it was started in another session; reopen that session to resume it", byHand: "" });
+			}
+			assert.deepEqual(fs.readdirSync(path.join(root, "foreign")).sort(), before);
+			assert.equal(manualWorkflowResumeRefusalText("foreign", { reason: "it was started in another session; reopen that session to resume it", byHand: "" }),
+				"Cannot resume workflow 'foreign': it was started in another session; reopen that session to resume it.");
 		});
 	});
 
@@ -99,10 +113,10 @@ describe("prepareWorkflowResume", () => {
 		withRoot((root, writeRun) => {
 			// The test runner's parent process is alive, so its claim is held.
 			writeRun("held");
-			fs.writeFileSync(path.join(root, "held", "resumed-by.json"), JSON.stringify({ version: 1, pid: process.ppid, ...(currentBootId() ? { bootId: currentBootId() } : {}), claimedAt: 1, newRunId: "pending-run", trigger: "auto" }));
+			fs.writeFileSync(path.join(root, "held", "resumed-by.1.json"), JSON.stringify({ version: 1, pid: process.ppid, ...(currentBootId() ? { bootId: currentBootId() } : {}), claimedAt: 1, newRunId: "pending-run", trigger: "auto" }));
 			assert.deepEqual(prepare(root, "held"), { ok: false, code: "claim-busy", reason: `being resumed by pid ${process.ppid}`, byHand: "" });
 			writeRun("done");
-			fs.writeFileSync(path.join(root, "done", "resumed-by.json"), JSON.stringify({ version: 1, pid: process.ppid, claimedAt: 1, newRunId: "next-run", trigger: "manual" }));
+			fs.writeFileSync(path.join(root, "done", "resumed-by.1.json"), JSON.stringify({ version: 1, pid: process.ppid, claimedAt: 1, newRunId: "next-run", trigger: "manual" }));
 			fs.mkdirSync(path.join(root, "next-run"));
 			fs.writeFileSync(path.join(root, "next-run", "status.json"), "{}");
 			assert.deepEqual(prepare(root, "done"), { ok: false, code: "claim-resumed", reason: "resumed as next-run; wait on it or stop it", byHand: "" });

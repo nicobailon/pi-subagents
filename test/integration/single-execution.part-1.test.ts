@@ -2357,9 +2357,9 @@ Answer only from the supplied synthetic text.
 
 			// The same-session relaunch re-attaches the running stage2 and holds the claim while it runs.
 			const relaunchId = await launch({ workflowScript: script, args }, sessionId);
-			const claim = JSON.parse(fs.readFileSync(path.join(DIRS.async, firstId, "resumed-by.json"), "utf-8")) as Record<string, unknown>;
+			const claim = JSON.parse(fs.readFileSync(path.join(DIRS.async, firstId, "resumed-by.1.json"), "utf-8")) as Record<string, unknown>;
 			assert.deepEqual({ newRunId: claim.newRunId, trigger: claim.trigger, pid: claim.pid }, { newRunId: relaunchId, trigger: "reuse", pid: process.pid });
-			assert.deepEqual(fs.readdirSync(path.join(DIRS.async, firstId)).filter((name) => name.startsWith("resumed-by.json.")), [], "no temporary claim file is left");
+			assert.deepEqual(fs.readdirSync(path.join(DIRS.async, firstId)).filter((name) => name.startsWith("resumed-by.")), ["resumed-by.1.json"], "no temporary claim file is left");
 			const capacityBefore = getActiveAsyncCapacitySnapshot(sessionId, 4).used;
 
 			const callsBefore = mockPi.callCount();
@@ -2411,7 +2411,7 @@ Answer only from the supplied synthetic text.
 			const named = await settled(await launch({ workflowScript: script, args: { variant: "a", only: ["stage2"] }, reuseFrom: firstId }, successor));
 			assert.equal(named.state, "complete", named.error);
 			assert.equal(named.workflow?.reusedFrom, firstId);
-			assert.deepEqual((({ newRunId, trigger, pid }) => ({ newRunId, trigger, pid }))(JSON.parse(fs.readFileSync(path.join(DIRS.async, firstId, "resumed-by.json"), "utf-8"))), { newRunId: named.runId, trigger: "reuse", pid: process.pid });
+			assert.deepEqual((({ newRunId, trigger, pid }) => ({ newRunId, trigger, pid }))(JSON.parse(fs.readFileSync(path.join(DIRS.async, firstId, "resumed-by.1.json"), "utf-8"))), { newRunId: named.runId, trigger: "reuse", pid: process.pid });
 			assert.deepEqual(named.workflow?.value, { first: "stage one done", reused: true });
 			assert.equal(mockPi.callCount(), callsAfterStop + 3, "different args still reuse a child whose launch params match");
 

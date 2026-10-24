@@ -128,10 +128,10 @@ function readWorkflowReuseChain(asyncDirRoot: string, headRunId: string, headSta
 
 /** Why a relaunch of `runId` is refused when another relaunch already continues it. */
 export function claimedWorkflowRunRefusal(runId: string, claim: { kind: "resumed"; newRunId: string } | { kind: "busy"; pid: number }, named: boolean): string {
-	const text = claim.kind === "resumed"
-		? `workflow run '${runId}' was resumed as ${claim.newRunId}; wait on it or stop it.`
-		: `workflow run '${runId}' is being resumed by pid ${claim.pid}; wait for it.`;
-	return named ? `options.reuseFrom: ${text}` : `W${text.slice(1)}`;
+	const run = `${named ? "options.reuseFrom: workflow" : "Workflow"} run '${runId}'`;
+	return claim.kind === "resumed"
+		? `${run} was resumed as ${claim.newRunId}; wait on it or stop it.`
+		: `${run} is being resumed by pid ${claim.pid}; wait for it.`;
 }
 
 function assertWorkflowRunNotClaimed(asyncDir: string, runId: string, named: boolean, claimOwnerRunId?: string): void {

@@ -5505,7 +5505,26 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (error) throw new Error(error);
 		}
 	};
+	// A plain-reuse claim is given back when its request ends, by any return or throw, before the new run's status.json exists.
+	const pendingReuseClaimReleases = new WeakMap<object, () => void>();
 	const execute = async (
+		_id: string,
+		params: SubagentParamsLike,
+		signal: AbortSignal,
+		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
+		ctx: ExtensionContext,
+		preserveActiveSession = false,
+		parentModelOverride?: ParentModel | null,
+	): Promise<AgentToolResult<Details>> => {
+		try {
+			return await executeRequest(_id, params, signal, onUpdate, ctx, preserveActiveSession, parentModelOverride);
+		} finally {
+			const releaseReuseClaim = pendingReuseClaimReleases.get(params);
+			pendingReuseClaimReleases.delete(params);
+			releaseReuseClaim?.();
+		}
+	};
+	const executeRequest = async (
 		_id: string,
 		params: SubagentParamsLike,
 		signal: AbortSignal,
@@ -5754,7 +5773,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						return { content: [{ type: "text", text: claimedWorkflowRunRefusal(workflowReuseSource.runId, claim, requestParams.reuseFrom !== undefined) }], isError: true, details: { mode: "workflow", results: [] } };
 					}
 				}
-				const releaseReuseClaim = () => { if (reuseSourceDir) releaseWorkflowResumeClaim(reuseSourceDir, workflowRunId); };
+				if (reuseSourceDir) pendingReuseClaimReleases.set(params, () => { if (!fs.existsSync(statusPath)) releaseWorkflowResumeClaim(reuseSourceDir, workflowRunId); });
 				try {
 					fs.mkdirSync(asyncDir, { recursive: true });
 					writeRunFanoutBudgetDescriptor(asyncDir, workflowFanoutBudget);
@@ -5762,7 +5781,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					fs.mkdirSync(DIRS.results, { recursive: true });
 				} catch (error) {
 					workflowCapacity?.rollback();
-					releaseReuseClaim();
 					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
 				}
 				const controller = new AbortController();
@@ -5980,7 +5998,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					deps.state.fleetJobs?.delete(workflowRunId);
 					workflowCapacity?.rollback();
 					indexPersistence.dispose();
-					releaseReuseClaim();
 					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
 				}
 				appendWorkflowEvent({ type: "subagent.workflow.started", ...(workflowArgsDigest ? { argsDigest: workflowArgsDigest } : {}) });
@@ -8349,7 +8366,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const refused = (text: string): AgentToolResult<Details> => ({ content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } });
 		let preparation: ReturnType<typeof prepareWorkflowResume>;
 		try {
-			preparation = prepareWorkflowResume({ asyncDirRoot: DIRS.async, sourceRunId, trigger: "manual", now: Date.now() });
+			preparation = prepareWorkflowResume({ asyncDirRoot: DIRS.async, sourceRunId, trigger: "manual", now: Date.now(), currentSessionId: resolveCurrentSessionId(ctx.sessionManager) });
 		} catch (error) {
 			return refused(`Cannot resume workflow '${sourceRunId}': ${error instanceof Error ? error.message : String(error)}`);
 		}
