@@ -169,9 +169,10 @@ subagent runs notify the parent automatically. Use `bg_wait({ all: true })` for
 all work active at call time, `bg_wait({ id: "..." })` for one async or
 remembered detached foreground run, and `bg_wait({ timeoutMs })` to cap the
 block; active work keeps running if it elapses. `bg_wait({ stopOnAttention:
-false })` keeps a blocking wait through idle or long-thinking attention, but
-supervisor/contact requests still stop it. In a long-lived interactive parent
-session, use `bg_wait({ id: "...", nonBlocking: true })` only for a known
+false })` keeps a blocking wait through all attention except supervisor/contact
+requests (such as idle time, a tool held open, or repeated tool failures); those
+requests, finished runs, timeout and user input still stop it. In a long-lived
+interactive parent session, use `bg_wait({ id: "...", nonBlocking: true })` only for a known
 detached or otherwise non-notifying run to resolve the prefix to one exact run,
 persist an armed subscription, return immediately, and wake later on
 completion, failure, attention, reconciliation failure, or timeout. Ordinary

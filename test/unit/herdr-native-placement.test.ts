@@ -140,6 +140,13 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		try { const defaults = resolveRemoteHerdrResources(remote, { agent: "defaults", toolCeiling: ["read"] }, ["read", "bash"]); assert.deepEqual(defaults.tools, ["read"]); assert.ok(defaults.systemPrompt.includes(`[Read from: ${path.join(remote, "remote-only.md")}]`)); assert.doesNotMatch(resolveRemoteHerdrResources(remote, { agent: "defaults", reads: false }, ["read"]).systemPrompt, /remote-only\.md/u); assert.deepEqual(resolveRemoteHerdrResources(remote, { agent: "wide", toolCeiling: ["read"] }, ["read", "bash"]).tools, ["read"]); } finally { fs.rmSync(remote, { recursive: true, force: true }); }
 	});
 
+	it("rejects Pi tool modifier entries in the remote agent's tools instead of filtering or activating them", () => {
+		const remote = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-modifiers-")); fs.mkdirSync(path.join(remote, ".git")); fs.mkdirSync(path.join(remote, ".pi", "agents"), { recursive: true });
+		fs.writeFileSync(path.join(remote, ".pi", "agents", "modifier.md"), "---\nname: modifier\ndescription: modifier\ntools: read, +codemode\n---\nModifier\n");
+		const rejected = { message: /^Agent 'modifier' lists Pi tool modifier entry in `tools`: \+codemode\. .*use `excludeTools` to drop one\.$/u };
+		try { assert.throws(() => resolveRemoteHerdrResources(remote, { agent: "modifier", toolCeiling: ["read"] }, ["read", "bash"]), rejected); assert.throws(() => resolveRemoteHerdrResources(remote, { agent: "modifier" }, ["read", "bash"]), rejected); } finally { fs.rmSync(remote, { recursive: true, force: true }); }
+	});
+
 	it("preserves canonical contact_supervisor progress and structured-interview semantics", { skip: process.platform === "win32" }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-supervisor-")); const old = { mode: process.env[HERDR_PI_MODE_ENV], run: process.env[HERDR_PI_RUN_ENV], dir: process.env[HERDR_PI_RUNTIME_DIR_ENV] }; process.env[HERDR_PI_MODE_ENV] = "1"; process.env[HERDR_PI_RUN_ENV] = "run_supervisor1"; process.env[HERDR_PI_RUNTIME_DIR_ENV] = dir; const handlers = new Map<string, Function>(); let tool: any; let command: any; let socket: net.Socket | undefined;
 		let activeTools = ["read"]; const pi = { registerTool(value: unknown) { tool = value; }, registerCommand(_name: string, value: unknown) { command = value; }, on(name: string, handler: Function) { handlers.set(name, handler); }, getActiveTools: () => activeTools, setActiveTools(value: string[]) { activeTools = value; } };

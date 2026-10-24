@@ -542,6 +542,7 @@ How `tools` behaves:
 - `tools` omitted: the child session gets Pi's normal builtin tools.
 - `tools` present: regular tool names become an explicit allowlist.
 - `tools:` empty: the child session gets no tools.
+- `tools: +codemode` or `tools: -write`: rejected. Pi's `--tools` and `defaultTools` accept `+name`/`-name` entries that edit the default tool set, but a child's `tools` list replaces that set, so name every tool the child needs, or omit `tools` and use `excludeTools` to drop one. If the local agent definition has such an entry, the launch fails before the child starts. A Herdr- or Rex-placed child resolves its agent on that machine, so if only that machine's definition has such an entry, the placed Pi starts and then fails when its pane bridge is configured, before its first prompt.
 - `allowNestedSubagents: true`: explicitly enables child-safe nested fanout without turning omitted `tools` into an allowlist. Depth and inherited capability ceilings still apply.
 - `allowedAgents: scout, reviewer`: if nesting is separately enabled, restricts this agent's descendant launches to those names. `allowedAgents:` denies all descendants and omission is unrestricted except for inherited/runtime policy.
 

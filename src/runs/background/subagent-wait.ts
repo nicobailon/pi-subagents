@@ -90,7 +90,7 @@ export interface SubagentWaitParams {
 	all?: boolean;
 	/** Give up after this many milliseconds. Defaults to waitTool.defaultTimeoutMs, then 30 minutes. */
 	timeoutMs?: number;
-	/** False keeps a blocking wait open through idle attention; supervisor/contact requests still stop the wait. */
+	/** False keeps a blocking wait open through all non-supervisor attention, such as idle time, a tool held open, or repeated tool failures; supervisor/contact requests, terminal runs, timeout, user input, and abort still stop it. */
 	stopOnAttention?: boolean;
 }
 
@@ -846,8 +846,13 @@ export async function waitForSubagents(
 	const supervisorAttentionHint = relevantAttention.some(hasSupervisorTool)
 		? " Reply to any pending supervisor request. If subagent_supervisor({ action: \"pending\" }) is empty, check intercom({ action: \"pending\" }) because an external intercom tool may own the request."
 		: "";
+	// Only when watchdog attention alone ended the wait: stopOnAttention: false would have kept blocking.
+	const keepWaitingHint = stopOnAttention && supervisorAttentionHint === ""
+		&& (waitForAll || finishedAsyncCount + providerFinishedCount === 0)
+		? " These runs are still running and none is waiting on a supervisor reply. To keep waiting through this kind of attention, call bg_wait again with stopOnAttention: false; supervisor requests still end that wait."
+		: "";
 	const attentionNote = relevantAttention.length > 0
-		? ` ${relevantAttention.length} run(s) need attention: ${relevantAttention.map((run) => run.id).join(", ")} —${supervisorAttentionHint} inspect with subagent({ action: "status" }) then steer a top-level live async child, resume a paused/completed/failed child, or interrupt explicitly.`
+		? ` ${relevantAttention.length} run(s) need attention: ${relevantAttention.map((run) => run.id).join(", ")} —${supervisorAttentionHint} inspect with subagent({ action: "status" }) then steer a top-level live async child, resume a paused/completed/failed child, or interrupt explicitly.${keepWaitingHint}`
 		: "";
 	const stillRunning = active.filter((run) => initialAsyncIds.has(run.id)).length
 		+ providerActive.filter((item) => initialProviderIds.has(backgroundWorkIdentity(item))).length;

@@ -5,7 +5,9 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
+import { runSingleStepInner } from "../../src/runs/background/subagent-runner.ts";
 import { MCP_RUNTIME_SNAPSHOT_EVENT, MCP_RUNTIME_SNAPSHOT_VERSION, type McpHostToolInfo, type McpRuntimeSnapshotHost } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
+import { createFakeChildSessions } from "../support/fake-child-session.ts";
 
 /** A parent whose pi-mcp-adapter answers snapshot requests for one runtime-only server. */
 function runtimeSnapshotHost(serverName: string): McpRuntimeSnapshotHost {
@@ -151,6 +153,43 @@ describe("child tool plan declared tools", () => {
 		assert.deepEqual(plan.requiredChildTools, ["read", "bash"]);
 	});
 
+	it("rejects Pi tool modifier entries instead of planning them as tool names", () => {
+		assert.throws(() => resolvePiLaunchToolPlan({ tools: ["+codemode"], agentName: "modifier-repro" }), {
+			message: "Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: +codemode. A child's `tools` list is the complete set of tools it gets, so +name and -name entries are not supported; name every tool the child needs, or omit `tools` and use `excludeTools` to drop one.",
+		});
+		for (const { input, rejected } of [
+			{ input: { tools: ["-write"], agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: -write\. .*use `excludeTools` to drop one\.$/ },
+			{ input: { tools: ["read", "+codemode"], agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. / },
+			{ input: { tools: ["+codemode"], requireReadTool: true, agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. / },
+			{ input: { tools: ["+codemode", "read", "-write"] }, rejected: /^Subagent lists Pi tool modifier entries in `tools`: \+codemode, -write\. / },
+		]) {
+			assert.throws(() => resolvePiLaunchToolPlan(input), { message: rejected });
+		}
+	});
+
+	it("rejects a modifier entry that the ceiling or an exclusion would filter out", () => {
+		for (const { input, rejected } of [
+			{ input: { tools: ["+codemode"], capabilityCeiling: { version: 1 as const, allowedTools: ["read"], denyExtensions: false, sources: ["test"] }, agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. / },
+			{ input: { tools: ["read", "-write"], excludeTools: ["-write"], agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: -write\. / },
+		]) {
+			assert.throws(() => resolvePiLaunchToolPlan(input), { message: rejected });
+		}
+	});
+
+	it("leaves a path-like entry that starts with a hyphen to the extension loader", () => {
+		for (const entry of ["-tools/fixture.ts", "-tools/fixture", "-fixture.ts", "-fixture.js"]) {
+			const plan = resolvePiLaunchToolPlan({ tools: ["read", entry], agentName: "modifier-repro" });
+			assert.deepEqual(plan.requiredChildTools, ["read"], entry);
+			assert.ok(plan.extensionArgs.includes(entry), entry);
+		}
+	});
+
+	it("still plans a plain tool list whose names contain hyphens", () => {
+		const plan = resolvePiLaunchToolPlan({ tools: ["bash", "codemode", "fixture-search"], requireReadTool: true, agentName: "modifier-repro" });
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "bash", "codemode", "fixture-search"]);
+		assert.deepEqual(plan.requiredChildTools, ["read", "bash", "codemode", "fixture-search"]);
+	});
+
 	it("preserves arbitrary non-core requirements without inferring their child providers", () => {
 		const tools = ["read", "fixture_search", "__proto__", "ipython"];
 		for (const configuration of [
@@ -248,6 +287,19 @@ describe("production launch path keeps declared child tools", () => {
 		} finally {
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("the background runner names the agent when a step lists a tool modifier entry", async () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runner-modifier-"));
+		const fake = createFakeChildSessions(() => cwd);
+		try {
+			await assert.rejects(runSingleStepInner({ agent: "modifier-repro", task: "do the work", tools: ["+codemode"] }, { cwd, id: "runner-modifier", flatIndex: 0, flatStepCount: 1, previousOutput: "", placeholder: "{previous}", outputFile: path.join(cwd, "output.log"), sessionEnabled: false, childSessions: fake.factory }), {
+				message: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. /,
+			});
+			assert.equal(fake.sessions.length, 0);
+		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
 	});

@@ -838,6 +838,7 @@ export async function runSingleStepInner(
 			capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
 			inheritedCapabilityCeiling: ctx.inheritedChildRuntime?.capabilityCeiling,
 			requiredExtensions: step.requiredExtensions ?? ctx.inheritedChildRuntime?.requiredExtensions,
+			agentName: step.agent,
 			permissionRules: step.permissionRules,
 		}));
 	}
