@@ -45,6 +45,17 @@ const waitUntil = async <T>(label: string, read: () => T | undefined | false, ti
 const resumedRuns = (sourceRunId: string) => fs.readdirSync(DIRS.async)
 	.filter((entry) => readStatusFile(entry)?.workflow?.resumeOrigin?.sourceRunId === sourceRunId);
 const claimFiles = (runId: string) => fs.readdirSync(path.join(DIRS.async, runId)).filter((name) => name.startsWith("resumed-by.")).sort();
+/** The completion notices delivered for `runId`. */
+const noticesFor = (sent: SentMessage[], runId: string) => sent
+	.filter((entry) => entry.message.customType === "subagent-notify" && typeof entry.message.content === "string" && entry.message.content.split("\n").includes(`Workflow run: ${runId}`))
+	.map((entry) => entry.message.content as string);
+/** Every line of a notice that says how the run continues or tells the reader what to do with it. */
+const nextSteps = (notice: string) => notice.split("\n").filter((line) => /Auto-resumed as |Resumed as |Relaunched as |Not auto-resumed: |Resume by hand|Relaunch|reuseFrom/.test(line));
+const oneNotice = async (sent: SentMessage[], runId: string) => {
+	const [notice, ...more] = await waitUntil(`the notice of ${runId}`, () => noticesFor(sent, runId).length > 0 && noticesFor(sent, runId));
+	assert.deepEqual(more, [], "one notice per interrupted run");
+	return notice!;
+};
 
 describe("auto-resuming interrupted workflows at session start", { skip: !available || !createSubagentExecutor ? "pi packages not available" : undefined }, () => {
 	installSingleExecutionHooks();
@@ -150,6 +161,9 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		assert.equal(done.steps?.find((step) => step.workflowKey === "stage2")?.runId, stage2RunId);
 		assert.equal(mockPi.callCount(), 3, "only stage3 launched after the reload");
 		assert.deepEqual(second.autoResumeMessages(), []);
+		// The stopped run's notice says once that it continues, and gives no other instruction.
+		assert.deepEqual(noticesFor(first.sent, sourceId), [], "the replaced runtime delivers nothing");
+		assert.deepEqual(nextSteps(await oneNotice(second.sent, sourceId)), [`Auto-resumed as ${resumedId}.`]);
 
 		// Another reload finds the run already resumed and claims nothing.
 		const claimsBefore = claimFiles(sourceId);
@@ -279,6 +293,48 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			assert.equal(stopped.workflow?.stopCause, "runtime-replaced", stopped.error);
 		} finally {
 			registration.dispose();
+		}
+	});
+
+	it("says in the notice how a workflow stopped by /new or a refused reload continues", { timeout: 30_000 }, async () => {
+		writeAgents();
+		const nonce = `auto-notice-${Date.now()}`;
+		const release = path.join(tempDir, `${nonce}.release`);
+		fs.writeFileSync(path.join(tempDir, `${nonce}.js`), `const held = await runs.run("held", { agent: "echo", task: "Held ${nonce}" }); return held.output;`);
+		mockPi.onCall({ matchArgIncludes: `Held ${nonce}`, waitForPath: release, output: "held done" });
+		const launchHeld = async (runtime: Awaited<ReturnType<typeof startRuntime>>) => {
+			const launched = await runtime.tool.execute(`launch-${nonce}`, { workflow: `./${nonce}.js`, async: true }, new AbortController().signal, undefined, runtime.ctx);
+			const runId = launched.details.asyncId;
+			assert.ok(runId, launched.content[0]?.text);
+			await waitUntil("the held child to start", () => readStatusFile(runId)?.steps?.some((step) => step.workflowKey === "held" && step.status === "running"));
+			return runId;
+		};
+		try {
+			// /new does not resume the replaced session's run; its notice says how to resume it by hand.
+			const oldSession = `session-${nonce}-old`;
+			const first = await startRuntime("startup", oldSession);
+			const replacedId = await launchHeld(first);
+			await first.shutDown("new");
+			const fresh = await startRuntime("new", `session-${nonce}-new`, { previousSessionFile: sessionFileFor(oldSession) });
+			assert.equal(readStatusFile(replacedId)?.workflow?.stopCause, "runtime-replaced");
+			assert.deepEqual(nextSteps(await oneNotice(fresh.sent, replacedId)), [`Resume by hand: subagent({ action: "resume", id: "${replacedId}" })`]);
+			assert.deepEqual(claimFiles(replacedId), []);
+			await fresh.shutDown("quit");
+
+			// A reload whose auto-resume is refused says why in the notice, with the way to continue by hand.
+			const sessionId = `session-${nonce}-reload`;
+			const before = await startRuntime("startup", sessionId);
+			const refusedId = await launchHeld(before);
+			fs.rmSync(path.join(DIRS.async, refusedId, "launch.json"));
+			await before.shutDown("reload");
+			const reloaded = await startRuntime("reload", sessionId);
+			const refusal = JSON.parse(fs.readFileSync(path.join(DIRS.async, refusedId, "resume-refused.json"), "utf-8")) as { reason: string; byHand: string };
+			assert.equal(refusal.byHand, `Relaunch it by hand with options: { reuseFrom: "${refusedId}" }.`);
+			assert.deepEqual(nextSteps(await oneNotice(reloaded.sent, refusedId)), [`Not auto-resumed: ${refusal.reason.replace(/\.$/, "")}. ${refusal.byHand}`]);
+			assert.deepEqual(resumedRuns(refusedId), []);
+			await reloaded.shutDown("quit");
+		} finally {
+			fs.writeFileSync(release, "go");
 		}
 	});
 

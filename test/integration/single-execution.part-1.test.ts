@@ -2209,7 +2209,7 @@ Answer only from the supplied synthetic text.
 			assert.equal(stopped.workflow?.scriptDigest, createHash("sha256").update(script).digest("hex"));
 			assert.equal(stopped.steps?.find((step) => step.workflowKey === "stage2")?.status, "stopped", "a foreground child cut by the replacement is stopped");
 			const stopSummary = (JSON.parse(resultFileText(firstId)) as { summary?: string }).summary ?? "";
-			assert.ok(stopSummary.endsWith(`Async children that were still running keep running. Relaunching the same workflow script with the same args from this session reuses finished children and re-attaches to running ones; from another session, add options: { reuseFrom: "${firstId}" }.`), stopSummary);
+			assert.ok(stopSummary.endsWith("Async children that were still running keep running, and finished children are kept."), stopSummary);
 			const stage1RunId = stopped.steps?.find((step) => step.workflowKey === "stage1")?.runId;
 			assert.ok(stage1RunId);
 			const callsAfterStop = mockPi.callCount();

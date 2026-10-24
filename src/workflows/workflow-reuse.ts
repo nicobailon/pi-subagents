@@ -7,12 +7,13 @@ import { readStatus } from "../shared/utils.ts";
 import type { AsyncStatus } from "../shared/types.ts";
 import { workflowResumeClaimState } from "./workflow-resume-claim.ts";
 import { workflowRunParamsFingerprint, type WorkflowScriptChildResult } from "./scripted-workflow.ts";
-import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED, workflowRelaunchReuseHint } from "./workflow-stop-cause.ts";
+import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED } from "./workflow-stop-cause.ts";
 
 const WORKFLOW_CHILD_JOURNAL_FILE = "workflow-children.jsonl";
 
-export function workflowRuntimeReplacedRelaunchNotice(runId: string): string {
-	return `Async children that were still running keep running. ${workflowRelaunchReuseHint(runId)}`;
+/** What a runtime replacement left; the notice's resume line says how the run continues. */
+export function workflowRuntimeReplacedStopNotice(): string {
+	return "Async children that were still running keep running, and finished children are kept.";
 }
 
 /** Abort reason for workflow controllers torn down by runtime replacement; carries the cause as data, not text. */

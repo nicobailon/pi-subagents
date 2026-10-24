@@ -5,6 +5,7 @@ import { writeAtomicJson } from "../shared/atomic-json.ts";
 import { currentBootId } from "../runs/background/boot-id.ts";
 import { currentPidNamespaceScope } from "../runs/background/pid-namespace.ts";
 import { checkRecordedPidLiveness, type PidLiveness } from "../runs/background/stale-run-reconciler.ts";
+import { readWorkflowLaunchRecord } from "./workflow-launch-record.ts";
 
 const CLAIM_FILE_PATTERN = /^resumed-by\.([1-9][0-9]*)\.json$/;
 const RELEASED_CLAIM_FILE_PATTERN = /^resumed-by\.([1-9][0-9]*)\.json\.released-/;
@@ -229,4 +230,29 @@ export function readWorkflowResumeRefusal(asyncDir: string): WorkflowResumeRefus
 	} catch {
 		return undefined;
 	}
+}
+
+export function resumeByHandText(runId: string): string {
+	return `Resume by hand: subagent({ action: "resume", id: "${runId}" })`;
+}
+
+export function relaunchByHandText(runId: string): string {
+	return `Relaunch it by hand with options: { reuseFrom: "${runId}" }.`;
+}
+
+const RESUMED_AS: Record<WorkflowResumeClaim["trigger"], string> = { auto: "Auto-resumed as", manual: "Resumed as", reuse: "Relaunched as" };
+
+/**
+ * The one line an interrupted workflow's notice carries about what happens next: the recorded
+ * auto-resume refusal, else who continues the run, else how to continue it by hand.
+ */
+export function describeWorkflowResume(asyncDir: string, runId: string): string {
+	const claim = readWorkflowResumeClaim(asyncDir);
+	const refusal = readWorkflowResumeRefusal(asyncDir);
+	if (refusal && (!claim || refusal.newRunId === claim.newRunId)) {
+		return `Not auto-resumed: ${refusal.reason.replace(/\.$/, "")}.${refusal.byHand ? ` ${refusal.byHand}` : ""}`;
+	}
+	if (claim) return `${RESUMED_AS[claim.trigger]} ${claim.newRunId}.`;
+	const launch = readWorkflowLaunchRecord(asyncDir);
+	return launch.ok && launch.record.source !== "structured" ? resumeByHandText(runId) : relaunchByHandText(runId);
 }

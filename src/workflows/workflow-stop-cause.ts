@@ -9,7 +9,3 @@ export type WorkflowStopCause = typeof WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED | ty
 export function isReusableWorkflowStopCause(cause: unknown): cause is WorkflowStopCause {
 	return cause === WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED || cause === WORKFLOW_STOP_CAUSE_OWNER_EXITED;
 }
-
-export function workflowRelaunchReuseHint(runId: string): string {
-	return `Relaunching the same workflow script with the same args from this session reuses finished children and re-attaches to running ones; from another session, add options: { reuseFrom: "${runId}" }.`;
-}

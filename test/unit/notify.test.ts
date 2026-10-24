@@ -27,6 +27,8 @@ import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { formatPartialOutput, timedOutRunSummary } from "../../src/runs/shared/partial-output.ts";
 import { buildTimeoutRecoverySummary } from "../../src/runs/shared/mutation-evidence.ts";
 import { formatOutputArtifactContent } from "../../src/shared/artifacts.ts";
+import { writeWorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
+import { claimWorkflowResume, recordWorkflowResumeRefusal } from "../../src/workflows/workflow-resume-claim.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 const completionContent = (content: string) => `${content}\n\nParent action: Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.`;
@@ -158,6 +160,53 @@ it("surfaces published workflow receipts outside single and grouped previews", (
 	const parsed = parseSubagentNotifyContent(single);
 	assert.equal(parsed?.workflowReceiptPath, workflowReceiptPath);
 	assert.doesNotMatch(parsed?.resultPreview ?? "", /Workflow receipt:/);
+});
+
+it("prints what happens next to an interrupted workflow right after its run id, and keeps it out of a re-rendered preview", () => {
+	const root = mkdtempSync(join(tmpdir(), "notify-resume-line-"));
+	try {
+		const runDir = (runId: string) => { const dir = join(root, runId); mkdirSync(dir, { recursive: true }); return dir; };
+		const launch = (dir: string) => writeWorkflowLaunchRecord(dir, { version: 1, source: "script", params: { workflowScript: "return 1;" }, scriptDigest: "digest" });
+		const interrupted = (runId: string, asyncDir: string, stopCause = "runtime-replaced") => ({ agent: "workflow", mode: "workflow", runId, success: false, state: "stopped", summary: "Workflow stopped.", asyncDir, workflow: { stopCause } });
+		const forms: Array<{ runId: string; setUp: (dir: string) => void; line: string }> = [
+			{ runId: "wf-auto", setUp: (dir) => claimWorkflowResume(dir, { newRunId: "wf-auto-next", trigger: "auto" }), line: "Auto-resumed as wf-auto-next." },
+			{ runId: "wf-manual", setUp: (dir) => claimWorkflowResume(dir, { newRunId: "wf-manual-next", trigger: "manual" }), line: "Resumed as wf-manual-next." },
+			{ runId: "wf-reuse", setUp: (dir) => claimWorkflowResume(dir, { newRunId: "wf-reuse-next", trigger: "reuse" }), line: "Relaunched as wf-reuse-next." },
+			{ runId: "wf-refused", setUp: (dir) => recordWorkflowResumeRefusal(dir, { reason: "the session already runs 2 async workflows.", byHand: 'Resume by hand: subagent({ action: "resume", id: "wf-refused" })' }), line: 'Not auto-resumed: the session already runs 2 async workflows. Resume by hand: subagent({ action: "resume", id: "wf-refused" })' },
+			{ runId: "wf-by-hand", setUp: launch, line: 'Resume by hand: subagent({ action: "resume", id: "wf-by-hand" })' },
+			{ runId: "wf-no-launch", setUp: () => {}, line: 'Relaunch it by hand with options: { reuseFrom: "wf-no-launch" }.' },
+		];
+		for (const form of forms) {
+			const dir = runDir(form.runId);
+			form.setUp(dir);
+			const details = buildCompletionDetails(interrupted(form.runId, dir, form.runId === "wf-by-hand" ? "owner-exited" : "runtime-replaced"));
+			assert.equal(details.resumeNotice, form.line);
+			for (const text of [formatSingleCompletion(details), formatGroupedCompletion([details, buildCompletionDetails({ agent: "worker", success: true, summary: "done" })])]) {
+				const lines = text.split("\n");
+				assert.equal(lines[lines.indexOf(`Workflow run: ${form.runId}`) + 1], form.line, text);
+				assert.equal(lines.filter((line) => line === form.line).length, 1, text);
+			}
+			const parsed = parseSubagentNotifyContent(formatSingleCompletion(details));
+			assert.equal(parsed?.resumeNotice, form.line);
+			assert.ok(!parsed?.resultPreview.includes(form.line), parsed?.resultPreview);
+			assert.equal(formatSingleCompletion(parsed!).split("\n").filter((line) => line === form.line).length, 1);
+		}
+
+		// A claimed run gets no line unless it stopped because Pi exited or the runtime was replaced, and only as a workflow.
+		const userStopped = runDir("wf-user-stopped");
+		claimWorkflowResume(userStopped, { newRunId: "wf-user-stopped-next", trigger: "reuse" });
+		const { workflow: _workflow, ...withoutStopCause } = interrupted("wf-user-stopped", userStopped);
+		assert.equal(buildCompletionDetails(withoutStopCause).resumeNotice, undefined);
+		assert.equal(buildCompletionDetails({ ...interrupted("wf-user-stopped", userStopped), workflow: { stopCause: "user" } }).resumeNotice, undefined);
+		assert.equal(buildCompletionDetails({ ...interrupted("wf-user-stopped", userStopped), agent: "worker", mode: "single" }).resumeNotice, undefined);
+		assert.ok(!formatSingleCompletion(buildCompletionDetails(withoutStopCause)).includes("Relaunched as"));
+		// A line the model wrote is output, not the resume line.
+		const modelText = parseSubagentNotifyContent("Background task completed: **worker**\n\nResumed as nothing.\n\nWorkflow run: wf-x\nChild runs: a=1");
+		assert.equal(modelText?.resumeNotice, undefined);
+		assert.match(modelText?.resultPreview ?? "", /Resumed as nothing\./);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 function createEventBus() {

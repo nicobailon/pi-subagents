@@ -75,7 +75,7 @@ describe("async stale-run reconciliation", () => {
 				const result = reconcileAsyncRun(asyncDir, { resultsDir, pidNamespaceScope: () => "pid:[same]", bootId: () => "boot-now", now: () => 2000, ...options });
 				return { result, status: JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) };
 			};
-			const ownerExitedMessage = (runId: string) => `The Pi process (PID 4242) that ran workflow ${runId} exited before the workflow finished. Marked run failed by stale-run reconciliation. Relaunching the same workflow script with the same args from this session reuses finished children and re-attaches to running ones; from another session, add options: { reuseFrom: "${runId}" }.`;
+			const ownerExitedMessage = (runId: string) => `The Pi process (PID 4242) that ran workflow ${runId} exited before the workflow finished. Marked run failed by stale-run reconciliation. Its finished children are kept.`;
 
 			const dead = reconcile("wf-dead", workflowStatus("wf-dead"), { kill: () => { throw errno("ESRCH"); } });
 			assert.equal(dead.result.repaired, true);

@@ -7,7 +7,7 @@ import { ownsRun } from "../runs/shared/run-ownership.ts";
 import type { AsyncStatus } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { readWorkflowLaunchRecord } from "./workflow-launch-record.ts";
-import { claimWorkflowResume } from "./workflow-resume-claim.ts";
+import { claimWorkflowResume, relaunchByHandText, resumeByHandText } from "./workflow-resume-claim.ts";
 import { workflowScriptDigest } from "./workflow-reuse.ts";
 import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_OWNER_EXITED } from "./workflow-stop-cause.ts";
 
@@ -41,14 +41,6 @@ export interface PreparedWorkflowResume {
 }
 
 export type WorkflowResumePreparation = { ok: true; prepared: PreparedWorkflowResume } | ({ ok: false } & WorkflowResumeRefusalReason);
-
-export function resumeByHandText(runId: string): string {
-	return `Resume by hand: subagent({ action: "resume", id: "${runId}" })`;
-}
-
-export function relaunchByHandText(runId: string): string {
-	return `Relaunch it by hand with options: { reuseFrom: "${runId}" }.`;
-}
 
 export function workflowResumeRefusal(code: WorkflowResumeRefusalCode, reason: string, runId: string): WorkflowResumeRefusalReason {
 	const byHand = code === "launch-missing" || code === "launch-invalid" || code === "structured" || code === "digest" || code === "authority"

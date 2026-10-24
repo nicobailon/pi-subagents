@@ -13,7 +13,7 @@ import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { currentBootId } from "./boot-id.ts";
-import { WORKFLOW_STOP_CAUSE_OWNER_EXITED, workflowRelaunchReuseHint } from "../../workflows/workflow-stop-cause.ts";
+import { WORKFLOW_STOP_CAUSE_OWNER_EXITED } from "../../workflows/workflow-stop-cause.ts";
 import { isTerminalAsyncState } from "./workflow-terminal-proof.ts";
 
 export type PidLiveness = "alive" | "dead" | "unknown";
@@ -275,7 +275,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 		? `exited with code ${runnerExit.exitCode ?? "none"}${runnerExit.signal ? ` (signal ${runnerExit.signal})` : ""}`
 		: "exited or disappeared";
 	const baseMessage = reason ?? (exitedWorkflow
-		? `The Pi process (PID ${pid}) that ran workflow ${runId} exited before the workflow finished. Marked run failed by stale-run reconciliation. ${workflowRelaunchReuseHint(runId)}`
+		? `The Pi process (PID ${pid}) that ran workflow ${runId} exited before the workflow finished. Marked run failed by stale-run reconciliation. Its finished children are kept.`
 		: `Async runner process ${pid} ${exitText} before writing a result. Marked run failed by stale-run reconciliation.`);
 	const diagnostics = readRunnerStartupDiagnostics(asyncDir);
 	const message = diagnostics ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}` : baseMessage;

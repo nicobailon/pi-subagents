@@ -4,7 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { currentBootId } from "../../src/runs/background/boot-id.ts";
-import { claimWorkflowResume, readWorkflowResumeClaim, releaseWorkflowResumeClaim, workflowResumeClaimState } from "../../src/workflows/workflow-resume-claim.ts";
+import { claimWorkflowResume, describeWorkflowResume, readWorkflowResumeClaim, recordWorkflowResumeRefusal, releaseWorkflowResumeClaim, workflowResumeClaimState } from "../../src/workflows/workflow-resume-claim.ts";
+import { writeWorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
 import { claimedWorkflowRunRefusal } from "../../src/workflows/workflow-reuse.ts";
 
 describe("workflow resume claim", () => {
@@ -136,5 +137,32 @@ describe("workflow resume claim", () => {
 			assert.equal(readWorkflowResumeClaim(asyncDir)?.newRunId, "next-run");
 			assert.deepEqual(files().map((name) => name.replace(/released-.*/, "released-*")), ["resumed-by.1.json", "resumed-by.2.json.released-*", "resumed-by.3.json"]);
 		});
+	});
+
+	it("describes what happens next to the run in the notice-line order", () => {
+		const byHand = 'Resume by hand: subagent({ action: "resume", id: "source" })';
+		const relaunch = 'Relaunch it by hand with options: { reuseFrom: "source" }.';
+		const describe = (setUp: (asyncDir: string) => void) => {
+			let line = "";
+			withRun((asyncDir) => { setUp(asyncDir); line = describeWorkflowResume(asyncDir, "source"); });
+			return line;
+		};
+		const refusal = { reason: "launch failed: no slot.", byHand };
+		// A refusal with no claim, or one recorded for the current claim's run.
+		assert.equal(describe((dir) => recordWorkflowResumeRefusal(dir, refusal)), `Not auto-resumed: launch failed: no slot. ${byHand}`);
+		assert.equal(describe((dir) => recordWorkflowResumeRefusal(dir, { reason: "it is not interrupted", byHand: "" })), "Not auto-resumed: it is not interrupted.");
+		assert.equal(describe((dir) => { writeClaim(dir, 1, { ...foreignClaim, newRunId: "failed-run" }); recordWorkflowResumeRefusal(dir, { ...refusal, newRunId: "failed-run" }); }), `Not auto-resumed: launch failed: no slot. ${byHand}`);
+		// A refusal from an earlier attempt does not hide a later claim.
+		assert.equal(describe((dir) => { recordWorkflowResumeRefusal(dir, { ...refusal, newRunId: "failed-run" }); writeClaim(dir, 2, { ...foreignClaim, newRunId: "later-run", trigger: "manual" }); }), "Resumed as later-run.");
+		assert.equal(describe((dir) => writeClaim(dir, 1, foreignClaim)), "Auto-resumed as first-run.");
+		assert.equal(describe((dir) => writeClaim(dir, 1, { ...foreignClaim, trigger: "manual" })), "Resumed as first-run.");
+		assert.equal(describe((dir) => writeClaim(dir, 1, { ...foreignClaim, trigger: "reuse" })), "Relaunched as first-run.");
+		// No claim (a released top is none): by hand, by id only when the saved launch can be resumed.
+		const script = { version: 1, source: "script", params: { workflowScript: "return 1;" }, scriptDigest: "digest" } as const;
+		assert.equal(describe((dir) => writeWorkflowLaunchRecord(dir, script)), byHand);
+		assert.equal(describe((dir) => { writeWorkflowLaunchRecord(dir, script); claimWorkflowResume(dir, { newRunId: "given-back", trigger: "auto" }); releaseWorkflowResumeClaim(dir, "given-back"); }), byHand);
+		assert.equal(describe(() => {}), relaunch);
+		assert.equal(describe((dir) => writeWorkflowLaunchRecord(dir, { version: 1, source: "structured", scriptDigest: "digest" })), relaunch);
+		assert.equal(describe((dir) => fs.writeFileSync(path.join(dir, "launch.json"), "{")), relaunch);
 	});
 });
