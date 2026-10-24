@@ -131,7 +131,8 @@ import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, Wo
 import { formatIncrementalChildCompletion, incrementalChildCompletionTriggersTurn } from "../background/notify.ts";
 import { COMPLETION_ACTION, STATUS_ACTION } from "../../shared/parent-wake.ts";
 import { appendWorkflowChildJournal, claimedWorkflowRunRefusal, findWorkflowReuseSource, matchWorkflowReuse, readNamedWorkflowReuseSource, workflowChildFingerprint, workflowRuntimeReplacedRelaunchNotice, workflowScriptDigest, workflowStopCause } from "../../workflows/workflow-reuse.ts";
-import { claimWorkflowResume, releaseWorkflowResumeClaim } from "../../workflows/workflow-resume-claim.ts";
+import { claimWorkflowResume, recordWorkflowResumeRefusal, releaseWorkflowResumeClaim } from "../../workflows/workflow-resume-claim.ts";
+import { manualWorkflowResumeRefusalText, prepareWorkflowResume, workflowResumeLaunched, workflowResumeRefusal, workflowResumeTargetId, type PreparedWorkflowResume, type WorkflowResumeRefusalCode, type WorkflowResumeRefusalReason } from "../../workflows/workflow-resume.ts";
 import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "../../workflows/host-command.ts";
 import { buildWorkflowReceipt, readWorkflowReceipt, workflowReceiptPath, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { formatWorkflowKeyRevival, recordWorkflowRevival, withWorkflowRevivals } from "../../workflows/workflow-revival.ts";
@@ -5412,6 +5413,14 @@ type PublicWorkflowLaunch =
 	| { source: "resource"; params: Record<string, unknown>; resourceName: string }
 	| { source: "structured" };
 
+/** A resume by id in flight: its claimed run id, what the new run records, and why it was refused. */
+interface WorkflowResumeLaunch {
+	presetRunId: string;
+	resumeOrigin: { sourceRunId: string; attempt: number };
+	expectedScriptDigest: string;
+	refusal?: { code: WorkflowResumeRefusalCode; reason: string };
+}
+
 /** Drops the fields that tie a launch to one run: a relaunch sets its own reuse and origin. */
 function savedWorkflowLaunchParams(params: SubagentParamsLike): Record<string, unknown> {
 	const { reuseFrom: _reuseFrom, scheduleOrigin: _scheduleOrigin, resumeOrigin: _resumeOrigin, action: _action, ...saved } = params as SubagentParamsLike & { scheduleOrigin?: unknown; resumeOrigin?: unknown };
@@ -5462,6 +5471,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		signal: AbortSignal,
 		ctx: ExtensionContext,
 	) => Promise<AgentToolResult<Details>>;
+	/** Relaunches a stopped workflow claimed by prepareWorkflowResume (resume by id and auto-resume). */
+	executeWorkflowResume: (
+		id: string,
+		prepared: PreparedWorkflowResume,
+		signal: AbortSignal,
+		ctx: ExtensionContext,
+	) => Promise<{ result: AgentToolResult<Details>; launched: boolean; refusal?: WorkflowResumeRefusalReason }>;
 	/** Scheduled state visible to the current runtime supervisor owner only. */
 	getCurrentSupervisorOwnerStates: () => Iterable<SubagentState>;
 } {
@@ -5472,6 +5488,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const publicExecutions = new WeakSet<object>();
 	const workflowResourcePermits = new WeakMap<object, WorkflowResourcePermit>();
 	const publicWorkflowLaunches = new WeakMap<object, PublicWorkflowLaunch>();
+	// Private seam for resume by id: the run id claimed in advance, and the origin the new run records.
+	const workflowResumeLaunches = new WeakMap<object, WorkflowResumeLaunch>();
 	const workflowPermitContexts = new WeakMap<object, { root: WorkflowChildPermit } | { child: WorkflowChildPermitContext }>();
 	const warnedArtifactPackageDirs = new Set<string>();
 	const scheduledOwnerExecutors = new Map<string | null, Map<string, { state: SubagentState; executor: ReturnType<typeof createSubagentExecutor> }>>();
@@ -5507,6 +5525,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const delegatedExecution = delegatedExecutions.has(params);
 		const publicExecution = publicExecutions.has(params);
 		const workflowResourcePermit = workflowResourcePermits.get(params);
+		const workflowResumeLaunch = workflowResumeLaunches.get(params);
 		const publicWorkflowLaunch = publicWorkflowLaunches.get(params);
 		const workflowPermitContext = workflowPermitContexts.get(params);
 		const delegatedWorkflowPermit = workflowPermitContext && "root" in workflowPermitContext ? workflowPermitContext.root : undefined;
@@ -5636,14 +5655,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				&& workflowDepth === 0
 				&& !inheritedNestedRoute(deps)
 				&& !requestParams.workflowParentRunId;
-			const workflowRunId = asyncWorkflow ? randomUUID() : undefined;
+			// A resume claimed its run id before launching, so the claim already names this run.
+			const workflowRunId = asyncWorkflow ? workflowResumeLaunch?.presetRunId ?? randomUUID() : undefined;
 			if (requestParams.reuseFrom !== undefined && !topLevelAsyncWorkflow) {
 				return { content: [{ type: "text", text: "options.reuseFrom requires an async top-level workflow." }], isError: true, details: { mode: "workflow", results: [] } };
 			}
 			// Both reuse readers run before capacity is taken: a run another relaunch continues is refused here.
 			let workflowReuseSource: ReturnType<typeof readNamedWorkflowReuseSource> | undefined;
 			try {
-				if (requestParams.reuseFrom !== undefined) workflowReuseSource = readNamedWorkflowReuseSource(DIRS.async, requestParams.reuseFrom, workflowScriptDigest(requestParams.workflowScript), workflowCwd);
+				if (requestParams.reuseFrom !== undefined) workflowReuseSource = readNamedWorkflowReuseSource(DIRS.async, requestParams.reuseFrom, workflowScriptDigest(requestParams.workflowScript), workflowCwd, workflowResumeLaunch?.presetRunId);
 				else if (workflowRunId) workflowReuseSource = findWorkflowReuseSource(DIRS.async, resolveCurrentSessionId(ctx.sessionManager), workflowScriptDigest(requestParams.workflowScript), workflowArgsDigest);
 			} catch (error) {
 				return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "workflow", results: [] } };
@@ -5720,8 +5740,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const completionOwnerId = deps.state.completionOwnerId ?? currentCompletionOwnerId();
 				deps.state.completionOwnerId = completionOwnerId;
 				const workflowScriptSourceDigest = workflowScriptDigest(requestParams.workflowScript);
-				const workflowRunEvidence: Pick<NonNullable<AsyncStatus["workflow"]>, "args" | "argsDigest" | "scriptDigest" | "reusedFrom" | "stopCause"> = { ...workflowArgsEvidence, scriptDigest: workflowScriptSourceDigest };
+				const workflowRunEvidence: Pick<NonNullable<AsyncStatus["workflow"]>, "args" | "argsDigest" | "scriptDigest" | "reusedFrom" | "stopCause" | "resumeOrigin"> = { ...workflowArgsEvidence, scriptDigest: workflowScriptSourceDigest };
 				if (workflowReuseSource) workflowRunEvidence.reusedFrom = workflowReuseSource.runId;
+				// In the first persisted status, before any child launches, so a later resume can count attempts.
+				if (workflowResumeLaunch) workflowRunEvidence.resumeOrigin = workflowResumeLaunch.resumeOrigin;
 				const workflowJournalFingerprints = new Map<string, string>();
 				// The relaunch continuing a stopped run holds its claim, so any other relaunch of that run is refused.
 				const reuseSourceDir = workflowReuseSource ? path.join(DIRS.async, workflowReuseSource.runId) : undefined;
@@ -7287,6 +7309,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
 			}
 			if (action === "resume") {
+				// No message on a stopped top-level workflow: relaunch it from its saved launch.
+				const workflowResumeSourceId = workflowResumeTargetId(DIRS.async, paramsWithResolvedCwd);
+				if (workflowResumeSourceId) return resumeWorkflowById(_id, workflowResumeSourceId, signal, ctx);
 				return resumeAsyncRun(omitUndefinedProperties({
 					params: paramsWithResolvedCwd,
 					requestCwd,
@@ -8237,6 +8262,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		// Models tend to put script text in the workflow string; say how to pass it instead.
 		const scriptTextHint = " A workflow string is a named workflow resource or a script file path. To run script text, write it in one ```js workflow block in the same reply and call subagent({ workflow: true }).";
 		let workflowLaunch: PublicWorkflowLaunch | undefined;
+		const workflowResumeLaunch = workflowResumeLaunches.get(params);
 		if (publicParams.tasks !== undefined || publicParams.chain !== undefined) {
 			// Normalization admits chain/tasks only with workflow scripts disabled; the original input was checked above.
 			const kind = publicParams.tasks !== undefined ? "tasks" : "chain";
@@ -8248,6 +8274,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			workflowLaunch = { source: "structured" };
 		} else if (typeof workflow === "string" && !isWorkflowScriptPath(workflow)) {
 			const resolved = resolveWorkflowResource(workflow, publicParams.args, ctx.sessionManager.getSessionId() ?? undefined);
+			// A resumed resource is resolved with current authority and must still be the script that ran.
+			if (workflowResumeLaunch && !resolved.ok) {
+				workflowResumeLaunch.refusal = { code: "authority", reason: `workflow resource '${workflow}' can no longer be resolved: ${resolved.error}` };
+				return errorResult(workflowResumeLaunch.refusal.reason);
+			}
+			if (workflowResumeLaunch && resolved.ok && workflowScriptDigest(resolved.resource.script) !== workflowResumeLaunch.expectedScriptDigest) {
+				workflowResumeLaunch.refusal = { code: "digest", reason: `workflow resource '${workflow}' changed since the run started` };
+				return errorResult(workflowResumeLaunch.refusal.reason);
+			}
 			if (!resolved.ok) return Promise.resolve({ content: [{ type: "text", text: resolved.error + scriptTextHint }], isError: true, details: { mode: "workflow", results: [] } });
 			const { workflow: _workflow, args: _args, ...withoutResourceInput } = publicParams;
 			// Saved by name: the runs.host permit cannot be saved, so a relaunch resolves the resource again.
@@ -8271,8 +8306,63 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			workflowLaunch = { source: "script", params: savedWorkflowLaunchParams(publicParams) };
 		}
 		if (workflowLaunch && publicParams.action === undefined) publicWorkflowLaunches.set(publicParams, workflowLaunch);
+		if (workflowResumeLaunch) workflowResumeLaunches.set(publicParams, workflowResumeLaunch);
 		publicExecutions.add(publicParams);
 		return executeWithSingleDispatchGuard(id, publicParams, signal, onUpdate, ctx);
+	};
+
+	/** Relaunches a stopped workflow from its prepared resume; a launch that did not start gives up its claim. */
+	const executeWorkflowResume = async (
+		id: string,
+		prepared: PreparedWorkflowResume,
+		signal: AbortSignal,
+		ctx: ExtensionContext,
+	): Promise<{ result: AgentToolResult<Details>; launched: boolean; refusal?: WorkflowResumeRefusalReason }> => {
+		const params = { ...prepared.params } as SubagentParamsLike;
+		const launch: WorkflowResumeLaunch = { presetRunId: prepared.newRunId, resumeOrigin: prepared.resumeOrigin, expectedScriptDigest: prepared.expectedScriptDigest };
+		workflowResumeLaunches.set(params, launch);
+		let result: AgentToolResult<Details>;
+		try {
+			result = await executePublic(id, params, signal, undefined, ctx);
+		} catch (error) {
+			result = { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "workflow", results: [] } };
+		}
+		if (workflowResumeLaunched(prepared)) return { result, launched: true };
+		const firstText = result.content.find((block) => block.type === "text")?.text ?? "no result";
+		const refusal = launch.refusal
+			? workflowResumeRefusal(launch.refusal.code, launch.refusal.reason, prepared.sourceRunId)
+			: result.details?.activeAsyncCapacity
+				? workflowResumeRefusal("capacity", `capacity refused: ${firstText}`, prepared.sourceRunId)
+				: workflowResumeRefusal("launch-failed", `launch failed: ${firstText}`, prepared.sourceRunId);
+		releaseWorkflowResumeClaim(prepared.sourceAsyncDir, prepared.newRunId);
+		if (prepared.trigger === "auto") {
+			try {
+				recordWorkflowResumeRefusal(prepared.sourceAsyncDir, { reason: refusal.reason, byHand: refusal.byHand, newRunId: prepared.newRunId });
+			} catch (error) {
+				console.error(`Failed to record why workflow ${prepared.sourceRunId} was not resumed:`, error);
+			}
+		}
+		return { result, launched: false, refusal };
+	};
+
+	const resumeWorkflowById = async (id: string, sourceRunId: string, signal: AbortSignal, ctx: ExtensionContext): Promise<AgentToolResult<Details>> => {
+		const refused = (text: string): AgentToolResult<Details> => ({ content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } });
+		let preparation: ReturnType<typeof prepareWorkflowResume>;
+		try {
+			preparation = prepareWorkflowResume({ asyncDirRoot: DIRS.async, sourceRunId, trigger: "manual", now: Date.now() });
+		} catch (error) {
+			return refused(`Cannot resume workflow '${sourceRunId}': ${error instanceof Error ? error.message : String(error)}`);
+		}
+		if (!preparation.ok) return refused(manualWorkflowResumeRefusalText(sourceRunId, preparation));
+		const outcome = await executeWorkflowResume(id, preparation.prepared, signal, ctx);
+		if (!outcome.launched) return refused(manualWorkflowResumeRefusalText(sourceRunId, outcome.refusal!));
+		const resumedLine = `Resumed workflow '${sourceRunId}' as ${preparation.prepared.newRunId}.`;
+		const textIndex = outcome.result.content.findIndex((block) => block.type === "text");
+		const content = [...outcome.result.content];
+		const first = content[textIndex];
+		if (first?.type === "text") content[textIndex] = { ...first, text: `${resumedLine}\n${first.text}` };
+		else content.unshift({ type: "text", text: resumedLine });
+		return { ...outcome.result, content };
 	};
 
 	const executeDelegated = async (
@@ -8332,5 +8422,5 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		for (const owner of scheduledOwnerExecutors.get(ownerId)?.values() ?? []) yield owner.state;
 	}
 
-	return { execute: executeWithSingleDispatchGuard, executePublic, executeDelegated, executeScheduled, getCurrentSupervisorOwnerStates };
+	return { execute: executeWithSingleDispatchGuard, executePublic, executeDelegated, executeScheduled, executeWorkflowResume, getCurrentSupervisorOwnerStates };
 }
