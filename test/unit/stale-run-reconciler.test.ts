@@ -75,13 +75,19 @@ describe("async stale-run reconciliation", () => {
 				const result = reconcileAsyncRun(asyncDir, { resultsDir, pidNamespaceScope: () => "pid:[same]", bootId: () => "boot-now", now: () => 2000, ...options });
 				return { result, status: JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) };
 			};
-			const ownerExitedMessage = (runId: string) => `The Pi process (PID 4242) that ran workflow ${runId} exited before the workflow finished. Marked run failed by stale-run reconciliation. Relaunching the same workflow script with the same args from this session reuses finished children and re-attaches to running ones; from another session, add options: { reuseFrom: "${runId}" }.`;
+			const ownerExitedMessage = (runId: string) => `The Pi process (PID 4242) that ran workflow ${runId} exited before the workflow finished. Marked run failed by stale-run reconciliation. Its finished children are kept.`;
 
 			const dead = reconcile("wf-dead", workflowStatus("wf-dead"), { kill: () => { throw errno("ESRCH"); } });
 			assert.equal(dead.result.repaired, true);
 			assert.equal(dead.status.state, "failed");
 			assert.equal(dead.status.workflow.stopCause, "owner-exited");
 			assert.equal(dead.status.workflow.scriptDigest, "digest");
+			// When the dead owner last updated it, not the repair time, and the stop cause in the result.
+			assert.equal(dead.status.workflow.ownerExitedAt, 1000);
+			assert.equal(dead.status.endedAt, 2000);
+			assert.deepEqual(JSON.parse(fs.readFileSync(path.join(resultsDir, "wf-dead.json"), "utf-8")).workflow, { stopCause: "owner-exited" });
+			const neverUpdated = reconcile("wf-never-updated", workflowStatus("wf-never-updated", { lastUpdate: undefined, startedAt: 900 }), { kill: () => { throw errno("ESRCH"); } });
+			assert.equal(neverUpdated.status.workflow.ownerExitedAt, 900);
 			assert.equal(JSON.parse(fs.readFileSync(path.join(resultsDir, "wf-dead.json"), "utf-8")).summary, ownerExitedMessage("wf-dead"));
 
 			const rebooted = reconcile("wf-rebooted", workflowStatus("wf-rebooted", { bootId: "boot-before" }), { kill: () => { throw new Error("the pid must not be probed"); } });
@@ -105,6 +111,20 @@ describe("async stale-run reconciliation", () => {
 			const single = reconcile("single-dead", singleStatus, { kill: () => { throw errno("ESRCH"); } });
 			assert.equal(single.status.workflow, undefined);
 			assert.equal(single.result.message, "Async runner process 4242 exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.");
+
+			// An owning session's repair adopts its completion owner, so it can deliver the notice; only an owner-exited workflow does.
+			const deadPid = () => { throw errno("ESRCH"); };
+			const resultOwner = (runId: string) => JSON.parse(fs.readFileSync(path.join(resultsDir, `${runId}.json`), "utf-8")).completionOwnerId;
+			const adopted = reconcile("wf-adopted", workflowStatus("wf-adopted", { completionOwnerId: "dead-process" }), { kill: deadPid, adoptCompletionOwnerId: "this-process" });
+			assert.equal(adopted.status.completionOwnerId, "this-process");
+			assert.equal(resultOwner("wf-adopted"), "this-process");
+			// A repair where no owning session adopts it leaves its notice to whichever session owns the run.
+			const elsewhere = reconcile("wf-elsewhere", workflowStatus("wf-elsewhere", { completionOwnerId: "dead-process" }), { kill: deadPid });
+			assert.equal(elsewhere.status.completionOwnerId, "owning-session");
+			assert.equal(resultOwner("wf-elsewhere"), "owning-session");
+			const singleKept = reconcile("single-kept", { ...singleStatus, runId: "single-kept", completionOwnerId: "dead-process" }, { kill: deadPid, adoptCompletionOwnerId: "this-process" });
+			assert.equal(singleKept.status.completionOwnerId, "dead-process");
+			assert.equal(resultOwner("single-kept"), "dead-process");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -258,6 +278,7 @@ describe("async stale-run reconciliation", () => {
 				runId: "run-dead",
 				sessionId: "session-current",
 				completionOwnerId: "owner-current",
+				completionOwnerProcess: { pid: 4321, bootId: "boot-a" },
 				mode: "single",
 				state: "running",
 				pid: 12345,
@@ -289,6 +310,7 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(resultJson.success, false);
 			assert.equal(resultJson.sessionId, "session-current");
 			assert.equal(resultJson.completionOwnerId, "owner-current");
+			assert.deepEqual(resultJson.completionOwnerProcess, { pid: 4321, bootId: "boot-a" });
 			assert.equal(resultJson.state, "failed");
 			assert.equal(resultJson.exitCode, 1);
 			assert.equal(resultJson.results[0].contextOverflow, true);

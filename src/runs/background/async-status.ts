@@ -168,6 +168,8 @@ interface AsyncRunListOptions {
 	includeNested?: boolean;
 	/** Explicit repair/debug escape hatch. Normal runtime paths must not set this. */
 	repairScan?: boolean;
+	/** This process's completion owner, adopted by an owner-exited workflow repair of a run the session owns; needs `sessionId`. */
+	adoptCompletionOwnerId?: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -556,16 +558,19 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		let status: (AsyncStatus & { cwd?: string }) | null;
 		try {
 			// Reconciliation can rewrite state; session-scoped discovery does not own foreign runs.
+			let owned = false;
 			if (owners) {
 				const stored = readStatus(asyncDir);
 				if (stored && !owners.has(stored.sessionId)) {
 					observeStatus?.(stored);
 					continue;
 				}
+				owned = stored !== null;
 			}
+			// Only a run this session owns may adopt the caller's completion owner.
 			const reconciliation = options.reconcile === false
 				? undefined
-				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now }, observeStatus);
+				: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now, adoptCompletionOwnerId: owned ? options.adoptCompletionOwnerId : undefined }, observeStatus);
 			status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
 			if (options.reconcile === false) observeStatus?.(status);
 		} catch (error) {

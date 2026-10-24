@@ -258,6 +258,10 @@ Package skill content.
 		assert.equal(loadConfig().programStatus, false);
 		writeFile(configPath, JSON.stringify({ programStatus: "off" }));
 		assert.throws(() => updateConfig((config) => config), /config\.programStatus must be a boolean/);
+		writeFile(configPath, JSON.stringify({ autoResume: false }));
+		assert.equal(loadConfig().autoResume, false);
+		writeFile(configPath, JSON.stringify({ autoResume: "off" }));
+		assert.throws(() => updateConfig((config) => config), /config\.autoResume must be a boolean/);
 
 		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "other" }));
 		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh" or "fork"/);

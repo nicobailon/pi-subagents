@@ -24,6 +24,8 @@ import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { capSummaryOutputs } from "../shared/single-output.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
+import { describeWorkflowResume } from "../../workflows/workflow-resume-claim.ts";
+import { isReusableWorkflowStopCause } from "../../workflows/workflow-stop-cause.ts";
 
 export interface SubagentNotifyChildOutput {
 	workflowKey?: string;
@@ -57,6 +59,8 @@ export interface SubagentNotifyDetails {
 	/** The finished run's id; for a workflow it equals workflowRunId. */
 	runId?: string;
 	workflowRunId?: string;
+	/** What happens next to a workflow that Pi's exit or a runtime replacement stopped; decided once at delivery. */
+	resumeNotice?: string;
 	childRuns?: Array<{ runId: string; workflowKey?: string; agent?: string; status?: string }>;
 	childOutputs?: SubagentNotifyChildOutput[];
 	reconciledFromDetachedChild?: string;
@@ -342,11 +346,14 @@ function formatCorrelationLines(details: SubagentNotifyDetails): string[] {
 	return [
 		details.asyncDir ? `Retention-managed async directory: ${boundedSafeText(details.asyncDir)}` : undefined,
 		details.workflowRunId ? `Workflow run: ${details.workflowRunId}` : undefined,
+		details.resumeNotice,
 		details.childRuns?.length ? `Child runs: ${details.childRuns.map(formatChildRun).join(", ")}` : undefined,
 		details.reconciledFromDetachedChild ? `Reconciled detached child: ${details.reconciledFromDetachedChild}` : undefined,
 	].filter((line): line is string => line !== undefined);
 }
 
+// The forms of describeWorkflowResume, so a re-render keeps the line out of the result preview.
+const RESUME_NOTICE_PREFIXES = ["Auto-resumed as ", "Resumed as ", "Relaunched as ", "Not auto-resumed: ", "Resume by hand: ", "Relaunch it by hand with "];
 const WATCHDOG_BLOCKERS_HEADING = "Watchdog blockers:";
 
 function formatWatchdogBlockerLines(details: SubagentNotifyDetails): string[] {
@@ -457,6 +464,9 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	const workflowRunIndex = body.findIndex((line) => line.startsWith("Workflow run: "));
 	const childRunsIndex = body.findIndex((line) => line.startsWith("Child runs: "));
 	const reconciledIndex = body.findIndex((line) => line.startsWith("Reconciled detached child: "));
+	// Only the slot right after `Workflow run:` carries the resume line; the same text elsewhere is output.
+	const resumeNoticeLine = workflowRunIndex >= 0 ? body[workflowRunIndex + 1] : undefined;
+	const resumeNotice = resumeNoticeLine && RESUME_NOTICE_PREFIXES.some((prefix) => resumeNoticeLine.startsWith(prefix)) ? resumeNoticeLine : undefined;
 	const watchdogIndex = body.findIndex((line) => line === WATCHDOG_BLOCKERS_HEADING);
 	const watchdogBlockers = watchdogIndex >= 0 ? parseWatchdogBlockerLines(body.slice(watchdogIndex + 1)) : [];
 	const metadataIndexes = [sessionIndex, handoffIndex, workflowRunIndex, childRunsIndex, reconciledIndex, watchdogIndex].filter((index) => index >= 0);
@@ -494,6 +504,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 		resultPreview,
 		...(handoffPath ? { handoffPath } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),
+		...(resumeNotice ? { resumeNotice } : {}),
 		...(childRuns?.length ? { childRuns } : {}),
 		...(reconciledFromDetachedChild ? { reconciledFromDetachedChild } : {}),
 		...(watchdogBlockers.length ? { watchdogBlockers } : {}),
@@ -814,6 +825,9 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		: undefined;
 	const reconciledFromDetachedChild = typeof result.reconciledFromDetachedChild === "string" ? result.reconciledFromDetachedChild : undefined;
 	const asyncDir = nonemptyPath(result.asyncDir);
+	// Read here, once per delivery; a re-render parses the line back instead of reading the run again.
+	const stopCause = (result.workflow as { stopCause?: unknown } | null | undefined)?.stopCause;
+	const resumeNotice = workflowRunId && asyncDir && isReusableWorkflowStopCause(stopCause) ? describeWorkflowResume(asyncDir, workflowRunId) : undefined;
 	const watchdogBlockers: SubagentNotifyWatchdogBlocker[] = [];
 	const watchdogConcerns: string[] = [];
 	const collectWatchdogFindings = (owner: string, progress: ChildWatchdogProgress | undefined) => {
@@ -850,6 +864,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		...(handoffPath ? { handoffPath } : {}),
 		...(rawRunId ? { runId: rawRunId } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),
+		...(resumeNotice ? { resumeNotice } : {}),
 		...(childRuns.length ? { childRuns } : {}),
 		...(childOutputs?.length ? { childOutputs } : {}),
 		...(reconciledFromDetachedChild ? { reconciledFromDetachedChild } : {}),

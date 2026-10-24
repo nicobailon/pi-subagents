@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fsDefault, * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
@@ -261,6 +262,39 @@ describe("result watcher", () => {
 				assert.equal(fs.existsSync(path.join(resultsDir, "new-run.json")), false);
 				assert.equal(fs.existsSync(path.join(resultsDir, "foreign-run.json")), true);
 				assert.equal(fs.existsSync(path.join(resultsDir, "wrong-owner.json")), true);
+			} finally {
+				watcher.stopResultWatcher();
+			}
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("delivers a result once when the Pi process that launched it has exited, and keeps one from a live Pi", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-dead-owner-"));
+		try {
+			const state = createState();
+			state.currentSessionId = "session-reopened";
+			const delivered: Array<{ id?: string; completionOwnerId?: string | null }> = [];
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				ownership: createResultDeliveryOwnership(state),
+				notifier: { async deliver(result) { delivered.push({ id: result.id, completionOwnerId: result.completionOwnerId }); return true; } },
+			});
+			const exitedPid = spawnSync(process.execPath, ["-e", ""]).pid;
+			const write = (id: string, data: Record<string, unknown>) => writeAsyncResultFile(path.join(resultsDir, `${id}.json`), { id, sessionId: "session-reopened", success: true, summary: id, ...data });
+			write("exited-owner", { completionOwnerId: "owner-exited", completionOwnerProcess: { pid: exitedPid } });
+			write("live-owner", { completionOwnerId: "owner-live", completionOwnerProcess: { pid: process.pid } });
+			write("workflow-child", { completionOwnerId: "owner-exited-workflow", completionOwnerProcess: { pid: exitedPid }, parentWorkflowRunId: "workflow-1" });
+			write("other-session", { sessionId: "session-other", completionOwnerId: "owner-exited-other", completionOwnerProcess: { pid: exitedPid } });
+			try {
+				await watcher.deliverPendingResults();
+				await watcher.deliverPendingResults();
+				assert.deepEqual(delivered, [{ id: "exited-owner", completionOwnerId: "owning-session" }]);
+				assert.equal(fs.existsSync(path.join(resultsDir, "exited-owner.json")), false);
+				assert.equal(fs.existsSync(path.join(resultsDir, "live-owner.json")), true);
+				assert.equal(fs.existsSync(path.join(resultsDir, "workflow-child.json")), true);
+				assert.equal(fs.existsSync(path.join(resultsDir, "other-session.json")), true);
 			} finally {
 				watcher.stopResultWatcher();
 			}

@@ -27,6 +27,7 @@ import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { formatPartialOutput, timedOutRunSummary } from "../../src/runs/shared/partial-output.ts";
 import { buildTimeoutRecoverySummary } from "../../src/runs/shared/mutation-evidence.ts";
 import { formatOutputArtifactContent } from "../../src/shared/artifacts.ts";
+import { claimWorkflowResume } from "../../src/workflows/workflow-resume-claim.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 const completionContent = (content: string) => `${content}\n\nParent action: Read the saved results above and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.`;
@@ -158,6 +159,50 @@ it("surfaces published workflow receipts outside single and grouped previews", (
 	const parsed = parseSubagentNotifyContent(single);
 	assert.equal(parsed?.workflowReceiptPath, workflowReceiptPath);
 	assert.doesNotMatch(parsed?.resultPreview ?? "", /Workflow receipt:/);
+});
+
+it("prints what happens next to an interrupted workflow right after its run id, and keeps it out of a re-rendered preview", () => {
+	const root = mkdtempSync(join(tmpdir(), "notify-resume-line-"));
+	try {
+		const interrupted = (asyncDir: string) => ({ agent: "workflow", mode: "workflow", runId: "wf-auto", success: false, state: "stopped", summary: "Workflow stopped.", asyncDir, workflow: { stopCause: "runtime-replaced" } });
+		// The line is read from the run only for a workflow that a runtime replacement or a Pi exit stopped.
+		const claimed = join(root, "wf-auto");
+		mkdirSync(claimed);
+		claimWorkflowResume(claimed, { newRunId: "wf-auto-next", trigger: "auto" });
+		const details = buildCompletionDetails(interrupted(claimed));
+		assert.equal(details.resumeNotice, "Auto-resumed as wf-auto-next.");
+		const { workflow: _workflow, ...withoutStopCause } = interrupted(claimed);
+		assert.equal(buildCompletionDetails(withoutStopCause).resumeNotice, undefined);
+		assert.equal(buildCompletionDetails({ ...interrupted(claimed), workflow: { stopCause: "user" } }).resumeNotice, undefined);
+		assert.equal(buildCompletionDetails({ ...interrupted(claimed), agent: "worker", mode: "single" }).resumeNotice, undefined);
+
+		const forms = [
+			"Auto-resumed as wf-auto-next.",
+			"Resumed as wf-auto-next.",
+			"Relaunched as wf-auto-next.",
+			'Not auto-resumed: the session already runs 2 async workflows. Resume by hand: subagent({ action: "resume", id: "wf-auto" })',
+			'Resume by hand: subagent({ action: "resume", id: "wf-auto" })',
+			'Relaunch it by hand with options: { reuseFrom: "wf-auto" }.',
+		];
+		for (const line of forms) {
+			const withLine = { ...details, resumeNotice: line };
+			for (const text of [formatSingleCompletion(withLine), formatGroupedCompletion([withLine, buildCompletionDetails({ agent: "worker", success: true, summary: "done" })])]) {
+				const lines = text.split("\n");
+				assert.equal(lines[lines.indexOf("Workflow run: wf-auto") + 1], line, text);
+				assert.equal(lines.filter((entry) => entry === line).length, 1, text);
+			}
+			const parsed = parseSubagentNotifyContent(formatSingleCompletion(withLine));
+			assert.equal(parsed?.resumeNotice, line);
+			assert.ok(!parsed?.resultPreview.includes(line), parsed?.resultPreview);
+			assert.equal(formatSingleCompletion(parsed!).split("\n").filter((entry) => entry === line).length, 1);
+		}
+		// A line the model wrote is output, not the resume line.
+		const modelText = parseSubagentNotifyContent("Background task completed: **worker**\n\nResumed as nothing.\n\nWorkflow run: wf-x\nChild runs: a=1");
+		assert.equal(modelText?.resumeNotice, undefined);
+		assert.match(modelText?.resultPreview ?? "", /Resumed as nothing\./);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 function createEventBus() {

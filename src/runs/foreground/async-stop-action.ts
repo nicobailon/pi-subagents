@@ -48,6 +48,8 @@ function sealPausedRun(asyncDir: string, status: AsyncStatus, resultsDir: string
 			sessionId: status.sessionId,
 			asyncDir,
 			...(status.completionOwnerId ? { completionOwnerId: status.completionOwnerId } : {}),
+			...(status.completionOwnerProcess ? { completionOwnerProcess: status.completionOwnerProcess } : {}),
+			...(status.parentWorkflowRunId ? { parentWorkflowRunId: status.parentWorkflowRunId } : {}),
 			...(status.toolCallId ? { toolCallId: status.toolCallId } : {}),
 			results: (status.steps ?? []).map((step) => ({
 				agent: step.agent,
@@ -152,7 +154,7 @@ export function stopAsyncRun(
 	}
 	if (!target) return null;
 	const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
-	// A workflow relaunched with options.reuseFrom stops the exact child run it re-attached, whichever session launched it.
+	// A relaunched workflow stops the exact child run it re-attached from its relaunch chain, whichever session launched it.
 	if (state.currentSessionId && !ownsRun(state.currentSessionId, status?.sessionId) && location?.reattachedRunId !== target.asyncId) {
 		return {
 			content: [{ type: "text", text: `Async run '${target.asyncId}' was not found in the active session.` }],

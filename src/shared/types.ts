@@ -19,6 +19,7 @@ import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 import type { WorkflowChildPermitContext } from "./workflow-child-permit.ts";
 import type { WatchdogWarningDetails } from "../watchdog/types.ts";
 import type { RequiredChildExtensionSnapshot } from "./required-child-extensions.ts";
+import type { RecordedPid } from "../runs/background/stale-run-reconciler.ts";
 
 // ============================================================================
 // Basic Types
@@ -1543,6 +1544,10 @@ export interface Details {
 		stopCause?: "runtime-replaced" | "owner-exited";
 		/** Interrupted workflow run whose finished children this run reused. */
 		reusedFrom?: string;
+		/** Owner-exited runs: the last time the dead Pi process updated the run (epoch ms), not the repair time. */
+		ownerExitedAt?: number;
+		/** Set on a run that resumes an interrupted one; `attempt` counts resumes that followed Pi exits. */
+		resumeOrigin?: { sourceRunId: string; attempt: number };
 		resource?: WorkflowResourceProvenance;
 		preflightWarnings?: string[];
 		trace: Array<{
@@ -1925,6 +1930,8 @@ export interface AsyncStatus {
 	runId: string;
 	/** Parent Pi process/window that owns local completion delivery. */
 	completionOwnerId?: string;
+	/** The Pi process behind `completionOwnerId`; once it is dead, the session that owns the run delivers it. */
+	completionOwnerProcess?: RecordedPid;
 	/** Host tool-call id retained when it differs from the internal run id. */
 	toolCallId?: string;
 	sessionId?: string;
@@ -2723,6 +2730,8 @@ export interface ActiveAsyncCapacityConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Relaunch this session's interrupted async workflows when the session is reopened or reloaded (default true). */
+	autoResume?: boolean;
 	/** Set the context for launches that omit an explicit context. */
 	defaultSubagentContext?: "fresh" | "fork";
 	/** Configure how every resolved fork session is prepared before child spawn. */

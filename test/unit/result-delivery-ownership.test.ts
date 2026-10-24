@@ -18,6 +18,9 @@ describe("result delivery ownership", () => {
 		assert.equal(ownership.owns("ownership-new", OWNER), true);
 		assert.equal(ownership.owns("ownership-old", "other-owner"), false);
 		assert.equal(ownership.owns("ownership-foreign", OWNER), false);
+		// A workflow whose Pi exited and that no owning session adopted: any session that owns the run delivers it.
+		assert.equal(ownership.owns("ownership-old", "owning-session"), true);
+		assert.equal(ownership.owns("ownership-foreign", "owning-session"), false);
 		state.currentSessionId = "ownership-fresh";
 		assert.equal(ownership.owns("ownership-old", OWNER), false);
 	});

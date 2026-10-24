@@ -131,6 +131,7 @@ describe("subagent messages in the main chat", () => {
 			["subagent-incremental-child-notify", undefined, "Workflow child paused (needs attention): **review**\nWorkflow run: wf-1", "workflow child review paused", "<customMessageText>workflow child review </customMessageText><warning>paused</warning>"],
 			["subagent-incremental-child-notify", undefined, "Something else", "workflow child update", "<customMessageText>workflow child update</customMessageText>"],
 			["subagent-workflow-result-write-failed", undefined, "", "workflow result save failed", "<customMessageText>workflow result </customMessageText><error>save failed</error>"],
+			["subagent-auto-resume", undefined, "Auto-resume of workflow wf-1 failed: launch failed: no slot.", "workflow auto-resume failed", "<customMessageText>workflow auto-resume </customMessageText><error>failed</error>"],
 		];
 		for (const [customType, details, content, text, toned] of rows) {
 			assert.deepEqual(visibleLines(renderMessage(customType, details, { content })), [` [subagent] ${text} (click to expand)`], text);
@@ -235,6 +236,7 @@ describe("subagent messages in the main chat", () => {
 			["subagent-incremental-child-notify", { childKey: "review", outcome: "failed" }, "", "mdLink"],
 			["subagent-wait-subscription", { token: "wait-1", runId: "run-1", outcome: "completed" }, "", "mdLink"],
 			["subagent-workflow-result-write-failed", undefined, "", "mdLink"],
+			["subagent-auto-resume", undefined, "", "mdLink"],
 			["subagent_control_notice", { event: { type: "needs_attention", agent: "worker", runId: "run-1", message: "stuck", ts: 1 } }, "", "customMessageLabel"],
 			["subagent_steering_notice", { runId: "run-1", state: "failed" }, "", "customMessageLabel"],
 			["subagent_watchdog_warning", watchdogWarning, "<subagent_watchdog>", "toolTitle"],

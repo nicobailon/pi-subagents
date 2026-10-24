@@ -244,6 +244,14 @@ Set `enabled` to `false` (or remove the block) as a kill switch. In that state, 
 
 Workflow script calls use background execution when the request omits `async`. Set `asyncByDefault` to `false` to restore foreground-by-default behavior for tool launches that still use the internal single-run primitive. Callers can still force foreground with `async: false` unless `forceTopLevelAsync` is enabled.
 
+## `autoResume`
+
+```json
+{ "autoResume": false }
+```
+
+Default `true`. When a session is reopened (`pi -c`, `pi --session`, `/resume`) or reloaded (`/reload`), its own async workflows that a Pi exit or a reload interrupted in the last 24 hours are resumed once, without delaying session start; set `autoResume` to `false` to resume them only by hand. A one-shot `pi -p` run does not auto-resume, so it does not wait on the workflow. See [Workflows](workflows.md).
+
 ## `runnerLaunchers`
 
 ```json

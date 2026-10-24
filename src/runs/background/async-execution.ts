@@ -85,7 +85,7 @@ import type { ActiveAsyncCapacityHandle } from "./active-async-capacity.ts";
 import { statusStepDescription } from "./chain-append.ts";
 import { currentBootId } from "./boot-id.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
-import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
+import { checkRecordedPidLiveness, type RecordedPid } from "./stale-run-reconciler.ts";
 import { lookupRunnerLauncher, resolveAgentRunnerLauncher, runnerLauncherPlacementError } from "../shared/runner-launcher.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT, type RunnerLauncher } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
@@ -633,6 +633,13 @@ async function completeRunnerStartupHandshake(
 	} finally {
 		await new Promise<void>((resolve) => setImmediate(resolve));
 	}
+}
+
+/** This Pi process, recorded beside its completion owner id so a reopened session can tell it exited. */
+function currentCompletionOwnerProcess(): RecordedPid {
+	const pidNamespaceScope = currentPidNamespaceScope();
+	const bootId = currentBootId();
+	return { pid: process.pid, ...(pidNamespaceScope ? { pidNamespaceScope } : {}), ...(bootId ? { bootId } : {}) };
 }
 
 function persistPreProceedStartupFailure(asyncDir: string, runId: string, runnerProcessInstanceId: string, sessionId: string | undefined, completionOwnerId: string | undefined, message: string): void {
@@ -1602,6 +1609,7 @@ export function executeAsyncChain(
 	}
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
+	const completionOwnerProcess = currentCompletionOwnerProcess();
 	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
 	try {
 		writeRetainedRequiredChildExtensions(asyncDir, params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(launchParentSessionId ?? undefined));
@@ -1627,6 +1635,7 @@ export function executeAsyncChain(
 				asyncDir,
 				sessionId: ctx.currentSessionId,
 				completionOwnerId: ctx.completionOwnerId ?? currentCompletionOwnerId(),
+				completionOwnerProcess,
 				...(capabilityCeiling ? { capabilityCeiling } : {}),
 				piPackageRoot,
 				childSessionFactoryModule: childSessionFactoryModule(),
@@ -1668,6 +1677,7 @@ export function executeAsyncChain(
 				runId: id,
 				...(ctx.currentSessionId ? { sessionId: ctx.currentSessionId } : {}),
 				...(initialCompletionOwnerId ? { completionOwnerId: initialCompletionOwnerId } : {}),
+				completionOwnerProcess,
 				mode: resultMode,
 				state: "running",
 				startedAt: initialStatusAt,
@@ -2189,6 +2199,7 @@ export function executeAsyncSingle(
 	let spawnResultOrPromise: SpawnRunnerResult | Promise<SpawnRunnerResult> = {};
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
+	const completionOwnerProcess = currentCompletionOwnerProcess();
 	const launchParentSessionId = ctx.parentSessionId ?? ctx.currentSessionId;
 	try {
 		spawnResultOrPromise = spawnRunner(
@@ -2272,6 +2283,7 @@ export function executeAsyncSingle(
 				asyncDir,
 				sessionId: ctx.currentSessionId,
 				completionOwnerId: ctx.completionOwnerId ?? currentCompletionOwnerId(),
+				completionOwnerProcess,
 				...(capabilityCeiling ? { capabilityCeiling } : {}),
 				piPackageRoot,
 				childSessionFactoryModule: childSessionFactoryModule(),
@@ -2316,6 +2328,7 @@ export function executeAsyncSingle(
 				runId: id,
 				...(ctx.currentSessionId ? { sessionId: ctx.currentSessionId } : {}),
 				...(initialCompletionOwnerId ? { completionOwnerId: initialCompletionOwnerId } : {}),
+				completionOwnerProcess,
 				mode: "single",
 				...(params.toolCallId ? { toolCallId: params.toolCallId } : {}),
 				state: "running",

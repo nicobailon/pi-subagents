@@ -329,6 +329,7 @@ subagent({ action: "stop", id: "<run-id>" })
 subagent({ action: "resume", id: "<run-id>", message: "follow-up question after it pauses or finishes" })
 subagent({ action: "resume", id: "<run-id>", message: "follow-up for child 2", options: { index: 1 } })
 subagent({ action: "resume", id: "<nested-run-id>", message: "follow-up for a nested child" })
+subagent({ action: "resume", id: "<stopped-workflow-run-id>" })
 subagent({ action: "steer", id: "<run-id>", message: "guidance for the running child" })
 subagent({ action: "steer", id: "<run-id>", message: "check this after the current turn", options: { mode: "follow_up" } })
 subagent({ action: "steer", id: "<run-id>", message: "guidance for child 2", options: { index: 1, mode: "auto" } })
@@ -379,6 +380,7 @@ Commands remain owned by the child session. Normal completion with unfinished co
 - Completed external-job runs, including nested runs, can use the same `resume` action as a provider follow-up when the registered provider exposes `followUp(input)`. Running external-job parents fail closed with guidance to wait for completion. Unsupported providers fail with an update/reload message.
 - Revive starts a new child session from the old session context; it does not resume the live session, and it requires the chosen child to have a persisted `.jsonl` session file.
 - Direct revival takes an exclusive cross-process lease on the canonical session file until the new child finishes. A concurrent attempt fails before Pi is spawned and identifies the owning revived run; dead-owner leases are reclaimed only when staleness can be proved.
+- Without `message` (and without `index` or `chain`), `resume` on a top-level async workflow run that stopped because its session was replaced or its Pi process exited (`workflow.stopCause: "runtime-replaced"` or `"owner-exited"`) relaunches it once from the launch it saved, reusing its finished children, and its receipt starts with `Resumed workflow '<id>' as <new id>.`; a run that cannot be resumed is refused as `Cannot resume workflow '<id>': <reason>.` The session that owns the run also resumes it on its own when reopened or reloaded, unless [`autoResume`](configuration.md#autoresume) is off; see [Workflows](workflows.md).
 
 ### stop
 

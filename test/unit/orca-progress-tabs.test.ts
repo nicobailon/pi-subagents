@@ -5,7 +5,8 @@ import { afterEach, test } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createOrcaProgressTab, resolveOrcaCommand, resolvePiSessionId } from "../../src/runs/shared/orca-progress-tabs.ts";
+import { createOrcaProgressTab, resolveOrcaCommand } from "../../src/runs/shared/orca-progress-tabs.ts";
+import { resolvePiSessionId } from "../../src/shared/session-identity.ts";
 import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { writeNodeCommand } from "../support/node-command.ts";
 

@@ -216,7 +216,8 @@ export function discardRunningForegroundRun(runId: string, options: { resultsDir
 	if (run && hasRunningChild(run) && run.ownerPid === process.pid) fs.rmSync(filePath, { force: true });
 }
 
-function ownerConfirmedDead(run: ForegroundResumeRun): boolean {
+/** For a record with a `running` child: its owning Pi process is gone. */
+export function ownerConfirmedDead(run: ForegroundResumeRun): boolean {
 	// readRunFile admits a running child only with a valid ownerPid.
 	return checkRecordedPidLiveness({ pid: run.ownerPid!, pidNamespaceScope: run.ownerPidNamespaceScope, bootId: run.ownerBootId }, { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() }) === "dead";
 }
@@ -249,11 +250,13 @@ export function foregroundChildStateLabel(run: Pick<ForegroundResumeRun, "runId"
 	return child.sessionFile ? `interrupted when Pi exited · resume ${run.runId}` : "interrupted when Pi exited";
 }
 
-export function restoreForegroundRunHistory(state: SubagentState, options: { resultsDir?: string; sessionId?: string | null; limit?: number } = {}): number {
+export function restoreForegroundRunHistory(state: SubagentState, options: { resultsDir?: string; sessionId?: string | null; limit?: number; observeForeign?: (run: ForegroundResumeRun) => void } = {}): number {
 	const sessionId = options.sessionId ?? state.currentSessionId;
 	if (!sessionId) return 0;
 	const dir = historyDir(options.resultsDir ?? DIRS.results);
 	const saved = historyFiles(dir).flatMap((name) => readRunFile(path.join(dir, name)) ?? []);
+	// Other sessions' records that may have been cut off, for a read-only pointer to them.
+	if (options.observeForeign) for (const run of saved) if (run.sessionId !== sessionId && hasRunningChild(run)) options.observeForeign(run);
 	const runs = sortAndBound(saved.filter((run) => run.sessionId === sessionId), options.limit ?? MAX_REMEMBERED_FOREGROUND_RUNS);
 	state.foregroundRuns ??= new Map();
 	let restored = 0;
