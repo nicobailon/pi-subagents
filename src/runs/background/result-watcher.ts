@@ -66,7 +66,7 @@ type ResultWatcherDeps = {
 	resultScanLogging?: "all" | "activity" | "off";
 	platform?: NodeJS.Platform;
 	/** Shared current/predecessor session ownership used by the notifier. */
-	ownership?: Pick<ResultDeliveryOwnership, "owns" | "claimedSessionIds"> & Partial<Pick<ResultDeliveryOwnership, "deliveryOwnerId">>;
+	ownership?: Pick<ResultDeliveryOwnership, "owns" | "claimedSessionIds" | "deliveryOwnerId">;
 	/** Called once the parent has this run's result: the notifier accepted it, or an earlier delivery already did. */
 	onResultDelivered?: (runId: string) => void;
 };
@@ -122,23 +122,10 @@ interface ResultScanStats {
 	startedAt: number;
 }
 
-function jsonStringProperty(raw: string, property: string): string | undefined {
-	const matches = raw.matchAll(new RegExp(`"${property}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`, "g"));
+/** The last `"property": <value>` whose value matches `valuePattern`, parsed without reading the whole file; malformed reads as none. */
+function jsonPropertyValue(raw: string, property: string, valuePattern: string): unknown {
 	let encoded: string | undefined;
-	for (const match of matches) encoded = match[1];
-	if (!encoded) return undefined;
-	try {
-		const value = JSON.parse(encoded) as unknown;
-		return typeof value === "string" && value ? value : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-/** The flat `completionOwnerProcess` object, read without parsing the whole result; malformed reads as none. */
-function jsonFlatObjectProperty(raw: string, property: string): unknown {
-	let encoded: string | undefined;
-	for (const match of raw.matchAll(new RegExp(`"${property}"\\s*:\\s*(\\{[^{}]*\\})`, "g"))) encoded = match[1];
+	for (const match of raw.matchAll(new RegExp(`"${property}"\\s*:\\s*(${valuePattern})`, "g"))) encoded = match[1];
 	if (!encoded) return undefined;
 	try {
 		return JSON.parse(encoded) as unknown;
@@ -147,11 +134,17 @@ function jsonFlatObjectProperty(raw: string, property: string): unknown {
 	}
 }
 
+function jsonStringProperty(raw: string, property: string): string | undefined {
+	const value = jsonPropertyValue(raw, property, `"(?:\\\\.|[^"\\\\])*"`);
+	return typeof value === "string" && value ? value : undefined;
+}
+
 function resultFileIdentity(raw: string, file: string): ResultFileIdentity {
 	return {
 		sessionId: jsonStringProperty(raw, "sessionId"),
 		completionOwnerId: jsonStringProperty(raw, "completionOwnerId"),
-		completionOwnerProcess: jsonFlatObjectProperty(raw, "completionOwnerProcess"),
+		// Recorded as a flat object, so a brace-free match is the whole value.
+		completionOwnerProcess: jsonPropertyValue(raw, "completionOwnerProcess", `\\{[^{}]*\\}`),
 		parentWorkflowRunId: jsonStringProperty(raw, "parentWorkflowRunId"),
 		runId: file.replace(/\.json$/i, ""),
 	};
@@ -251,8 +244,7 @@ export function createResultWatcher(
 			&& typeof completionOwnerId === "string"
 			&& completionOwnerId === state.completionOwnerId);
 	const claimedSessionIds = () => deps.ownership?.claimedSessionIds() ?? [];
-	const deliveryOwnerId = (sessionId: string, completionOwnerId: string | null | undefined, ownerProcess: unknown, parentWorkflowRunId: unknown): string | null | undefined =>
-		deps.ownership?.deliveryOwnerId ? deps.ownership.deliveryOwnerId(sessionId, completionOwnerId, ownerProcess, parentWorkflowRunId) : completionOwnerId;
+	const deliveryOwnerId: ResultDeliveryOwnership["deliveryOwnerId"] = deps.ownership?.deliveryOwnerId ?? ((_sessionId, completionOwnerId) => completionOwnerId);
 
 	const ownsCompletion = (sessionId: string, completionOwnerId: unknown, epoch: number) => {
 		if (!deliveryActive || epoch !== deliveryEpoch) return false;
