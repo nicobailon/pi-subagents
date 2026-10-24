@@ -180,6 +180,7 @@ describe("child tool plan declared tools", () => {
 		for (const entry of ["-tools/fixture.ts", "-tools/fixture", "-fixture.ts", "-fixture.js"]) {
 			const plan = resolvePiLaunchToolPlan({ tools: ["read", entry], agentName: "modifier-repro" });
 			assert.deepEqual(plan.requiredChildTools, ["read"], entry);
+			assert.ok(plan.extensionArgs.includes(entry), entry);
 		}
 	});
 
