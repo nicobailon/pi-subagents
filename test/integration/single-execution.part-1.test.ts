@@ -2090,6 +2090,37 @@ Answer only from the supplied synthetic text.
 			// The only slot was released, so the next launch is admitted.
 			await launchAndSettle(executor, "launch-after-unsaved", { workflowScript: "return 2;" }, ctx);
 		});
+
+		it("fails a relaunch and frees its capacity slot when its claim on the stopped run cannot be written", { timeout: 30_000, skip }, async (t) => {
+			const script = "return 3;";
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => `claim-capacity-${Date.now().toString(36)}`;
+			const sourceId = `claim-source-${Date.now().toString(36)}`;
+			fs.mkdirSync(path.join(DIRS.async, sourceId), { recursive: true });
+			fs.writeFileSync(path.join(DIRS.async, sourceId, "status.json"), JSON.stringify({
+				runId: sourceId, sessionId: "session-other", mode: "workflow", state: "failed", startedAt: 1, endedAt: 2, cwd: tempDir,
+				workflow: { trace: [], emits: [], console: [], scriptDigest: sha256(script), stopCause: "runtime-replaced" },
+			}));
+			const executor = makeExecutor([makeAgent("echo")], { maxActiveAsyncRunsPerSession: 1 });
+			const originalWriteFileSync = fsDefault.writeFileSync;
+			t.mock.method(fsDefault, "writeFileSync", ((file: fs.PathOrFileDescriptor, ...rest: [string | NodeJS.ArrayBufferView, fs.WriteFileOptions?]) => {
+				if (path.basename(String(file)).startsWith("resumed-by.")) throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+				return originalWriteFileSync(file, ...rest);
+			}) as typeof fsDefault.writeFileSync);
+			syncBuiltinESMExports();
+			let failed: Awaited<ReturnType<typeof executor.executePublic>>;
+			try {
+				failed = await executor.executePublic("claim-unwritten", { workflowScript: script, reuseFrom: sourceId, async: true, mission: false }, new AbortController().signal, undefined, ctx);
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+			}
+			assert.equal(failed.isError, true);
+			assert.match(failed.content[0]?.text ?? "", /^Failed to create async workflow storage: no space left/);
+			assert.deepEqual(fs.readdirSync(path.join(DIRS.async, sourceId)), ["status.json"], "no claim is left");
+			// The only slot was released, so the next launch is admitted.
+			await launchAndSettle(executor, "launch-after-unclaimed", { workflowScript: "return 4;" }, ctx);
+		});
 	});
 
 	describe("relaunching a runtime-replaced workflow", () => {

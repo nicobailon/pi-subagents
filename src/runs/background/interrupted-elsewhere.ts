@@ -10,8 +10,12 @@ import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
 /** Runs interrupted longer ago than this are not pointed to. */
 const INTERRUPTED_ELSEWHERE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-/** A POSIX shell word for `text`, single-quoted only when it needs quoting. */
+/**
+ * A shell word for `text`, quoted only when it needs quoting: POSIX single quotes, or on Windows
+ * double quotes around whitespace or a cmd/PowerShell special character (a Windows path has no `"`).
+ */
 function shellQuote(text: string): string {
+	if (process.platform === "win32") return /[\s&|<>^()%!$`';,=@#{}]/.test(text) ? `"${text}"` : text;
 	return /^[A-Za-z0-9_@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, "'\\''")}'`;
 }
 

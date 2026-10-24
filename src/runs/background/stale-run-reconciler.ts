@@ -4,6 +4,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { resultFilePath, resultPayloadPathForSessionRun, writeAsyncResultFile } from "./result-files.ts";
 import { updateActiveRunIndex } from "./active-run-index.ts";
 import { readProcessTerminal } from "./process-terminal.ts";
+import { OWNING_SESSION_COMPLETION_OWNER } from "./result-delivery-ownership.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -272,8 +273,9 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 	const pid = typeof status.pid === "number" ? status.pid : "unknown";
 	// A dead workflow host is the Pi process itself; its journal keeps the finished children for a relaunch.
 	const exitedWorkflow = ownerExited && status.mode === "workflow" ? status.workflow : undefined;
-	// Its owner process is dead, so nothing else can deliver its notice: an owning session that repairs it adopts it.
-	const completionOwnerId = exitedWorkflow && adoptCompletionOwnerId ? adoptCompletionOwnerId : status.completionOwnerId;
+	// Its owner process is dead, so nothing else can deliver its notice: an owning session that repairs it
+	// adopts it, and a repair elsewhere leaves it to whichever session owns the run.
+	const completionOwnerId = exitedWorkflow ? adoptCompletionOwnerId || OWNING_SESSION_COMPLETION_OWNER : status.completionOwnerId;
 	const terminal = readProcessTerminal(asyncDir, { runId }) ?? status.processTerminal;
 	const runnerExit = terminal?.state === "observed" || terminal?.state === "unknown"
 		? terminal.instances?.find((instance) => instance.kind === "runner" && instance.processInstanceId === terminal.runnerProcessInstanceId)

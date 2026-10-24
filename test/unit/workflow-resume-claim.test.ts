@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { currentBootId } from "../../src/runs/background/boot-id.ts";
+import { currentPidNamespaceScope } from "../../src/runs/background/pid-namespace.ts";
 import { claimWorkflowResume, describeWorkflowResume, readWorkflowResumeClaim, recordWorkflowResumeRefusal, releaseWorkflowResumeClaim, workflowResumeClaimState } from "../../src/workflows/workflow-resume-claim.ts";
 import { writeWorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
 import { claimedWorkflowRunRefusal } from "../../src/workflows/workflow-reuse.ts";
@@ -83,7 +84,8 @@ describe("workflow resume claim", () => {
 
 	it("supersedes this process's claim that no runtime holds, and a corrupt claim", () => {
 		withRun((asyncDir) => {
-			writeClaim(asyncDir, 1, { ...foreignClaim, pid: process.pid, ...(currentBootId() ? { bootId: currentBootId() } : {}) });
+			// Written as claimWorkflowResume writes this process's claim: with its boot id and, on Linux, its pid namespace.
+			writeClaim(asyncDir, 1, { ...foreignClaim, pid: process.pid, ...(currentBootId() ? { bootId: currentBootId() } : {}), ...(currentPidNamespaceScope() ? { pidNamespaceScope: currentPidNamespaceScope() } : {}) });
 			assert.deepEqual(workflowResumeClaimState(asyncDir), { kind: "none" });
 			assert.deepEqual(claimWorkflowResume(asyncDir, { newRunId: "second-run", trigger: "auto" }), { kind: "owner" });
 		});

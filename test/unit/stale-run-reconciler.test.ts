@@ -118,9 +118,10 @@ describe("async stale-run reconciliation", () => {
 			const adopted = reconcile("wf-adopted", workflowStatus("wf-adopted", { completionOwnerId: "dead-process" }), { kill: deadPid, adoptCompletionOwnerId: "this-process" });
 			assert.equal(adopted.status.completionOwnerId, "this-process");
 			assert.equal(resultOwner("wf-adopted"), "this-process");
-			const kept = reconcile("wf-kept", workflowStatus("wf-kept", { completionOwnerId: "dead-process" }), { kill: deadPid });
-			assert.equal(kept.status.completionOwnerId, "dead-process");
-			assert.equal(resultOwner("wf-kept"), "dead-process");
+			// A repair where no owning session adopts it leaves its notice to whichever session owns the run.
+			const elsewhere = reconcile("wf-elsewhere", workflowStatus("wf-elsewhere", { completionOwnerId: "dead-process" }), { kill: deadPid });
+			assert.equal(elsewhere.status.completionOwnerId, "owning-session");
+			assert.equal(resultOwner("wf-elsewhere"), "owning-session");
 			const singleKept = reconcile("single-kept", { ...singleStatus, runId: "single-kept", completionOwnerId: "dead-process" }, { kill: deadPid, adoptCompletionOwnerId: "this-process" });
 			assert.equal(singleKept.status.completionOwnerId, "dead-process");
 			assert.equal(resultOwner("single-kept"), "dead-process");

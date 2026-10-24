@@ -4,6 +4,12 @@ import type { SubagentState } from "../../shared/types.ts";
 
 type ResultDeliveryState = Pick<SubagentState, "currentSessionId" | "completionOwnerId">;
 
+/**
+ * The completion owner of a workflow whose Pi exited, repaired where no owning session could adopt
+ * it: its own owner is dead, so whichever session owns the run delivers it. Delivery consumes the result.
+ */
+export const OWNING_SESSION_COMPLETION_OWNER = "owning-session";
+
 export interface ResultDeliveryOwnership {
 	owns(sessionId: string, completionOwnerId: unknown): boolean;
 	claimedSessionIds(): readonly string[];
@@ -17,7 +23,7 @@ export function createResultDeliveryOwnership(state: ResultDeliveryState): Resul
 	return {
 		owns(sessionId, completionOwnerId) {
 			const owner = currentOwner();
-			if (!owner || completionOwnerId !== owner) return false;
+			if (!owner || (completionOwnerId !== owner && completionOwnerId !== OWNING_SESSION_COMPLETION_OWNER)) return false;
 			return ownsRun(state.currentSessionId, sessionId);
 		},
 		claimedSessionIds() {

@@ -281,6 +281,34 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		await reopened.shutDown("quit");
 	});
 
+	it("delivers the notice of a run another session repaired once its own session reopens, and only once", { timeout: 30_000 }, async () => {
+		writeAgents();
+		const nonce = `auto-repaired-elsewhere-${Date.now()}`;
+		const ownerSession = `session-${nonce}-owner`;
+		const script = `return "${nonce}";`;
+		const sourceId = writeCrashedRun(ownerSession, scriptLaunch(script), Date.now() - 60_000);
+
+		// Another session relaunches it through options.reuseFrom, which repairs it there.
+		const other = await startRuntime("startup", `session-${nonce}-other`);
+		fs.writeFileSync(path.join(tempDir, `${nonce}.js`), script);
+		const launched = await other.tool.execute("repaired-elsewhere", { workflow: `./${nonce}.js`, async: true, mission: false, reuseFrom: sourceId }, new AbortController().signal, undefined, other.ctx);
+		const relaunchId = launched.details.asyncId;
+		assert.ok(relaunchId, launched.content[0]?.text);
+		assert.equal(readStatusFile(sourceId)?.workflow?.stopCause, "owner-exited");
+		await waitUntil("the relaunch to finish", () => terminalStates.includes(readStatusFile(relaunchId)?.state ?? ""));
+		await other.shutDown("quit");
+		assert.deepEqual(noticesFor(other.sent, sourceId), [], "the session that does not own it delivers nothing");
+
+		const reopened = await startRuntime("startup", ownerSession);
+		assert.deepEqual(nextSteps(await oneNotice(reopened.sent, sourceId)), [`Relaunched as ${relaunchId}.`]);
+		await reopened.shutDown("quit");
+		assert.equal(fs.existsSync(path.join(DIRS.results, `${sourceId}.json`)), false, "delivery consumed the result");
+		const again = await startRuntime("startup", ownerSession);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		assert.deepEqual(noticesFor(again.sent, sourceId), [], "a later reopen delivers nothing");
+		await again.shutDown("quit");
+	});
+
 	it("resumes the run from the new runtime when /reload lands between the session-start claim and the launch", { timeout: 30_000 }, async () => {
 		writeAgents();
 		const nonce = `auto-window-${Date.now()}`;
@@ -445,8 +473,10 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const elsewhere = (runtime: { notifications: Array<{ text: string; level: string }> }) => runtime.notifications.filter((notice) => notice.text.includes("in another session"));
 
 		const withUi = await startRuntime("new", current, { previousSessionFile: sessionFileFor(inherited) });
+		// The path with a space is quoted for the platform's shell: single quotes on POSIX, double quotes on Windows.
+		const spacedWord = process.platform === "win32" ? `"${sessionFileFor(spaced)}"` : `'${sessionFileFor(spaced)}'`;
 		assert.deepEqual(elsewhere(withUi).sort((left, right) => left.text.localeCompare(right.text)), [
-			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session '${sessionFileFor(spaced)}'\``, level: "info" },
+			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session ${spacedWord}\``, level: "info" },
 			{ text: `2 subagent runs were interrupted in another session. Reopen it to resume them: \`pi --session ${sessionFileFor(foreign)}\``, level: "info" },
 		]);
 		assert.deepEqual(withUi.sent.filter((entry) => String(entry.message.content).includes("in another session")), [], "never sent to the model");
