@@ -170,7 +170,7 @@ all work active at call time, `bg_wait({ id: "..." })` for one async or
 remembered detached foreground run, and `bg_wait({ timeoutMs })` to cap the
 block; active work keeps running if it elapses. `bg_wait({ stopOnAttention:
 false })` keeps a blocking wait through all attention except supervisor/contact
-requests (idle, long-running, a tool held open, threshold notices); those
+requests (such as idle time, a tool held open, or repeated tool failures); those
 requests, finished runs, timeout and user input still stop it. In a long-lived
 interactive parent session, use `bg_wait({ id: "...", nonBlocking: true })` only for a known
 detached or otherwise non-notifying run to resolve the prefix to one exact run,
