@@ -625,7 +625,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	// Pi sends custom messages to the model as plain user messages, so every model-visible
 	// pi-subagents message is wrapped in a marker naming its source. The marker depends only on
 	// the message, so history renders the same bytes every turn and cached prefixes stay valid.
-	const markedMessageTypes = new Set([...SUBAGENT_MESSAGE_TYPES, "subagent-compaction-resume", SLASH_RESULT_TYPE, SLASH_TEXT_RESULT_TYPE, ADMIN_MESSAGE_TYPE, WORKFLOW_AUTO_RESUME_MESSAGE_TYPE]);
+	const markedMessageTypes = new Set([...SUBAGENT_MESSAGE_TYPES, "subagent-compaction-resume", SLASH_RESULT_TYPE, SLASH_TEXT_RESULT_TYPE, ADMIN_MESSAGE_TYPE]);
 	pi.on("context", (event) => {
 		const messages: typeof event.messages = [];
 		for (const message of event.messages) {
@@ -648,7 +648,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return { messages };
 	});
 
-	const renderPlainTextMessage = (message: { content: string | Array<{ type: string; text?: string }> }) => {
+	pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
 		const content = typeof message.content === "string"
 			? message.content
 			: message.content
@@ -656,9 +656,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				.map((entry) => entry.text)
 				.join("\n");
 		return new Text(content, 0, 0);
-	};
-	pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message) => renderPlainTextMessage(message));
-	pi.registerMessageRenderer<undefined>(WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, (message) => renderPlainTextMessage(message));
+	});
 
 	const executeSubagentReady = async (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
 		await waitForAdvertisement();
@@ -1022,7 +1020,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		phaseStartedAt = Date.now();
 		// Launches an earlier session start of this runtime planned and has not started belong to that session.
 		cancelPendingWorkflowAutoResumes((entry) => entry.owner === autoResumeOwner);
-		if (recovering && config.autoResume !== false) {
+		// Not in a one-shot print run: its turn would then wait on the resumed workflow at settle.
+		if (recovering && ctx.hasUI && config.autoResume !== false) {
 			for (const entry of planWorkflowAutoResumes({ asyncDirRoot: DIRS.async, currentSessionId: state.currentSessionId, now: Date.now(), owner: autoResumeOwner })) {
 				void launchWorkflowAutoResume(entry, ctx);
 			}

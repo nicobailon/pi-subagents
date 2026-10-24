@@ -75,7 +75,7 @@ describe("prepareWorkflowResume", () => {
 			const cases: Array<[string, Parameters<typeof writeRun>[1], string, string]> = [
 				["completed", { stopCause: "", state: "complete" }, "not-interrupted", "not interrupted; pass message to revive one of its children"],
 				["missing", { launch: null }, "launch-missing", "launch.json is missing (the run started before launches were saved)"],
-				["invalid", { launch: "{bad" }, "launch-invalid", "launch.json is invalid: launch.json is not valid JSON: "],
+				["invalid", { launch: "{bad" }, "launch-invalid", "launch.json is invalid: not valid JSON: "],
 				["structured", { launch: { version: 1, source: "structured", scriptDigest: "d" } }, "structured", "launched from tasks/chain; resume it by hand"],
 				["edited", { launch: { ...scriptLaunch, params: { ...scriptLaunch.params, workflowScript: "return 2;" } } }, "launch-invalid", "launch.json is invalid: its script does not match its scriptDigest"],
 			];

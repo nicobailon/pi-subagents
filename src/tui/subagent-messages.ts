@@ -211,6 +211,7 @@ const MESSAGE_VIEWS = new Map<string, (message: SubagentMessage) => BlockView>([
 	["subagent-wait-subscription", readsContent("result", (message) => waitSubscriptionHeadline(message.details))],
 	["subagent-incremental-child-notify", readsContent("result", workflowChildHeadline)],
 	["subagent-workflow-result-write-failed", readsContent("result", () => ["workflow result ", { status: "save failed" }])],
+	["subagent-auto-resume", readsContent("result", () => ["workflow auto-resume ", { status: "failed" }])],
 	[SUBAGENT_CONTROL_MESSAGE_TYPE, readsContent("attention", (message) => controlNoticeHeadline(message.details))],
 	[SUBAGENT_STEERING_MESSAGE_TYPE, readsContent("attention", (message) => steeringNoticeHeadline(message.details))],
 	[SUBAGENT_WATCHDOG_WARNING_TYPE, (message) => watchdogWarningView(message.details, contentText(message.content))],

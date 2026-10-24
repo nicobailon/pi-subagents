@@ -101,8 +101,8 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const ctx = {
 			...makeMinimalCtx(tempDir),
 			isIdle: () => true,
-			// With `ui`, a session with a UI that records its notices; any other UI call does nothing.
-			hasUI: options.ui === true,
+			// A session with a UI (interactive or RPC) that records its notices, unless `ui: false` (a print run); any other UI call does nothing.
+			hasUI: options.ui !== false,
 			ui: new Proxy({ notify: (text: string, level: string) => { notifications.push({ text, level }); } }, { get: (target, prop) => prop in target ? target[prop as keyof typeof target] : () => undefined }),
 			sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFileFor(sessionId), getEntries: () => [], getBranch: () => [] },
 		};
@@ -255,6 +255,30 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const reopenedOld = await startRuntime("resume", oldSession);
 		await waitUntil("the run of the reopened old session", () => resumedRuns(inheritedId)[0]);
 		await reopenedOld.shutDown("quit");
+	});
+
+	it("does not auto-resume in a session with no UI, and resumes once when the session reopens with one", { timeout: 30_000 }, async () => {
+		writeAgents();
+		const nonce = `auto-headless-${Date.now()}`;
+		const sessionId = `session-${nonce}`;
+		const script = `const only = await runs.run("only", { agent: "echo", task: "Only ${nonce}" }); return only.output;`;
+		mockPi.onCall({ matchArgIncludes: `Only ${nonce}`, output: "only done" });
+		const sourceId = writeCrashedRun(sessionId, scriptLaunch(script), Date.now() - 60_000);
+
+		// A one-shot print run (`pi -c -p`) has no UI; it would wait on the resumed workflow at turn settle.
+		const headless = await startRuntime("startup", sessionId, { ui: false });
+		assert.equal(readStatusFile(sourceId)?.workflow?.stopCause, "owner-exited");
+		assert.deepEqual(nextSteps(await oneNotice(headless.sent, sourceId)), [`Resume by hand: subagent({ action: "resume", id: "${sourceId}" })`]);
+		assert.deepEqual(claimFiles(sourceId), []);
+		assert.deepEqual(resumedRuns(sourceId), []);
+		await headless.shutDown("quit");
+
+		const reopened = await startRuntime("startup", sessionId);
+		const resumedId = await waitUntil("the resumed run", () => resumedRuns(sourceId)[0]);
+		const done = await waitUntil("the resumed run to finish", () => { const status = readStatusFile(resumedId); return status && terminalStates.includes(status.state) ? status : undefined; }, 15_000);
+		assert.equal(done.state, "complete", done.error);
+		assert.deepEqual(resumedRuns(sourceId), [resumedId], "resumed once");
+		await reopened.shutDown("quit");
 	});
 
 	it("resumes the run from the new runtime when /reload lands between the session-start claim and the launch", { timeout: 30_000 }, async () => {
@@ -420,14 +444,14 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		assert.equal(Object.keys(before).filter((file) => file.endsWith("status.json")).length, foreignRuns.length);
 		const elsewhere = (runtime: { notifications: Array<{ text: string; level: string }> }) => runtime.notifications.filter((notice) => notice.text.includes("in another session"));
 
-		const withUi = await startRuntime("new", current, { previousSessionFile: sessionFileFor(inherited), ui: true });
+		const withUi = await startRuntime("new", current, { previousSessionFile: sessionFileFor(inherited) });
 		assert.deepEqual(elsewhere(withUi).sort((left, right) => left.text.localeCompare(right.text)), [
 			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session '${sessionFileFor(spaced)}'\``, level: "info" },
 			{ text: `2 subagent runs were interrupted in another session. Reopen it to resume them: \`pi --session ${sessionFileFor(foreign)}\``, level: "info" },
 		]);
 		assert.deepEqual(withUi.sent.filter((entry) => String(entry.message.content).includes("in another session")), [], "never sent to the model");
 		await withUi.shutDown("quit");
-		const withoutUi = await startRuntime("startup", headless);
+		const withoutUi = await startRuntime("startup", headless, { ui: false });
 		assert.deepEqual(elsewhere(withoutUi), []);
 		await withoutUi.shutDown("quit");
 		assert.deepEqual(snapshot(), before, "nothing of the other sessions changed");

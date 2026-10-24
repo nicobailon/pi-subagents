@@ -1602,6 +1602,7 @@ describe("subagent extension child mode", () => {
 		).trim().split("\n").at(-1)!) as { messageTypes: string[]; entryTypes: string[]; blocks: { messages: Array<[string, string[]]>; entries: Array<[string, string[]]> } };
 
 		assert.deepEqual(output.messageTypes, [
+			"subagent-auto-resume",
 			"subagent-completion-unanswered",
 			"subagent-completion-unhandled",
 			"subagent-incremental-child-notify",

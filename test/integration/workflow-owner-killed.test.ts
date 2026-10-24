@@ -102,6 +102,9 @@ async function reopenSession(sessionFile: string, agentDir: string) {
 	const ctx = {
 		...makeMinimalCtx(tempDir),
 		isIdle: () => true,
+		// Reopened with a UI, as `pi -c` does; a print run does not auto-resume. Every UI call does nothing.
+		hasUI: true,
+		ui: new Proxy({}, { get: () => () => undefined }),
 		sessionManager: { getSessionId: () => path.basename(sessionFile), getSessionFile: () => sessionFile, getEntries: () => [], getBranch: () => [] },
 	};
 	const previous = { agentDir: process.env.PI_CODING_AGENT_DIR, childEnv: process.env[SUBAGENT_CHILD_ENV] };

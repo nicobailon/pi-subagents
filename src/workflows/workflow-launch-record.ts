@@ -40,19 +40,19 @@ export function readWorkflowLaunchRecord(asyncDir: string): WorkflowLaunchRecord
 		text = fs.readFileSync(launchRecordPath(asyncDir), "utf-8");
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { ok: false, missing: true, error: "launch.json is missing" };
-		return invalid(`launch.json could not be read: ${error instanceof Error ? error.message : String(error)}`);
+		return invalid(`could not be read: ${error instanceof Error ? error.message : String(error)}`);
 	}
 	let value: unknown;
 	try {
 		value = JSON.parse(text);
 	} catch (error) {
-		return invalid(`launch.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+		return invalid(`not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
 	}
-	if (!isPlainObject(value)) return invalid("launch.json must be a JSON object");
-	if (value.version !== 1) return invalid("launch.json version must be 1");
-	if (typeof value.scriptDigest !== "string" || !value.scriptDigest) return invalid("launch.json scriptDigest must be a non-empty string");
+	if (!isPlainObject(value)) return invalid("not a JSON object");
+	if (value.version !== 1) return invalid("version must be 1");
+	if (typeof value.scriptDigest !== "string" || !value.scriptDigest) return invalid("scriptDigest must be a non-empty string");
 	if (value.source === "structured") return { ok: true, record: { version: 1, source: "structured", scriptDigest: value.scriptDigest } };
-	if (value.source !== "script" && value.source !== "resource") return invalid("launch.json source must be \"script\", \"resource\", or \"structured\"");
-	if (!isPlainObject(value.params)) return invalid("launch.json params must be an object");
+	if (value.source !== "script" && value.source !== "resource") return invalid("source must be \"script\", \"resource\", or \"structured\"");
+	if (!isPlainObject(value.params)) return invalid("params must be an object");
 	return { ok: true, record: { version: 1, source: value.source, params: value.params, scriptDigest: value.scriptDigest } };
 }

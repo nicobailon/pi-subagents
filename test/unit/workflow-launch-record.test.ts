@@ -12,12 +12,12 @@ describe("workflow launch record", () => {
 			assert.deepEqual(readWorkflowLaunchRecord(root), { ok: false, missing: true, error: "launch.json is missing" });
 			const write = (value: string) => fs.writeFileSync(path.join(root, "launch.json"), value, "utf-8");
 			const cases: Array<[string, RegExp]> = [
-				["{not json", /^launch\.json is not valid JSON: /],
-				["[]", /^launch\.json must be a JSON object$/],
-				[JSON.stringify({ version: 2, source: "script", params: {}, scriptDigest: "d" }), /^launch\.json version must be 1$/],
-				[JSON.stringify({ version: 1, source: "script", params: {} }), /^launch\.json scriptDigest must be a non-empty string$/],
-				[JSON.stringify({ version: 1, source: "other", scriptDigest: "d" }), /^launch\.json source must be /],
-				[JSON.stringify({ version: 1, source: "script", params: [], scriptDigest: "d" }), /^launch\.json params must be an object$/],
+				["{not json", /^not valid JSON: /],
+				["[]", /^not a JSON object$/],
+				[JSON.stringify({ version: 2, source: "script", params: {}, scriptDigest: "d" }), /^version must be 1$/],
+				[JSON.stringify({ version: 1, source: "script", params: {} }), /^scriptDigest must be a non-empty string$/],
+				[JSON.stringify({ version: 1, source: "other", scriptDigest: "d" }), /^source must be "script", "resource", or "structured"$/],
+				[JSON.stringify({ version: 1, source: "script", params: [], scriptDigest: "d" }), /^params must be an object$/],
 			];
 			for (const [text, error] of cases) {
 				write(text);
