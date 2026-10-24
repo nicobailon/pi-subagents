@@ -131,7 +131,7 @@ describe("subagent messages in the main chat", () => {
 			["subagent-incremental-child-notify", undefined, "Workflow child paused (needs attention): **review**\nWorkflow run: wf-1", "workflow child review paused", "<customMessageText>workflow child review </customMessageText><warning>paused</warning>"],
 			["subagent-incremental-child-notify", undefined, "Something else", "workflow child update", "<customMessageText>workflow child update</customMessageText>"],
 			["subagent-workflow-result-write-failed", undefined, "", "workflow result save failed", "<customMessageText>workflow result </customMessageText><error>save failed</error>"],
-			["subagent-auto-resume", undefined, "Auto-resume of workflow wf-1 failed: launch failed: no slot.", "workflow auto-resume failed", "<customMessageText>workflow auto-resume </customMessageText><error>failed</error>"],
+			["subagent-auto-resume", undefined, "Workflow wf-1 was not auto-resumed: launch failed: no slot.", "workflow auto-resume failed", "<customMessageText>workflow auto-resume </customMessageText><error>failed</error>"],
 		];
 		for (const [customType, details, content, text, toned] of rows) {
 			assert.deepEqual(visibleLines(renderMessage(customType, details, { content })), [` [subagent] ${text} (click to expand)`], text);

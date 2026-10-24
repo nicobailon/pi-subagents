@@ -510,7 +510,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const resolved = resolveWorkflowResource(resourceName, undefined, sessionId);
 		assert.equal(resolved.ok, false);
 		const resolveError = resolved.ok ? "" : resolved.error.replace(/\.$/, "");
-		assert.equal(message?.message.content, `Auto-resume of workflow ${sourceId} failed: workflow resource '${resourceName}' can no longer be resolved: ${resolveError}. Relaunch it by hand with options: { reuseFrom: "${sourceId}" }.`);
+		assert.equal(message?.message.content, `Workflow ${sourceId} was not auto-resumed: workflow resource '${resourceName}' can no longer be resolved: ${resolveError}. Relaunch it by hand with options: { reuseFrom: "${sourceId}" }.`);
 		assert.equal(message?.message.display, true);
 		assert.equal(message?.options?.triggerTurn, false);
 		assert.equal(readWorkflowResumeClaim(path.join(DIRS.async, sourceId)), undefined, "the claim was given back");

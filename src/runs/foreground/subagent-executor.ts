@@ -131,7 +131,7 @@ import { formatIncrementalChildCompletion, incrementalChildCompletionTriggersTur
 import { COMPLETION_ACTION, STATUS_ACTION } from "../../shared/parent-wake.ts";
 import { appendWorkflowChildJournal, claimedWorkflowRunRefusal, findWorkflowReuseSource, matchWorkflowReuse, readNamedWorkflowReuseSource, WORKFLOW_RUNTIME_REPLACED_STOP_NOTICE, workflowChildFingerprint, workflowScriptDigest, workflowStopCause } from "../../workflows/workflow-reuse.ts";
 import { claimWorkflowResume, recordWorkflowResumeRefusal, releaseWorkflowResumeClaim, resumedRunStarted } from "../../workflows/workflow-resume-claim.ts";
-import { manualWorkflowResumeRefusalText, prepareWorkflowResume, workflowResumeRefusal, workflowResumeTargetId, type PreparedWorkflowResume, type WorkflowResumeRefusalCode, type WorkflowResumeRefusalReason } from "../../workflows/workflow-resume.ts";
+import { manualWorkflowResumeRefusalText, prepareWorkflowResume, workflowResumeRefusal, workflowResumeTargetId, type PreparedWorkflowResume, type WorkflowResumeRefusalReason } from "../../workflows/workflow-resume.ts";
 import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "../../workflows/host-command.ts";
 import { buildWorkflowReceipt, readWorkflowReceipt, workflowReceiptPath, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { formatWorkflowKeyRevival, recordWorkflowRevival, withWorkflowRevivals } from "../../workflows/workflow-revival.ts";
@@ -151,7 +151,7 @@ import {
 	type WorkflowResourcePermit,
 } from "../../shared/workflow-child-permit.ts";
 import { deepFreezeWorkflowArgs, normalizeWorkflowArgs, resolveStructuredWorkflowResource, resolveWorkflowResource } from "../../workflows/workflow-resources.ts";
-import { writeWorkflowLaunchRecord, type WorkflowLaunchRecord } from "../../workflows/workflow-launch-record.ts";
+import { writeWorkflowLaunchRecord, type WorkflowLaunch, type WorkflowLaunchRecord } from "../../workflows/workflow-launch-record.ts";
 import { stableJsonDigest } from "../../shared/launch-contract.ts";
 import {
 	cleanupWorktrees,
@@ -5406,26 +5406,21 @@ function createScheduledOwnerState(source: SubagentState, ownerSessionId: string
 	};
 }
 
-/** Public launch captured by executePublic for launch.json; never built from the internal request. */
-type PublicWorkflowLaunch =
-	| { source: "script" | "resource"; params: Record<string, unknown> }
-	| { source: "structured" };
-
 /** A resume by id in flight: its claimed run id, what the new run records, and why it was refused. */
-interface WorkflowResumeLaunch {
+interface WorkflowResumeLaunch extends Pick<PreparedWorkflowResume, "resumeOrigin" | "expectedScriptDigest"> {
 	presetRunId: string;
-	resumeOrigin: { sourceRunId: string; attempt: number };
-	expectedScriptDigest: string;
-	refusal?: { code: WorkflowResumeRefusalCode; reason: string };
+	refusal?: Pick<WorkflowResumeRefusalReason, "code" | "reason">;
 }
+
+type WorkflowResumeOutcome = { result: AgentToolResult<Details> } & ({ launched: true } | { launched: false; refusal: WorkflowResumeRefusalReason });
 
 /** Drops the fields that tie a launch to one run: a relaunch sets its own reuse and origin. */
 function savedWorkflowLaunchParams(params: SubagentParamsLike): Record<string, unknown> {
-	const { reuseFrom: _reuseFrom, scheduleOrigin: _scheduleOrigin, resumeOrigin: _resumeOrigin, action: _action, ...saved } = params as SubagentParamsLike & { scheduleOrigin?: unknown; resumeOrigin?: unknown };
+	const { reuseFrom: _reuseFrom, scheduleOrigin: _scheduleOrigin, resumeOrigin: _resumeOrigin, ...saved } = params as SubagentParamsLike & { resumeOrigin?: unknown };
 	return saved;
 }
 
-function workflowLaunchRecord(launch: PublicWorkflowLaunch, cwd: string, scriptDigest: string): WorkflowLaunchRecord {
+function workflowLaunchRecord(launch: WorkflowLaunch, cwd: string, scriptDigest: string): WorkflowLaunchRecord {
 	if (launch.source === "structured") return { version: 1, source: "structured", scriptDigest };
 	// The resolved cwd is saved: a relative one would resolve against a later session's cwd.
 	return { version: 1, source: launch.source, params: { ...launch.params, cwd }, scriptDigest };
@@ -5472,7 +5467,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		prepared: PreparedWorkflowResume,
 		signal: AbortSignal,
 		ctx: ExtensionContext,
-	) => Promise<{ result: AgentToolResult<Details>; launched: boolean; refusal?: WorkflowResumeRefusalReason }>;
+	) => Promise<WorkflowResumeOutcome>;
 	/** Scheduled state visible to the current runtime supervisor owner only. */
 	getCurrentSupervisorOwnerStates: () => Iterable<SubagentState>;
 } {
@@ -5482,7 +5477,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const delegatedExecutions = new WeakSet<object>();
 	const publicExecutions = new WeakSet<object>();
 	const workflowResourcePermits = new WeakMap<object, WorkflowResourcePermit>();
-	const publicWorkflowLaunches = new WeakMap<object, PublicWorkflowLaunch>();
+	// Public launches captured by executePublic for launch.json; never built from the internal request.
+	const publicWorkflowLaunches = new WeakMap<object, WorkflowLaunch>();
 	const workflowResumeLaunches = new WeakMap<object, WorkflowResumeLaunch>();
 	const workflowPermitContexts = new WeakMap<object, { root: WorkflowChildPermit } | { child: WorkflowChildPermitContext }>();
 	const warnedArtifactPackageDirs = new Set<string>();
@@ -8272,7 +8268,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const errorResult = (text: string): Promise<AgentToolResult<Details>> => Promise.resolve({ content: [{ type: "text", text }], isError: true, details: { mode: publicParams.action ? "management" : "workflow", results: [] } });
 		// Models tend to put script text in the workflow string; say how to pass it instead.
 		const scriptTextHint = " A workflow string is a named workflow resource or a script file path. To run script text, write it in one ```js workflow block in the same reply and call subagent({ workflow: true }).";
-		let workflowLaunch: PublicWorkflowLaunch | undefined;
+		let workflowLaunch: WorkflowLaunch | undefined;
 		const workflowResumeLaunch = workflowResumeLaunches.get(params);
 		if (publicParams.tasks !== undefined || publicParams.chain !== undefined) {
 			// Normalization admits chain/tasks only with workflow scripts disabled; the original input was checked above.
@@ -8327,7 +8323,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		prepared: PreparedWorkflowResume,
 		signal: AbortSignal,
 		ctx: ExtensionContext,
-	): Promise<{ result: AgentToolResult<Details>; launched: boolean; refusal?: WorkflowResumeRefusalReason }> => {
+	): Promise<WorkflowResumeOutcome> => {
 		const params = { ...prepared.params } as SubagentParamsLike;
 		const launch: WorkflowResumeLaunch = { presetRunId: prepared.newRunId, resumeOrigin: prepared.resumeOrigin, expectedScriptDigest: prepared.expectedScriptDigest };
 		workflowResumeLaunches.set(params, launch);
@@ -8365,7 +8361,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		if (!preparation.ok) return refused(manualWorkflowResumeRefusalText(sourceRunId, preparation));
 		const outcome = await executeWorkflowResume(id, preparation.prepared, signal, ctx);
-		if (!outcome.launched) return refused(manualWorkflowResumeRefusalText(sourceRunId, outcome.refusal!));
+		if (!outcome.launched) return refused(manualWorkflowResumeRefusalText(sourceRunId, outcome.refusal));
 		const resumedLine = `Resumed workflow '${sourceRunId}' as ${preparation.prepared.newRunId}.`;
 		const textIndex = outcome.result.content.findIndex((block) => block.type === "text");
 		const content = [...outcome.result.content];

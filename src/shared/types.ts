@@ -20,6 +20,7 @@ import type { WorkflowChildPermitContext } from "./workflow-child-permit.ts";
 import type { WatchdogWarningDetails } from "../watchdog/types.ts";
 import type { RequiredChildExtensionSnapshot } from "./required-child-extensions.ts";
 import type { RecordedPid } from "../runs/background/stale-run-reconciler.ts";
+import type { WorkflowStopCause } from "../workflows/workflow-stop-cause.ts";
 
 // ============================================================================
 // Basic Types
@@ -1541,7 +1542,7 @@ export interface Details {
 		/** SHA-256 of the workflow script source (async workflows). */
 		scriptDigest?: string;
 		/** Structured stop cause: `runtime-replaced` when the owning extension runtime was replaced; `owner-exited` when stale-run reconciliation found the owning Pi process dead. */
-		stopCause?: "runtime-replaced" | "owner-exited";
+		stopCause?: WorkflowStopCause;
 		/** Interrupted workflow run whose finished children this run reused. */
 		reusedFrom?: string;
 		/** Owner-exited runs: the last time the dead Pi process updated the run (epoch ms), not the repair time. */

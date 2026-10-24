@@ -35,7 +35,8 @@ export interface WorkflowKeyRevival {
 	state?: AsyncStatus["state"];
 }
 
-function isRunId(value: unknown): value is string {
+/** A run directory name, never a path. */
+export function isRunId(value: unknown): value is string {
 	return typeof value === "string" && value.length > 0 && value.length <= 255 && path.basename(value) === value && value !== "." && value !== "..";
 }
 

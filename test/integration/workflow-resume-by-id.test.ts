@@ -98,7 +98,7 @@ describe("resuming a stopped workflow by id", { skip: !available || !createSubag
 		const sourceId = await launch({ tasks: [{ agent: "echo", task: `Structured ${nonce}` }], chatProgress: "off" }, sessionId);
 		assert.equal((await replaceWhen(sourceId, (status) => Boolean(status.steps?.some((step) => step.status === "running")))).workflow?.stopCause, "runtime-replaced");
 		const refused = await resume(sourceId, sessionId);
-		assert.equal(text(refused), `Cannot resume workflow '${sourceId}': launched from tasks/chain; resume it by hand. Relaunch it by hand with options: { reuseFrom: "${sourceId}" }.`);
+		assert.equal(text(refused), `Cannot resume workflow '${sourceId}': launched from tasks/chain. Relaunch it by hand with options: { reuseFrom: "${sourceId}" }.`);
 		assert.deepEqual(fs.readdirSync(path.join(DIRS.async, sourceId)).filter((name) => name.startsWith("resumed-by.")), [], "no claim was taken");
 	});
 

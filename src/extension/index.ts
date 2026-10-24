@@ -77,7 +77,7 @@ import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./
 import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
 import { formatWorkflowPreflightSummary, normalizeWorkflowPreflight } from "../workflows/workflow-preflight.ts";
 import { runtimeReplacedAbortReason } from "../workflows/workflow-reuse.ts";
-import { autoResumeFailureText, cancelPendingWorkflowAutoResumes, finishWorkflowAutoResume, planWorkflowAutoResumes, startPendingWorkflowAutoResume, WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, type PendingWorkflowAutoResume } from "../workflows/workflow-auto-resume.ts";
+import { autoResumeFailureText, cancelPendingWorkflowAutoResumes, finishWorkflowAutoResume, planWorkflowAutoResumes, WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, type PendingWorkflowAutoResume } from "../workflows/workflow-auto-resume.ts";
 import { recordWorkflowResumeRefusal, releaseWorkflowResumeClaim, resumedRunStarted } from "../workflows/workflow-resume-claim.ts";
 import { workflowResumeRefusal } from "../workflows/workflow-resume.ts";
 import { finalizeToolResult } from "./tool-result.ts";
@@ -663,13 +663,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		await waitForAdvertisement();
 		return (await getExecutor()).executePublic(id, params, signal, onUpdate, ctx);
 	};
-	// Each session start claims its interrupted workflows synchronously, then launches them here, off
-	// session start. Cleanup and the next session start cancel the launches that have not started.
 	// Names this runtime's planned auto-resumes in the process-global registry.
 	const autoResumeOwner = {};
-	const postAutoResumeFailure = (sourceRunId: string, refusal: { reason: string; byHand: string }) => {
+	const postAutoResumeFailure = (sourceRunId: string, refusal: Parameters<typeof autoResumeFailureText>[1]) => {
 		pi.sendMessage({ customType: WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, content: autoResumeFailureText(sourceRunId, refusal), display: true }, { triggerTurn: false });
 	};
+	// Each session start claims its interrupted workflows synchronously, then launches them here, off
+	// session start. Cleanup and the next session start cancel the launches that have not started.
 	const launchWorkflowAutoResume = async (entry: PendingWorkflowAutoResume, ctx: ExtensionContext): Promise<void> => {
 		const { prepared } = entry;
 		try {
@@ -677,13 +677,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			await new Promise((resolve) => setImmediate(resolve));
 			await waitForAdvertisement();
 			const executor = await getExecutor();
-			if (!startPendingWorkflowAutoResume(entry)) return;
+			if (entry.state !== "pending") return;
+			entry.state = "started";
 			const outcome = await executor.executeWorkflowResume(randomUUID(), prepared, new AbortController().signal, ctx);
 			// The executor has given back the claim and recorded any refusal; nothing below may replace them.
 			// A run launched by a runtime that was cleaned up meanwhile would keep running through its stale context.
 			if (outcome.launched && runtimeCleaned) state.workflowControllers?.get(prepared.newRunId)?.abort(runtimeReplacedAbortReason());
 			// A cleaned-up runtime's pi can no longer post; the refusal stays in the run for its notice.
-			if (outcome.launched || !outcome.refusal || runtimeCleaned) return;
+			if (outcome.launched || runtimeCleaned) return;
 			try {
 				postAutoResumeFailure(prepared.sourceRunId, outcome.refusal);
 			} catch (error) {
@@ -696,7 +697,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			console.error(`Failed to auto-resume workflow ${prepared.sourceRunId}:`, error);
 			try {
 				if (resumedRunStarted(prepared.sourceAsyncDir, prepared.newRunId)) return;
-				entry.state = "failed";
 				releaseWorkflowResumeClaim(prepared.sourceAsyncDir, prepared.newRunId);
 				const refusal = workflowResumeRefusal("launch-failed", `launch failed: ${message}`, prepared.sourceRunId);
 				recordWorkflowResumeRefusal(prepared.sourceAsyncDir, { reason: refusal.reason, byHand: refusal.byHand, newRunId: prepared.newRunId });
@@ -1005,9 +1005,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		logSlowPhase("reset-jobs", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		// Runs other sessions in this folder left when their Pi died, from what this restore reads anyway.
-		const interruptedElsewhere = ctx.hasUI && state.currentSessionId
-			? createInterruptedElsewhereCollector({ currentSessionId: state.currentSessionId, cwd: ctx.cwd, now: Date.now() })
-			: undefined;
+		const interruptedElsewhere = ctx.hasUI ? createInterruptedElsewhereCollector({ currentSessionId: state.currentSessionId, cwd: ctx.cwd, now: Date.now() }) : undefined;
 		restoreForegroundRunHistory(state, { resultsDir: DIRS.results, observeForeign: interruptedElsewhere?.observeForegroundRun });
 		logSlowPhase("foreground-history", phaseStartedAt);
 		phaseStartedAt = Date.now();

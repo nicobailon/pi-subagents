@@ -3,7 +3,7 @@ import { readRecentTerminalRunIndex } from "../runs/background/terminal-run-inde
 import type { AsyncStatus } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { hasWorkflowResumeRefusal, recordWorkflowResumeRefusal, refusalSentence, releaseWorkflowResumeClaim, workflowResumeClaimState } from "./workflow-resume-claim.ts";
-import { prepareWorkflowResume, type PreparedWorkflowResume } from "./workflow-resume.ts";
+import { prepareWorkflowResume, type PreparedWorkflowResume, type WorkflowResumeRefusalReason } from "./workflow-resume.ts";
 import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_OWNER_EXITED } from "./workflow-stop-cause.ts";
 
 /** Custom message posted when an auto-resume launch did not start. */
@@ -24,8 +24,8 @@ export interface PendingWorkflowAutoResume {
 	/** The extension runtime that planned it. */
 	readonly owner: object;
 	readonly prepared: PreparedWorkflowResume;
-	/** `cancelled` before it started (its run id is reused by the next scan), `failed` when its launch threw. */
-	state: "pending" | "started" | "cancelled" | "failed";
+	/** `cancelled` before it started: its run id is reused by the next scan. */
+	state: "pending" | "started" | "cancelled";
 }
 
 // Shared by every runtime in the process: a reload's new runtime must see the old runtime's pending claims.
@@ -46,13 +46,6 @@ export function cancelPendingWorkflowAutoResumes(match: (entry: PendingWorkflowA
 			console.error(`Failed to give back the auto-resume claim of workflow ${entry.prepared.sourceRunId}:`, error);
 		}
 	}
-}
-
-/** Marks a pending launch started; false when it was cancelled meanwhile and must not launch. */
-export function startPendingWorkflowAutoResume(entry: PendingWorkflowAutoResume): boolean {
-	if (entry.state !== "pending") return false;
-	entry.state = "started";
-	return true;
 }
 
 /** A cancelled entry stays recorded until its session's next scan reuses its run id. */
@@ -112,6 +105,6 @@ export function planWorkflowAutoResumes(input: { asyncDirRoot: string; currentSe
 }
 
 /** The one line posted when an auto-resume launch did not start. */
-export function autoResumeFailureText(sourceRunId: string, refusal: { reason: string; byHand: string }): string {
-	return `Auto-resume of workflow ${sourceRunId} failed: ${refusalSentence(refusal.reason, refusal.byHand)}`;
+export function autoResumeFailureText(sourceRunId: string, refusal: Pick<WorkflowResumeRefusalReason, "reason" | "byHand">): string {
+	return `Workflow ${sourceRunId} was not auto-resumed: ${refusalSentence(refusal.reason, refusal.byHand)}`;
 }

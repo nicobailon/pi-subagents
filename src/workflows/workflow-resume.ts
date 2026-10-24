@@ -7,7 +7,8 @@ import type { AsyncStatus } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { readWorkflowLaunchRecord } from "./workflow-launch-record.ts";
 import { claimWorkflowResume, refusalSentence, relaunchByHandText, resumeByHandText } from "./workflow-resume-claim.ts";
-import { isRunName, workflowScriptDigest } from "./workflow-reuse.ts";
+import { workflowScriptDigest } from "./workflow-reuse.ts";
+import { isRunId } from "./workflow-revival.ts";
 import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_OWNER_EXITED } from "./workflow-stop-cause.ts";
 
 /** A run may be resumed again after at most this many resumes that followed Pi exits (auto-resume only). */
@@ -60,7 +61,7 @@ export function workflowResumeTargetId(asyncDirRoot: string, params: { id?: unkn
 	if (params.message !== undefined || params.task !== undefined || params.index !== undefined) return undefined;
 	if (Array.isArray(params.chain) && params.chain.length > 0) return undefined;
 	const id = params.id ?? params.runId;
-	if (!isRunName(id)) return undefined;
+	if (!isRunId(id)) return undefined;
 	let status: AsyncStatus | null;
 	try {
 		status = readStatus(path.join(asyncDirRoot, id));
@@ -93,7 +94,7 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 	const read = readWorkflowLaunchRecord(sourceAsyncDir);
 	if (!read.ok) return read.missing ? refuse("launch-missing", "launch.json is missing (the run started before launches were saved)") : refuse("launch-invalid", `launch.json is invalid: ${read.error}`);
 	const record = read.record;
-	if (record.source === "structured") return refuse("structured", "launched from tasks/chain; resume it by hand");
+	if (record.source === "structured") return refuse("structured", "launched from tasks/chain");
 	if (record.source === "script" && (typeof record.params.workflowScript !== "string" || workflowScriptDigest(record.params.workflowScript) !== record.scriptDigest)) {
 		return refuse("launch-invalid", "launch.json is invalid: its script does not match its scriptDigest");
 	}

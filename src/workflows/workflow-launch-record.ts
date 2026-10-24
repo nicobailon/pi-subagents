@@ -9,9 +9,8 @@ const WORKFLOW_LAUNCH_RECORD_FILE = "launch.json";
  * relaunched later. A named resource is saved by name (its `runs.host` permit cannot be saved);
  * structured tasks/chain launches save no params, so they cannot be relaunched from this record.
  */
-export type WorkflowLaunchRecord =
-	| { version: 1; source: "script" | "resource"; params: Record<string, unknown>; scriptDigest: string }
-	| { version: 1; source: "structured"; scriptDigest: string };
+export type WorkflowLaunch = { source: "script" | "resource"; params: Record<string, unknown> } | { source: "structured" };
+export type WorkflowLaunchRecord = WorkflowLaunch & { version: 1; scriptDigest: string };
 
 type WorkflowLaunchRecordRead =
 	| { ok: true; record: WorkflowLaunchRecord }

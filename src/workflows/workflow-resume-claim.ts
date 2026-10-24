@@ -36,7 +36,7 @@ interface WorkflowResumeRefusal {
 	refusedAt: number;
 }
 
-type WorkflowResumeClaimOutcome =
+export type WorkflowResumeClaimOutcome =
 	| { kind: "owner" }
 	| { kind: "resumed"; newRunId: string }
 	| { kind: "busy"; pid: number }
@@ -71,14 +71,13 @@ function isClaim(value: unknown): value is WorkflowResumeClaim {
 
 /**
  * The current claim. `unreadable` means a read failed for a reason other than a missing file,
- * which must fail closed: nothing proves its claimant dead. `released` means the highest
- * generation was given back by its owner; it blocks nothing and the next claim goes above it.
+ * which must fail closed: nothing proves its claimant dead. `open` blocks nothing: there is no
+ * claim, the highest generation was given back by its owner, or it is corrupt. The next claim
+ * goes above `generation` (0 when there was never a claim).
  */
 type TopClaim =
-	| { kind: "none" }
 	| { kind: "unreadable" }
-	| { kind: "released"; generation: number }
-	| { kind: "invalid"; generation: number }
+	| { kind: "open"; generation: number }
 	| { kind: "claim"; generation: number; filePath: string; claim: WorkflowResumeClaim };
 
 function readTopClaim(asyncDir: string, retries = 3): TopClaim {
@@ -92,11 +91,10 @@ function readTopClaim(asyncDir: string, retries = 3): TopClaim {
 			if (released) releasedGeneration = Math.max(releasedGeneration, Number(released[1]));
 		}
 	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "none" } : { kind: "unreadable" };
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "open", generation: 0 } : { kind: "unreadable" };
 	}
 	// A live file and a released one with the same n: the live one was created after the release.
-	if (releasedGeneration > generation) return { kind: "released", generation: releasedGeneration };
-	if (generation === 0) return { kind: "none" };
+	if (releasedGeneration > generation || generation === 0) return { kind: "open", generation: Math.max(releasedGeneration, generation) };
 	const filePath = claimFilePath(asyncDir, generation);
 	let text: string;
 	try {
@@ -109,9 +107,9 @@ function readTopClaim(asyncDir: string, retries = 3): TopClaim {
 	try {
 		const value = JSON.parse(text) as unknown;
 		// The file is created whole, so a body that does not parse is corrupt, not half-written.
-		return isClaim(value) ? { kind: "claim", generation, filePath, claim: value } : { kind: "invalid", generation };
+		return isClaim(value) ? { kind: "claim", generation, filePath, claim: value } : { kind: "open", generation };
 	} catch {
-		return { kind: "invalid", generation };
+		return { kind: "open", generation };
 	}
 }
 
@@ -182,7 +180,7 @@ export function claimWorkflowResume(asyncDir: string, input: { newRunId: string;
 			if (resumedRunStarted(asyncDir, top.claim.newRunId)) return { kind: "resumed", newRunId: top.claim.newRunId };
 			if (claimantLiveness(top.filePath, top.claim, input.liveness) !== "dead") return { kind: "busy", pid: top.claim.pid };
 		}
-		const filePath = claimFilePath(asyncDir, top.kind === "none" ? 1 : top.generation + 1);
+		const filePath = claimFilePath(asyncDir, top.generation + 1);
 		if (createClaimFile(filePath, claim)) {
 			heldClaims.add(filePath);
 			return { kind: "owner" };

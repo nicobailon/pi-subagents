@@ -5,7 +5,8 @@ import { readRecentTerminalRunIndex } from "../runs/background/terminal-run-inde
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
 import { readStatus } from "../shared/utils.ts";
 import type { AsyncStatus } from "../shared/types.ts";
-import { workflowResumeClaimState } from "./workflow-resume-claim.ts";
+import { workflowResumeClaimState, type WorkflowResumeClaimOutcome } from "./workflow-resume-claim.ts";
+import { isRunId } from "./workflow-revival.ts";
 import { workflowRunParamsFingerprint, type WorkflowScriptChildResult } from "./scripted-workflow.ts";
 import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED } from "./workflow-stop-cause.ts";
 
@@ -88,21 +89,17 @@ function readWorkflowChildJournal(runId: string, workflowAsyncDir: string): Work
 }
 const WORKFLOW_REUSE_CHAIN_MAX_LINKS = 16;
 
-/** A run directory name, never a path; a status file is parsed, not validated, so a corrupt `reusedFrom` may be any JSON value. */
-export function isRunName(runId: unknown): runId is string {
-	return typeof runId === "string" && runId === path.basename(runId) && runId !== "." && runId !== "..";
-}
-
 /**
  * The head run's journal plus the journals of the runs it was relaunched from (`workflow.reusedFrom`).
  * A child's start record is written only once it gets a concurrency slot, so a key the head never
- * reached is still in an earlier run's journal. For each key the newest run that recorded it wins.
+ * reached is still in an earlier run's journal. For each key the newest run that recorded it wins. A
+ * status file is parsed, not validated, so a corrupt `reusedFrom` may be any JSON value.
  */
 function readWorkflowReuseChain(asyncDirRoot: string, headRunId: string, headStatus: AsyncStatus): WorkflowReuseSource {
 	const source = readWorkflowChildJournal(headRunId, path.join(asyncDirRoot, headRunId));
 	const visited = new Set([headRunId]);
 	let next: unknown = headStatus.workflow?.reusedFrom;
-	for (let links = 0; isRunName(next) && links < WORKFLOW_REUSE_CHAIN_MAX_LINKS && !visited.has(next); links++) {
+	for (let links = 0; isRunId(next) && links < WORKFLOW_REUSE_CHAIN_MAX_LINKS && !visited.has(next); links++) {
 		visited.add(next);
 		const asyncDir = path.join(asyncDirRoot, next);
 		let status: ReturnType<typeof readStatus>;
@@ -126,7 +123,7 @@ function readWorkflowReuseChain(asyncDirRoot: string, headRunId: string, headSta
 }
 
 /** Why a relaunch of `runId` is refused when another relaunch already continues it. */
-export function claimedWorkflowRunRefusal(runId: string, claim: { kind: "resumed"; newRunId: string } | { kind: "busy"; pid: number } | { kind: "unreadable" }, named: boolean): string {
+export function claimedWorkflowRunRefusal(runId: string, claim: Exclude<WorkflowResumeClaimOutcome, { kind: "owner" }>, named: boolean): string {
 	const run = `${named ? "options.reuseFrom: workflow" : "Workflow"} run '${runId}'`;
 	if (claim.kind === "resumed") return `${run} was resumed as ${claim.newRunId}; wait on it or stop it.`;
 	if (claim.kind === "busy") return `${run} is being resumed by pid ${claim.pid}; wait for it.`;
@@ -174,7 +171,7 @@ export function findWorkflowReuseSource(asyncDirRoot: string, sessionId: string,
  */
 export function readNamedWorkflowReuseSource(asyncDirRoot: string, runId: string, scriptDigest: string, cwd: string, claimOwnerRunId?: string): WorkflowReuseSource {
 	// A user-supplied id: it must name one run directory, never a path.
-	const runName = isRunName(runId);
+	const runName = isRunId(runId);
 	if (runName) reconcileAsyncRun(path.join(asyncDirRoot, runId));
 	const status = runName ? readStatus(path.join(asyncDirRoot, runId)) : null;
 	if (!status) throw new Error(`options.reuseFrom: workflow run '${runId}' was not found.`);
