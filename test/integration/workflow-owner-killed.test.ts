@@ -171,16 +171,12 @@ describe("a workflow whose Pi process is killed", { skip: process.platform === "
 
 	it("resumes it once on its own when its session reopens after the SIGKILL", { timeout: 60_000 }, async () => {
 		assert.ok(available && createSubagentExecutor, "fixture must not skip");
-		// The input under test: with auto-resume off, nothing continues the killed run.
-		const AUTO_RESUME = true;
 		const nonce = `owner-killed-reopen-${Date.now()}`;
 		const sessionFile = path.join(tempDir, `session-${nonce}.jsonl`);
 		const agentDir = path.join(tempDir, "agent");
 		fs.mkdirSync(path.join(agentDir, "agents"), { recursive: true });
 		fs.writeFileSync(path.join(agentDir, "agents", "echo.md"), "---\nname: echo\ndescription: Echoes\n---\nEcho the task.\n");
 		fs.writeFileSync(path.join(agentDir, "agents", "bg.md"), "---\nname: bg\ndescription: Background echo\nasync: true\n---\nEcho the task.\n");
-		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
-		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ autoResume: AUTO_RESUME }));
 		const run = startKilledWorkflow(nonce, sessionFile);
 		let reopened: Awaited<ReturnType<typeof reopenSession>> | undefined;
 		try {
