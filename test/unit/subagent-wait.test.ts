@@ -734,6 +734,24 @@ describe("bg_wait tool", () => {
 		}
 	});
 
+	it("tells the caller how to wait through attention that is not a supervisor request", async (t) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-attn-hint-"));
+		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+		const asyncRoot = path.join(root, "runs");
+		const state = makeState("sess-1");
+		const hint = /still running and none is waiting on a supervisor reply\. To keep waiting through this kind of attention, call bg_wait again with stopOnAttention: false/;
+
+		writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999, activityState: "needs_attention", currentTool: "bash" });
+		const watchdog = await waitForSubagents({ id: "run-a" }, undefined, baseDeps(root, state));
+		assert.match(textOf(watchdog), /attention required/);
+		assert.match(textOf(watchdog), hint);
+
+		writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999, activityState: "needs_attention", currentTool: "contact_supervisor" });
+		const supervisor = await waitForSubagents({ id: "run-a" }, undefined, baseDeps(root, state));
+		assert.match(textOf(supervisor), /Reply to any pending supervisor request/);
+		assert.doesNotMatch(textOf(supervisor), hint);
+	});
+
 	it("still stops tolerant waits for supervisor attention", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-tolerant-supervisor-"));
 		try {

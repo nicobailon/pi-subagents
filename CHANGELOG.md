@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- When `bg_wait` returned at once because a run that was still working needed attention, such as a long `bash` command or a quiet stretch, nothing told the caller how to keep waiting, so agents kept calling it in a loop. The result now says the run is still running and that `bg_wait` with `stopOnAttention: false` waits through this, and the option's descriptions now say it waits through all attention except supervisor requests. Thanks to [@jettoblack](https://github.com/jettoblack) for #3019.
 - A background run still working when Pi exited or crashed never reported its result, even after you reopened its session. Its result now shows once in the reopened session, right away if the run already finished or as soon as it finishes. While the Pi that started the run is open, other Pi windows on the same session don't receive it.
 - A host-required child extension (`registerRequiredChildExtensions`) is now recognized when Pi loads it under another spelling of its path, such as a symlink, a case variant, or a path with a Unicode space, so its load, provider-registration and startup failures still stop the launch. A required extension that Pi did not load at all now rejects the launch instead of letting the child start without it. Thanks to [@pandalaohe](https://github.com/pandalaohe) for #3012.
 - Skill discovery no longer fails with `ENOTDIR` when a `settings.json` `packages` entry names a single extension file. Thanks to [@tara-marchand](https://github.com/tara-marchand) for #3011.
