@@ -66,7 +66,7 @@ type ResultWatcherDeps = {
 	resultScanLogging?: "all" | "activity" | "off";
 	platform?: NodeJS.Platform;
 	/** Shared current/predecessor session ownership used by the notifier. */
-	ownership?: Pick<ResultDeliveryOwnership, "owns" | "claimedSessionIds">;
+	ownership?: Pick<ResultDeliveryOwnership, "owns" | "claimedSessionIds"> & Partial<Pick<ResultDeliveryOwnership, "deliveryOwnerId">>;
 	/** Called once the parent has this run's result: the notifier accepted it, or an earlier delivery already did. */
 	onResultDelivered?: (runId: string) => void;
 };
@@ -104,11 +104,15 @@ type ResultFileData = CompletionNotification & {
 	intercomTarget?: string;
 	parallelHandoff?: ParallelHandoffReference;
 	notificationDeliveredAt?: unknown;
+	completionOwnerProcess?: unknown;
+	parentWorkflowRunId?: unknown;
 };
 
 type ResultFileIdentity = {
 	sessionId?: string;
 	completionOwnerId?: string;
+	completionOwnerProcess?: unknown;
+	parentWorkflowRunId?: string;
 	runId?: string;
 };
 
@@ -131,10 +135,24 @@ function jsonStringProperty(raw: string, property: string): string | undefined {
 	}
 }
 
+/** The flat `completionOwnerProcess` object, read without parsing the whole result; malformed reads as none. */
+function jsonFlatObjectProperty(raw: string, property: string): unknown {
+	let encoded: string | undefined;
+	for (const match of raw.matchAll(new RegExp(`"${property}"\\s*:\\s*(\\{[^{}]*\\})`, "g"))) encoded = match[1];
+	if (!encoded) return undefined;
+	try {
+		return JSON.parse(encoded) as unknown;
+	} catch {
+		return undefined;
+	}
+}
+
 function resultFileIdentity(raw: string, file: string): ResultFileIdentity {
 	return {
 		sessionId: jsonStringProperty(raw, "sessionId"),
 		completionOwnerId: jsonStringProperty(raw, "completionOwnerId"),
+		completionOwnerProcess: jsonFlatObjectProperty(raw, "completionOwnerProcess"),
+		parentWorkflowRunId: jsonStringProperty(raw, "parentWorkflowRunId"),
 		runId: file.replace(/\.json$/i, ""),
 	};
 }
@@ -233,6 +251,8 @@ export function createResultWatcher(
 			&& typeof completionOwnerId === "string"
 			&& completionOwnerId === state.completionOwnerId);
 	const claimedSessionIds = () => deps.ownership?.claimedSessionIds() ?? [];
+	const deliveryOwnerId = (completionOwnerId: string | null | undefined, ownerProcess: unknown, parentWorkflowRunId: unknown): string | null | undefined =>
+		deps.ownership?.deliveryOwnerId ? deps.ownership.deliveryOwnerId(completionOwnerId, ownerProcess, parentWorkflowRunId) : completionOwnerId;
 
 	const ownsCompletion = (sessionId: string, completionOwnerId: unknown, epoch: number) => {
 		if (!deliveryActive || epoch !== deliveryEpoch) return false;
@@ -323,7 +343,7 @@ export function createResultWatcher(
 		// Missing identity stays on the normal parser path so malformed or legacy
 		// files keep their existing diagnostics and compatibility behavior.
 		if (!identity.sessionId) return true;
-		if (ownsResult(identity.sessionId, identity.completionOwnerId)) return true;
+		if (ownsResult(identity.sessionId, deliveryOwnerId(identity.completionOwnerId, identity.completionOwnerProcess, identity.parentWorkflowRunId))) return true;
 		// Acknowledgment removes the observer index; gating on the mission binding instead
 		// re-ran mission sync for an unowned result on every scan.
 		if (identity.runId && fsApi.existsSync(missionObserverIndexPath(resultsDir, identity.runId))) return true;
@@ -393,7 +413,7 @@ export function createResultWatcher(
 			let data = parseResult(raw);
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const sessionId = data.sessionId;
-			const completionOwnerId = data.completionOwnerId;
+			const completionOwnerId = deliveryOwnerId(data.completionOwnerId, data.completionOwnerProcess, data.parentWorkflowRunId);
 			const runId = typeof data.runId === "string" && data.runId
 				? data.runId
 				: typeof data.id === "string" && data.id ? data.id : file.replace(/\.json$/i, "");
@@ -559,6 +579,7 @@ export function createResultWatcher(
 				...data,
 				id: data.id ?? runId,
 				runId,
+				completionOwnerId,
 				triggerTurn,
 				intercomDelivered,
 				...(nestedChildren?.length ? { nestedChildren } : {}),

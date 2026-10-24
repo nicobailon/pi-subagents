@@ -19,6 +19,7 @@ import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 import type { WorkflowChildPermitContext } from "./workflow-child-permit.ts";
 import type { WatchdogWarningDetails } from "../watchdog/types.ts";
 import type { RequiredChildExtensionSnapshot } from "./required-child-extensions.ts";
+import type { RecordedPid } from "../runs/background/stale-run-reconciler.ts";
 
 // ============================================================================
 // Basic Types
@@ -1929,6 +1930,8 @@ export interface AsyncStatus {
 	runId: string;
 	/** Parent Pi process/window that owns local completion delivery. */
 	completionOwnerId?: string;
+	/** The Pi process behind `completionOwnerId`; once it is dead, the session that owns the run delivers it. */
+	completionOwnerProcess?: RecordedPid;
 	/** Host tool-call id retained when it differs from the internal run id. */
 	toolCallId?: string;
 	sessionId?: string;

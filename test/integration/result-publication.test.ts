@@ -128,6 +128,7 @@ describe("native runner result publication", { skip: !available ? "pi packages u
 			const publishedPath = fs.existsSync(publicPath) ? publicPath : path.join(RESULTS_DIR, "result-pending", sessionId, `${id}.json`);
 			const published = JSON.parse(fs.readFileSync(publishedPath, "utf8"));
 			assert.equal(published.completionOwnerId, owner);
+			assert.equal(published.completionOwnerProcess.pid, process.pid, "records the launching Pi beside its owner id");
 			assert.equal(published.success, false);
 			assert.equal(mockPi.callCount(), 1, "dynamic failure occurs before reviewer children start");
 			trackerTick(); // Final failed-to-failed refresh through the actual tracker.

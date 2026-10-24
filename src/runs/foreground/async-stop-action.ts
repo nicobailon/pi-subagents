@@ -48,6 +48,7 @@ function sealPausedRun(asyncDir: string, status: AsyncStatus, resultsDir: string
 			sessionId: status.sessionId,
 			asyncDir,
 			...(status.completionOwnerId ? { completionOwnerId: status.completionOwnerId } : {}),
+			...(status.completionOwnerProcess ? { completionOwnerProcess: status.completionOwnerProcess } : {}),
 			...(status.toolCallId ? { toolCallId: status.toolCallId } : {}),
 			results: (status.steps ?? []).map((step) => ({
 				agent: step.agent,

@@ -4,7 +4,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { resultFilePath, resultPayloadPathForSessionRun, writeAsyncResultFile } from "./result-files.ts";
 import { updateActiveRunIndex } from "./active-run-index.ts";
 import { readProcessTerminal } from "./process-terminal.ts";
-import { OWNING_SESSION_COMPLETION_OWNER } from "./result-delivery-ownership.ts";
+import { OWNING_SESSION_COMPLETION_OWNER } from "../../shared/completion-owner.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -334,6 +334,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 			mode: status.mode,
 			...(exitedWorkflow ? { workflow: { stopCause: WORKFLOW_STOP_CAUSE_OWNER_EXITED } } : {}),
 			...(completionOwnerId ? { completionOwnerId } : {}),
+			...(status.completionOwnerProcess ? { completionOwnerProcess: status.completionOwnerProcess } : {}),
 			...(status.parentWorkflowRunId ? { parentWorkflowRunId: status.parentWorkflowRunId } : {}),
 			...(status.workflowKey ? { workflowKey: status.workflowKey } : {}),
 			success: false,

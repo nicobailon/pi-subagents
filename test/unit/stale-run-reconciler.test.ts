@@ -278,6 +278,7 @@ describe("async stale-run reconciliation", () => {
 				runId: "run-dead",
 				sessionId: "session-current",
 				completionOwnerId: "owner-current",
+				completionOwnerProcess: { pid: 4321, bootId: "boot-a" },
 				mode: "single",
 				state: "running",
 				pid: 12345,
@@ -309,6 +310,7 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(resultJson.success, false);
 			assert.equal(resultJson.sessionId, "session-current");
 			assert.equal(resultJson.completionOwnerId, "owner-current");
+			assert.deepEqual(resultJson.completionOwnerProcess, { pid: 4321, bootId: "boot-a" });
 			assert.equal(resultJson.state, "failed");
 			assert.equal(resultJson.exitCode, 1);
 			assert.equal(resultJson.results[0].contextOverflow, true);
