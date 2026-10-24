@@ -39,14 +39,14 @@ export interface WorkflowResumeRefusal {
 	refusedAt: number;
 }
 
-export type WorkflowResumeClaimOutcome =
+type WorkflowResumeClaimOutcome =
 	| { kind: "owner" }
 	| { kind: "resumed"; newRunId: string }
 	| { kind: "busy"; pid: number }
 	/** The current claim file exists but cannot be read, so nothing proves its claimant dead. */
 	| { kind: "unreadable" };
 
-export type WorkflowResumeClaimState =
+type WorkflowResumeClaimState =
 	| { kind: "none" }
 	| { kind: "resumed"; newRunId: string }
 	| { kind: "busy"; pid: number; newRunId: string }
@@ -126,9 +126,10 @@ export function readWorkflowResumeClaim(asyncDir: string): WorkflowResumeClaim |
 	return top.kind === "claim" ? top.claim : undefined;
 }
 
-function claimedRunStarted(asyncDir: string, claim: WorkflowResumeClaim): boolean {
-	return path.basename(claim.newRunId) === claim.newRunId
-		&& fs.existsSync(path.join(path.dirname(asyncDir), claim.newRunId, "status.json"));
+/** True once the run that resumes the run in `sourceAsyncDir` as `newRunId` has written its first status. */
+export function resumedRunStarted(sourceAsyncDir: string, newRunId: string): boolean {
+	return path.basename(newRunId) === newRunId
+		&& fs.existsSync(path.join(path.dirname(sourceAsyncDir), newRunId, "status.json"));
 }
 
 function claimantLiveness(filePath: string, claim: WorkflowResumeClaim, liveness: ClaimLiveness | undefined): PidLiveness {
@@ -145,7 +146,7 @@ export function workflowResumeClaimState(asyncDir: string, options: { liveness?:
 	const top = readTopClaim(asyncDir);
 	if (top.kind === "unreadable") return { kind: "unreadable" };
 	if (top.kind !== "claim") return { kind: "none" };
-	if (claimedRunStarted(asyncDir, top.claim)) return { kind: "resumed", newRunId: top.claim.newRunId };
+	if (resumedRunStarted(asyncDir, top.claim.newRunId)) return { kind: "resumed", newRunId: top.claim.newRunId };
 	return claimantLiveness(top.filePath, top.claim, options.liveness) === "dead" ? { kind: "none" } : { kind: "busy", pid: top.claim.pid, newRunId: top.claim.newRunId };
 }
 
@@ -188,7 +189,7 @@ export function claimWorkflowResume(asyncDir: string, input: { newRunId: string;
 				heldClaims.add(top.filePath);
 				return { kind: "owner" };
 			}
-			if (claimedRunStarted(asyncDir, top.claim)) return { kind: "resumed", newRunId: top.claim.newRunId };
+			if (resumedRunStarted(asyncDir, top.claim.newRunId)) return { kind: "resumed", newRunId: top.claim.newRunId };
 			if (claimantLiveness(top.filePath, top.claim, input.liveness) !== "dead") return { kind: "busy", pid: top.claim.pid };
 		}
 		const filePath = claimFilePath(asyncDir, top.kind === "none" ? 1 : top.generation + 1);
@@ -240,6 +241,16 @@ export function relaunchByHandText(runId: string): string {
 	return `Relaunch it by hand with options: { reuseFrom: "${runId}" }.`;
 }
 
+/** `<reason>. <byHand>`; some reasons quote a message that already ends in a period. */
+export function refusalSentence(reason: string, byHand: string): string {
+	return `${reason.replace(/\.$/, "")}.${byHand ? ` ${byHand}` : ""}`;
+}
+
+/** A refusal was recorded for this run; the run is not tried again automatically. */
+export function hasWorkflowResumeRefusal(asyncDir: string): boolean {
+	return fs.existsSync(path.join(asyncDir, REFUSAL_FILE));
+}
+
 const RESUMED_AS: Record<WorkflowResumeClaim["trigger"], string> = { auto: "Auto-resumed as", manual: "Resumed as", reuse: "Relaunched as" };
 
 /**
@@ -250,7 +261,7 @@ export function describeWorkflowResume(asyncDir: string, runId: string): string 
 	const claim = readWorkflowResumeClaim(asyncDir);
 	const refusal = readWorkflowResumeRefusal(asyncDir);
 	if (refusal && (!claim || refusal.newRunId === claim.newRunId)) {
-		return `Not auto-resumed: ${refusal.reason.replace(/\.$/, "")}.${refusal.byHand ? ` ${refusal.byHand}` : ""}`;
+		return `Not auto-resumed: ${refusalSentence(refusal.reason, refusal.byHand)}`;
 	}
 	if (claim) return `${RESUMED_AS[claim.trigger]} ${claim.newRunId}.`;
 	const launch = readWorkflowLaunchRecord(asyncDir);

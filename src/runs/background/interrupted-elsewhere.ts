@@ -11,18 +11,18 @@ import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
 const INTERRUPTED_ELSEWHERE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /** A POSIX shell word for `text`, single-quoted only when it needs quoting. */
-export function shellQuote(text: string): string {
+function shellQuote(text: string): string {
 	return /^[A-Za-z0-9_@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, "'\\''")}'`;
 }
 
-export function interruptedElsewhereLine(sessionId: string, count: number): string {
+function interruptedElsewhereLine(sessionId: string, count: number): string {
 	const command = `\`pi --session ${shellQuote(sessionId)}\``;
 	return count === 1
 		? `1 subagent run was interrupted in another session. Reopen it to resume it: ${command}`
 		: `${count} subagent runs were interrupted in another session. Reopen it to resume them: ${command}`;
 }
 
-export interface InterruptedElsewhereCollector {
+interface InterruptedElsewhereCollector {
 	/** Observer for the async statuses session start already reads; keeps foreign ones that may be interrupted. */
 	observeStatus: RawDrainStatusObserver;
 	/** Receives the foreground records of other sessions that session start already reads. */

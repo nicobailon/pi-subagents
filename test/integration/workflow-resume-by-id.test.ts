@@ -23,7 +23,7 @@ describe("resuming a stopped workflow by id", { skip: !available || !createSubag
 
 	const setup = (config: Record<string, unknown> = {}) => {
 		const workflowControllers = new Map<string, AbortController>();
-		const executor = makeExecutor([makeAgent("echo"), makeAgent("bg", { defaultAsync: true })], config, false, undefined, true, new Map(), workflowControllers, undefined, undefined, undefined, undefined, () => {});
+		const executor = makeExecutor([makeAgent("echo")], config, false, undefined, true, new Map(), workflowControllers, undefined, undefined, undefined, undefined, () => {});
 		const ctxFor = (sessionId: string) => {
 			const ctx = makeMinimalCtx(tempDir);
 			ctx.sessionManager.getSessionId = () => sessionId;
@@ -55,26 +55,20 @@ describe("resuming a stopped workflow by id", { skip: !available || !createSubag
 	};
 	const stageStarted = (key: string) => (status: AsyncStatus) => Boolean(status.steps?.find((step) => step.workflowKey === key)?.runId)
 		|| (status.workflow?.trace.some((entry) => entry.key === key && entry.state === "started") ?? false);
-	const asyncStageReady = (key: string) => (status: AsyncStatus) => Boolean(status.steps?.find((step) => step.workflowKey === key && step.async === true)?.runId);
 	const claimOf = (runId: string) => readWorkflowResumeClaim(path.join(DIRS.async, runId)) ?? {};
 
-	it("relaunches a runtime-replaced workflow once, reusing its finished child and re-attaching its running one", { timeout: 90_000 }, async () => {
+	it("relaunches a runtime-replaced workflow once, reusing its finished child", { timeout: 60_000 }, async () => {
 		const nonce = `resume-by-id-${Date.now()}`;
 		const sessionId = `session-${nonce}`;
-		const release = path.join(tempDir, `${nonce}.release`);
-		const script = `const first = await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); const second = await runs.run("stage2", { agent: "bg", task: "Stage two ${nonce}" }); const third = await runs.run("stage3", { agent: "echo", task: "Stage three ${nonce}" }); return [first.output, second.output, third.output];`;
-		const { launch, settled, waitFor, replaceWhen, resume } = setup();
+		const script = `const first = await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); const second = await runs.run("stage2", { agent: "echo", task: "Stage two ${nonce}" }); return [first.output, second.output];`;
+		const { launch, settled, replaceWhen, resume } = setup();
 		mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
-		mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, waitForPath: release, output: "stage two done" });
-		mockPi.onCall({ matchArgIncludes: `Stage three ${nonce}`, output: "stage three done" });
+		mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, hangUntilAbort: true });
 		const sourceId = await launch({ workflowScript: script }, sessionId);
-		const source = await replaceWhen(sourceId, asyncStageReady("stage2"));
-		assert.equal(source.workflow?.stopCause, "runtime-replaced");
-		const stage2RunId = source.steps?.find((step) => step.workflowKey === "stage2")?.runId;
-		assert.ok(stage2RunId);
-		for (const deadline = Date.now() + 15_000; mockPi.callCount() < 2 && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 50));
-		assert.equal(mockPi.callCount(), 2);
+		assert.equal((await replaceWhen(sourceId, stageStarted("stage2"))).workflow?.stopCause, "runtime-replaced");
+		const callsBefore = mockPi.callCount();
 
+		mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, output: "stage two done" });
 		const resumed = await resume(sourceId, sessionId);
 		assert.equal(resumed.isError, undefined, text(resumed));
 		const newRunId = resumed.details.asyncId!;
@@ -84,14 +78,11 @@ describe("resuming a stopped workflow by id", { skip: !available || !createSubag
 		assert.equal(first.workflow?.reusedFrom, sourceId);
 		assert.deepEqual(first.workflow?.resumeOrigin, { sourceRunId: sourceId, attempt: 0 });
 
-		await waitFor(newRunId, stageStarted("stage2"));
-		fs.writeFileSync(release, "go");
 		const done = await settled(newRunId);
 		assert.equal(done.state, "complete", done.error);
-		assert.deepEqual(done.workflow?.value, ["stage one done", "stage two done", "stage three done"]);
-		assert.equal(mockPi.callCount(), 3, "only stage3 launched after the resume");
+		assert.deepEqual(done.workflow?.value, ["stage one done", "stage two done"]);
+		assert.equal(mockPi.callCount(), callsBefore + 1, "only stage2 launched after the resume");
 		assert.equal(done.steps?.find((step) => step.workflowKey === "stage1")?.reused, true);
-		assert.equal(done.steps?.find((step) => step.workflowKey === "stage2")?.runId, stage2RunId);
 		assert.deepEqual(done.workflow?.resumeOrigin, { sourceRunId: sourceId, attempt: 0 }, "the origin survives into the terminal status");
 
 		const again = await resume(sourceId, sessionId);

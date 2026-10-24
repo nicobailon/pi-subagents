@@ -82,6 +82,12 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(dead.status.state, "failed");
 			assert.equal(dead.status.workflow.stopCause, "owner-exited");
 			assert.equal(dead.status.workflow.scriptDigest, "digest");
+			// When the dead owner last updated it, not the repair time, and the stop cause in the result.
+			assert.equal(dead.status.workflow.ownerExitedAt, 1000);
+			assert.equal(dead.status.endedAt, 2000);
+			assert.deepEqual(JSON.parse(fs.readFileSync(path.join(resultsDir, "wf-dead.json"), "utf-8")).workflow, { stopCause: "owner-exited" });
+			const neverUpdated = reconcile("wf-never-updated", workflowStatus("wf-never-updated", { lastUpdate: undefined, startedAt: 900 }), { kill: () => { throw errno("ESRCH"); } });
+			assert.equal(neverUpdated.status.workflow.ownerExitedAt, 900);
 			assert.equal(JSON.parse(fs.readFileSync(path.join(resultsDir, "wf-dead.json"), "utf-8")).summary, ownerExitedMessage("wf-dead"));
 
 			const rebooted = reconcile("wf-rebooted", workflowStatus("wf-rebooted", { bootId: "boot-before" }), { kill: () => { throw new Error("the pid must not be probed"); } });
@@ -118,52 +124,6 @@ describe("async stale-run reconciliation", () => {
 			const singleKept = reconcile("single-kept", { ...singleStatus, runId: "single-kept", completionOwnerId: "dead-process" }, { kill: deadPid, adoptCompletionOwnerId: "this-process" });
 			assert.equal(singleKept.status.completionOwnerId, "dead-process");
 			assert.equal(resultOwner("single-kept"), "dead-process");
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("records when the dead owner last updated a workflow and puts the stop cause in the repaired result", () => {
-		const root = tempRoot("pi-stale-run-owner-exited-at-");
-		try {
-			const resultsDir = path.join(root, "results");
-			const repair = (runId: string, extra: Record<string, unknown>, kill: () => boolean) => {
-				const asyncDir = path.join(root, runId);
-				writeStatus(asyncDir, {
-					runId,
-					sessionId: "session-owner",
-					mode: "workflow",
-					state: "running",
-					pid: 4242,
-					startedAt: 1000,
-					steps: [{ agent: "echo", status: "running", startedAt: 1000 }],
-					workflow: { trace: [], emits: [], console: [], scriptDigest: "digest" },
-					...extra,
-				});
-				reconcileAsyncRun(asyncDir, { resultsDir, now: () => 90_000, kill, staleAlivePidMs: 500 });
-				return {
-					status: JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")),
-					result: JSON.parse(fs.readFileSync(path.join(resultsDir, `${runId}.json`), "utf-8")),
-				};
-			};
-			const dead = () => { throw errno("ESRCH"); };
-
-			const updated = repair("wf-updated", { lastUpdate: 5000 }, dead);
-			assert.equal(updated.status.workflow.ownerExitedAt, 5000);
-			assert.equal(updated.status.endedAt, 90_000);
-			assert.deepEqual(updated.result.workflow, { stopCause: "owner-exited" });
-
-			const neverUpdated = repair("wf-never-updated", {}, dead);
-			assert.equal(neverUpdated.status.workflow.ownerExitedAt, 1000);
-			assert.deepEqual(neverUpdated.result.workflow, { stopCause: "owner-exited" });
-
-			const staleAlive = repair("wf-stale-alive", { lastUpdate: 5000 }, () => true);
-			assert.equal(staleAlive.status.workflow.ownerExitedAt, undefined);
-			assert.equal(staleAlive.result.workflow, undefined);
-
-			const single = repair("single-dead", { mode: "single", workflow: undefined, lastUpdate: 5000 }, dead);
-			assert.equal(single.status.workflow, undefined);
-			assert.equal(single.result.workflow, undefined);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

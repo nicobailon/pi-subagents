@@ -10,11 +10,10 @@ const WORKFLOW_LAUNCH_RECORD_FILE = "launch.json";
  * structured tasks/chain launches save no params, so they cannot be relaunched from this record.
  */
 export type WorkflowLaunchRecord =
-	| { version: 1; source: "script"; params: Record<string, unknown>; scriptDigest: string }
-	| { version: 1; source: "resource"; params: Record<string, unknown>; scriptDigest: string; resourceName: string }
+	| { version: 1; source: "script" | "resource"; params: Record<string, unknown>; scriptDigest: string }
 	| { version: 1; source: "structured"; scriptDigest: string };
 
-export type WorkflowLaunchRecordRead =
+type WorkflowLaunchRecordRead =
 	| { ok: true; record: WorkflowLaunchRecord }
 	| { ok: false; missing: boolean; error: string };
 
@@ -56,8 +55,5 @@ export function readWorkflowLaunchRecord(asyncDir: string): WorkflowLaunchRecord
 	if (value.source === "structured") return { ok: true, record: { version: 1, source: "structured", scriptDigest } };
 	if (value.source !== "script" && value.source !== "resource") return invalid("launch.json source must be \"script\", \"resource\", or \"structured\"");
 	if (!isPlainObject(value.params)) return invalid("launch.json params must be an object");
-	const params = value.params;
-	if (value.source === "script") return { ok: true, record: { version: 1, source: "script", params, scriptDigest } };
-	if (typeof value.resourceName !== "string" || !value.resourceName) return invalid("launch.json resourceName must be a non-empty string");
-	return { ok: true, record: { version: 1, source: "resource", params, scriptDigest, resourceName: value.resourceName } };
+	return { ok: true, record: { version: 1, source: value.source, params: value.params, scriptDigest } };
 }

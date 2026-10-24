@@ -232,6 +232,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const fresh = await startRuntime("new", `session-${nonce}-new`, { previousSessionFile: sessionFileFor(oldSession) });
 		assert.equal(readStatusFile(inheritedId)?.workflow?.stopCause, "owner-exited", "the new session reconciled the run it inherited");
 		assert.deepEqual(claimFiles(inheritedId), []);
+		assert.deepEqual(nextSteps(await oneNotice(fresh.sent, inheritedId)), [`Resume by hand: subagent({ action: "resume", id: "${inheritedId}" })`], "its notice says how to resume it by hand");
 		await fresh.shutDown("quit");
 
 		writeConfig({ autoResume: false });
@@ -302,7 +303,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const script = `const only = await runs.run("only", { agent: "echo", task: "Only ${nonce}" }); return only.output;`;
 		// Long enough to outlast the test's checks, short enough that a run nothing aborts still ends.
 		mockPi.onCall({ matchArgIncludes: `Only ${nonce}`, delay: 10_000, output: "late" });
-		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", resourceName, params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256(script) }, Date.now() - 60_000);
+		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256(script) }, Date.now() - 60_000);
 		// The launch resolves the resource after its last check; cleaning the runtime there is "cleaned while launching".
 		let cleanUpDuringLaunch: (() => void) | undefined;
 		const registration = registerWorkflowResource({ sessionId, definition: { name: resourceName, version: 1, resolve: () => { cleanUpDuringLaunch?.(); return { script }; } } });
@@ -318,7 +319,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		}
 	});
 
-	it("says in the notice how a workflow stopped by /new or a refused reload continues", { timeout: 30_000 }, async () => {
+	it("says in the notice why a reload did not resume a workflow, and how to continue it", { timeout: 30_000 }, async () => {
 		writeAgents();
 		const nonce = `auto-notice-${Date.now()}`;
 		const release = path.join(tempDir, `${nonce}.release`);
@@ -332,17 +333,6 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			return runId;
 		};
 		try {
-			// /new does not resume the replaced session's run; its notice says how to resume it by hand.
-			const oldSession = `session-${nonce}-old`;
-			const first = await startRuntime("startup", oldSession);
-			const replacedId = await launchHeld(first);
-			await first.shutDown("new");
-			const fresh = await startRuntime("new", `session-${nonce}-new`, { previousSessionFile: sessionFileFor(oldSession) });
-			assert.equal(readStatusFile(replacedId)?.workflow?.stopCause, "runtime-replaced");
-			assert.deepEqual(nextSteps(await oneNotice(fresh.sent, replacedId)), [`Resume by hand: subagent({ action: "resume", id: "${replacedId}" })`]);
-			assert.deepEqual(claimFiles(replacedId), []);
-			await fresh.shutDown("quit");
-
 			// A reload whose auto-resume is refused says why in the notice, with the way to continue by hand.
 			const sessionId = `session-${nonce}-reload`;
 			const before = await startRuntime("startup", sessionId);
@@ -365,7 +355,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const nonce = `auto-stale-fail-${Date.now()}`;
 		const sessionId = `session-${nonce}`;
 		const resourceName = "test.gone-during-launch";
-		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", resourceName, params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256("return 1;") }, Date.now() - 60_000);
+		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256("return 1;") }, Date.now() - 60_000);
 		// The launch resolves the resource after its last check: a reload there, then the resource is gone.
 		let reloadDuringLaunch: (() => void) | undefined;
 		const registration = registerWorkflowResource({ sessionId, definition: { name: resourceName, version: 1, resolve: () => { reloadDuringLaunch?.(); throw new Error("the resource is gone"); } } });
@@ -448,7 +438,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const nonce = `auto-fail-${Date.now()}`;
 		const sessionId = `session-${nonce}`;
 		const resourceName = "test.gone";
-		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", resourceName, params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256("return 1;") }, Date.now() - 60_000);
+		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256("return 1;") }, Date.now() - 60_000);
 
 		const runtime = await startRuntime("startup", sessionId);
 		const [message] = await waitUntil("the failure message", () => runtime.autoResumeMessages().length > 0 && runtime.autoResumeMessages());

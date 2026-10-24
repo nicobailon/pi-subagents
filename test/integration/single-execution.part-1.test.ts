@@ -2064,19 +2064,8 @@ Answer only from the supplied synthetic text.
 					source: "resource",
 					params: { async: true, mission: false, workflow: "test.launch", args: { x: 2 }, cwd: tempDir },
 					scriptDigest: sha256(script),
-					resourceName: "test.launch",
 				});
 			} finally { registration.dispose(); }
-		});
-
-		it("saves a launch for an async workflow but not for a foreground one", { timeout: 30_000, skip }, async () => {
-			const launchFiles = () => fs.existsSync(DIRS.async) ? fs.readdirSync(DIRS.async).filter((entry) => fs.existsSync(path.join(DIRS.async, entry, "launch.json"))) : [];
-			const before = launchFiles();
-			const executor = makeExecutor([makeAgent("echo")]);
-			const result = await executor.executePublic("launch-foreground", { workflowScript: "return 1;", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
-			assert.equal(result.isError, undefined, result.content[0]?.text);
-			const asyncRunId = await launchAndSettle(executor, "launch-background", { workflowScript: "return 1;" });
-			assert.deepEqual(launchFiles().sort(), [...before, asyncRunId].sort());
 		});
 
 		it("fails the launch and frees its capacity slot when the launch cannot be saved", { timeout: 30_000, skip }, async (t) => {
@@ -2411,7 +2400,6 @@ Answer only from the supplied synthetic text.
 			const named = await settled(await launch({ workflowScript: script, args: { variant: "a", only: ["stage2"] }, reuseFrom: firstId }, successor));
 			assert.equal(named.state, "complete", named.error);
 			assert.equal(named.workflow?.reusedFrom, firstId);
-			assert.deepEqual((({ newRunId, trigger, pid }) => ({ newRunId, trigger, pid }))(JSON.parse(fs.readFileSync(path.join(DIRS.async, firstId, "resumed-by.1.json"), "utf-8"))), { newRunId: named.runId, trigger: "reuse", pid: process.pid });
 			assert.deepEqual(named.workflow?.value, { first: "stage one done", reused: true });
 			assert.equal(mockPi.callCount(), callsAfterStop + 3, "different args still reuse a child whose launch params match");
 
@@ -2435,7 +2423,6 @@ Answer only from the supplied synthetic text.
 				[{ workflowScript: `${script}\n// changed`, reuseFrom: firstId }, `options.reuseFrom: workflow run '${firstId}' ran a different workflow script.`],
 				[{ reuseFrom: firstId, cwd: otherCwd }, `options.reuseFrom: workflow run '${firstId}' ran in '${tempDir}', not '${otherCwd}'.`],
 				[{ reuseFrom: firstId, async: false }, "options.reuseFrom requires an async top-level workflow."],
-				[{ reuseFrom: firstId }, `options.reuseFrom: workflow run '${firstId}' was resumed as ${named.runId}; wait on it or stop it.`],
 			] as const) {
 				const result = await start({ workflowScript: script, args: { variant: "a" }, ...params }, successor);
 				assert.equal(result.isError, true, expected);

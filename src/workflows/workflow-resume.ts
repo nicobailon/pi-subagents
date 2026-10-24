@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizePublicSubagentExecution } from "../extension/public-execution.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
@@ -7,12 +6,12 @@ import { ownsRun } from "../runs/shared/run-ownership.ts";
 import type { AsyncStatus } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 import { readWorkflowLaunchRecord } from "./workflow-launch-record.ts";
-import { claimWorkflowResume, relaunchByHandText, resumeByHandText } from "./workflow-resume-claim.ts";
-import { workflowScriptDigest } from "./workflow-reuse.ts";
+import { claimWorkflowResume, refusalSentence, relaunchByHandText, resumeByHandText } from "./workflow-resume-claim.ts";
+import { isRunName, workflowScriptDigest } from "./workflow-reuse.ts";
 import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_OWNER_EXITED } from "./workflow-stop-cause.ts";
 
 /** A run may be resumed again after at most this many resumes that followed Pi exits (auto-resume only). */
-export const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
+const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
 
 export type WorkflowResumeTrigger = "auto" | "manual";
 
@@ -36,11 +35,10 @@ export interface PreparedWorkflowResume {
 	/** Public launch params for executePublic: the saved launch with async, reuseFrom and the source's ceiling. */
 	params: Record<string, unknown>;
 	expectedScriptDigest: string;
-	resourceName?: string;
 	resumeOrigin: { sourceRunId: string; attempt: number };
 }
 
-export type WorkflowResumePreparation = { ok: true; prepared: PreparedWorkflowResume } | ({ ok: false } & WorkflowResumeRefusalReason);
+type WorkflowResumePreparation = { ok: true; prepared: PreparedWorkflowResume } | ({ ok: false } & WorkflowResumeRefusalReason);
 
 export function workflowResumeRefusal(code: WorkflowResumeRefusalCode, reason: string, runId: string): WorkflowResumeRefusalReason {
 	const byHand = code === "launch-missing" || code === "launch-invalid" || code === "structured" || code === "digest" || code === "authority"
@@ -51,13 +49,7 @@ export function workflowResumeRefusal(code: WorkflowResumeRefusalCode, reason: s
 
 /** The tool error for a resume by id; the resume form is not repeated to a caller that just tried it. */
 export function manualWorkflowResumeRefusalText(runId: string, refusal: Pick<WorkflowResumeRefusalReason, "reason" | "byHand">): string {
-	const relaunch = refusal.byHand === relaunchByHandText(runId) ? ` ${refusal.byHand}` : "";
-	// Some reasons quote a message that already ends in a period.
-	return `Cannot resume workflow '${runId}': ${refusal.reason.replace(/\.$/, "")}.${relaunch}`;
-}
-
-function isRunName(runId: unknown): runId is string {
-	return typeof runId === "string" && runId.length > 0 && runId === path.basename(runId) && runId !== "." && runId !== "..";
+	return `Cannot resume workflow '${runId}': ${refusalSentence(refusal.reason, refusal.byHand === relaunchByHandText(runId) ? refusal.byHand : "")}`;
 }
 
 /**
@@ -78,12 +70,6 @@ export function workflowResumeTargetId(asyncDirRoot: string, params: { id?: unkn
 	return status?.mode === "workflow" && status.parentWorkflowRunId === undefined ? id : undefined;
 }
 
-/** The attempt the resumed run records: only resumes that follow a Pi exit count. */
-export function nextWorkflowResumeAttempt(workflow: Pick<NonNullable<AsyncStatus["workflow"]>, "stopCause" | "resumeOrigin"> | undefined): number {
-	const previous = workflow?.resumeOrigin?.attempt ?? 0;
-	return workflow?.stopCause === WORKFLOW_STOP_CAUSE_OWNER_EXITED ? previous + 1 : previous;
-}
-
 /**
  * Checks a stopped workflow run can be resumed and claims it for a new run id. Synchronous and
  * cheap: the launch itself happens in the executor.
@@ -101,7 +87,8 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 	if (trigger === "manual") reconcileAsyncRun(sourceAsyncDir);
 	const status = readStatus(sourceAsyncDir);
 	if (!status || status.mode !== "workflow" || !isReusableWorkflowStopCause(status.workflow?.stopCause)) return refuse("not-interrupted", "not interrupted; pass message to revive one of its children");
-	const attempt = nextWorkflowResumeAttempt(status.workflow);
+	// The attempt the resumed run records: only resumes that follow a Pi exit count.
+	const attempt = (status.workflow?.resumeOrigin?.attempt ?? 0) + (status.workflow?.stopCause === WORKFLOW_STOP_CAUSE_OWNER_EXITED ? 1 : 0);
 	if (trigger === "auto" && attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) return refuse("attempts", `${MAX_WORKFLOW_RESUME_ATTEMPTS} resumes already followed Pi exits`);
 	const read = readWorkflowLaunchRecord(sourceAsyncDir);
 	if (!read.ok) return read.missing ? refuse("launch-missing", "launch.json is missing (the run started before launches were saved)") : refuse("launch-invalid", `launch.json is invalid: ${read.error}`);
@@ -131,13 +118,7 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 				...(status.admissionCapabilityCeiling ? { capabilityCeiling: status.admissionCapabilityCeiling } : {}),
 			},
 			expectedScriptDigest: record.scriptDigest,
-			...(record.source === "resource" ? { resourceName: record.resourceName } : {}),
 			resumeOrigin: { sourceRunId, attempt },
 		},
 	};
-}
-
-/** True once the claimed new run has written its first status. */
-export function workflowResumeLaunched(prepared: Pick<PreparedWorkflowResume, "sourceAsyncDir" | "newRunId">): boolean {
-	return fs.existsSync(path.join(path.dirname(prepared.sourceAsyncDir), prepared.newRunId, "status.json"));
 }

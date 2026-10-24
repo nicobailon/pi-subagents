@@ -12,9 +12,7 @@ import { isReusableWorkflowStopCause, WORKFLOW_STOP_CAUSE_RUNTIME_REPLACED } fro
 const WORKFLOW_CHILD_JOURNAL_FILE = "workflow-children.jsonl";
 
 /** What a runtime replacement left; the notice's resume line says how the run continues. */
-export function workflowRuntimeReplacedStopNotice(): string {
-	return "Async children that were still running keep running, and finished children are kept.";
-}
+export const WORKFLOW_RUNTIME_REPLACED_STOP_NOTICE = "Async children that were still running keep running, and finished children are kept.";
 
 /** Abort reason for workflow controllers torn down by runtime replacement; carries the cause as data, not text. */
 export function runtimeReplacedAbortReason(): Error {
@@ -88,10 +86,10 @@ function readWorkflowChildJournal(runId: string, workflowAsyncDir: string): Work
 	}
 	return source;
 }
-export const WORKFLOW_REUSE_CHAIN_MAX_LINKS = 16;
+const WORKFLOW_REUSE_CHAIN_MAX_LINKS = 16;
 
-/** A status file is parsed, not validated, so a corrupt `reusedFrom` may be any JSON value. */
-function isRunName(runId: unknown): runId is string {
+/** A run directory name, never a path; a status file is parsed, not validated, so a corrupt `reusedFrom` may be any JSON value. */
+export function isRunName(runId: unknown): runId is string {
 	return typeof runId === "string" && runId === path.basename(runId) && runId !== "." && runId !== "..";
 }
 
