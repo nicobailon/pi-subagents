@@ -105,6 +105,19 @@ describe("async stale-run reconciliation", () => {
 			const single = reconcile("single-dead", singleStatus, { kill: () => { throw errno("ESRCH"); } });
 			assert.equal(single.status.workflow, undefined);
 			assert.equal(single.result.message, "Async runner process 4242 exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.");
+
+			// An owning session's repair adopts its completion owner, so it can deliver the notice; only an owner-exited workflow does.
+			const deadPid = () => { throw errno("ESRCH"); };
+			const resultOwner = (runId: string) => JSON.parse(fs.readFileSync(path.join(resultsDir, `${runId}.json`), "utf-8")).completionOwnerId;
+			const adopted = reconcile("wf-adopted", workflowStatus("wf-adopted", { completionOwnerId: "dead-process" }), { kill: deadPid, adoptCompletionOwnerId: "this-process" });
+			assert.equal(adopted.status.completionOwnerId, "this-process");
+			assert.equal(resultOwner("wf-adopted"), "this-process");
+			const kept = reconcile("wf-kept", workflowStatus("wf-kept", { completionOwnerId: "dead-process" }), { kill: deadPid });
+			assert.equal(kept.status.completionOwnerId, "dead-process");
+			assert.equal(resultOwner("wf-kept"), "dead-process");
+			const singleKept = reconcile("single-kept", { ...singleStatus, runId: "single-kept", completionOwnerId: "dead-process" }, { kill: deadPid, adoptCompletionOwnerId: "this-process" });
+			assert.equal(singleKept.status.completionOwnerId, "dead-process");
+			assert.equal(resultOwner("single-kept"), "dead-process");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

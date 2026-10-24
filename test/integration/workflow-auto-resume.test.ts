@@ -23,6 +23,8 @@ type Tool = { execute(id: string, params: unknown, signal: AbortSignal, onUpdate
 type SentMessage = { message: { customType?: string; content?: unknown; display?: boolean }; options?: { triggerTurn?: boolean } };
 
 const terminalStates = ["complete", "failed", "partial", "paused", "stopped", "rejected"];
+/** The completion owner a Pi process that has since exited wrote into its runs; never this process's. */
+const DEAD_PI_COMPLETION_OWNER = "completion-owner-of-an-exited-pi";
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const readStatusFile = (runId: string) => {
 	try {
@@ -120,7 +122,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		assert.ok(deadPid);
 		fs.mkdirSync(asyncDir, { recursive: true });
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId, sessionId: sessionFileFor(sessionId), mode: "workflow", state: "running", pid: deadPid, startedAt: lastUpdate - 1000, lastUpdate, cwd: tempDir, steps: [],
+			runId, sessionId: sessionFileFor(sessionId), mode: "workflow", state: "running", pid: deadPid, completionOwnerId: DEAD_PI_COMPLETION_OWNER, startedAt: lastUpdate - 1000, lastUpdate, cwd: tempDir, steps: [],
 			workflow: { trace: [], emits: [], console: [], scriptDigest: launch.scriptDigest },
 		}));
 		writeWorkflowLaunchRecord(asyncDir, launch);
@@ -199,10 +201,15 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const done = await waitUntil("the resumed run to finish", () => { const status = readStatusFile(resumedId); return status && terminalStates.includes(status.state) ? status : undefined; }, 15_000);
 		assert.equal(done.state, "complete", done.error);
 
+		// Its Pi exited; the reopened session delivers its notice once: what happened, then that it continues.
+		const notice = await oneNotice(runtime.sent, recentId);
+		assert.match(notice, new RegExp(`that ran workflow ${recentId} exited before the workflow finished\\. Marked run failed by stale-run reconciliation\\. Its finished children are kept\\.`));
+		assert.deepEqual(nextSteps(notice), [`Auto-resumed as ${resumedId}.`]);
 		assert.equal(readStatusFile(oldId)?.workflow?.stopCause, "owner-exited");
 		assert.deepEqual(claimFiles(oldId), [], "a run interrupted more than 24 hours ago is not claimed");
 		assert.deepEqual(resumedRuns(oldId), []);
 		assert.equal(runtime.sent.some((entry) => entry.options?.triggerTurn === true), false, "nothing starts a turn");
+		assert.equal(noticesFor(runtime.sent, recentId).length, 1, "still one notice");
 		await runtime.shutDown("quit");
 	});
 
@@ -223,6 +230,11 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const off = await startRuntime("startup", offSession);
 		assert.equal(readStatusFile(offId)?.workflow?.stopCause, "owner-exited");
 		assert.deepEqual(claimFiles(offId), []);
+		// Its Pi exited; the session that owns it delivers its notice once, with the way to resume it by hand.
+		const offNotice = await oneNotice(off.sent, offId);
+		assert.match(offNotice, new RegExp(`that ran workflow ${offId} exited before the workflow finished`));
+		assert.deepEqual(nextSteps(offNotice), [`Resume by hand: subagent({ action: "resume", id: "${offId}" })`]);
+		assert.equal(noticesFor(off.sent, offId).length, 1, "still one notice");
 		await off.shutDown("quit");
 		// The same runs are resumed once their own session reopens with the setting on.
 		writeConfig({});

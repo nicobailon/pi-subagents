@@ -852,7 +852,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
 		try {
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now });
+			// A workflow whose Pi exited is repaired here, in the session that owns it, which then delivers its notice.
+			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now, ...(state.completionOwnerId ? { adoptCompletionOwnerId: state.completionOwnerId } : {}) });
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
 			return;

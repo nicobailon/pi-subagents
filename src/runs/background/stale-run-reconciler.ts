@@ -43,6 +43,11 @@ interface ReconcileAsyncRunOptions {
 	staleAlivePidMs?: number;
 	pidNamespaceScope?: () => string | undefined;
 	bootId?: () => string | undefined;
+	/**
+	 * This process's completion owner, for an owner-exited workflow repair to adopt so the session that
+	 * reopened it delivers its notice. Only callers whose session owns the run pass it.
+	 */
+	adoptCompletionOwnerId?: string;
 }
 
 interface ReconcileAsyncRunResult {
@@ -262,11 +267,13 @@ function settledWorkflowChildStatus(asyncDir: string, workflowRunId: string, ste
 	return settled;
 }
 
-function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, reason?: string, ownerExited = false): { status: AsyncStatus; result: Record<string, unknown>; message: string } {
+function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, reason?: string, ownerExited = false, adoptCompletionOwnerId?: string): { status: AsyncStatus; result: Record<string, unknown>; message: string } {
 	const runId = status.runId || path.basename(asyncDir);
 	const pid = typeof status.pid === "number" ? status.pid : "unknown";
 	// A dead workflow host is the Pi process itself; its journal keeps the finished children for a relaunch.
 	const exitedWorkflow = ownerExited && status.mode === "workflow" ? status.workflow : undefined;
+	// Its owner process is dead, so nothing else can deliver its notice: an owning session that repairs it adopts it.
+	const completionOwnerId = exitedWorkflow && adoptCompletionOwnerId ? adoptCompletionOwnerId : status.completionOwnerId;
 	const terminal = readProcessTerminal(asyncDir, { runId }) ?? status.processTerminal;
 	const runnerExit = terminal?.state === "observed" || terminal?.state === "unknown"
 		? terminal.instances?.find((instance) => instance.kind === "runner" && instance.processInstanceId === terminal.runnerProcessInstanceId)
@@ -313,6 +320,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 		steps: repairedSteps,
 		// Read from the pre-repair status: the repair time would make an old crash look new.
 		...(exitedWorkflow ? { workflow: { ...exitedWorkflow, stopCause: WORKFLOW_STOP_CAUSE_OWNER_EXITED, ownerExitedAt: status.lastUpdate ?? status.startedAt } } : {}),
+		...(completionOwnerId ? { completionOwnerId } : {}),
 	};
 	const resultAgent = repairedSteps[status.currentStep ?? 0]?.agent ?? repairedSteps[0]?.agent ?? "subagent";
 	return {
@@ -323,7 +331,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 			agent: resultAgent,
 			mode: status.mode,
 			...(exitedWorkflow ? { workflow: { stopCause: WORKFLOW_STOP_CAUSE_OWNER_EXITED } } : {}),
-			...(status.completionOwnerId ? { completionOwnerId: status.completionOwnerId } : {}),
+			...(completionOwnerId ? { completionOwnerId } : {}),
 			...(status.parentWorkflowRunId ? { parentWorkflowRunId: status.parentWorkflowRunId } : {}),
 			...(status.workflowKey ? { workflowKey: status.workflowKey } : {}),
 			success: false,
@@ -350,8 +358,8 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 	};
 }
 
-function writeFailedRepair(asyncDir: string, status: AsyncStatus, resultPath: string, now: number, reason?: string, ownerExited = false): ReconcileAsyncRunResult {
-	const repair = buildFailedRepair(status, asyncDir, now, reason, ownerExited);
+function writeFailedRepair(asyncDir: string, status: AsyncStatus, resultPath: string, now: number, reason?: string, ownerExited = false, adoptCompletionOwnerId?: string): ReconcileAsyncRunResult {
+	const repair = buildFailedRepair(status, asyncDir, now, reason, ownerExited, adoptCompletionOwnerId);
 	if (repair.result.sessionId) writeAsyncResultFile(resultPath, repair.result);
 	writeAtomicJson(path.join(asyncDir, "status.json"), repair.status);
 	updateActiveRunIndex(asyncDir, repair.status.state, repair.status.toolCallId);
@@ -542,5 +550,5 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 		return writeFailedRepair(asyncDir, effectiveStatus, resultPath, now, message);
 	}
 
-	return writeFailedRepair(asyncDir, effectiveStatus, resultPath, now, undefined, true);
+	return writeFailedRepair(asyncDir, effectiveStatus, resultPath, now, undefined, true, options.adoptCompletionOwnerId);
 }
