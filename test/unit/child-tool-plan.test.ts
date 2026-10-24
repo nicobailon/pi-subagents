@@ -165,9 +165,20 @@ describe("child tool plan declared tools", () => {
 		}
 	});
 
+	it("rejects a modifier entry that the ceiling or an exclusion would filter out", () => {
+		for (const { input, rejected } of [
+			{ input: { tools: ["+codemode"], capabilityCeiling: { version: 1 as const, allowedTools: ["read"], denyExtensions: false, sources: ["test"] }, agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. / },
+			{ input: { tools: ["read", "-write"], excludeTools: ["-write"], agentName: "modifier-repro" }, rejected: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: -write\. / },
+		]) {
+			assert.throws(() => resolvePiLaunchToolPlan(input), { message: rejected });
+		}
+	});
+
 	it("leaves a path-like entry that starts with a hyphen to the extension loader", () => {
-		const plan = resolvePiLaunchToolPlan({ tools: ["read", "-tools/fixture.ts"], agentName: "modifier-repro" });
-		assert.deepEqual(plan.requiredChildTools, ["read"]);
+		for (const entry of ["-tools/fixture.ts", "-tools/fixture", "-fixture.ts", "-fixture.js"]) {
+			const plan = resolvePiLaunchToolPlan({ tools: ["read", entry], agentName: "modifier-repro" });
+			assert.deepEqual(plan.requiredChildTools, ["read"], entry);
+		}
 	});
 
 	it("still plans a plain tool list whose names contain hyphens", () => {
