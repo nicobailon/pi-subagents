@@ -5747,10 +5747,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				// In the first persisted status, before any child launches, so a later resume can count attempts.
 				if (workflowResumeLaunch) workflowRunEvidence.resumeOrigin = workflowResumeLaunch.resumeOrigin;
 				const workflowJournalFingerprints = new Map<string, string>();
+				const storageFailure = (error: unknown): AgentToolResult<Details> => {
+					workflowCapacity?.rollback();
+					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
+				};
 				// The relaunch continuing a stopped run holds its claim, so any other relaunch of that run is refused.
 				if (workflowReuseSource) {
 					const reuseSourceDir = path.join(DIRS.async, workflowReuseSource.runId);
-					const claim = claimWorkflowResume(reuseSourceDir, { newRunId: workflowRunId, trigger: "reuse" });
+					let claim: ReturnType<typeof claimWorkflowResume>;
+					try {
+						claim = claimWorkflowResume(reuseSourceDir, { newRunId: workflowRunId, trigger: "reuse" });
+					} catch (error) {
+						return storageFailure(error);
+					}
 					if (claim.kind !== "owner") {
 						workflowCapacity?.rollback();
 						return { content: [{ type: "text", text: claimedWorkflowRunRefusal(workflowReuseSource.runId, claim, requestParams.reuseFrom !== undefined) }], isError: true, details: { mode: "workflow", results: [] } };
@@ -5763,8 +5772,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					if (topLevelAsyncWorkflow && publicWorkflowLaunch) writeWorkflowLaunchRecord(asyncDir, workflowLaunchRecord(publicWorkflowLaunch, workflowCwd, workflowScriptSourceDigest));
 					fs.mkdirSync(DIRS.results, { recursive: true });
 				} catch (error) {
-					workflowCapacity?.rollback();
-					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
+					return storageFailure(error);
 				}
 				const controller = new AbortController();
 				deps.state.workflowControllers ??= new Map();
