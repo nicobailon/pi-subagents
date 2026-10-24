@@ -295,8 +295,8 @@ describe("result watcher", () => {
 				assert.deepEqual(delivered, [{ id: "exited-owner", completionOwnerId: "owning-session" }]);
 				assert.equal(fs.existsSync(path.join(resultsDir, "exited-owner.json")), false);
 				assert.equal(fs.existsSync(path.join(resultsDir, "live-owner.json")), true);
-			assert.equal(fs.existsSync(path.join(resultsDir, "workflow-child.json")), true);
-			assert.equal(fs.existsSync(path.join(resultsDir, "other-session.json")), true);
+				assert.equal(fs.existsSync(path.join(resultsDir, "workflow-child.json")), true);
+				assert.equal(fs.existsSync(path.join(resultsDir, "other-session.json")), true);
 			} finally {
 				watcher.stopResultWatcher();
 			}
