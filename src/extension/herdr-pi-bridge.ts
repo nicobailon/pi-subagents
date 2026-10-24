@@ -12,6 +12,7 @@ import { buildSkillInjection, resolveSkills } from "../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../agents/agent-memory.ts";
 import { appendAgentRefinementOverlay } from "../agents/agent-refinements.ts";
 import { rewriteSubagentPrompt } from "../runs/shared/subagent-prompt-runtime.ts";
+import { assertNoToolModifierEntries } from "../runs/shared/child-tool-plan.ts";
 import { resolveExistingReadPaths } from "../shared/settings.ts";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 
@@ -40,6 +41,7 @@ export function resolveRemoteHerdrResources(cwd: string, resources: { agent: str
 	const skillPrompt = buildSkillInjection(skills.resolved);
 	const reads = resources.reads === undefined ? agent.defaultReads ?? false : resources.reads; const readPaths = Array.isArray(reads) ? resolveExistingReadPaths(reads, cwd) : [];
 	const systemPrompt = appendAgentRefinementOverlay(`${agent.systemPrompt}${buildAgentMemoryInjection(agent, cwd)}${skillPrompt ? `\n\n${skillPrompt}` : ""}${readPaths.length ? `\n\n[Read from: ${readPaths.join(", ")}]` : ""}`, { cwd, agentName: agent.name });
+	assertNoToolModifierEntries(agent.name, agent.tools ?? []);
 	const denied = new Set(agent.excludeTools ?? []); const tools = (agent.tools === undefined ? remoteDefaultTools : agent.tools).filter((tool) => !denied.has(tool) && (!resources.toolCeiling || resources.toolCeiling.includes(tool))); if (agent.tools === undefined && !tools.length) throw new Error(`Remote agent '${agent.name}' resolved no default active tools within the inherited ceiling.`);
 	return { agent: agent.name, skills: names, tools, systemPrompt, inheritProjectContext: agent.inheritProjectContext, inheritGlobalContext: agent.inheritGlobalContext, inheritSkills: agent.inheritSkills };
 }
