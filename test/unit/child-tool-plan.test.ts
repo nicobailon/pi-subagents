@@ -5,7 +5,9 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
+import { runSingleStepInner } from "../../src/runs/background/subagent-runner.ts";
 import { MCP_RUNTIME_SNAPSHOT_EVENT, MCP_RUNTIME_SNAPSHOT_VERSION, type McpHostToolInfo, type McpRuntimeSnapshotHost } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
+import { createFakeChildSessions } from "../support/fake-child-session.ts";
 
 /** A parent whose pi-mcp-adapter answers snapshot requests for one runtime-only server. */
 function runtimeSnapshotHost(serverName: string): McpRuntimeSnapshotHost {
@@ -284,6 +286,19 @@ describe("production launch path keeps declared child tools", () => {
 		} finally {
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("the background runner names the agent when a step lists a tool modifier entry", async () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-runner-modifier-"));
+		const fake = createFakeChildSessions(() => cwd);
+		try {
+			await assert.rejects(runSingleStepInner({ agent: "modifier-repro", task: "do the work", tools: ["+codemode"] }, { cwd, id: "runner-modifier", flatIndex: 0, flatStepCount: 1, previousOutput: "", placeholder: "{previous}", outputFile: path.join(cwd, "output.log"), sessionEnabled: false, childSessions: fake.factory }), {
+				message: /^Agent 'modifier-repro' lists Pi tool modifier entry in `tools`: \+codemode\. /,
+			});
+			assert.equal(fake.sessions.length, 0);
+		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
 	});
