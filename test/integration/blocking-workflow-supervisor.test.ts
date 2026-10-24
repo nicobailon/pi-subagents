@@ -34,7 +34,7 @@ describe("supervisor asks in blocking workflows", { skip: !available }, () => {
 			};
 			const channel = createNativeSupervisorChannel(pi as never, state, { getChannelDirs: () => ({ dirs: [...dirs] }) });
 			bus.on(SUBAGENT_ASYNC_STARTED_EVENT, (data) => {
-				const launch = data as { id: string; mode?: string; agent?: string; asyncDir?: string };
+				const launch = data as { id: string; mode?: string };
 				if (launch.mode === "workflow") return;
 				childIds.push(launch.id);
 				dirs.add(resolveSupervisorChannelDir(launch.id, "worker", 0));

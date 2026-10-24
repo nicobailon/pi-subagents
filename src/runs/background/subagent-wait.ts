@@ -90,7 +90,7 @@ export interface SubagentWaitParams {
 	all?: boolean;
 	/** Give up after this many milliseconds. Defaults to waitTool.defaultTimeoutMs, then 30 minutes. */
 	timeoutMs?: number;
-	/** False keeps a blocking wait open through all non-supervisor attention, such as idle time, a tool held open, or repeated tool failures; supervisor/contact requests, terminal runs, timeout, user input, and abort still stop it. */
+	/** False keeps a blocking wait open through all attention except supervisor/contact requests, such as idle time, a tool held open, or repeated tool failures. */
 	stopOnAttention?: boolean;
 }
 

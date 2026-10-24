@@ -1193,10 +1193,6 @@ function shouldCollapseSingleChildDetails(job: AsyncJobState, step: AsyncJobStep
 	return false;
 }
 
-function singleChildTask(job: AsyncJobState, step: AsyncJobStep): string | undefined {
-	return stepTaskSummary(step, singleChildAgentName(job, step));
-}
-
 /** A child's task in one line: its label and task, else its session name without the repeated agent name. */
 export function stepTaskSummary(step: { description?: string; label?: string; sessionName?: string }, agentName: string | undefined): string | undefined {
 	const task = compactTaskText(step.description, step.label);
@@ -2357,7 +2353,7 @@ function foregroundStyleWidgetStepLines(
 	const lines = [`${rowIndent}${rowMarker}${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame, thinking)} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const lane = projectAsyncLane(job, step);
 	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, detailIndent));
-	const task = collapseDetails ? singleChildTask(job, step) : compactTaskText(step.description, step.label);
+	const task = collapseDetails ? stepTaskSummary(step, displayName) : compactTaskText(step.description, step.label);
 	if (task) lines.push(`${detailIndent}${theme.fg("dim", `task: ${task}`)}`);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	const currentPath = options?.includeCurrentPath && step.currentPath ? shortenPath(step.currentPath) : undefined;
