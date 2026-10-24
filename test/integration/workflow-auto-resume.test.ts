@@ -80,9 +80,10 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 	 * One extension runtime. The session_start handlers are called together and `atSessionStart` runs
 	 * right after they return synchronously, before any launch they started could have run.
 	 */
-	const startRuntime = async (reason: string, sessionId: string, options: { previousSessionFile?: string; atSessionStart?: (runtime: StartedRuntime) => void } = {}) => {
+	const startRuntime = async (reason: string, sessionId: string, options: { previousSessionFile?: string; atSessionStart?: (runtime: StartedRuntime) => void; ui?: boolean } = {}) => {
 		const handlers = new Map<string, Handler[]>();
 		const sent: SentMessage[] = [];
+		const notifications: Array<{ text: string; level: string }> = [];
 		const staleSends: SentMessage[] = [];
 		let stale = false;
 		let tool: Tool | undefined;
@@ -100,6 +101,9 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const ctx = {
 			...makeMinimalCtx(tempDir),
 			isIdle: () => true,
+			// With `ui`, a session with a UI that records its notices; any other UI call does nothing.
+			hasUI: options.ui === true,
+			ui: new Proxy({ notify: (text: string, level: string) => { notifications.push({ text, level }); } }, { get: (target, prop) => prop in target ? target[prop as keyof typeof target] : () => undefined }),
 			sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFileFor(sessionId), getEntries: () => [], getBranch: () => [] },
 		};
 		const previousChildEnv = process.env[SUBAGENT_CHILD_ENV];
@@ -117,18 +121,18 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		await Promise.all(started);
 		assert.ok(tool, "subagent tool registered");
 		const autoResumeMessages = () => sent.filter((entry) => entry.message.customType === "subagent-auto-resume");
-		return { tool, ctx, sent, staleSends: () => staleSends, autoResumeMessages, shutDown: async (shutdownReason: string) => { stale = true; for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: shutdownReason }, ctx); } };
+		return { tool, ctx, sent, notifications, staleSends: () => staleSends, autoResumeMessages, shutDown: async (shutdownReason: string) => { stale = true; for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: shutdownReason }, ctx); } };
 	};
 
 	/** What a killed Pi leaves behind: a running status under a dead pid, its saved launch, and the active-run marker. */
-	const writeCrashedRun = (sessionId: string, launch: WorkflowLaunchRecord, lastUpdate: number) => {
+	const writeCrashedRun = (sessionId: string, launch: WorkflowLaunchRecord, lastUpdate: number, options: { pid?: number; cwd?: string } = {}) => {
 		const runId = `crashed-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
 		const asyncDir = path.join(DIRS.async, runId);
 		const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
 		assert.ok(deadPid);
 		fs.mkdirSync(asyncDir, { recursive: true });
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
-			runId, sessionId: sessionFileFor(sessionId), mode: "workflow", state: "running", pid: deadPid, completionOwnerId: DEAD_PI_COMPLETION_OWNER, startedAt: lastUpdate - 1000, lastUpdate, cwd: tempDir, steps: [],
+			runId, sessionId: sessionFileFor(sessionId), mode: "workflow", state: "running", pid: options.pid ?? deadPid, completionOwnerId: DEAD_PI_COMPLETION_OWNER, startedAt: lastUpdate - 1000, lastUpdate, cwd: options.cwd ?? tempDir, steps: [],
 			workflow: { trace: [], emits: [], console: [], scriptDigest: launch.scriptDigest },
 		}));
 		writeWorkflowLaunchRecord(asyncDir, launch);
@@ -380,6 +384,63 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		} finally {
 			registration.dispose();
 		}
+	});
+
+	it("points to runs another session left when its Pi died, without touching them", { timeout: 30_000 }, async () => {
+		writeAgents();
+		const nonce = `elsewhere-${Date.now()}`;
+		const script = `return "${nonce}";`;
+		const now = Date.now();
+		const deadPid = () => { const pid = spawnSync(process.execPath, ["-e", ""]).pid; assert.ok(pid); return pid; };
+		const historyDir = path.join(DIRS.results, "foreground-history");
+		const writeForegroundRecord = (sessionId: string, runId: string) => {
+			fs.mkdirSync(historyDir, { recursive: true });
+			fs.writeFileSync(path.join(historyDir, `${runId}.json`), JSON.stringify({ runId, mode: "single", cwd: tempDir, sessionId: sessionFileFor(sessionId), updatedAt: now - 60_000, ownerPid: deadPid(), children: [{ agent: "echo", index: 0, status: "running" }] }));
+		};
+		const session = (name: string, saved = true) => { const id = `session-${nonce}-${name}`; if (saved) fs.writeFileSync(sessionFileFor(id), "{}\n"); return id; };
+
+		// Two runs (an async workflow and a foreground run; the same run seen from both sources counts once).
+		const foreign = session("foreign");
+		const foreignRun = writeCrashedRun(foreign, scriptLaunch(script), now - 60_000);
+		writeForegroundRecord(foreign, `fg-${nonce}`);
+		writeForegroundRecord(foreign, foreignRun);
+		// One run, in a session whose path needs quoting.
+		const spaced = session("with space");
+		const foreignRuns = [foreignRun, writeCrashedRun(spaced, scriptLaunch(script), now - 60_000)];
+		// Not pointed to: a live owner, another folder, older than a day, a session that cannot be reopened, an inherited session.
+		foreignRuns.push(
+			writeCrashedRun(session("alive"), scriptLaunch(script), now - 60_000, { pid: process.pid }),
+			writeCrashedRun(session("elsewhere"), scriptLaunch(script), now - 60_000, { cwd: path.join(tempDir, "other") }),
+			writeCrashedRun(session("old"), scriptLaunch(script), now - 25 * 60 * 60 * 1000),
+			writeCrashedRun(session("unsaved", false), scriptLaunch(script), now - 60_000),
+		);
+		const inherited = session("inherited");
+		writeCrashedRun(inherited, scriptLaunch(script), now - 60_000);
+		const current = session("current");
+		const headless = session("headless");
+
+		// Every file of the other sessions' runs, their active-run markers, the foreground history, and the session files.
+		const filesUnder = (root: string) => fs.existsSync(root) ? (fs.readdirSync(root, { recursive: true }) as string[]).map((name) => path.join(root, name)) : [];
+		const snapshot = () => Object.fromEntries([
+			...foreignRuns.flatMap((runId) => [...filesUnder(path.join(DIRS.async, runId)), path.join(DIRS.async, ".active-runs", runId)]),
+			...filesUnder(historyDir),
+			...fs.readdirSync(tempDir).filter((name) => name.endsWith(".jsonl")).map((name) => path.join(tempDir, name)),
+		].filter((file) => fs.existsSync(file) && fs.statSync(file).isFile()).map((file) => [file, fs.readFileSync(file, "utf-8")]));
+		const before = snapshot();
+		assert.equal(Object.keys(before).filter((file) => file.endsWith("status.json")).length, foreignRuns.length);
+		const elsewhere = (runtime: { notifications: Array<{ text: string; level: string }> }) => runtime.notifications.filter((notice) => notice.text.includes("in another session"));
+
+		const withUi = await startRuntime("new", current, { previousSessionFile: sessionFileFor(inherited), ui: true });
+		assert.deepEqual(elsewhere(withUi).sort((left, right) => left.text.localeCompare(right.text)), [
+			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session '${sessionFileFor(spaced)}'\``, level: "info" },
+			{ text: `2 subagent runs were interrupted in another session. Reopen it to resume them: \`pi --session ${sessionFileFor(foreign)}\``, level: "info" },
+		]);
+		assert.deepEqual(withUi.sent.filter((entry) => String(entry.message.content).includes("in another session")), [], "never sent to the model");
+		await withUi.shutDown("quit");
+		const withoutUi = await startRuntime("startup", headless);
+		assert.deepEqual(elsewhere(withoutUi), []);
+		await withoutUi.shutDown("quit");
+		assert.deepEqual(snapshot(), before, "nothing of the other sessions changed");
 	});
 
 	it("reports a launch that cannot start once, records why, and does not retry it", { timeout: 30_000 }, async () => {

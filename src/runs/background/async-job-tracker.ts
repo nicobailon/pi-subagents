@@ -23,6 +23,7 @@ import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { findNestedRouteForRootId, hasLiveNestedDescendants, retainNestedLookupRoute, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, externalJobBridgeEligibility, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
@@ -82,7 +83,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	handleStarted: (data: unknown) => void;
 	handleComplete: (data: unknown) => void;
 	resetJobs: (ctx?: ExtensionContext) => void;
-	restoreActiveJobs: (ctx?: ExtensionContext) => void;
+	/** `observeStatus` also sees the statuses of other sessions' runs that the listing skips. */
+	restoreActiveJobs: (ctx?: ExtensionContext, observeStatus?: RawDrainStatusObserver) => void;
 	dispose: () => void;
 } {
 	const completionRetentionMs = options.completionRetentionMs ?? 10000;
@@ -846,14 +848,14 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}
 	};
 
-	const restoreActiveJobs = (ctx?: ExtensionContext) => {
+	const restoreActiveJobs = (ctx?: ExtensionContext, observeStatus?: RawDrainStatusObserver) => {
 		if (ctx?.hasUI) state.lastUiContext = ctx;
 		state.statusProjectionSessionId = null;
 		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
 		try {
 			// A workflow whose Pi exited is repaired here, in the session that owns it, which then delivers its notice.
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now, ...(state.completionOwnerId ? { adoptCompletionOwnerId: state.completionOwnerId } : {}) });
+			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now, ...(state.completionOwnerId ? { adoptCompletionOwnerId: state.completionOwnerId } : {}) }, observeStatus);
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
 			return;

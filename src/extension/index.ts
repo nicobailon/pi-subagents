@@ -84,6 +84,7 @@ import { finalizeToolResult } from "./tool-result.ts";
 import { flattenSubagentToolOptions } from "./subagent-options.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
 import { restoreForegroundRunHistory } from "../runs/foreground/foreground-history.ts";
+import { createInterruptedElsewhereCollector } from "../runs/background/interrupted-elsewhere.ts";
 import { resolveMissionStoreLocation } from "../missions/store.ts";
 import { listRetainedChildren } from "../runs/background/retained-children.ts";
 import {
@@ -1011,11 +1012,19 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		resetJobs(ctx);
 		logSlowPhase("reset-jobs", phaseStartedAt);
 		phaseStartedAt = Date.now();
-		restoreForegroundRunHistory(state, { resultsDir: DIRS.results });
+		// Runs other sessions in this folder left when their Pi died, from what this restore reads anyway.
+		const interruptedElsewhere = ctx.hasUI && state.currentSessionId
+			? createInterruptedElsewhereCollector({ currentSessionId: state.currentSessionId, cwd: ctx.cwd, now: Date.now() })
+			: undefined;
+		restoreForegroundRunHistory(state, { resultsDir: DIRS.results, ...(interruptedElsewhere ? { observeForeign: interruptedElsewhere.observeForegroundRun } : {}) });
 		logSlowPhase("foreground-history", phaseStartedAt);
 		phaseStartedAt = Date.now();
-		restoreActiveJobs(ctx);
+		restoreActiveJobs(ctx, interruptedElsewhere?.observeStatus);
 		logSlowPhase("active-job-restore", phaseStartedAt);
+		phaseStartedAt = Date.now();
+		// Read-only and UI-only: never sent to the model, so prompts and history are unchanged.
+		if (interruptedElsewhere) for (const line of interruptedElsewhere.lines()) ctx.ui.notify(line, "info");
+		logSlowPhase("cross-session-notice", phaseStartedAt);
 		// Before any stored result is delivered, so the interrupted run's notice can name its resume.
 		phaseStartedAt = Date.now();
 		const autoResumeLaunchGeneration = ++autoResumeGeneration;
