@@ -288,10 +288,8 @@ describe("result watcher", () => {
 			write("workflow-child", { completionOwnerId: "owner-exited-workflow", completionOwnerProcess: { pid: exitedPid }, parentWorkflowRunId: "workflow-1" });
 			write("other-session", { sessionId: "session-other", completionOwnerId: "owner-exited-other", completionOwnerProcess: { pid: exitedPid } });
 			try {
-				watcher.primeExistingResults();
-				assert.equal(await waitForPredicate(() => delivered.length === 1), true);
-				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 100));
+				await watcher.deliverPendingResults();
+				await watcher.deliverPendingResults();
 				assert.deepEqual(delivered, [{ id: "exited-owner", completionOwnerId: "owning-session" }]);
 				assert.equal(fs.existsSync(path.join(resultsDir, "exited-owner.json")), false);
 				assert.equal(fs.existsSync(path.join(resultsDir, "live-owner.json")), true);

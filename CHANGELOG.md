@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- A background run still working when Pi exited or crashed never reported its result, even after you reopened its session. Its result now shows once in the reopened session, right away if the run already finished or as soon as it finishes. Another Pi window open on the same session still doesn't receive it.
+- A background run still working when Pi exited or crashed never reported its result, even after you reopened its session. Its result now shows once in the reopened session, right away if the run already finished or as soon as it finishes. While the Pi that started the run is still open, other Pi windows on the same session still don't receive it.
 - A host-required child extension (`registerRequiredChildExtensions`) is now recognized when Pi loads it under another spelling of its path, such as a symlink, a case variant, or a path with a Unicode space, so its load, provider-registration and startup failures still stop the launch. A required extension that Pi did not load at all now rejects the launch instead of letting the child start without it. Thanks to [@pandalaohe](https://github.com/pandalaohe) for #3012.
 - Skill discovery no longer fails with `ENOTDIR` when a `settings.json` `packages` entry names a single extension file. Thanks to [@tara-marchand](https://github.com/tara-marchand) for #3011.
 - Herdr-placed native Pi children no longer fail their bridge configure step. The bridge read the child's active tools from the event context, which does not carry them, instead of from the Pi API, so it saw no tools and rejected every configuration.
