@@ -24,6 +24,7 @@ import { resolveWatchPath } from "../../shared/utils.ts";
 import { FileLeaseBusyError } from "../../shared/file-lease.ts";
 import { recordWaitCompletion } from "./wait-completions.ts";
 import { syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
+import { corruptRecordPath, shouldReportCorruptRecord } from "../../shared/corrupt-record-diagnostic.ts";
 import { acknowledgeMissionObserverSnapshot, missionObserverIndexPath, missionObserverResultCandidateFiles, promotePendingResultFile, readResultPayload, resultCandidateFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, resultSnapshotReplaced, retireResultSnapshot, withResultRunLease, writeAsyncResultFile, writeResultIndexForData, type ResultSnapshot } from "./result-files.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
@@ -427,7 +428,10 @@ export function createResultWatcher(
 				syncMissionFromAsyncCompletion({ ...data, runId });
 			} catch (error) {
 				observerSucceeded = false;
-				console.error(`Mission completion sync failed for '${resultPath}':`, error);
+				const corruptPath = corruptRecordPath(error);
+				if (!corruptPath || shouldReportCorruptRecord(corruptPath)) {
+					console.error(`Mission completion sync failed for '${resultPath}':`, error);
+				}
 			}
 			try {
 				deps.observeCompletion?.({ ...data, runId });

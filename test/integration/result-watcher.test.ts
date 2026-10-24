@@ -17,7 +17,7 @@ import { missionObserverIndexPath, resultPayloadPathForMissionObserverRun, write
 import { tryLease } from "../../src/shared/file-lease.ts";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
-import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
+import { prepareMissionLaunch, readMissionBinding, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
 import { readMission, updateMission } from "../../src/missions/store.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
@@ -484,6 +484,94 @@ describe("result watcher", () => {
 			assert.ok(child?.artifactPaths.includes(outputPath));
 			assert.ok(child?.artifactPaths.includes(path.join(asyncDir, "status.json")));
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("bounds corrupt mission completion diagnostics while preserving retry and targeted errors", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-corrupt-mission-"));
+		const resultsDir = path.join(root, "results");
+		const asyncDir = path.join(root, "async");
+		const project = path.join(root, "project");
+		fs.mkdirSync(resultsDir, { recursive: true });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(project, { recursive: true });
+		const originalError = console.error;
+		const errors: unknown[][] = [];
+		try {
+			const binding = prepareMissionLaunch({
+				params: { mission: { title: "Corrupt mission", objective: "Keep evidence" } },
+				projectRoot: project,
+				config: { directory: path.join(root, "missions"), globalIndexDir: path.join(root, "global-index") },
+				ownerSessionId: "session-current",
+			});
+			assert.ok(binding);
+			writeMissionAsyncBinding(asyncDir, binding);
+			const bindingPath = path.join(asyncDir, "mission.json");
+			const corruptBinding = Buffer.from([0, 0, 0]);
+			fs.writeFileSync(bindingPath, corruptBinding);
+			assert.throws(() => readMissionBinding(asyncDir), /Invalid mission binding file/);
+			const resultPath = path.join(resultsDir, "corrupt-binding.json");
+			writeIndexedResult(resultPath, { id: "corrupt-binding", runId: "corrupt-binding", sessionId: "session-current", asyncDir, state: "complete", success: true });
+			console.error = (...args: unknown[]) => { errors.push(args); };
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				notifier: { deliver: async () => true },
+			});
+			try {
+				watcher.primeExistingResults();
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				assert.equal(errors.filter((args) => String(args[0]).includes("Mission completion sync failed")).length, 1);
+				assert.equal(fs.existsSync(resultPath), true, "corrupt mission completion stays unacknowledged and retryable");
+				assert.deepEqual(fs.readFileSync(bindingPath), corruptBinding);
+				watcher.primeExistingResults();
+				await new Promise((resolve) => setTimeout(resolve, 150));
+				assert.equal(errors.filter((args) => String(args[0]).includes("Mission completion sync failed")).length, 1, "unchanged corrupt binding emits one diagnostic across retries");
+				assert.equal(fs.existsSync(resultPath), true, "retry behavior remains fail-closed");
+				const validBinding = JSON.stringify({
+					schemaVersion: 1,
+					missionId: binding.missionId,
+					projectRoot: binding.location.projectRoot,
+					missionDir: binding.location.missionDir,
+					globalIndexDir: binding.location.globalIndexDir,
+					writeGlobalIndex: binding.location.writeGlobalIndex,
+				});
+				fs.writeFileSync(bindingPath, validBinding);
+				const missionPath = path.join(binding.location.missionDir, `${binding.missionId}.json`);
+				const originalMission = readMission(binding.location, binding.missionId);
+				const corruptMission = Buffer.from([0, 0, 0]);
+				fs.writeFileSync(missionPath, corruptMission);
+				assert.throws(() => readMission(binding.location, binding.missionId), /Invalid mission file/);
+				watcher.stopResultWatcher();
+				const missionResultPath = path.join(resultsDir, "corrupt-mission-record.json");
+				writeIndexedResult(missionResultPath, { id: "corrupt-mission-record", runId: "corrupt-mission-record", sessionId: "session-current", asyncDir, state: "complete", success: true });
+				const missionRetryState = createState();
+				missionRetryState.currentSessionId = "session-current";
+				const missionRetryWatcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, missionRetryState, resultsDir, 60_000, {
+					notifier: { deliver: async () => true },
+				});
+				try {
+					missionRetryWatcher.primeExistingResults();
+					await new Promise((resolve) => setTimeout(resolve, 150));
+					assert.equal(errors.filter((args) => String(args[0]).includes("Mission completion sync failed")).length, 2, "corrupt mission record is diagnosed");
+					assert.equal(fs.existsSync(missionResultPath), true, "corrupt record remains retryable");
+					assert.deepEqual(fs.readFileSync(missionPath), corruptMission);
+					missionRetryWatcher.primeExistingResults();
+					await new Promise((resolve) => setTimeout(resolve, 150));
+					assert.equal(errors.filter((args) => String(args[0]).includes("Mission completion sync failed")).length, 2, "unchanged corrupt mission record warning is bounded");
+					fs.writeFileSync(missionPath, JSON.stringify(originalMission));
+					missionRetryWatcher.primeExistingResults();
+					assert.equal(await waitForPredicate(() => !fs.existsSync(missionResultPath)), true, "repaired record retries and is reconciled");
+				} finally {
+					missionRetryWatcher.stopResultWatcher();
+				}
+			} finally {
+				watcher.stopResultWatcher();
+			}
+		} finally {
+			console.error = originalError;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

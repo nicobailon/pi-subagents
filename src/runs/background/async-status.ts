@@ -29,6 +29,7 @@ import { formatWorkflowChecklistText, projectWorkflowChecklist } from "../../wor
 import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 import { childWatchdogProgressForModel } from "../../watchdog/child-status.ts";
 import { ownerSessionIds } from "../shared/run-ownership.ts";
+import { shouldReportCorruptRecord } from "../../shared/corrupt-record-diagnostic.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -207,7 +208,9 @@ function isolateCorruptActiveRun(asyncDir: string, runId: string, error: unknown
 			markerAction = `failed to release active marker: ${getErrorMessage(releaseError)}`;
 		}
 	}
-	console.error(`[pi-subagents] Skipping corrupt active async run '${runId}' at '${statusPath}': ${getErrorMessage(error)}; ${markerAction}.`);
+	if (shouldReportCorruptRecord(statusPath)) {
+		console.error(`[pi-subagents] Skipping corrupt active async run '${runId}' at '${statusPath}': ${getErrorMessage(error)}; ${markerAction}.`);
+	}
 }
 
 function isNotFoundError(error: unknown): boolean {
