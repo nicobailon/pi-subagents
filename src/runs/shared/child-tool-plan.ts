@@ -208,11 +208,14 @@ function isPiToolModifier(entry: string): boolean {
 /**
  * A child's `tools` list is a complete allowlist. Read as names, Pi's modifier
  * entries would become required tools no child has, or mix with the names the
- * plan adds into a list Pi rejects.
+ * plan adds into a list Pi rejects. The placed-Pi bridge resolves the remote
+ * agent definition itself, so it checks that list with this too.
  */
-function formatToolModifierEntriesError(agentName: string | undefined, entries: readonly string[]): string {
+export function assertNoToolModifierEntries(agentName: string | undefined, tools: readonly string[]): void {
+	const entries = tools.filter(isPiToolModifier);
+	if (entries.length === 0) return;
 	const subject = agentName ? `Agent '${agentName}'` : "Subagent";
-	return `${subject} lists Pi tool modifier ${entries.length === 1 ? "entry" : "entries"} in \`tools\`: ${entries.join(", ")}. A child's \`tools\` list is the complete set of tools it gets, so +name and -name entries are not supported; name every tool the child needs, or omit \`tools\` and use \`excludeTools\` to drop one.`;
+	throw new Error(`${subject} lists Pi tool modifier ${entries.length === 1 ? "entry" : "entries"} in \`tools\`: ${entries.join(", ")}. A child's \`tools\` list is the complete set of tools it gets, so +name and -name entries are not supported; name every tool the child needs, or omit \`tools\` and use \`excludeTools\` to drop one.`);
 }
 
 export function projectLaunchResolvedChildExtensions(
@@ -321,10 +324,7 @@ export function resolvePiLaunchToolPlan(
 			(tool) =>
 				!(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")),
 		) ?? [];
-	const toolModifierEntries = requestedBuiltinTools.filter(isPiToolModifier);
-	if (toolModifierEntries.length > 0) {
-		throw new Error(formatToolModifierEntriesError(input.agentName, toolModifierEntries));
-	}
+	assertNoToolModifierEntries(input.agentName, requestedBuiltinTools);
 	if (input.requireReadTool && allowedToolSet && !allowedToolSet.has("read")) {
 		throw new Error(
 			`Capability ceiling from ${capabilityCeiling?.sources.join(", ") || "unknown source"} excludes required tool 'read' for lazy skill loading.`,
