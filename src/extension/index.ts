@@ -77,6 +77,9 @@ import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./
 import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
 import { formatWorkflowPreflightSummary, normalizeWorkflowPreflight } from "../workflows/workflow-preflight.ts";
 import { runtimeReplacedAbortReason } from "../workflows/workflow-reuse.ts";
+import { autoResumeFailureText, planWorkflowAutoResumes, WORKFLOW_AUTO_RESUME_MESSAGE_TYPE } from "../workflows/workflow-auto-resume.ts";
+import { recordWorkflowResumeRefusal, releaseWorkflowResumeClaim } from "../workflows/workflow-resume-claim.ts";
+import { workflowResumeLaunched, workflowResumeRefusal, type PreparedWorkflowResume } from "../workflows/workflow-resume.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { flattenSubagentToolOptions } from "./subagent-options.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
@@ -621,7 +624,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	// Pi sends custom messages to the model as plain user messages, so every model-visible
 	// pi-subagents message is wrapped in a marker naming its source. The marker depends only on
 	// the message, so history renders the same bytes every turn and cached prefixes stay valid.
-	const markedMessageTypes = new Set([...SUBAGENT_MESSAGE_TYPES, "subagent-compaction-resume", SLASH_RESULT_TYPE, SLASH_TEXT_RESULT_TYPE, ADMIN_MESSAGE_TYPE]);
+	const markedMessageTypes = new Set([...SUBAGENT_MESSAGE_TYPES, "subagent-compaction-resume", SLASH_RESULT_TYPE, SLASH_TEXT_RESULT_TYPE, ADMIN_MESSAGE_TYPE, WORKFLOW_AUTO_RESUME_MESSAGE_TYPE]);
 	pi.on("context", (event) => {
 		const messages: typeof event.messages = [];
 		for (const message of event.messages) {
@@ -644,7 +647,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return { messages };
 	});
 
-	pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
+	const renderPlainTextMessage = (message: { content: string | Array<{ type: string; text?: string }> }) => {
 		const content = typeof message.content === "string"
 			? message.content
 			: message.content
@@ -652,11 +655,42 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				.map((entry) => entry.text)
 				.join("\n");
 		return new Text(content, 0, 0);
-	});
+	};
+	pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message) => renderPlainTextMessage(message));
+	pi.registerMessageRenderer<undefined>(WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, (message) => renderPlainTextMessage(message));
 
 	const executeSubagentReady = async (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
 		await waitForAdvertisement();
 		return (await getExecutor()).executePublic(id, params, signal, onUpdate, ctx);
+	};
+	// Each session start claims its interrupted workflows synchronously, then launches them here, off
+	// session start. A launch from a runtime that was cleaned up or reset since gives its claim back.
+	let autoResumeGeneration = 0;
+	const launchWorkflowAutoResume = async (prepared: PreparedWorkflowResume, ctx: ExtensionContext, generation: number): Promise<void> => {
+		try {
+			// Let the rest of session start (agent advertisement, other handlers) run first.
+			await new Promise((resolve) => setImmediate(resolve));
+			await waitForAdvertisement();
+			if (runtimeCleaned || generation !== autoResumeGeneration) {
+				releaseWorkflowResumeClaim(prepared.sourceAsyncDir, prepared.newRunId);
+				return;
+			}
+			const outcome = await (await getExecutor()).executeWorkflowResume(randomUUID(), prepared, new AbortController().signal, ctx);
+			if (outcome.launched || !outcome.refusal) return;
+			pi.sendMessage({ customType: WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, content: autoResumeFailureText(prepared.sourceRunId, outcome.refusal), display: true }, { triggerTurn: false });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			console.error(`Failed to auto-resume workflow ${prepared.sourceRunId}:`, error);
+			try {
+				if (workflowResumeLaunched(prepared)) return;
+				releaseWorkflowResumeClaim(prepared.sourceAsyncDir, prepared.newRunId);
+				const refusal = workflowResumeRefusal("launch-failed", `launch failed: ${message}`, prepared.sourceRunId);
+				recordWorkflowResumeRefusal(prepared.sourceAsyncDir, { reason: refusal.reason, byHand: refusal.byHand, newRunId: prepared.newRunId });
+				pi.sendMessage({ customType: WORKFLOW_AUTO_RESUME_MESSAGE_TYPE, content: autoResumeFailureText(prepared.sourceRunId, refusal), display: true }, { triggerTurn: false });
+			} catch (cleanupError) {
+				console.error(`Failed to give back the auto-resume claim of workflow ${prepared.sourceRunId}:`, cleanupError);
+			}
+		}
 	};
 	const executeSubagentCollapsed = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
 		if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
@@ -959,6 +993,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		phaseStartedAt = Date.now();
 		restoreActiveJobs(ctx);
 		logSlowPhase("active-job-restore", phaseStartedAt);
+		// Before any stored result is delivered, so the interrupted run's notice can name its resume.
+		phaseStartedAt = Date.now();
+		const autoResumeLaunchGeneration = ++autoResumeGeneration;
+		if (recovering && config.autoResume !== false) {
+			for (const prepared of planWorkflowAutoResumes({ asyncDirRoot: DIRS.async, currentSessionId: state.currentSessionId, now: Date.now() })) {
+				void launchWorkflowAutoResume(prepared, ctx, autoResumeLaunchGeneration);
+			}
+		}
+		logSlowPhase("workflow-auto-resume", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		scheduledRunManager.bindSession(ctx);
 		logSlowPhase("scheduled-runs", phaseStartedAt);

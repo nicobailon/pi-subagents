@@ -2727,6 +2727,8 @@ export interface ActiveAsyncCapacityConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Relaunch this session's interrupted async workflows when the session is reopened or reloaded (default true). */
+	autoResume?: boolean;
 	/** Set the context for launches that omit an explicit context. */
 	defaultSubagentContext?: "fresh" | "fork";
 	/** Configure how every resolved fork session is prepared before child spawn. */
