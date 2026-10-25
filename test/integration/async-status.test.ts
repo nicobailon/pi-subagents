@@ -8,6 +8,7 @@ import { formatAsyncRunList, formatWorkflowStageLine, listAsyncRuns } from "../.
 import { ACTIVE_RUN_INDEX_DIR, DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
 import { TERMINAL_RUN_INDEX_DIR } from "../../src/runs/background/terminal-run-index.ts";
+import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 
 function createAsyncDir(root: string, id: string, status: Record<string, unknown>): string {
@@ -1361,6 +1362,118 @@ describe("async status helpers", () => {
 			assert.equal(diagnostics.filter((line) => line.includes("corrupt status")).length, 2);
 		} finally {
 			console.error = originalError;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("validates indexed terminal summary fields before reconciliation can rewrite status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-terminal-reconcile-"));
+		const resultsDir = path.join(root, "results");
+		const originalReadFileSync = fsDefault.readFileSync;
+		const originalError = console.error;
+		const diagnostics: string[] = [];
+		try {
+			console.error = (...args: unknown[]) => diagnostics.push(args.map(String).join(" "));
+			const runId = "terminal-bad-output-reconcile";
+			const runDir = createAsyncDir(root, runId, {
+				runId,
+				sessionId: "session-a",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				endedAt: 200,
+				outputFile: { invalid: true },
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			const statusPath = path.join(runDir, "status.json");
+			const malformedRunningStatus = Buffer.from(JSON.stringify({
+				runId,
+				sessionId: "session-a",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 100,
+				pid: 12345,
+				outputFile: { invalid: true },
+				steps: [{ agent: "worker", status: "running" }],
+			}));
+			writeAsyncResultFile(path.join(resultsDir, `${runId}.json`), {
+				id: runId,
+				runId,
+				sessionId: "session-a",
+				state: "complete",
+				success: true,
+				summary: "completed",
+				results: [{ agent: "worker", success: true, output: "done" }],
+			});
+			const terminalMarker = path.join(root, TERMINAL_RUN_INDEX_DIR, encodeIndexSegment("session-a"), "0000000000000200-terminal-bad-output-reconcile.json");
+			const indexBytes = fs.readFileSync(terminalMarker);
+			// Invalidate readStatus's cache so the index reader reads the terminal bytes below.
+			const statusMtime = fs.statSync(statusPath).mtimeMs;
+			fs.utimesSync(statusPath, new Date(statusMtime + 2000), new Date(statusMtime + 2000));
+			let changedAfterAdmission = false;
+			fsDefault.readFileSync = ((filePath: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+				const value = (originalReadFileSync as (...values: unknown[]) => Buffer | string)(filePath, ...args);
+				if (!changedAfterAdmission && String(filePath) === statusPath) {
+					changedAfterAdmission = true;
+					fs.writeFileSync(statusPath, malformedRunningStatus);
+				}
+				return value;
+			}) as typeof fsDefault.readFileSync;
+			syncBuiltinESMExports();
+
+			const runs = listAsyncRuns(root, { sessionId: "session-a", states: ["complete"], resultsDir });
+			assert.equal(changedAfterAdmission, true);
+			assert.equal(runs.some((run) => run.id === runId), false);
+			fsDefault.readFileSync = originalReadFileSync;
+			syncBuiltinESMExports();
+			assert.deepEqual(fs.readFileSync(statusPath), malformedRunningStatus);
+			assert.deepEqual(fs.readFileSync(terminalMarker), indexBytes);
+			assert.ok(diagnostics.some((line) => line.includes(runId) && line.includes("outputFile must be a string")));
+		} finally {
+			fsDefault.readFileSync = originalReadFileSync;
+			syncBuiltinESMExports();
+			console.error = originalError;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("propagates terminal status I/O failures after index admission", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-terminal-io-"));
+		const originalStatSync = fsDefault.statSync;
+		const runId = "terminal-io-failure";
+		const statusPath = path.join(root, runId, "status.json");
+		try {
+			createAsyncDir(root, runId, {
+				runId,
+				sessionId: "session-a",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				endedAt: 200,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			const indexMarker = path.join(root, TERMINAL_RUN_INDEX_DIR, encodeIndexSegment("session-a"), "0000000000000200-terminal-io-failure.json");
+			const statusBytes = fs.readFileSync(statusPath);
+			const indexBytes = fs.readFileSync(indexMarker);
+			let statusStats = 0;
+			fsDefault.statSync = ((filePath: fs.PathLike, ...args: unknown[]) => {
+				if (String(filePath) === statusPath && ++statusStats === 2) {
+					const error = new Error("injected status read failure") as NodeJS.ErrnoException;
+					error.code = "EIO";
+					throw error;
+				}
+				return (originalStatSync as (...values: unknown[]) => fs.Stats)(filePath, ...args);
+			}) as typeof fsDefault.statSync;
+			syncBuiltinESMExports();
+
+			assert.throws(() => listAsyncRuns(root, { sessionId: "session-a", states: ["complete"] }), /Failed to inspect async status file/);
+			assert.equal(statusStats, 2);
+			assert.deepEqual(fs.readFileSync(statusPath), statusBytes);
+			assert.deepEqual(fs.readFileSync(indexMarker), indexBytes);
+		} finally {
+			fsDefault.statSync = originalStatSync;
+			syncBuiltinESMExports();
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

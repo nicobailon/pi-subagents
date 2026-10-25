@@ -185,6 +185,24 @@ function isAsyncStatusIsolationError(asyncDir: string, error: unknown): boolean 
 		|| /^(workflowChildren|Invalid workflowChildren)/.test(message);
 }
 
+function isAsyncStatusCorruptionError(asyncDir: string, error: unknown): boolean {
+	const statusPath = path.join(asyncDir, "status.json");
+	const message = getErrorMessage(error);
+	return message.startsWith(`Failed to parse async status file '${statusPath}'`)
+		|| message.startsWith(`Failed to validate async status file '${statusPath}'`)
+		|| message.startsWith(`Invalid async status file '${statusPath}'`)
+		|| message.startsWith(`Invalid async status '${statusPath}'`)
+		|| message.startsWith(`Invalid host step '${statusPath}`)
+		|| /^(workflowChildren|Invalid workflowChildren)/.test(message);
+}
+
+function validateIndexedTerminalStatusForReconciliation(asyncDir: string, status: AsyncStatus): void {
+	const statusPath = path.join(asyncDir, "status.json");
+	if (status.outputFile !== undefined && typeof status.outputFile !== "string") {
+		throw new Error(`Invalid async status '${statusPath}': outputFile must be a string.`);
+	}
+}
+
 // Status path -> last logged signature. A corrupt run is re-scanned on every
 // status poll, so the line repeats only when the file or the outcome changes.
 const reportedCorruptStatus = new Map<string, string>();
@@ -592,6 +610,11 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		const asyncDir = path.join(asyncDirRoot, entry);
 		let status: (AsyncStatus & { cwd?: string }) | null;
 		try {
+			// Validate terminal summary fields before reconciliation can repair and rewrite status.
+			if (terminalEntries.has(entry)) {
+				const indexedStatus = readStatus(asyncDir);
+				if (indexedStatus) validateIndexedTerminalStatusForReconciliation(asyncDir, indexedStatus);
+			}
 			// Reconciliation can rewrite state; session-scoped discovery does not own foreign runs.
 			let owned = false;
 			if (owners) {
@@ -610,12 +633,13 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			if (options.reconcile === false) observeStatus?.(status);
 		} catch (error) {
 			observeStatus?.(null);
-			if (!isAsyncStatusIsolationError(asyncDir, error)) throw error;
 			if (activeEntries.has(entry)) {
+				if (!isAsyncStatusIsolationError(asyncDir, error)) throw error;
 				isolateCorruptActiveRun(asyncDir, entry, error, options.now);
 				continue;
 			}
 			if (terminalEntries.has(entry)) {
+				if (!isAsyncStatusCorruptionError(asyncDir, error)) throw error;
 				warnCorruptIndexedTerminalRun(asyncDir, entry, error);
 				continue;
 			}
@@ -655,12 +679,13 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			summary = statusToSummary(asyncDir, status, nestedWarnings, nestedRoute);
 		} catch (error) {
 			observeStatus?.(null);
-			if (!isAsyncStatusIsolationError(asyncDir, error)) throw error;
 			if (activeEntries.has(entry)) {
+				if (!isAsyncStatusIsolationError(asyncDir, error)) throw error;
 				isolateCorruptActiveRun(asyncDir, entry, error, options.now);
 				continue;
 			}
 			if (terminalEntries.has(entry)) {
+				if (!isAsyncStatusCorruptionError(asyncDir, error)) throw error;
 				warnCorruptIndexedTerminalRun(asyncDir, entry, error);
 				continue;
 			}
