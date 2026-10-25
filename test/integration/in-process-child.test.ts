@@ -726,7 +726,7 @@ describe("default child session factory", () => {
 			await child.dispose();
 			process.stdout.write("disposed");
 		`;
-		const loader = new URL("../support/register-loader.mjs", import.meta.url).pathname;
+		const loader = new URL("../support/register-loader.mjs", import.meta.url).href;
 		const result = spawnSync(process.execPath, ["--experimental-strip-types", "--import", loader, "--input-type=module", "-e", script], { encoding: "utf8", timeout: 15_000 });
 		assert.equal(result.stdout, "disposed", result.stderr);
 		assert.equal(result.status, 0);
