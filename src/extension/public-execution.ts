@@ -64,8 +64,8 @@ export function isWorkflowScriptPath(workflow: string): boolean {
 }
 
 /**
- * Model tool calls supply script text only through workflow: true (the reply block) or a script path.
- * workflowScript remains the internal carrier for slash, prompt-workflow, scheduled, RPC, and named-resource launches.
+ * Model tool calls supply script text through workflow: true (the reply block), a script path, or options.script,
+ * which flattenSubagentToolOptions lowers to workflowScript, the internal carrier for every other launch path too.
  */
 export function removedModelWorkflowFieldError(params: object): string | undefined {
 	if (Object.hasOwn(params, "workflowScript")) return REMOVED_WORKFLOW_SCRIPT;
@@ -110,7 +110,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		return { ok: false, error: "workflow must be true (the ```js workflow block in this reply), a script path containing '/', or a named workflow resource.", mode: "workflow" };
 	}
 	const hasNamedWorkflow = typeof workflow === "string" && !isWorkflowScriptPath(workflow);
-	// workflowScript is the internal script carrier; model tool calls cannot set it.
+	// workflowScript is the internal script carrier; model tool calls set it only through options.script.
 	if (workflow !== undefined && params.workflowScript !== undefined) {
 		return { ok: false, error: "workflow cannot be combined with an internal workflowScript.", mode: "workflow" };
 	}

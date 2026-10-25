@@ -4,7 +4,8 @@
 
 ### Fixed
 
-- Workflows no longer crash the parent on Windows standalone Pi builds using Bun 1.3.14 when its runtime transpiler cache is warm. Bun now loads the workflow worker from a package-owned file instead of an anonymous eval source; Node retains its existing eval-worker behavior, including inherited preload handling after cwd changes. No cache-clearing or global environment override is needed.
+- When text written after a tool call reaches Pi only as a summary, as happens through the Claude Agent SDK used by pi-claude-bridge, a lost ```` ```js workflow ```` block no longer means writing the script to a file first. The error now says to resend the source as `options: { script: "..." }`, which runs it directly. The tool's schema and description are unchanged, so other providers see no difference.
+- Workflows no longer crash on Windows standalone Pi builds (Bun 1.3.14) once Bun's transpiler cache is warm: Bun now starts the workflow worker from a file in the package instead of anonymous eval source. Thanks to [@temoc](https://github.com/temoc). (#3055)
 
 ## [0.82.1] - 2026-10-24
 

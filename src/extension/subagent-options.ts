@@ -22,6 +22,13 @@ export function flattenSubagentToolOptions(params: Record<string, unknown>, disa
 	if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error("subagent: options must be an object.");
 	const removedField = removedModelWorkflowFieldError(options);
 	if (removedField) throw new Error(removedField);
+	// options.script carries script text as a tool argument for hosts that drop the reply's ```js block (SUMMARY_NOTE).
+	const { script, ...rest } = options as Record<string, unknown>;
+	if (script !== undefined) {
+		if (typeof script !== "string" || !script.trim()) throw new Error("subagent: options.script must be the workflow script's source text.");
+		if (topLevel.workflow !== undefined) throw new Error("subagent: options.script replaces workflow; pass one of them.");
+		return { ...flattenSubagentToolOptions({ ...topLevel, options: rest }, disabled), workflowScript: script } as SubagentParamsLike;
+	}
 	const entries = Object.entries(options);
 	const enabledKeys = SUBAGENT_OPTION_KEYS.filter((key) => !disabled?.params.has(key));
 	const unknown = entries.map(([key]) => key).filter((key) => !optionKeys.has(key));
