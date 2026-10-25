@@ -4,8 +4,12 @@
 
 ### Fixed
 
+- After the first subagent notice in a conversation, the first request of every new turn missed the prompt cache on models that take system messages mid-conversation, so most of the context was sent uncached again each turn. Marking pi-subagents notices for the model made Pi fold every mid-conversation system message into the leading prompt; the notices are now marked without moving Pi's system messages (#3058). Thanks to [@adameq](https://github.com/adameq) for the report.
 - When text written after a tool call reaches Pi only as a summary, as happens through the Claude Agent SDK used by pi-claude-bridge, a lost ```` ```js workflow ```` block no longer means writing the script to a file first. The error now says to resend the source as `options: { script: "..." }`, which runs it directly. The tool's schema and description are unchanged, so other providers see no difference.
 - Workflows no longer crash on Windows standalone Pi builds (Bun 1.3.14) once Bun's transpiler cache is warm: Bun now starts the workflow worker from a file in the package instead of anonymous eval source. Thanks to [@temoc](https://github.com/temoc). (#3055)
+- `subagent` calls from providers that send nested tool values as strings, such as `options: { capabilities: "true", timeoutMs: "120000" }`, no longer fail with "must be boolean" or "must be integer". Values inside `options` now get the same type conversion Pi already applies to top-level parameters. (#3048) Thanks to [@5hiri](https://github.com/5hiri) for the report and [@isjiajia01](https://github.com/isjiajia01) for narrowing it down.
+- Child transcripts in `/subagents-fleet`, `subagent` status and inspect replies show each tool call's input again (`[tool: bash {"command":"ls"}]`) instead of the bare tool name. The transcript reader looked for the input under `args`, but Pi saves it under `arguments`. Thanks to [@kunkun9527](https://github.com/kunkun9527) for the report. (#3053)
+- Background subagents that finished their work no longer end as "exited with code 0 before writing a result". When a child stopped after its final reply without reporting that it had settled, or when one of its extensions hung on shutdown, the background runner process exited with the result still unwritten. It now ends the child after its final reply, waits for any compaction that runs after that reply, and waits at most 5 seconds for shutdown handlers, so the result is always written. Thanks to [@perriea](https://github.com/perriea). (#3051)
 
 ## [0.82.1] - 2026-10-24
 

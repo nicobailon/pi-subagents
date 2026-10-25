@@ -711,6 +711,26 @@ describe("default child session factory", () => {
 		(await factory.create(stubLaunch)).dispose();
 		await factory.dispose();
 	});
+
+	// A detached runner has nothing else keeping Node alive while a child's shutdown handler hangs.
+	// If the bound did not hold the event loop, the process would exit with the disposal still pending
+	// and the runner would never publish its result (#3051).
+	it("finishes a stuck session_shutdown disposal in a process with nothing else pending", { timeout: 20_000 }, () => {
+		const childSession = new URL("../../src/runs/shared/child-session.ts", import.meta.url).href;
+		const script = `
+			import { createDefaultChildSessionFactory } from ${JSON.stringify(childSession)};
+			const session = { bindExtensions: async () => {}, dispose() {}, extensionRunner: { hasHandlers: () => true, emit: () => new Promise(() => {}) }, subscribe: () => () => {}, prompt: async () => {}, abort: async () => {}, steer: async () => {}, followUp: async () => {}, messages: [], sessionId: "s" };
+			const pi = { ModelRuntime: { create: async () => ({}) }, SettingsManager: { create: () => ({}) }, DefaultResourceLoader: class { async reload() {} }, SessionManager: { inMemory: () => ({}) }, resolveCliModel: () => ({}), createAgentSession: async () => ({ session }) };
+			const factory = createDefaultChildSessionFactory({ shutdownTimeoutMs: 200, loadPiCodingAgent: async () => pi });
+			const child = await factory.create(${JSON.stringify(stubLaunch)});
+			await child.dispose();
+			process.stdout.write("disposed");
+		`;
+		const loader = new URL("../support/register-loader.mjs", import.meta.url).href;
+		const result = spawnSync(process.execPath, ["--experimental-strip-types", "--import", loader, "--input-type=module", "-e", script], { encoding: "utf8", timeout: 15_000 });
+		assert.equal(result.stdout, "disposed", result.stderr);
+		assert.equal(result.status, 0);
+	});
 });
 
 /** MCP connects after session_start. Its tool_call hook waits for the connection, not a separate registration timer. */

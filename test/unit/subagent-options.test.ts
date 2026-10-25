@@ -43,6 +43,13 @@ describe("subagent tool options", () => {
 		assert.throws(() => flattenSubagentToolOptions({ action: "status", view: "fleet", lines: 5, options: { view: "transcript", lines: 6 } }), { message: "subagent: 'view', 'lines' given both at the top level and in options with different values; give each once." });
 	});
 
+	it("converts option scalars a provider sent as strings to their declared types", () => {
+		assert.deepEqual(flattenSubagentToolOptions({ action: "list", options: { capabilities: "true" } }), { action: "list", capabilities: true });
+		assert.deepEqual(flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { timeoutMs: "120000", toolBudget: { hard: "3" } } }), { agent: "worker", task: "scan", timeoutMs: 120000, toolBudget: { hard: 3 } });
+		assert.deepEqual(flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { skill: "false", thinking: "false" } }), { agent: "worker", task: "scan", skill: "false", thinking: "false" });
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { timeoutMs: "soon" } }), /options\.timeoutMs must be integer/);
+	});
+
 	it("points typos, aliases and top-level fields inside options to the field to use", () => {
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { acceptence: "checked" } }), { message: /^subagent: unknown options key 'acceptence'\. Did you mean 'acceptance'\? Valid options: acceptance, additional, agentContract, / });
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { maxRuntimeMs: 1000 } }), { message: /^subagent: unknown options key 'maxRuntimeMs'; use options\.timeoutMs\. Valid options: / });

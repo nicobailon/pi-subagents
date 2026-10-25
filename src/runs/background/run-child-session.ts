@@ -202,6 +202,8 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 		let queuedDrainHold = false;
 		let compactionStartedReceived = false;
 		let afterCompactionSettlement = false;
+		let terminalAgentEndReceived = false;
+		let compactionAfterFinalOpen = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardFinishTimer: NodeJS.Timeout | undefined;
 		let watchdogTailTimer: NodeJS.Timeout | undefined;
@@ -339,7 +341,8 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			if (promptSettled || finalDrainTimer || settled) return;
 			finalDrainTimer = setTimeout(() => {
 				if (settled || promptSettled) return;
-				if (input.launch.capture.finalDrainHeld() || observeQueuedDrainHold()) {
+				// Pi runs auto-compaction after the final agent_end and only then emits agent_settled.
+				if (input.launch.capture.finalDrainHeld() || observeQueuedDrainHold() || compactionAfterFinalOpen) {
 					finalDrainTimer = undefined;
 					armFinalDrainTimer();
 					return;
@@ -353,14 +356,26 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					if (settled || promptSettled) return;
 					settle(undefined, true);
 				}, HARD_FINISH_MS);
-				finalHardFinishTimer.unref?.();
 			}, FINAL_STOP_GRACE_MS);
-			finalDrainTimer.unref?.();
 		}
-		const applyChildLifecycle = (action: ChildLifecycleAction): void => {
+		const applyChildLifecycle = (action: ChildLifecycleAction, event?: { type?: string; willRetry?: unknown }): void => {
 			if (action === "cancel-drain") {
+				// A non-retrying agent_end closes the turn, so it cancels the drain that ends
+				// this run. When the assistant already stopped cleanly it is the last event
+				// the child emits, so re-arm the drain here and keep the terminal stop:
+				// nothing else will arm it, and clearing it would report a settle timeout.
+				if (event?.type === "agent_end" && event.willRetry !== true && cleanTerminalAssistantStopReceived) {
+					agentSettledReceived = false;
+					terminalAgentEndReceived = true;
+					clearFinalDrainTimers();
+					clearWatchdogTailTimer();
+					startFinalDrain();
+					return;
+				}
 				cleanTerminalAssistantStopReceived = false;
 				agentSettledReceived = false;
+				terminalAgentEndReceived = false;
+				compactionAfterFinalOpen = false;
 				clearFinalDrainTimers();
 				clearWatchdogTailTimer();
 				return;
@@ -427,10 +442,16 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			if (event.type === "compaction_start") {
 				compactionStartedReceived = true;
 				if (agentSettledReceived) afterCompactionSettlement = true;
+				if (terminalAgentEndReceived) compactionAfterFinalOpen = true;
 			}
 			if (event.type === "compaction_end" && event.willRetry === true) {
 				compactionStartedReceived = false;
 				afterCompactionSettlement = false;
+			}
+			if (event.type === "compaction_end" && event.willRetry !== true && compactionAfterFinalOpen) {
+				compactionAfterFinalOpen = false;
+				clearFinalDrainTimers();
+				startFinalDrain();
 			}
 			if (event.type === "turn_start" || event.type === "agent_start" || event.type === "auto_retry_start") {
 				queuedDrainHold = false;
@@ -444,7 +465,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				agentSettledReceived = true;
 				afterCompactionSettlement = compactionStartedReceived;
 			}
-			applyChildLifecycle(lifecycleAction);
+			applyChildLifecycle(lifecycleAction, event);
 
 			if (isChildWatchdogStatusEvent(event)) {
 				if (!input.childWatchdog) return;

@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { Compile } from "typebox/compile";
+import { Value } from "typebox/value";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { closestMatch } from "../shared/edit-distance.ts";
@@ -44,11 +45,14 @@ export function flattenSubagentToolOptions(params: Record<string, unknown>, disa
 	}
 	const disabledKey = entries.find(([key]) => disabled?.params.has(key))?.[0];
 	if (disabledKey) throw new Error(`subagent option 'options.${disabledKey}' is disabled by config ${disabled!.params.get(disabledKey)}.`);
-	if (!optionsValidator.Check(options)) {
-		const errors = [...optionsValidator.Errors(options)].slice(0, 4).map((error) => `options${error.instancePath.replaceAll("/", ".")} ${error.message}`);
+	// Pi converts only the declared top-level parameters ("true" -> true); `options` is an untyped bag in the
+	// tool schema, so its values get the same conversion here. Some providers send nested scalars as strings.
+	const converted = Value.Convert(SubagentOptionParams, structuredClone(options)) as Record<string, unknown>;
+	if (!optionsValidator.Check(converted)) {
+		const errors = [...optionsValidator.Errors(converted)].slice(0, 4).map((error) => `options${error.instancePath.replaceAll("/", ".")} ${error.message}`);
 		throw new Error(`subagent: ${errors.join("; ")}.`);
 	}
-	const conflicts = entries.filter(([key, value]) => topLevel[key] !== undefined && !isDeepStrictEqual(topLevel[key], value)).map(([key]) => `'${key}'`);
+	const conflicts = Object.entries(converted).filter(([key, value]) => topLevel[key] !== undefined && !isDeepStrictEqual(topLevel[key], value)).map(([key]) => `'${key}'`);
 	if (conflicts.length > 0) throw new Error(`subagent: ${conflicts.join(", ")} given both at the top level and in options with different values; give each once.`);
-	return { ...topLevel, ...options } as SubagentParamsLike;
+	return { ...topLevel, ...converted } as SubagentParamsLike;
 }
