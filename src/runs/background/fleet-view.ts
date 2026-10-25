@@ -198,14 +198,14 @@ function sessionMessageParts(record: unknown): SessionTranscriptMessage[] {
 	const parts: SessionTranscriptMessage[] = [];
 	for (const part of content) {
 		if (!part || typeof part !== "object") continue;
-		const entry = part as { type?: unknown; text?: unknown; name?: unknown; toolName?: unknown; args?: unknown; result?: unknown; content?: unknown; isError?: unknown };
+		const entry = part as { type?: unknown; text?: unknown; name?: unknown; toolName?: unknown; arguments?: unknown; result?: unknown; content?: unknown; isError?: unknown };
 		if (typeof entry.text === "string") {
 			if (entry.text.trim()) parts.push({ role, kind: "text", text: entry.text });
 			continue;
 		}
 		if (entry.type === "toolCall" || entry.type === "tool_call") {
 			const name = typeof entry.name === "string" ? entry.name : typeof entry.toolName === "string" ? entry.toolName : "tool";
-			parts.push({ role, kind: "toolCall", name, text: `[tool: ${name}${entry.args === undefined ? "" : ` ${stringifyJsonPreview(entry.args)}`}]` });
+			parts.push({ role, kind: "toolCall", name, text: `[tool: ${name}${entry.arguments === undefined ? "" : ` ${stringifyJsonPreview(entry.arguments)}`}]` });
 			continue;
 		}
 		if (entry.type === "toolResult" || entry.type === "tool_result") {

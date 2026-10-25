@@ -43,6 +43,13 @@ describe("subagent tool options", () => {
 		assert.throws(() => flattenSubagentToolOptions({ action: "status", view: "fleet", lines: 5, options: { view: "transcript", lines: 6 } }), { message: "subagent: 'view', 'lines' given both at the top level and in options with different values; give each once." });
 	});
 
+	it("converts option scalars a provider sent as strings to their declared types", () => {
+		assert.deepEqual(flattenSubagentToolOptions({ action: "list", options: { capabilities: "true" } }), { action: "list", capabilities: true });
+		assert.deepEqual(flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { timeoutMs: "120000", toolBudget: { hard: "3" } } }), { agent: "worker", task: "scan", timeoutMs: 120000, toolBudget: { hard: 3 } });
+		assert.deepEqual(flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { skill: "false", thinking: "false" } }), { agent: "worker", task: "scan", skill: "false", thinking: "false" });
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { timeoutMs: "soon" } }), /options\.timeoutMs must be integer/);
+	});
+
 	it("points typos, aliases and top-level fields inside options to the field to use", () => {
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { acceptence: "checked" } }), { message: /^subagent: unknown options key 'acceptence'\. Did you mean 'acceptance'\? Valid options: acceptance, additional, agentContract, / });
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { maxRuntimeMs: 1000 } }), { message: /^subagent: unknown options key 'maxRuntimeMs'; use options\.timeoutMs\. Valid options: / });
@@ -94,6 +101,9 @@ describe("registered subagent tools with options", () => {
 			await assert.rejects(call({ action: "status", id: "missing-run", options: { view: "transcript", lines: 5 } }), /Transcript target: run missing-run/);
 			await assert.rejects(call({ action: "steer", id: "missing-run", message: "focus", options: { mode: "plan" } }), /action='steer' mode must be/);
 			assert.match(text(await call({ action: "schedule.create", workflow: "./flow.js", options: { every: "1h", name: "nightly" } })), /Trigger: every 1h/);
+			assert.match(text(await call({ action: "validate", options: { script: "return 1;" } })), /"ok":true/);
+			await assert.rejects(call({ action: "validate", options: { script: "return (;" } }), /Unexpected token/);
+			await assert.rejects(call({ workflow: true, options: { script: "return 1;" } }), /options\.script replaces workflow/);
 			await assert.rejects(call({ agent: "worker", task: "scan", options: { acceptance: "checked", timeoutMs: 3000000000 } }), /timeoutMs must be a positive integer no larger/);
 			const theme = { fg(_name, value) { return value; }, bold(value) { return value; } };
 			assert.match(tools.parent.renderCall({ workflow: true, options: { preflight: { version: 1, lanes: [] } } }, theme).text, /preflight/);

@@ -626,8 +626,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	// Pi sends custom messages to the model as plain user messages, so every model-visible
 	// pi-subagents message is wrapped in a marker naming its source. The marker depends only on
 	// the message, so history renders the same bytes every turn and cached prefixes stay valid.
+	// It runs on context_with_system, not context: Pi treats any change a context handler makes
+	// to the message list as a rewritten conversation and folds every mid-conversation system
+	// message into the leading one, which misses the prompt cache on every later turn.
 	const markedMessageTypes = new Set([...SUBAGENT_MESSAGE_TYPES, "subagent-compaction-resume", SLASH_RESULT_TYPE, SLASH_TEXT_RESULT_TYPE, ADMIN_MESSAGE_TYPE]);
-	pi.on("context", (event) => {
+	pi.on("context_with_system", (event) => {
 		const messages: typeof event.messages = [];
 		for (const message of event.messages) {
 			if (message.role !== "custom" || !markedMessageTypes.has(message.customType)) {

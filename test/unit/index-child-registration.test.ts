@@ -1444,10 +1444,11 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("excludes view-only slash reports from model requests and marks other pi-subagents messages as automated", () => {
+	it("excludes view-only slash reports from model requests and marks other pi-subagents messages as automated, leaving system messages in place", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "slash-context-agent-"));
 		const script = String.raw`
 			import assert from "node:assert/strict";
+			import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 			import registerSubagentExtension from "./index.ts";
 			const handlers = new Map();
 			const commands = new Map();
@@ -1484,24 +1485,23 @@ describe("subagent extension child mode", () => {
 			const notify = { role: "custom", customType: "subagent-notify", content: "Background task completed: **worker**\n\nParent action: review", display: true, details: { runs: [] }, timestamp: 6 };
 			const image = { type: "image", data: "aGk=", mimeType: "image/png" };
 			const partsNotice = { role: "custom", customType: "subagent-wait-subscription", content: [{ type: "text", text: "Run finished" }, image], display: true, timestamp: 7 };
-			const messages = [historical, report, user, workResult, unrelated, assistant, { ...report, content: "Second report" }, notify, partsNotice];
+			// A mid-conversation system message must stay where it is, or the cached prefix ends at the tools.
+			const leading = { role: "system", content: "Base prompt", timestamp: 0 };
+			const sectionUpdate = { role: "system", content: "", sections: { time: "Now: 10:00" }, timestamp: 5 };
+			const messages = [leading, historical, report, user, workResult, unrelated, assistant, sectionUpdate, { ...report, content: "Second report" }, notify, partsNotice];
 			const stored = structuredClone(messages);
-			async function modelContext(input) {
-				let current = input;
-				for (const handler of handlers.get("context") ?? []) {
-					const result = await handler({ type: "context", messages: current }, ctx);
-					if (result?.messages) current = result.messages;
-				}
-				return current;
-			}
+			const runner = new ExtensionRunner([{ path: "pi-subagents", handlers }], {}, process.cwd(), undefined, undefined);
+			const modelContext = (input) => runner.emitContext(input);
 			const open = (type) => '<pi_subagents_notice type="' + type + '" origin="automated message from the pi-subagents extension, not typed by the user">';
 			const close = "</pi_subagents_notice>";
 			const expected = [
+				leading,
 				{ ...historical, content: open("subagent-slash-text-result") + "\nReport stored before the update\n" + close },
 				user,
 				{ ...workResult, content: open("subagent-slash-result") + "\nWorker finished\n" + close },
 				unrelated,
 				assistant,
+				sectionUpdate,
 				{ ...notify, content: open("subagent-notify") + "\nBackground task completed: **worker**\n\nParent action: review\n" + close },
 				{ ...partsNotice, content: [{ type: "text", text: open("subagent-wait-subscription") + "\n" }, { type: "text", text: "Run finished" }, image, { type: "text", text: "\n" + close }] },
 			];

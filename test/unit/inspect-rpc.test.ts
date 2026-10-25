@@ -91,7 +91,7 @@ function makeDeps(root: string, resultsDir: string, state?: SubagentState): Insp
 
 const userMessage = (text: string) => ({ role: "user", content: text });
 const assistantMessage = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
-const toolCallMessage = (name: string, args: unknown) => ({ role: "assistant", content: [{ type: "toolCall", name, args }] });
+const toolCallMessage = (name: string, args: unknown) => ({ role: "assistant", content: [{ type: "toolCall", name, arguments: args }] });
 
 describe("inspect-rpc request parsing", () => {
 	it("parses positional args and --lines", () => {
@@ -204,6 +204,7 @@ describe("inspect-rpc reply content", () => {
 		assert.equal(reply.messages?.length, 3);
 		assert.equal(reply.messages?.[1]?.kind, "toolCall");
 		assert.equal(reply.messages?.[1]?.name, "bash");
+		assert.equal(reply.messages?.[1]?.text, `[tool: bash {"command":"ls"}]`);
 		const serialized = JSON.stringify(reply);
 		assert.equal(serialized.includes(sessionFile), false);
 		assert.equal(serialized.includes(root), false);
