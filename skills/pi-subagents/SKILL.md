@@ -48,12 +48,12 @@ needs.
 Use a script when later steps depend on earlier results, or for keyed,
 retried, aggregated, or resumed children. Write one ```` ```js workflow ````
 block in the reply and call `subagent({ workflow: true })` in the same reply.
-For a long script, or when a `workflow: true` call reports the block missing,
-write it to a file and pass `workflow: "./path.js"`. On Claude 5.x models (Opus
-5.5, Sonnet 5.5, Fable 5.1), use the file whenever the turn already made a tool
-call: text after one reaches the session as a summary without the block. Calls in one reply run at
-the same time, so write the file in one reply and `validate` or launch it in
-the next.
+For a long script, write it to a file and pass `workflow: "./path.js"`; calls in
+one reply run at the same time, so write the file in one reply and `validate` or
+launch it in the next. When a `workflow: true` call reports the block missing,
+pass the source as `options: { script: "..." }` in place of `workflow: true` for
+the rest of the turn: on some hosts, text after a tool call reaches the session
+as a summary without the block.
 
 ```js workflow
 const scan = await runs.run("scan", { label: "Map auth flow", agent: "scout", task: "..." });

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- When text written after a tool call reaches Pi only as a summary, as happens through the Claude Agent SDK used by pi-claude-bridge, a lost ```` ```js workflow ```` block no longer means writing the script to a file first. The error now says to resend the source as `options: { script: "..." }`, which runs it directly. The tool's schema and description are unchanged, so other providers see no difference.
+
 ## [0.82.1] - 2026-10-24
 
 ### Highlights

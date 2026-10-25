@@ -94,6 +94,9 @@ describe("registered subagent tools with options", () => {
 			await assert.rejects(call({ action: "status", id: "missing-run", options: { view: "transcript", lines: 5 } }), /Transcript target: run missing-run/);
 			await assert.rejects(call({ action: "steer", id: "missing-run", message: "focus", options: { mode: "plan" } }), /action='steer' mode must be/);
 			assert.match(text(await call({ action: "schedule.create", workflow: "./flow.js", options: { every: "1h", name: "nightly" } })), /Trigger: every 1h/);
+			assert.match(text(await call({ action: "validate", options: { script: "return 1;" } })), /"ok":true/);
+			await assert.rejects(call({ action: "validate", options: { script: "return (;" } }), /Unexpected token/);
+			await assert.rejects(call({ workflow: true, options: { script: "return 1;" } }), /options\.script replaces workflow/);
 			await assert.rejects(call({ agent: "worker", task: "scan", options: { acceptance: "checked", timeoutMs: 3000000000 } }), /timeoutMs must be a positive integer no larger/);
 			const theme = { fg(_name, value) { return value; }, bold(value) { return value; } };
 			assert.match(tools.parent.renderCall({ workflow: true, options: { preflight: { version: 1, lanes: [] } } }, theme).text, /preflight/);
