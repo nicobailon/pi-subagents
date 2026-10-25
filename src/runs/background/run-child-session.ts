@@ -169,6 +169,7 @@ function omitUndefined<T extends object>(value: T): T {
 
 const FINAL_STOP_GRACE_MS = 1000;
 const HARD_FINISH_MS = 3000;
+const DISPOSE_GRACE_MS = 2000;
 const ABORT_SETTLE_MS = 3000;
 
 export function runChildSession(input: RunChildSessionInput): Promise<RunChildSessionResult> {
@@ -353,12 +354,21 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					if (settled || promptSettled) return;
 					settle(undefined, true);
 				}, HARD_FINISH_MS);
-				finalHardFinishTimer.unref?.();
 			}, FINAL_STOP_GRACE_MS);
-			finalDrainTimer.unref?.();
 		}
-		const applyChildLifecycle = (action: ChildLifecycleAction): void => {
+		const applyChildLifecycle = (action: ChildLifecycleAction, event?: { type?: string; willRetry?: unknown }): void => {
 			if (action === "cancel-drain") {
+				// A non-retrying agent_end closes the turn, so it cancels the drain that ends
+				// this run. When the assistant already stopped cleanly it is the last event
+				// the child emits, so re-arm the drain here and keep the terminal stop:
+				// nothing else will arm it, and clearing it would report a settle timeout.
+				if (event?.type === "agent_end" && event.willRetry !== true && cleanTerminalAssistantStopReceived) {
+					agentSettledReceived = false;
+					clearFinalDrainTimers();
+					clearWatchdogTailTimer();
+					startFinalDrain();
+					return;
+				}
 				cleanTerminalAssistantStopReceived = false;
 				agentSettledReceived = false;
 				clearFinalDrainTimers();
@@ -444,7 +454,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				agentSettledReceived = true;
 				afterCompactionSettlement = compactionStartedReceived;
 			}
-			applyChildLifecycle(lifecycleAction);
+			applyChildLifecycle(lifecycleAction, event);
 
 			if (isChildWatchdogStatusEvent(event)) {
 				if (!input.childWatchdog) return;
@@ -567,7 +577,15 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				try { await session?.finishCommands?.(); }
 				catch (error) { commandError = error instanceof Error ? error.message : String(error); }
 			}
-			await Promise.resolve().then(() => session?.dispose()).catch(() => undefined);
+			// Bound the disposal: a child shutdown that never completes must not hold the
+			// runner open. The grace timer stays ref'd so the loop survives long enough for
+			// a disposal that does finish.
+			let disposeGraceTimer: ReturnType<typeof setTimeout> | undefined;
+			await Promise.race([
+				Promise.resolve().then(() => session?.dispose()).catch(() => undefined),
+				new Promise<void>((resolve) => { disposeGraceTimer = setTimeout(resolve, DISPOSE_GRACE_MS); }),
+			]);
+			clearTimeout(disposeGraceTimer);
 			return commandError;
 		};
 
