@@ -311,6 +311,14 @@ export interface ResolveSubagentModelOverrideOptions {
 	source?: ModelSource;
 	/** Called for warn-severity violations instead of `console.warn`. */
 	onWarn?: (violation: ModelScopeViolation) => void;
+	/**
+	 * Operator-forced model (user-settings `subagents.operatorModelOverride`,
+	 * carried on the discovered agent as `operatorForcedModel`). When set it
+	 * replaces both the explicit per-call model and the configured agent
+	 * model, and must resolve in the parent registry like an explicit
+	 * request — an unresolvable forced model fails the launch.
+	 */
+	forcedModel?: string;
 }
 
 function defaultScopeWarn(violation: ModelScopeViolation): void {
@@ -371,6 +379,13 @@ export function resolveSubagentModelOverride(
 	preferredProvider?: string,
 	options?: ResolveSubagentModelOverrideOptions,
 ): string | undefined {
+	const forcedModel = typeof options?.forcedModel === "string" && options.forcedModel.trim() && options.forcedModel.trim() !== INHERIT_MODEL
+		? options.forcedModel.trim()
+		: undefined;
+	if (forcedModel !== undefined) {
+		// Operator force wins over the explicit and configured models alike.
+		return resolveSubagentModelOverride(forcedModel, parentModel, availableModels, preferredProvider, { ...options, forcedModel: undefined, source: "explicit" });
+	}
 	const trimmed = typeof requestedModel === "string" ? requestedModel.trim() : "";
 	const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
 	if (!parentModel) throwForUnresolvedEnforcedReservedScope(options?.scope, explicit === undefined || options?.source === "inherited");
@@ -432,6 +447,8 @@ export interface ResolveModelSelectionOptions {
 	primaryModelFromParent?: boolean;
 	/** How the model was selected. */
 	origin?: ModelOrigin;
+	/** Evidence override: the model originally requested before operator force replaced it. */
+	requestedModel?: string;
 }
 
 export function resolveModelOrigin(input: {
@@ -440,7 +457,10 @@ export function resolveModelOrigin(input: {
 	parentModel?: ParentModel;
 	fromParent?: boolean;
 	storedOrigin?: ModelOrigin;
+	/** Operator-forced model: the selection is configuration-owned even when a per-call model was also supplied. */
+	forcedModel?: string;
 }): ModelOrigin {
+	if (typeof input.forcedModel === "string" && input.forcedModel.trim()) return "configured";
 	if (input.storedOrigin) return input.storedOrigin;
 	if (input.fromParent) return "inherited";
 	if (inheritsParentModel(input.explicitModel, input.agentModel, input.parentModel)) return "inherited";
@@ -466,7 +486,7 @@ export function resolveModelSelection(
 ): ModelSelectionEvidence {
 	if (!model) throwForUnresolvedEnforcedReservedScope(options?.scope, true);
 	const origin = options?.origin ?? (options?.primaryModelFromParent ? "inherited" : "configured");
-	const requestedModel = origin === "inherited" ? undefined : model;
+	const requestedModel = options?.requestedModel ?? (origin === "inherited" ? undefined : model);
 	const scopes = configuredScopes(options?.scope);
 	if (origin === "explicit" && model) {
 		const normalized = resolveRequiredSubagentModelCandidate(model.trim(), availableModels, preferredProvider);

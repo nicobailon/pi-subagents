@@ -2605,6 +2605,8 @@ export interface RunSyncOptions {
 	modelOverrideFromParent?: boolean;
 	/** How the launch model was selected: explicit per-call, configured agent primary, or inherited parent. */
 	modelOrigin?: "explicit" | "inherited" | "configured";
+	/** Evidence only: the model originally requested before operator force replaced it. */
+	requestedModel?: string;
 	/** Override the agent's default thinking level for this run */
 	thinkingOverride?: AgentConfig["thinking"];
 	thinkingCeiling?: ThinkingLevel;

@@ -31,6 +31,8 @@ import { validatePermissionRules, type PermissionRules } from "../runs/shared/pe
 import { parseThinkingLevel, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
 import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
 import { normalizeCapabilityCeilingAllowedAgents } from "../runs/shared/capability-ceiling.ts";
+import { operatorForcedModelForAgent, parseOperatorForceSettings, type OperatorForceSettings } from "./operator-force.ts";
+export { parseOperatorForceSettings, type OperatorForceSettings } from "./operator-force.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -152,6 +154,13 @@ export interface AgentConfig {
 	mcpDirectTools?: string[];
 	model?: string;
 	modelProvider?: string;
+	/**
+	 * Operator-forced virtual model (`policy/<id>`) from user-settings
+	 * `subagents.operatorModelOverride`. When set, launch model resolution
+	 * uses it above the agent definition, `agentOverrides`, and any per-call
+	 * model. Only ever set for native Pi agents without machine placement.
+	 */
+	operatorForcedModel?: string;
 	fast?: boolean;
 	thinking?: string | false;
 	systemPromptMode: SystemPromptMode;
@@ -216,6 +225,8 @@ interface SubagentSettings {
 	disableBuiltins?: boolean;
 	disableThinking?: boolean;
 	modelScope?: ModelScopeConfig;
+	/** Parsed only from the operator-owned (user) settings read; project settings never carry force authority. */
+	operatorForce?: OperatorForceSettings;
 }
 
 const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = { overrides: {}, providerOverrides: {} };
@@ -1219,7 +1230,7 @@ function parseBuiltinOverrideEntry(
 	return Object.keys(override).length > 0 ? override : undefined;
 }
 
-function readSubagentSettings(filePath: string | null): SubagentSettings {
+function readSubagentSettings(filePath: string | null, options: { operatorOwned?: boolean } = {}): SubagentSettings {
 	if (!filePath) return EMPTY_SUBAGENT_SETTINGS;
 	const settings = readSettingsFileStrict(filePath);
 	const subagents = settings.subagents;
@@ -1307,6 +1318,10 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		agentExcludeDirs = subagentsObject.agentExcludeDirs.map((item) => item.trim());
 	}
 	const modelScope = parseModelScopeConfig(subagentsObject.modelScope, { filePath });
+	// Operator force is user-settings-owned: it is parsed (and validated) only
+	// on the operator-owned read, so a project file can neither supply,
+	// shadow, nor break it.
+	const operatorForce = options.operatorOwned ? parseOperatorForceSettings(subagentsObject, filePath) : undefined;
 
 	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
 	const providerOverrides: Record<string, Record<string, BuiltinAgentOverrideConfig>> = {};
@@ -1326,6 +1341,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(disableBuiltins !== undefined ? { disableBuiltins } : {}),
 		...(disableThinking !== undefined ? { disableThinking } : {}),
 		...(modelScope !== undefined ? { modelScope } : {}),
+		...(operatorForce !== undefined ? { operatorForce } : {}),
 	};
 	if (agentOverrides && typeof agentOverrides === "object" && !Array.isArray(agentOverrides)) {
 		for (const [name, value] of Object.entries(agentOverrides)) {
@@ -1434,6 +1450,15 @@ function resolveSubagentMaxThinking(
 function applySubagentMaxThinking(agents: AgentConfig[], maxThinking: ThinkingLevel | undefined): AgentConfig[] {
 	if (maxThinking === undefined) return agents;
 	return agents.map((agent) => agent.maxThinking === maxThinking ? agent : { ...agent, maxThinking });
+}
+
+/** Stamps the operator-forced virtual model onto forced native agents; launch resolution reads it above every other model source. */
+function applyOperatorForce(agents: AgentConfig[], operatorForce: OperatorForceSettings | undefined): AgentConfig[] {
+	if (operatorForce === undefined) return agents;
+	return agents.map((agent) => {
+		const forcedModel = operatorForcedModelForAgent(operatorForce, agent);
+		return forcedModel === undefined || agent.operatorForcedModel === forcedModel ? agent : { ...agent, operatorForcedModel: forcedModel };
+	});
 }
 
 function resolveSubagentDefaultExtensions(
@@ -2854,7 +2879,7 @@ export function clearAgentDiscoveryCache(): void {
 function ensureSettingsForScope(sources: AgentDiscoverySources, scope: AgentScope, preferredModelProvider?: string): void {
 	if (scope !== "project" && sources.userSettings === undefined) {
 		if (sources.packageSubagentPaths.settingsErrors.user) throw sources.packageSubagentPaths.settingsErrors.user;
-		sources.userSettings = selectProviderOverrides(readSubagentSettings(sources.userSettingsPath), preferredModelProvider);
+		sources.userSettings = selectProviderOverrides(readSubagentSettings(sources.userSettingsPath, { operatorOwned: true }), preferredModelProvider);
 	}
 	if (scope !== "user" && sources.projectSettings === undefined) {
 		if (sources.packageSubagentPaths.settingsErrors.project) throw sources.packageSubagentPaths.settingsErrors.project;
@@ -2953,7 +2978,7 @@ function discoveryDiagnostics(sources: AgentDiscoverySources, scope: AgentScope)
 function buildEffectiveDiscovery(sources: AgentDiscoverySources, scope: AgentScope): AgentDiscoveryResult {
 	const configured = configuredAgentsForScope(sources, scope);
 	const merged = mergeAgentsForScope(scope, configured.user, configured.project, configured.builtin, configured.package);
-	const agents = applySubagentMaxThinking(merged.filter((agent) => agent.disabled !== true), configured.maxThinking);
+	const agents = applyOperatorForce(applySubagentMaxThinking(merged.filter((agent) => agent.disabled !== true), configured.maxThinking), configured.userSettings.operatorForce);
 	const disabledAgents = merged.filter((agent) => agent.disabled === true).map((agent) => agent.name);
 	return {
 		agents,
@@ -2989,10 +3014,10 @@ function buildAllDiscovery(sources: AgentDiscoverySources, includeChains: boolea
 		...Array.from(projectChainMap.values()),
 	];
 	return {
-		builtin: applySubagentMaxThinking(configured.builtin, configured.maxThinking),
-		package: applySubagentMaxThinking(configured.package, configured.maxThinking),
-		user: applySubagentMaxThinking(configured.user, configured.maxThinking),
-		project: applySubagentMaxThinking(configured.project, configured.maxThinking),
+		builtin: applyOperatorForce(applySubagentMaxThinking(configured.builtin, configured.maxThinking), configured.userSettings.operatorForce),
+		package: applyOperatorForce(applySubagentMaxThinking(configured.package, configured.maxThinking), configured.userSettings.operatorForce),
+		user: applyOperatorForce(applySubagentMaxThinking(configured.user, configured.maxThinking), configured.userSettings.operatorForce),
+		project: applyOperatorForce(applySubagentMaxThinking(configured.project, configured.maxThinking), configured.userSettings.operatorForce),
 		agentDiagnostics: [
 			...sources.builtinLoaded.diagnostics,
 			...sources.userLoaded.flatMap((loaded) => loaded.loaded.diagnostics),
@@ -3040,7 +3065,7 @@ function discoverAgentsUncached(cwd: string, scope: AgentScope, preferredModelPr
 	const { readDirs: projectAgentDirs, candidateDirs: projectCandidateDirs, preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(effectiveCwd);
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = getProjectAgentSettingsPath(effectiveCwd);
-	const userSettings = selectProviderOverrides(scope === "project" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(userSettingsPath), preferredModelProvider);
+	const userSettings = selectProviderOverrides(scope === "project" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(userSettingsPath, { operatorOwned: true }), preferredModelProvider);
 	const projectSettings = selectProviderOverrides(scope === "user" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(projectSettingsPath), preferredModelProvider);
 	const defaultProvider = resolveSubagentDefaultProvider(userSettings, projectSettings, projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath, defaultProvider);
@@ -3080,7 +3105,7 @@ function discoverAgentsUncached(cwd: string, scope: AgentScope, preferredModelPr
 	for (const loaded of packageLoaded) for (const agent of loaded.agents) if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);
 	const packageAgents = applyCustomAgentOverrides(applyDefaults(Array.from(packageMap.values())), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
 	const merged = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents);
-	const agents = applySubagentMaxThinking(merged.filter((agent) => agent.disabled !== true), maxThinking);
+	const agents = applyOperatorForce(applySubagentMaxThinking(merged.filter((agent) => agent.disabled !== true), maxThinking), userSettings.operatorForce);
 	const disabledAgents = merged.filter((agent) => agent.disabled === true).map((agent) => agent.name);
 	const agentDiagnostics = [...builtinLoaded.diagnostics, ...userLoaded.flatMap((loaded) => loaded.diagnostics), ...projectLoaded.flatMap((loaded) => loaded.diagnostics), ...packageLoaded.flatMap((loaded) => loaded.diagnostics)];
 	return { agents, ...(disabledAgents.length ? { disabledAgents } : {}), agentDiagnostics, projectAgentsDir, cwd: effectiveCwd, scope, directories, ...(modelScope !== undefined ? { modelScope } : {}), ...(maxThinking !== undefined ? { maxThinking } : {}) };

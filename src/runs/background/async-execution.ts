@@ -1162,7 +1162,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const task = namespaceOutputPath ? taskText : injectSingleOutputInstruction(taskText, outputPath, a);
 
 		const modelScopes = resolveModelScopesForAgent(ctx.modelScope, a.name, ctx.currentModel, ctx.scopedModelIds);
-		const modelOrigin = resolveModelOrigin({ explicitModel: s.model, agentModel: a.model, parentModel: ctx.currentModel });
+		const modelOrigin = resolveModelOrigin({ explicitModel: s.model, agentModel: a.model, parentModel: ctx.currentModel, forcedModel: a.operatorForcedModel });
 		const primaryModelFromParent = modelOrigin === "inherited";
 		const primaryModel = externalRunner ? undefined : resolveEffectiveSubagentModel(
 			s.model,
@@ -1170,7 +1170,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			ctx.currentModel,
 			availableModels,
 			a.modelProvider ?? ctx.currentModelProvider,
-			{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
+			{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", ...(a.operatorForcedModel ? { forcedModel: a.operatorForcedModel } : {}) },
 		);
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
 		let claudeCodeOverride: ClaudeCodeOverride | undefined;
@@ -1215,6 +1215,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					scope: modelScopes,
 					primaryModelFromParent,
 					origin: modelOrigin,
+					...(a.operatorForcedModel && typeof s.model === "string" ? { requestedModel: s.model } : {}),
 				});
 				requestedModel = modelEvidence.requestedModel;
 				selectedModel = applyThinkingSuffix(modelEvidence.model, effectiveThinking, thinkingOverride !== undefined);
@@ -1994,6 +1995,7 @@ export function executeAsyncSingle(
 		explicitModel: params.modelOverrideFromParent ? undefined : params.modelOverride,
 		agentModel: agentConfig.model,
 		parentModel: ctx.currentModel,
+		forcedModel: agentConfig.operatorForcedModel,
 	});
 	let primaryModel: string | undefined;
 	try {
@@ -2004,7 +2006,7 @@ export function executeAsyncSingle(
 				ctx.currentModel,
 				availableModels,
 				ctx.currentModelProvider,
-				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
+				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", ...(agentConfig.operatorForcedModel ? { forcedModel: agentConfig.operatorForcedModel } : {}) },
 			);
 	} catch (error) {
 		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));

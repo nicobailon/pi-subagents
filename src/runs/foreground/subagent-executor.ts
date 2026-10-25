@@ -3657,12 +3657,14 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			explicitModel: params.model as string | undefined,
 			agentModel: a.model,
 			parentModel,
+			forcedModel: a.operatorForcedModel,
 		});
 		const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
 			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, a.modelProvider ?? currentProvider, {
 				...(modelScopes.length === 0 ? {} : { scope: modelScopes }),
 				source: modelOrigin === "explicit" ? "explicit" : "inherited",
+				...(a.operatorForcedModel ? { forcedModel: a.operatorForcedModel } : {}),
 			});
 		const modelOverrideFromParent = modelOrigin === "inherited";
 		const launchRuleError = applyWatchdogLaunchRules({ cwd: effectiveCwd, agent: a.name, model: modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`), warn: (violation) => deps.watchdog?.displayRuleWarning(violation) });
@@ -4191,6 +4193,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		explicitModel: params.model as string | undefined,
 		agentModel: agentConfig.model,
 		parentModel,
+		forcedModel: agentConfig.operatorForcedModel,
 	});
 	let modelOverride: string | undefined = resolveEffectiveSubagentModel(
 		params.model as string | undefined,
@@ -4201,6 +4204,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		{
 			...(modelScopes.length === 0 ? {} : { scope: modelScopes }),
 			source: modelOrigin === "explicit" ? "explicit" : "inherited",
+			...(agentConfig.operatorForcedModel ? { forcedModel: agentConfig.operatorForcedModel } : {}),
 		},
 	);
 	const modelOverrideFromParent = modelOrigin === "inherited";
@@ -4444,6 +4448,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			nestedRoute: foregroundControl?.nestedRoute,
 			index: 0,
 			modelOverride,
+			// Evidence keeps the caller's originally requested model when operator force replaced it.
+			requestedModel: agentConfig.operatorForcedModel ? params.model as string | undefined : undefined,
 			fast: params.fast,
 			modelOverrideFromParent,
 			modelOrigin,

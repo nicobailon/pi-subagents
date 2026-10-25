@@ -103,7 +103,9 @@ export function resolveStepBehavior(
 	}
 
 	const outputMode = stepOverrides.outputMode ?? agentConfig.outputMode ?? "inline";
-	const model = stepOverrides.model ?? agentConfig.model;
+	// Operator force (user-settings operatorModelOverride) wins over the step
+	// model and the configured agent model alike.
+	const model = agentConfig.operatorForcedModel ?? stepOverrides.model ?? agentConfig.model;
 	const fast = stepOverrides.fast ?? agentConfig.fast;
 	const outputSchema = resolveEffectiveOutputSchema(agentConfig, stepOverrides.outputSchema);
 	return { output, outputMode, reads, progress, skills, model, fast, ...(outputSchema !== undefined ? { outputSchema } : {}) };

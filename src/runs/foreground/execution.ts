@@ -1845,6 +1845,7 @@ async function runSyncCompletionInner(
 			scope: options.modelScope,
 			primaryModelFromParent: options.modelOverrideFromParent,
 			origin: options.modelOrigin ?? (options.modelOverrideFromParent ? "inherited" : "configured"),
+			...(options.requestedModel !== undefined ? { requestedModel: options.requestedModel } : {}),
 		},
 	);
 	try {

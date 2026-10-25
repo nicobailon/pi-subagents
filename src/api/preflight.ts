@@ -398,12 +398,13 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const availableModels = normalizeAvailableModels(input.availableModels);
 	const preferredProvider = agent.modelProvider ?? input.preferredProvider ?? input.parentModel?.provider;
 	const modelScopes = resolveModelScopesForAgent(discovered.modelScope, agent.name, input.parentModel, input.scopedModelIds);
-	const modelOrigin = resolveModelOrigin({ explicitModel: input.model, agentModel: agent.model, parentModel: input.parentModel });
+	const modelOrigin = resolveModelOrigin({ explicitModel: input.model, agentModel: agent.model, parentModel: input.parentModel, forcedModel: agent.operatorForcedModel });
 	const primaryModel = externalRunner
 		? undefined
 		: resolveEffectiveSubagentModel(input.model, agent.model, input.parentModel, availableModels, preferredProvider, {
 			scope: modelScopes,
 			source: modelOrigin === "explicit" ? "explicit" : "inherited",
+			...(agent.operatorForcedModel ? { forcedModel: agent.operatorForcedModel } : {}),
 		});
 	const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : agent.thinking;
 	const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(
@@ -413,8 +414,9 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	);
 	const model = externalRunner ? undefined : applyThinkingSuffix(resolveModelSelection(primaryModel, availableModels, preferredProvider, {
 			scope: modelScopes,
-			primaryModelFromParent: modelOrigin === "inherited" || inheritsParentModel(input.model, agent.model, input.parentModel),
+			primaryModelFromParent: !agent.operatorForcedModel && (modelOrigin === "inherited" || inheritsParentModel(input.model, agent.model, input.parentModel)),
 			origin: modelOrigin,
+			...(agent.operatorForcedModel && typeof input.model === "string" ? { requestedModel: input.model } : {}),
 		}).model, effectiveThinkingConfig, input.thinking !== undefined);
 	if (!externalRunner) {
 		try {
