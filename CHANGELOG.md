@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Background subagents that finished their work no longer end as "exited with code 0 before writing a result". When a child stopped after its final reply without reporting that it had settled, or when one of its extensions hung on shutdown, the background runner process exited with the result still unwritten. It now ends the child after its final reply, waits for any compaction that runs after that reply, and waits at most 5 seconds for shutdown handlers, so the result is always written. Thanks to [@perriea](https://github.com/perriea). (#3051)
+
 ## [0.82.1] - 2026-10-24
 
 ### Highlights

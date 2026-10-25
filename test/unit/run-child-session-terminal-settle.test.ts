@@ -49,29 +49,35 @@ it("settles and keeps the reply when the child ends on agent_end without agent_s
 	assert.equal(aborted, true, "the re-armed drain must abort the child so its loop can end");
 });
 
-// The child's own shutdown work is bounded: a disposal that never resolves must not keep
-// the result from being published.
-it("settles a run whose child disposal never resolves", { timeout: 10_000 }, async () => {
+// Pi's order after a final reply: agent_end, then a threshold auto-compaction (a model call that
+// can take seconds), then agent_settled. Ending the run early would cancel the compaction.
+it("lets a compaction that runs after the final agent_end finish", { timeout: 10_000 }, async () => {
 	let listener: Parameters<ChildSession["subscribe"]>[0] = () => {};
 	const messages: ChildSession["messages"] = [];
+	let aborted = false;
 	const session: ChildSession = {
 		subscribe(handler) { listener = handler; return () => {}; },
 		async prompt() {
 			const message = fauxAssistantMessage("Done");
 			messages.push(message);
+			listener({ type: "agent_start" });
 			listener({ type: "message_end", message });
-			listener({ type: "agent_end", messages });
+			listener({ type: "turn_end" });
+			listener({ type: "agent_end", messages, willRetry: false });
+			listener({ type: "compaction_start", reason: "threshold" });
+			await new Promise((resolve) => setTimeout(resolve, 2500));
+			listener({ type: "compaction_end", reason: "threshold", willRetry: false, aborted });
 			listener({ type: "agent_settled" });
 		},
-		async steer() {}, async followUp() {}, async abort() {},
-		dispose() { return new Promise<void>(() => {}); },
-		messages, sessionId: "stuck-disposal-session", modelId: "mock/model",
+		async steer() {}, async followUp() {}, async dispose() {},
+		async abort() { aborted = true; },
+		messages, sessionId: "compaction-after-final-session", modelId: "mock/model",
 	};
 	const factory: ChildSessionFactory = { create: async () => session, async dispose() {} };
 	const result = await runChildSession({
 		factory, launch, prompt: "Finish",
 		timeoutMessage: "timed out", appendChildEvent() {}, writeOutputLine() {},
 	});
-	assert.equal(result.exitCode, 0);
 	assert.equal(result.finalOutput, "Done");
+	assert.equal(aborted, false, "the child must not be aborted while it compacts");
 });
