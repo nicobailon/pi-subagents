@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Workflows no longer crash the parent on Windows standalone Pi builds using Bun 1.3.14 when its runtime transpiler cache is warm. Bun now loads the workflow worker from a package-owned file instead of an anonymous eval source; Node retains its existing eval-worker behavior, including inherited preload handling after cwd changes. No cache-clearing or global environment override is needed.
+
 ## [0.82.1] - 2026-10-24
 
 ### Highlights

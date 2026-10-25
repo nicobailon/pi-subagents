@@ -97,7 +97,7 @@ function collectSourceFiles(dir: string): string[] {
 		const entryPath = path.join(dir, entry.name);
 		if (entry.isDirectory()) {
 			collectSourceFiles(entryPath).forEach((file) => files.push(file));
-		} else if (entry.name.endsWith(".ts") || entry.name.endsWith(".mjs")) {
+		} else if (entry.name.endsWith(".ts") || entry.name.endsWith(".mjs") || entry.name.endsWith(".cjs")) {
 			files.push(entryPath);
 		}
 	}
@@ -112,6 +112,8 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(packageJson.files?.includes("index.ts"), true);
 	assert.equal(packageJson.files?.includes("*.mjs"), true);
 	assert.equal(fs.existsSync(path.join(projectRoot, "async-retention-discovery-worker.mjs")), true);
+	assert.equal(packageJson.files?.includes("workflow-script-worker.cjs"), true, "published packages must include the file-backed workflow worker");
+	assert.equal(fs.existsSync(path.join(projectRoot, "workflow-script-worker.cjs")), true, "source installs must resolve a real workflow worker file");
 	const entrySource = fs.readFileSync(path.join(projectRoot, "index.ts"), "utf-8");
 	assert.match(entrySource, /import type \{\} from "\.\/src\/types\/pi-runtime-compat\.d\.ts";/);
 	assert.equal(entrySource.includes('export { default } from "./src/extension/index.ts";'), false);

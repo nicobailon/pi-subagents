@@ -43,6 +43,7 @@ run("build-package", process.execPath, ["scripts/build-package.mjs"], source);
 const packed = JSON.parse(run("pack", "npm", ["pack", "--json", "--pack-destination", root, path.join(source, "dist-pkg")], source).stdout)[0];
 assert.ok(packed.files.some(file => file.path === "runner-peer-preload.mjs"), "peer preload must ship");
 assert.ok(packed.files.some(file => file.path === "runner-peer-loader.mjs"), "older-Node peer loader must ship");
+assert.ok(packed.files.some(file => file.path === "workflow-script-worker.cjs"), "the Bun workflow worker must ship");
 assert.equal(packed.files.some(file => file.path.endsWith(".ts") && !file.path.endsWith(".d.ts")), false, "package must not ship TypeScript sources");
 assert.ok(packed.files.some(file => file.path === "index.js"), "compiled extension entry must ship");
 assert.ok(packed.files.some(file => file.path === "bundle/index.js"), "bundled extension entry must ship");

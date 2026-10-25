@@ -12,6 +12,7 @@ const expectedRootModules = [
 	"runner-peer-loader.mjs",
 	"inspector-runner.mjs",
 	"async-retention-discovery-worker.mjs",
+	"workflow-script-worker.cjs",
 ];
 const staticFiles = [
 	"README.md",
@@ -46,7 +47,7 @@ if (/^import\s+.*["']\.\/subagent-runner\.js["'];?$/m.test(runnerBootstrap)) {
 	throw new Error("Compiled runner bootstrap must not statically import the heavy execution module");
 }
 
-const rootModules = fs.readdirSync(root).filter((name) => name.endsWith(".mjs"));
+const rootModules = fs.readdirSync(root).filter((name) => name.endsWith(".mjs") || name === "workflow-script-worker.cjs");
 for (const relativePath of [...rootModules, ...staticFiles]) {
 	fs.copyFileSync(path.join(root, relativePath), path.join(output, relativePath));
 }
