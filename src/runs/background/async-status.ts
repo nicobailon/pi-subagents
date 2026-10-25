@@ -189,6 +189,22 @@ function isAsyncStatusIsolationError(asyncDir: string, error: unknown): boolean 
 // status poll, so the line repeats only when the file or the outcome changes.
 const reportedCorruptStatus = new Map<string, string>();
 
+function warnCorruptIndexedTerminalRun(asyncDir: string, runId: string, error: unknown): void {
+	const statusPath = path.join(asyncDir, "status.json");
+	let fileSignature = "";
+	try {
+		const stat = fs.statSync(statusPath);
+		fileSignature = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}`;
+	} catch {
+		// The error message still distinguishes a missing status record.
+	}
+	const message = getErrorMessage(error);
+	const signature = `${fileSignature}\n${message}`;
+	if (reportedCorruptStatus.get(statusPath) === signature) return;
+	reportedCorruptStatus.set(statusPath, signature);
+	console.error(`[pi-subagents] Skipping indexed terminal run '${runId}' with corrupt status at '${statusPath}': ${message}.`);
+}
+
 function isolateCorruptActiveRun(asyncDir: string, runId: string, error: unknown, now?: () => number): void {
 	const statusPath = path.join(asyncDir, "status.json");
 	const processTerminal = readProcessTerminal(asyncDir, { runId });
@@ -509,6 +525,7 @@ function sortRuns(runs: AsyncRunSummary[]): AsyncRunSummary[] {
 export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions = {}, observeStatus?: RawDrainStatusObserver): AsyncRunSummary[] {
 	let entries: string[];
 	const activeEntries = new Set<string>();
+	const terminalEntries = new Set<string>();
 	const wantsActive = options.states === undefined || options.states.some(isActiveAsyncState);
 	const wantsTerminal = options.states === undefined || options.states.some((state) => !isActiveAsyncState(state));
 	const includeNested = options.includeNested !== false;
@@ -541,7 +558,10 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			}
 			if (wantsTerminal) {
 				for (const sessionId of owners ?? [undefined]) {
-					for (const entry of readRecentTerminalRunIndex(asyncDirRoot, { sessionId, ...(options.entryLimit !== undefined ? { limit: options.entryLimit } : {}) })) indexed.add(entry);
+					for (const entry of readRecentTerminalRunIndex(asyncDirRoot, { sessionId, ...(options.entryLimit !== undefined ? { limit: options.entryLimit } : {}) })) {
+						indexed.add(entry);
+						terminalEntries.add(entry);
+					}
 				}
 			}
 			entries = [...indexed];
@@ -590,9 +610,16 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			if (options.reconcile === false) observeStatus?.(status);
 		} catch (error) {
 			observeStatus?.(null);
-			if (!activeEntries.has(entry) || !isAsyncStatusIsolationError(asyncDir, error)) throw error;
-			isolateCorruptActiveRun(asyncDir, entry, error, options.now);
-			continue;
+			if (!isAsyncStatusIsolationError(asyncDir, error)) throw error;
+			if (activeEntries.has(entry)) {
+				isolateCorruptActiveRun(asyncDir, entry, error, options.now);
+				continue;
+			}
+			if (terminalEntries.has(entry)) {
+				warnCorruptIndexedTerminalRun(asyncDir, entry, error);
+				continue;
+			}
+			throw error;
 		}
 		if (!status) {
 			observeStatus?.(null);
@@ -628,9 +655,16 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			summary = statusToSummary(asyncDir, status, nestedWarnings, nestedRoute);
 		} catch (error) {
 			observeStatus?.(null);
-			if (!activeEntries.has(entry) || !isAsyncStatusIsolationError(asyncDir, error)) throw error;
-			isolateCorruptActiveRun(asyncDir, entry, error, options.now);
-			continue;
+			if (!isAsyncStatusIsolationError(asyncDir, error)) throw error;
+			if (activeEntries.has(entry)) {
+				isolateCorruptActiveRun(asyncDir, entry, error, options.now);
+				continue;
+			}
+			if (terminalEntries.has(entry)) {
+				warnCorruptIndexedTerminalRun(asyncDir, entry, error);
+				continue;
+			}
+			throw error;
 		}
 		runs.push(summary);
 	}

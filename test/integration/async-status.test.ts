@@ -1306,6 +1306,65 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("isolates parse-valid terminal status validation failures per indexed record", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-terminal-invalid-"));
+		const originalError = console.error;
+		const diagnostics: string[] = [];
+		try {
+			console.error = (...args: unknown[]) => diagnostics.push(args.map(String).join(" "));
+			const validStatus = (runId: string) => ({
+				runId,
+				sessionId: "session-a",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				endedAt: 200,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			createAsyncDir(root, "terminal-good", validStatus("terminal-good"));
+			const modelDir = createAsyncDir(root, "terminal-bad-model", {
+				...validStatus("terminal-bad-model"),
+				steps: [{ agent: "worker", status: "complete", model: 42 }],
+			});
+			const outputDir = createAsyncDir(root, "terminal-bad-output", {
+				...validStatus("terminal-bad-output"),
+				outputFile: { invalid: true },
+			});
+			const modelStatusPath = path.join(modelDir, "status.json");
+			const outputStatusPath = path.join(outputDir, "status.json");
+			const modelStatusBytes = fs.readFileSync(modelStatusPath);
+			const outputStatusBytes = fs.readFileSync(outputStatusPath);
+			const indexDir = path.join(root, TERMINAL_RUN_INDEX_DIR, encodeIndexSegment("session-a"));
+			const modelMarker = path.join(indexDir, "0000000000000200-terminal-bad-model.json");
+			const outputMarker = path.join(indexDir, "0000000000000200-terminal-bad-output.json");
+			const modelMarkerBytes = fs.readFileSync(modelMarker);
+			const outputMarkerBytes = fs.readFileSync(outputMarker);
+			const list = () => listAsyncRuns(root, { sessionId: "session-a", states: ["complete"] });
+
+			assert.deepEqual(list().map((run) => run.id), ["terminal-good"]);
+			assert.deepEqual(list().map((run) => run.id), ["terminal-good"]);
+			assert.equal(diagnostics.filter((line) => line.includes("corrupt status")).length, 2);
+			assert.deepEqual(fs.readFileSync(modelStatusPath), modelStatusBytes);
+			assert.deepEqual(fs.readFileSync(outputStatusPath), outputStatusBytes);
+			assert.deepEqual(fs.readFileSync(modelMarker), modelMarkerBytes);
+			assert.deepEqual(fs.readFileSync(outputMarker), outputMarkerBytes);
+			assert.throws(() => listAsyncRuns(root, { runId: "terminal-bad-model" }), /steps\[0\]\.model must be a string/);
+			assert.throws(() => listAsyncRuns(root, { runId: "terminal-bad-output" }), /outputFile must be a string/);
+			assert.deepEqual(fs.readFileSync(modelStatusPath), modelStatusBytes);
+			assert.deepEqual(fs.readFileSync(outputStatusPath), outputStatusBytes);
+			assert.deepEqual(fs.readFileSync(modelMarker), modelMarkerBytes);
+			assert.deepEqual(fs.readFileSync(outputMarker), outputMarkerBytes);
+
+			fs.writeFileSync(modelStatusPath, JSON.stringify({ ...validStatus("terminal-bad-model"), steps: [{ agent: "worker", status: "complete", model: "repaired" }] }));
+			fs.writeFileSync(outputStatusPath, JSON.stringify({ ...validStatus("terminal-bad-output"), outputFile: "output.txt" }));
+			assert.deepEqual(new Set(list().map((run) => run.id)), new Set(["terminal-good", "terminal-bad-model", "terminal-bad-output"]));
+			assert.equal(diagnostics.filter((line) => line.includes("corrupt status")).length, 2);
+		} finally {
+			console.error = originalError;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("removes invalid terminal markers while reading the advisory index", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-terminal-heal-"));
 		try {
