@@ -239,13 +239,15 @@ export function attachMissionToLaunchResult(input: {
 		const statusPath = path.join(input.result.details.asyncDir, "status.json");
 		if (fs.existsSync(statusPath)) {
 			try {
-				const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as { state?: unknown };
+				const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as { state?: unknown; steps?: unknown };
 				if (typeof status.state === "string" && !["queued", "running"].includes(status.state)) {
 					mission = syncMissionFromAsyncCompletion({
 						runId,
 						asyncDir: input.result.details.asyncDir,
 						mode: input.result.details.mode,
 						state: status.state,
+						// A run that finished before this launch result was attached keeps its acceptance in the status steps.
+						...(Array.isArray(status.steps) ? { results: status.steps.map((step) => ({ acceptance: (step as { acceptance?: unknown } | null)?.acceptance })) } : {}),
 						...(firstText(input.result) ? { summary: firstText(input.result) } : {}),
 					}) ?? mission;
 				}

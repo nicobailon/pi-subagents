@@ -336,6 +336,30 @@ describe("mission launch lifecycle", () => {
 		}
 	});
 
+	it("keeps a mission waiting when an async run finished before its launch result was attached", () => {
+		const test = projectFixture();
+		try {
+			const asyncDir = path.join(test.root, "fast-run");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				state: "complete",
+				steps: [{ agent: "worker", status: "complete", acceptance: { status: "review-required", evidenceStatus: "checked" } }],
+			}));
+			const binding = prepareMissionLaunch({ params: { mission: { title: "Fast run" }, task: "Do it" }, projectRoot: test.projectRoot, config: test.missionConfig });
+			assert.ok(binding);
+			attachMissionToLaunchResult({
+				binding,
+				result: {
+					content: [{ type: "text", text: "Async started" }],
+					details: { mode: "single", runId: "fast-1", asyncId: "fast-1", asyncDir, results: [] },
+				},
+			});
+			assert.equal(readMission(binding.location, binding.missionId).status, "waiting");
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps an async workflow mission waiting when a child result needs review", () => {
 		const test = projectFixture();
 		try {
