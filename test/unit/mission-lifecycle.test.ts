@@ -306,4 +306,89 @@ describe("mission launch lifecycle", () => {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}
 	});
+
+	it("keeps a mission waiting when a foreground run ends without accepted evidence", () => {
+		const test = projectFixture();
+		try {
+			const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 };
+			const launch = (title: string, acceptanceStatus: string) => {
+				const binding = prepareMissionLaunch({ params: { mission: { title }, task: "Do the work" }, projectRoot: test.projectRoot, config: test.missionConfig });
+				assert.ok(binding);
+				attachMissionToLaunchResult({
+					binding,
+					result: {
+						content: [{ type: "text", text: "Done." }],
+						details: {
+							mode: "single",
+							runId: `run-${acceptanceStatus}`,
+							results: [{ index: 0, agent: "worker", task: "Do the work", exitCode: 0, usage, acceptance: { status: acceptanceStatus } as never }],
+						},
+					},
+				});
+				return readMission(binding.location, binding.missionId).status;
+			};
+			assert.equal(launch("Self-reported", "review-required"), "waiting");
+			assert.equal(launch("Rejected", "rejected"), "waiting");
+			assert.equal(launch("Verified", "verified"), "completed");
+			assert.equal(launch("Reviewed", "reviewed"), "completed");
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps an async workflow mission waiting when a child result needs review", () => {
+		const test = projectFixture();
+		try {
+			const workflowDir = path.join(test.root, "workflow-run");
+			const childDir = path.join(test.root, "child-run");
+			fs.mkdirSync(workflowDir, { recursive: true });
+			fs.mkdirSync(childDir, { recursive: true });
+			const binding = prepareMissionLaunch({
+				params: { mission: { title: "Draft the approval email" }, task: "Draft it" },
+				projectRoot: test.projectRoot,
+				config: test.missionConfig,
+			});
+			assert.ok(binding);
+			attachMissionToLaunchResult({
+				binding,
+				result: {
+					content: [{ type: "text", text: "Async started" }],
+					details: { mode: "workflow", runId: "workflow-1", asyncId: "workflow-1", asyncDir: workflowDir, results: [] },
+				},
+			});
+			attachMissionToLaunchResult({
+				binding,
+				result: {
+					content: [{ type: "text", text: "Child started" }],
+					details: { mode: "single", runId: "child-1", asyncId: "child-1", asyncDir: childDir, results: [] },
+				},
+			});
+
+			const childDone = syncMissionFromAsyncCompletion({
+				runId: "child-1",
+				asyncDir: childDir,
+				mode: "single",
+				state: "complete",
+				success: true,
+				parentWorkflowRunId: "workflow-1",
+				workflowKey: "draft-email",
+				results: [{ agent: "worker", acceptance: { status: "review-required", evidenceStatus: "checked" } }],
+			});
+			assert.equal(childDone?.status, "active", "the workflow run is still active");
+			assert.equal(childDone?.workflowChildren[0]?.acceptanceStatus, "review-required");
+
+			const workflowDone = syncMissionFromAsyncCompletion({
+				runId: "workflow-1",
+				asyncDir: workflowDir,
+				mode: "workflow",
+				state: "complete",
+				success: true,
+				results: [],
+			});
+			assert.equal(workflowDone?.status, "waiting");
+			assert.equal(workflowDone?.runs.find((run) => run.runId === "workflow-1")?.status, "complete");
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
 });

@@ -163,6 +163,7 @@ function parseWorkflowChild(value: unknown, label: string): MissionWorkflowChild
 		...(optionalString(input.phase, `${label}.phase`) ? { phase: input.phase as string } : {}),
 		...(input.completedAt !== undefined ? { completedAt: timestamp(input.completedAt, `${label}.completedAt`) } : {}),
 		...(optionalString(input.sessionPath, `${label}.sessionPath`) ? { sessionPath: input.sessionPath as string } : {}),
+		...(optionalString(input.acceptanceStatus, `${label}.acceptanceStatus`) ? { acceptanceStatus: input.acceptanceStatus as string } : {}),
 		...(heartbeat ? { heartbeat: {
 			updatedAt: timestamp(heartbeat.updatedAt, `${label}.heartbeat.updatedAt`),
 			...(optionalString(heartbeat.status, `${label}.heartbeat.status`) ? { status: heartbeat.status as string } : {}),

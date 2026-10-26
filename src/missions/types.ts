@@ -73,6 +73,8 @@ export interface MissionWorkflowChild {
 	sessionPath?: string;
 	artifactPaths: string[];
 	heartbeat?: MissionChildHeartbeat;
+	/** Acceptance ledger status of the child's latest finished attempt. */
+	acceptanceStatus?: string;
 }
 
 export type MissionWorkflowChildUpdate = Pick<MissionWorkflowChild, "workflowRunId" | "key" | "status"> & Partial<Omit<MissionWorkflowChild, "workflowRunId" | "key" | "status" | "startedAt" | "updatedAt" | "artifactPaths" | "heartbeat">> & {

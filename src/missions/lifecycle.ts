@@ -99,14 +99,41 @@ function runStatusForResult(result: AgentToolResult<Details>): string {
 	return "completed";
 }
 
-function missionStatusForRun(record: MissionRecord, runId: string, runStatus: string): MissionStatus {
+/**
+ * Acceptance ledger statuses that mean nobody accepted the child's result:
+ * evidence is missing, only self-reported with a required review pending,
+ * or rejected. A run that ends with one of them does not complete a mission.
+ */
+const UNACCEPTED_ACCEPTANCE_STATUSES = new Set(["pending", "claimed", "review-required", "rejected"]);
+
+function acceptanceStatusOf(value: unknown): string | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const acceptance = (value as { acceptance?: unknown }).acceptance;
+	if (!acceptance || typeof acceptance !== "object" || Array.isArray(acceptance)) return undefined;
+	const status = (acceptance as { status?: unknown }).status;
+	return typeof status === "string" && status.trim() ? status : undefined;
+}
+
+/** The first unaccepted acceptance status among child results, else the first status found. */
+export function missionAcceptanceStatus(results: readonly unknown[] | undefined): string | undefined {
+	const statuses = (results ?? []).map(acceptanceStatusOf).filter((status): status is string => status !== undefined);
+	return statuses.find((status) => UNACCEPTED_ACCEPTANCE_STATUSES.has(status)) ?? statuses[0];
+}
+
+function hasUnacceptedResult(record: MissionRecord, runId: string, acceptanceStatus: string | undefined): boolean {
+	if (acceptanceStatus && UNACCEPTED_ACCEPTANCE_STATUSES.has(acceptanceStatus)) return true;
+	// The run being synced reports its own status above; its older child record may be stale.
+	return record.workflowChildren.some((child) => child.runId !== runId && child.acceptanceStatus !== undefined && UNACCEPTED_ACCEPTANCE_STATUSES.has(child.acceptanceStatus));
+}
+
+function missionStatusForRun(record: MissionRecord, runId: string, runStatus: string, acceptanceStatus?: string): MissionStatus {
 	if (record.status === "completed" || record.status === "failed" || record.status === "cancelled") return record.status;
 	if (runStatus === "active" || runStatus === "queued" || runStatus === "running") return "active";
 	if (record.goal) return "active";
 	if (runStatus === "paused") return "waiting";
 	const otherActive = record.runs.some((run) => run.runId !== runId && (run.status === "active" || run.status === "queued" || run.status === "running"));
 	if (otherActive) return "active";
-	if (runStatus === "completed" || runStatus === "complete") return "completed";
+	if (runStatus === "completed" || runStatus === "complete") return hasUnacceptedResult(record, runId, acceptanceStatus) ? "waiting" : "completed";
 	if (runStatus === "stopped" || runStatus === "rejected" || runStatus === "cancelled") return "cancelled";
 	return "failed";
 }
@@ -201,7 +228,7 @@ export function attachMissionToLaunchResult(input: {
 		...(usage ? { usage } : {}),
 	};
 	let mission = updateMission(input.binding.location, input.binding.missionId, {
-		status: missionStatusForRun(current, runId, runStatus),
+		status: missionStatusForRun(current, runId, runStatus, missionAcceptanceStatus(input.result.details.results)),
 		addRuns: [run],
 		addArtifacts: artifactsForResult(input.result),
 		...(firstText(input.result) && runStatus !== "active" ? { summary: firstText(input.result)! } : {}),
@@ -354,8 +381,9 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 				? "stopped"
 				: "failed";
 	const workflowChildTerminal = !["running", "queued", "active", "paused"].includes(workflowChildStatus);
+	const acceptanceStatus = missionAcceptanceStatus(Array.isArray(event.results) ? event.results : undefined);
 	return updateMission(binding.location, binding.missionId, {
-		status: missionStatusForRun(current, runId, runStatus),
+		status: missionStatusForRun(current, runId, runStatus, acceptanceStatus),
 		addRuns: [{ runId, mode: typeof event.mode === "string" && ["single", "parallel", "chain", "workflow"].includes(event.mode) ? event.mode as SubagentRunMode : "external", asyncDir: event.asyncDir, status: runStatus, completedAt, ...(usage && usage.tokens > 0 ? { usage } : {}) }],
 		addArtifacts: artifacts,
 		...(workflowRunId && workflowKey ? { upsertWorkflowChildren: [{
@@ -365,6 +393,7 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 			status: workflowChildStatus,
 			artifactPaths: artifacts.map((artifact) => artifact.path),
 			...(workflowChildTerminal ? { completedAt } : {}),
+			...(acceptanceStatus ? { acceptanceStatus } : {}),
 			heartbeat: { status: workflowChildStatus, ...(summary ? { message: summary } : {}) },
 		}] } : {}),
 		...(summary ? { summary } : {}),

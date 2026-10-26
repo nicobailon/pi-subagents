@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A mission no longer becomes `completed` when the run that ends it has no accepted evidence. Before, a background worker whose acceptance was `review-required`, such as any writer run with only its own report, marked its mission `completed`, so the parent could take a claimed result for a proven one. When the finished run, or any workflow child in the mission, ends with acceptance `review-required`, `rejected`, `claimed`, or `pending`, the mission now stays `waiting`, and `mission.show` lists each child's acceptance status. Close it with `mission.close` after you check the result, or add a `gate` to the child so the runtime verifies it.
+
 ## [0.83.0] - 2026-10-25
 
 ### Highlights

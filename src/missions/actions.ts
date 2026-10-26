@@ -305,7 +305,8 @@ function formatMission(record: MissionRecord): string {
 			const identity = child.runId ? `${child.key} (${child.runId})` : child.key;
 			const heartbeat = child.heartbeat ? `; heartbeat ${child.heartbeat.status ?? child.status}${child.heartbeat.phase ? `/${child.heartbeat.phase}` : ""} at ${child.heartbeat.updatedAt}` : "";
 			const recovery = child.sessionPath ? `; session ${child.sessionPath}` : child.artifactPaths.length ? `; artifacts ${child.artifactPaths.length}` : "";
-			lines.push(`  ${identity}: ${child.status}${child.agent ? ` — ${child.agent}` : ""}${child.phase ? ` [${child.phase}]` : ""}; updated ${child.updatedAt}${heartbeat}${recovery}`);
+			const acceptance = child.acceptanceStatus ? `; acceptance ${child.acceptanceStatus}` : "";
+			lines.push(`  ${identity}: ${child.status}${child.agent ? ` — ${child.agent}` : ""}${child.phase ? ` [${child.phase}]` : ""}${acceptance}; updated ${child.updatedAt}${heartbeat}${recovery}`);
 		}
 	}
 	if (record.decisions.length) {

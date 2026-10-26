@@ -118,7 +118,7 @@ import { formatHerdrMachineRunnerUnsupported, resolveMachinePlacement } from "..
 import { lookupRunnerLauncher, resolveAgentRunnerLauncher } from "../shared/runner-launcher.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
-import { attachMissionToLaunchResult, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
+import { attachMissionToLaunchResult, missionAcceptanceStatus, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
 import { MissionNotFoundError, updateMission } from "../../missions/store.ts";
 import type { MissionWorkflowChildUpdate } from "../../missions/types.ts";
 import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
@@ -6521,6 +6521,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								}
 								if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
 								const childStatus = missionWorkflowChildStatus(result);
+								const childAcceptanceStatus = missionAcceptanceStatus(result.details.results);
 								recordMissionWorkflowChild(missionBinding, workflowRunId, key, {
 									status: childStatus,
 									...(child.runId ? { runId: child.runId } : {}),
@@ -6528,6 +6529,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									...(result.details.results[0]?.sessionFile ? { sessionPath: result.details.results[0].sessionFile } : {}),
 									artifactPaths: child.artifactPaths,
 									...(["completed", "failed"].includes(childStatus) ? { completedAt: new Date().toISOString() } : {}),
+									...(childAcceptanceStatus ? { acceptanceStatus: childAcceptanceStatus } : {}),
 									heartbeat: { status: childStatus, ...(childPhase ? { phase: childPhase } : {}) },
 								});
 								if (result.details.asyncId) {
@@ -6807,6 +6809,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const child = workflowChildResult(key, result, preparedChildParams ?? childParams, deps.state);
 						if (child.runId) workflowChildRunIds.set(key, child.runId);
 						const childStatus = missionWorkflowChildStatus(result);
+						const childAcceptanceStatus = missionAcceptanceStatus(result.details.results);
 						recordMissionWorkflowChild(missionBinding, foregroundWorkflowRunId, key, {
 							status: childStatus,
 							...(child.runId ? { runId: child.runId } : {}),
@@ -6814,6 +6817,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(result.details.results[0]?.sessionFile ? { sessionPath: result.details.results[0].sessionFile } : {}),
 							artifactPaths: child.artifactPaths,
 							...(["completed", "failed"].includes(childStatus) ? { completedAt: new Date().toISOString() } : {}),
+							...(childAcceptanceStatus ? { acceptanceStatus: childAcceptanceStatus } : {}),
 							heartbeat: { status: childStatus, ...(childPhase ? { phase: childPhase } : {}) },
 						});
 						return child;
