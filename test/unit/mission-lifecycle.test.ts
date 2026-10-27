@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { validateMissionLaunch } from "../../src/missions/actions.ts";
+import { handleMissionAction, validateMissionLaunch } from "../../src/missions/actions.ts";
 import {
 	attachMissionToLaunchResult,
 	prepareMissionLaunch,
@@ -383,6 +383,22 @@ describe("mission launch lifecycle", () => {
 				results: [{ agent: "worker", acceptance: { status: "review-required", evidenceStatus: "checked" } }],
 			});
 			assert.equal(done?.status, "completed");
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a requested mission waiting when mission.show sees a finished run that needs review", () => {
+		const test = projectFixture();
+		try {
+			const asyncDir = path.join(test.root, "shown-run");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			const binding = prepareMissionLaunch({ params: { mission: { title: "Shown" }, task: "Do it" }, projectRoot: test.projectRoot, config: test.missionConfig });
+			assert.ok(binding);
+			attachMissionToLaunchResult({ binding, result: { content: [{ type: "text", text: "Async started" }], details: { mode: "single", runId: "shown-1", asyncId: "shown-1", asyncDir, results: [] } } });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ state: "complete", steps: [{ status: "complete", acceptance: { status: "review-required" } }] }));
+			const shown = handleMissionAction("mission.show", { missionId: binding.missionId }, { cwd: test.projectRoot, config: test.missionConfig });
+			assert.equal(shown.details?.mission?.status, "waiting");
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}

@@ -124,10 +124,17 @@ export function missionAcceptanceStatus(results: readonly unknown[] | undefined)
 	return statuses.find((status) => UNACCEPTED_ACCEPTANCE_STATUSES.has(status)) ?? statuses[0];
 }
 
-function hasUnacceptedResult(record: MissionRecord, runId: string, acceptanceStatus: string | undefined): boolean {
-	if (acceptanceStatus && UNACCEPTED_ACCEPTANCE_STATUSES.has(acceptanceStatus)) return true;
-	// The run being synced reports its own status above; its older child record may be stale.
-	return record.workflowChildren.some((child) => child.runId !== runId && child.acceptanceStatus !== undefined && UNACCEPTED_ACCEPTANCE_STATUSES.has(child.acceptanceStatus));
+/**
+ * The status of a mission whose runs all finished successfully. Every path that
+ * completes a mission from run state goes through here.
+ */
+export function finishedMissionStatus(record: MissionRecord, autoCreated: boolean, runAcceptance: ReadonlyArray<{ runId: string; status: string | undefined }>): "completed" | "waiting" {
+	if (autoCreated) return "completed";
+	const unaccepted = (status: string | undefined) => status !== undefined && UNACCEPTED_ACCEPTANCE_STATUSES.has(status);
+	if (runAcceptance.some((run) => unaccepted(run.status))) return "waiting";
+	// A run reported here supersedes its older workflow child record.
+	const reported = new Set(runAcceptance.map((run) => run.runId));
+	return record.workflowChildren.some((child) => !(child.runId !== undefined && reported.has(child.runId)) && unaccepted(child.acceptanceStatus)) ? "waiting" : "completed";
 }
 
 function missionStatusForRun(record: MissionRecord, runId: string, runStatus: string, acceptanceStatus: string | undefined, autoCreated: boolean): MissionStatus {
@@ -137,7 +144,7 @@ function missionStatusForRun(record: MissionRecord, runId: string, runStatus: st
 	if (runStatus === "paused") return "waiting";
 	const otherActive = record.runs.some((run) => run.runId !== runId && (run.status === "active" || run.status === "queued" || run.status === "running"));
 	if (otherActive) return "active";
-	if (runStatus === "completed" || runStatus === "complete") return !autoCreated && hasUnacceptedResult(record, runId, acceptanceStatus) ? "waiting" : "completed";
+	if (runStatus === "completed" || runStatus === "complete") return finishedMissionStatus(record, autoCreated, [{ runId, status: acceptanceStatus }]);
 	if (runStatus === "stopped" || runStatus === "rejected" || runStatus === "cancelled") return "cancelled";
 	return "failed";
 }

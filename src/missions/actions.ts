@@ -18,6 +18,7 @@ import {
 	type MissionUpdateInput,
 } from "./types.ts";
 import { missionStatePath } from "./workflow-state.ts";
+import { finishedMissionStatus, missionAcceptanceStatus, readMissionBinding } from "./lifecycle.ts";
 import {
 	createMission,
 	listGlobalMissions,
@@ -236,6 +237,7 @@ function validateMissionUpdate(value: unknown): MissionUpdateInput {
 
 function refreshLinkedRunStatus(location: MissionStoreLocation, record: MissionRecord): { record: MissionRecord; warnings: string[] } {
 	const warnings: string[] = [];
+	const runAcceptance: Array<{ runId: string; status: string | undefined }> = [];
 	const updates = record.runs.flatMap((run) => {
 		if (!run.asyncDir) return [];
 		const statusPath = path.join(run.asyncDir, "status.json");
@@ -256,6 +258,8 @@ function refreshLinkedRunStatus(location: MissionStoreLocation, record: MissionR
 			warnings.push(`Linked run status '${statusPath}' is missing state`);
 			return [];
 		}
+		const steps = (status as { steps?: unknown }).steps;
+		runAcceptance.push({ runId: run.runId, status: missionAcceptanceStatus(Array.isArray(steps) ? steps : undefined) });
 		if (state === run.status) return [];
 		return [{
 			...run,
@@ -279,7 +283,8 @@ function refreshLinkedRunStatus(location: MissionStoreLocation, record: MissionR
 				: states.some((state) => state === "stopped" || state === "rejected" || state === "cancelled")
 					? "cancelled"
 					: states.length > 0 && states.every((state) => state === "complete" || state === "completed")
-						? "completed"
+						// A missing binding, or one saved before autoCreated existed, reads as auto-created.
+						? finishedMissionStatus(record, !merged.some((run) => run.asyncDir && readMissionBinding(run.asyncDir)?.autoCreated === false), runAcceptance)
 						: record.status;
 	return { record: updateMission(location, record.id, { status, addRuns: updates }), warnings };
 }
