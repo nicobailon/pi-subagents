@@ -108,7 +108,10 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 		// neither end a pending list block nor become part of its value.
 		if (trimmed.startsWith("#") && !currentFolded && !currentLiteral) continue;
 
-		if (currentKey !== null && currentBlockLines !== null && (indent > (currentIndent ?? 0) || ((currentFolded || currentLiteral) && trimmed === ""))) {
+		// Exactly-empty lines are content of any pending block, whatever indicator
+		// opened it; whitespace-only lines already have indent > 0 and are collected
+		// by the indent test below.
+		if (currentKey !== null && currentBlockLines !== null && (indent > (currentIndent ?? 0) || trimmed === "")) {
 			// This line is part of the current block value
 			currentBlockLines.push(line);
 			continue;
@@ -116,15 +119,7 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 
 		// Flush any pending block value
 		if (currentKey !== null && currentBlockLines !== null) {
-			// Strip the common leading whitespace from the block so the
-			// serializer can add its own indentation level.
-			const rawBlock = currentBlockLines.join("\n");
-			const leadingSpaces = rawBlock.match(/^[ \t]+(?=\S)/m);
-			const prefix = leadingSpaces?.[0] ?? "";
-			const stripped = prefix
-				? rawBlock.replace(new RegExp(`^${escapeRegex(prefix)}`, "gm"), "").replace(/^\n/, "")
-				: rawBlock;
-			frontmatter[currentKey] = currentFolded ? foldBlock(stripped) : stripped;
+			frontmatter[currentKey] = flushBlockLines(currentBlockLines, currentFolded, currentLiteral);
 			currentKey = null;
 			currentBlockLines = null;
 			currentIndent = null;
@@ -158,19 +153,47 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 				frontmatter[key] = value;
 			}
 		}
-		// Lines that don't match a key pattern (e.g., comments, empty lines) are ignored
+		// Lines that don't match a key pattern (e.g., comments) are ignored; empty
+		// lines are block content while a block is pending (collected above)
 	}
 
 	// Flush final block value
 	if (currentKey !== null && currentBlockLines !== null) {
-		const rawBlock = currentBlockLines.join("\n");
-		const leadingSpaces = rawBlock.match(/^[ \t]+(?=\S)/m);
-		const prefix = leadingSpaces?.[0] ?? "";
-		const stripped = prefix
-			? rawBlock.replace(new RegExp(`^${escapeRegex(prefix)}`, "gm"), "").replace(/^\n/, "")
-			: rawBlock;
-		frontmatter[currentKey] = currentFolded ? foldBlock(stripped) : stripped;
+		frontmatter[currentKey] = flushBlockLines(currentBlockLines, currentFolded, currentLiteral);
 	}
 
 	return { frontmatter, body };
+}
+
+function flushBlockLines(blockLines: string[], folded: boolean, literal: boolean): string {
+	// Strip the common leading whitespace from the block so the
+	// serializer can add its own indentation level.
+	const lines = folded || literal ? blockLines : trimEdgeEmptyLines(blockLines);
+	const rawBlock = lines.join("\n");
+	const leadingSpaces = rawBlock.match(/^[ \t]+(?=\S)/m);
+	const prefix = leadingSpaces?.[0] ?? "";
+	const stripped = prefix
+		? rawBlock.replace(new RegExp(`^${escapeRegex(prefix)}`, "gm"), "").replace(/^\n/, "")
+		: rawBlock;
+	return folded ? foldBlock(stripped) : stripped;
+}
+
+/**
+ * Drop exactly-empty lines at the start and end of a nested-block value.
+ * After the last content line, whitespace-only lines are kept only up to the
+ * first exactly-empty line, where the old parser ended the block.
+ * Only empty-indicator (nested) blocks are trimmed: the old parser never
+ * collected them, so keeping them would append a stray trailing newline (or a
+ * leading one the single ^\n replace misses) to previously-clean values.
+ * Literal |/|- and folded >/>- blocks keep their trailing-newline behavior
+ * byte-identical to the pre-blank-line-fix parser.
+ */
+function trimEdgeEmptyLines(lines: string[]): string[] {
+	let last = lines.length;
+	while (last > 0 && lines[last - 1]!.trim() === "") last--;
+	let end = last;
+	while (end < lines.length && lines[end] !== "") end++;
+	let start = 0;
+	while (start < last && lines[start] === "") start++;
+	return lines.slice(start, end);
 }

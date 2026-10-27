@@ -202,7 +202,18 @@ With `"summary"`, a tool result looks like this:
 
 Set to `false` to register none of the pi-subagents slash commands (`/run`, `/subagents`, `/subagents-fleet`, `/subagents-watchdog`, `/prompt-workflow`, and the rest) and no [`foregroundDetachShortcut`](#foregrounddetachshortcut). The `subagent` tool, RPC, the async widget, and the extension's other features are unchanged. Prompt templates whose frontmatter has `chain:` launch through `/prompt-workflow`, so they stop working too. Defaults to `true`. Restart Pi or run `/reload` after changing it.
 
-The package's prompt shortcuts, such as `/parallel-review` and `/review-loop`, are Pi prompt templates, not commands, so this setting leaves them alone. Pi's package filter removes them: `{ "packages": [{ "source": "npm:pi-subagents", "prompts": [] }] }` in Pi's `settings.json`, or `pi config`.
+The package's prompt shortcuts, such as `/parallel-review` and `/review-loop`, are Pi prompt templates, not commands, so this setting leaves them alone. The same goes for its skills (`pi-subagents` and `council-mode`) and built-in agents. To turn them off, use Pi's package filter for prompts and skills and `disableBuiltins` for the agents, in Pi's `settings.json`:
+
+```json
+{
+  "packages": [
+    { "source": "npm:pi-subagents", "prompts": ["!council.md", "!parallel-review.md", "!review-loop.md"], "skills": ["!council-mode"] }
+  ],
+  "subagents": { "disableBuiltins": true }
+}
+```
+
+`"prompts": []` drops every prompt template. `subagents.agentOverrides.<name>.disabled: true` turns off one built-in agent instead of all of them ([agents.md](agents.md)). `pi config` toggles the package's prompts and skills interactively.
 
 ## `foregroundDetachShortcut`
 
