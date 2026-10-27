@@ -22,6 +22,7 @@ export interface MissionLaunchParams {
 export interface MissionLaunchBinding {
 	missionId: string;
 	location: MissionStoreLocation;
+	/** True when the launch made the mission without a `mission` or `missionId` request. */
 	autoCreated: boolean;
 	announceInContent?: boolean;
 }
@@ -34,6 +35,7 @@ interface PersistedMissionBinding {
 	globalIndexDir: string;
 	writeGlobalIndex: boolean;
 	retainTerminal?: number;
+	autoCreated: boolean;
 }
 
 function workflowObjective(params: MissionLaunchParams): string | undefined {
@@ -81,7 +83,7 @@ export function prepareMissionLaunch(input: {
 		...(mission?.labels ? { labels: mission.labels } : {}),
 		...(input.ownerSessionId ? { ownerSessionId: input.ownerSessionId } : {}),
 	}, new Date(), input.config?.retainTerminal);
-	return { missionId: record.id, location, autoCreated: true, announceInContent: true };
+	return { missionId: record.id, location, autoCreated: input.params.mission === undefined, announceInContent: true };
 }
 
 function toolResultIsError(result: AgentToolResult<Details>): boolean {
@@ -102,7 +104,9 @@ function runStatusForResult(result: AgentToolResult<Details>): string {
 /**
  * Acceptance ledger statuses that mean nobody accepted the child's result:
  * evidence is missing, only self-reported with a required review pending,
- * or rejected. A run that ends with one of them does not complete a mission.
+ * or rejected. A run that ends with one of them does not complete a mission
+ * the caller asked for with `mission` or `missionId`. Missions made by default
+ * for ordinary launches still complete, since nobody is expected to close them.
  */
 const UNACCEPTED_ACCEPTANCE_STATUSES = new Set(["pending", "claimed", "review-required", "rejected"]);
 
@@ -126,14 +130,14 @@ function hasUnacceptedResult(record: MissionRecord, runId: string, acceptanceSta
 	return record.workflowChildren.some((child) => child.runId !== runId && child.acceptanceStatus !== undefined && UNACCEPTED_ACCEPTANCE_STATUSES.has(child.acceptanceStatus));
 }
 
-function missionStatusForRun(record: MissionRecord, runId: string, runStatus: string, acceptanceStatus?: string): MissionStatus {
+function missionStatusForRun(record: MissionRecord, runId: string, runStatus: string, acceptanceStatus: string | undefined, autoCreated: boolean): MissionStatus {
 	if (record.status === "completed" || record.status === "failed" || record.status === "cancelled") return record.status;
 	if (runStatus === "active" || runStatus === "queued" || runStatus === "running") return "active";
 	if (record.goal) return "active";
 	if (runStatus === "paused") return "waiting";
 	const otherActive = record.runs.some((run) => run.runId !== runId && (run.status === "active" || run.status === "queued" || run.status === "running"));
 	if (otherActive) return "active";
-	if (runStatus === "completed" || runStatus === "complete") return hasUnacceptedResult(record, runId, acceptanceStatus) ? "waiting" : "completed";
+	if (runStatus === "completed" || runStatus === "complete") return !autoCreated && hasUnacceptedResult(record, runId, acceptanceStatus) ? "waiting" : "completed";
 	if (runStatus === "stopped" || runStatus === "rejected" || runStatus === "cancelled") return "cancelled";
 	return "failed";
 }
@@ -182,6 +186,7 @@ function persistedBinding(binding: MissionLaunchBinding): PersistedMissionBindin
 		globalIndexDir: binding.location.globalIndexDir,
 		writeGlobalIndex: binding.location.writeGlobalIndex,
 		...(binding.location.retainTerminal !== undefined ? { retainTerminal: binding.location.retainTerminal } : {}),
+		autoCreated: binding.autoCreated,
 	};
 }
 
@@ -228,7 +233,7 @@ export function attachMissionToLaunchResult(input: {
 		...(usage ? { usage } : {}),
 	};
 	let mission = updateMission(input.binding.location, input.binding.missionId, {
-		status: missionStatusForRun(current, runId, runStatus, missionAcceptanceStatus(input.result.details.results)),
+		status: missionStatusForRun(current, runId, runStatus, missionAcceptanceStatus(input.result.details.results), input.binding.autoCreated),
 		addRuns: [run],
 		addArtifacts: artifactsForResult(input.result),
 		...(firstText(input.result) && runStatus !== "active" ? { summary: firstText(input.result)! } : {}),
@@ -291,9 +296,11 @@ function parsePersistedBinding(value: unknown, source: string): MissionLaunchBin
 	}
 	if (typeof input.writeGlobalIndex !== "boolean") throw new Error(`${source}.writeGlobalIndex must be boolean`);
 	if (input.retainTerminal !== undefined && (!Number.isInteger(input.retainTerminal) || (input.retainTerminal as number) < 1)) throw new Error(`${source}.retainTerminal must be a positive integer`);
+	if (input.autoCreated !== undefined && typeof input.autoCreated !== "boolean") throw new Error(`${source}.autoCreated must be boolean`);
 	return {
 		missionId: validateMissionId(input.missionId, `${source}.missionId`),
-		autoCreated: false,
+		// Bindings saved before this field existed belong to runs that completed their mission without an acceptance check.
+		autoCreated: input.autoCreated !== false,
 		location: {
 			projectRoot: input.projectRoot as string,
 			missionDir: input.missionDir as string,
@@ -385,7 +392,7 @@ export function syncMissionFromAsyncCompletion(value: unknown): MissionRecord | 
 	const workflowChildTerminal = !["running", "queued", "active", "paused"].includes(workflowChildStatus);
 	const acceptanceStatus = missionAcceptanceStatus(Array.isArray(event.results) ? event.results : undefined);
 	return updateMission(binding.location, binding.missionId, {
-		status: missionStatusForRun(current, runId, runStatus, acceptanceStatus),
+		status: missionStatusForRun(current, runId, runStatus, acceptanceStatus, binding.autoCreated),
 		addRuns: [{ runId, mode: typeof event.mode === "string" && ["single", "parallel", "chain", "workflow"].includes(event.mode) ? event.mode as SubagentRunMode : "external", asyncDir: event.asyncDir, status: runStatus, completedAt, ...(usage && usage.tokens > 0 ? { usage } : {}) }],
 		addArtifacts: artifacts,
 		...(workflowRunId && workflowKey ? { upsertWorkflowChildren: [{

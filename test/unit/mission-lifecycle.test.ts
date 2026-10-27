@@ -360,6 +360,34 @@ describe("mission launch lifecycle", () => {
 		}
 	});
 
+	it("completes a default mission when its async run ends without accepted evidence", () => {
+		const test = projectFixture();
+		try {
+			const asyncDir = path.join(test.root, "default-run");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			const binding = prepareMissionLaunch({ params: { task: "Edit the file" }, projectRoot: test.projectRoot, config: test.missionConfig });
+			assert.ok(binding);
+			attachMissionToLaunchResult({
+				binding,
+				result: {
+					content: [{ type: "text", text: "Async started" }],
+					details: { mode: "single", runId: "default-1", asyncId: "default-1", asyncDir, results: [] },
+				},
+			});
+			const done = syncMissionFromAsyncCompletion({
+				runId: "default-1",
+				asyncDir,
+				mode: "single",
+				state: "complete",
+				success: true,
+				results: [{ agent: "worker", acceptance: { status: "review-required", evidenceStatus: "checked" } }],
+			});
+			assert.equal(done?.status, "completed");
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps an async workflow mission waiting when a child result needs review", () => {
 		const test = projectFixture();
 		try {
