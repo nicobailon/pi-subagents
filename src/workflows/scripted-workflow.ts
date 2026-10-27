@@ -887,7 +887,8 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 		: undefined;
 	const workflowBody = wrapper && astNode(wrapper.body) ? wrapper.body : root;
 	// A rebound `runs` may not be the workflow API, so its calls prove nothing about child launches.
-	const agentNameError = options.agentNameError && !invalidatesRunsBinding(workflowBody) ? options.agentNameError : undefined;
+	const runsRebound = invalidatesRunsBinding(workflowBody);
+	const agentNameError = options.agentNameError && !runsRebound ? options.agentNameError : undefined;
 	walkAst(workflowBody, (node) => {
 		if (node !== wrapper && node.async === true && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression")) {
 			errors.push({ message: "workflowScript does not support nested async functions. Use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains.", ...nodeLocation(node) });
@@ -897,6 +898,7 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 			const keyNode = astNode(args[0]) ? args[0] : undefined;
 			const key = literalString(keyNode);
 			if (keyNode && key !== undefined && !KEY_PATTERN.test(key)) errors.push({ message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", ...nodeLocation(keyNode) });
+			if (keyNode?.type === "ObjectExpression" && !runsRebound) errors.push({ message: `runs.run expects (key, params); got an object as the first argument. Use runs.run("plan", { agent, task }) or runs.all([{ key, agent, task }]).`, ...nodeLocation(keyNode) });
 			if (astNode(args[1])) {
 				errors.push(...validateStaticBaseRef(args[1], "runs.run"));
 				const message = definitelyNonJson(args[1]);

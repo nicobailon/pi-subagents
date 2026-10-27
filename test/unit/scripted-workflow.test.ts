@@ -151,6 +151,11 @@ describe("scripted workflow runtime", () => {
 		assert.equal(invalidRunKey.ok, false);
 		assert.ok(invalidRunKey.errors.some((error) => error.message.includes("runs.run key")));
 
+		const objectRunKey = validateWorkflowScript(`const plan = await runs.run({ key: "plan", agent: "scout", task: "x" });\nreturn plan.output;`);
+		assert.equal(objectRunKey.ok, false);
+		assert.ok(objectRunKey.errors.some((error) => error.message.includes("got an object as the first argument") && error.message.includes(`runs.run("plan", { agent, task })`)));
+		assert.equal(validateWorkflowScript(`const runs = { run: (item) => item.task };\nreturn runs.run({ task: "x" });`).ok, true);
+
 		for (const script of [
 			`return runs.run("single", { agent: "worker", task: undefined });`,
 			`return runs.all([{ key: "same", agent: "worker", task: undefined }]);`,
@@ -2418,6 +2423,16 @@ describe("scripted workflow runtime", () => {
 			"Run 'bad' failed: child failed",
 		]);
 		assert.deepEqual(result.children.map((child) => child.key), ["bad"]);
+	});
+
+	it("names the (key, params) form when runs.run gets an object", async () => {
+		const result = await runWorkflowScript({
+			script: `try { await runs.run({ key: "plan", agent: "worker", task: "x" }); } catch (e) { return e.message; }`,
+			async launch(key) { return { key, ok: true, output: "", artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "", artifactPaths: [] }; },
+		});
+		assert.match(String(result.value), /got an object as the first argument\. Use runs\.run\("plan", \{ agent, task \}\)/);
+		assert.deepEqual(result.children, []);
 	});
 
 	it("rejects an unawaited runs.lanes launch", async () => {

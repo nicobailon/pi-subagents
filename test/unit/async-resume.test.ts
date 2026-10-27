@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -6,6 +7,8 @@ import { describe, it } from "node:test";
 import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
+import { parallelHandoffPath, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../../src/runs/shared/parallel-handoff.ts";
+import { cleanupWorktrees, createWorktrees } from "../../src/runs/shared/worktree.ts";
 import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
 
 function writeJson(filePath: string, value: object): void {
@@ -142,6 +145,39 @@ describe("async resume lookup", () => {
 				/required managed worktree cwd is missing/,
 			);
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("refuses to revive a worktree child in the source checkout while its runner is finalizing", async () => {
+		// Git reports the long Windows path; a short 8.3 temp path would fail the cwd containment check first.
+		const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-finalizing-")));
+		const repo = path.join(root, "repo");
+		const asyncDir = path.join(root, "runs", "run-finalizing");
+		const manifestPath = parallelHandoffPath(asyncDir);
+		const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf-8" });
+		fs.mkdirSync(repo);
+		git("init", "-q");
+		fs.writeFileSync(path.join(repo, "a.txt"), "a", "utf-8");
+		git("add", ".");
+		git("-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init");
+		const handoff = { manifestPath, runId: "run-finalizing", mode: "single" as const, source: "async" as const, cwd: repo, stepIndex: 0, flatStartIndex: 0 };
+		const setup = await createWorktrees(repo, "run-finalizing-s0", 1, { baseDir: path.join(root, "worktrees"), onProgress: (progress) => { writeWorktreeSetupHandoff({ ...handoff, progress }); } });
+		try {
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			// Interrupt marks the run paused before the runner captures the child's handoff.
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-finalizing", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: repo,
+				steps: [{ agent: "worker", status: "paused", sessionFile, worktreePath: setup.worktrees[0]!.path, branch: setup.worktrees[0]!.branch }],
+			});
+			const resume = () => resolveAsyncResumeTarget({ id: "run-finalizing" }, { asyncDirRoot: path.join(root, "runs"), resultsDir: path.join(root, "results") });
+
+			assert.throws(resume, /handoff has no resumable record yet/);
+			writeParallelHandoffGroup({ ...handoff, setup, diffs: [], results: [{ agent: "worker", status: "paused", summary: "paused", sessionPath: sessionFile }] });
+			assert.throws(resume, /still finalizing its managed worktree/);
+		} finally {
+			cleanupWorktrees(setup);
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

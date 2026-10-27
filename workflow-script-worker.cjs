@@ -758,6 +758,7 @@ function launchRunsAllPermissive(items) {
 
 const runs = Object.freeze({
   run(key, params) {
+    if (key && typeof key === "object" && !Array.isArray(key)) throw new Error('runs.run expects (key, params); got an object as the first argument. Use runs.run("plan", { agent, task }) or runs.all([{ key, agent, task }]).');
     validateRunCall(key, params, "runs.run", runFingerprints);
     const launched = runHostCall(key, params, false);
     return trackRunObservation([{ key, operation: "run", callId: launched.callId }], launched.promise.then(decorateWorkflowChildResult));
