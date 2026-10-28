@@ -768,18 +768,6 @@ Unset by default, so children inherit the parent's retention and behaviour is un
 
 Provider-reported `cacheWrite1h` usage confirms which tier a request used: it matches `cacheWrite` on the 1h tier and is `0` on the short one.
 
-## `PI_SUBAGENT_RESUMABLE_RETENTION_DAYS`
-
-Sets how many days a finished async run stays protected by the `resumable` retention skip, in days. Environment-only; there is no config key.
-
-By default, a run whose session file still exists is skipped by async retention forever, which makes `ASYNC_RETENTION_DAYS` a no-op for most completed runs on a busy host. With this window, resumable runs keep their unconditional protection only while they are younger than the configured age (default `90` days); once past it they fall through to the standard `ASYNC_RETENTION_DAYS` cutoff and are reclaimed like any other terminal run. Runs of unknown age and non-terminal runs are unaffected and stay protected.
-
-```text
-PI_SUBAGENT_RESUMABLE_RETENTION_DAYS=45
-```
-
-The value is read once per retention pass. Set `0` or `false` to disable the ceiling and restore the permanent skip. Values that are not a positive integer are ignored in favor of the default.
-
 ## `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS`
 
 Caps the total time a single retried filesystem operation may sleep, in milliseconds. Environment-only; there is no config key.

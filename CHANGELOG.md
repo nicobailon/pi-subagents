@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Old background runs are now deleted from disk. Background runs are meant to be removed 30 days after they finish, but a run was kept forever while its Pi session file still existed, and session files are never deleted, so almost no run was ever removed. A run whose session still exists is now kept for 90 days, so you can still resume it for that long, and is then removed like any other finished run. Thanks to [@LCorleone](https://github.com/LCorleone) for the report and fix, and [@isjiajia01](https://github.com/isjiajia01) for reproducing it. (#3098)
+
 ## [0.83.1] - 2026-10-27
 
 ### Highlights

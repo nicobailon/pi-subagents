@@ -18,13 +18,12 @@ export const ASYNC_RETENTION_DAYS = 30;
 export const ASYNC_RETENTION_BATCH_SIZE = 100;
 export const ASYNC_RETENTION_DELAY_MS = 60_000;
 export const ASYNC_RETENTION_TOMBSTONE_GRACE_MS = 24 * 60 * 60 * 1000;
-// Resumable runs outlive plain runs, but not forever: past this age the standard
-// ASYNC_RETENTION_DAYS window applies again instead of the unconditional "resumable" skip.
+// A run or result whose session file still exists can be resumed, so it is kept this long
+// instead of ASYNC_RETENTION_DAYS. Session files outlive run dirs, so without a ceiling it is kept forever.
 export const RESUMABLE_RETENTION_DAYS = 90;
 
 const RETENTION_MS = ASYNC_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const RESUMABLE_RETENTION_MS = RESUMABLE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-const RESUMABLE_RETENTION_DAYS_ENV = "PI_SUBAGENT_RESUMABLE_RETENTION_DAYS";
 const LOCK_NAME = ".async-retention.lock";
 const CURSOR_NAME = ".async-retention-cursor.json";
 const LOG_NAME = "async-retention-maintenance.jsonl";
@@ -305,17 +304,6 @@ function hasUnresolvedRunHandoff(runDir: string, status: AsyncStatus): boolean {
 	return [...paths].some(unresolvedHandoff);
 }
 
-// The resumable window is read per pass so the setting can change without a restart.
-// `0`/`false` disables the ceiling and restores the permanent skip; any other
-// non-positive-integer value is ignored in favor of the default.
-function resumableRetentionMs(): number {
-	const raw = process.env[RESUMABLE_RETENTION_DAYS_ENV]?.trim().toLowerCase();
-	if (!raw) return RESUMABLE_RETENTION_MS;
-	if (raw === "0" || raw === "false") return Number.POSITIVE_INFINITY;
-	const days = /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : 0;
-	return days > 0 ? days * 24 * 60 * 60 * 1000 : RESUMABLE_RETENTION_MS;
-}
-
 function runSkipReason(input: {
 	runDir: string;
 	status: AsyncStatus | undefined;
@@ -341,8 +329,7 @@ function runSkipReason(input: {
 	if (missionReferenceBlocksReclaim(runDir, input.resultsDir, status.runId)) return "mission-reference";
 	if (hasUnresolvedRunHandoff(runDir, status)) return "handoff-reference";
 	const timestamp = statusTimestamp(status, runDir);
-	// The resumable skip has an age ceiling: within the window resume stays available, past it
-	// the run falls through to the standard cutoff check. Unknown ages fail closed.
+	// Unknown ages stay protected.
 	if (hasResumableContract(runDir, status) && (timestamp === undefined || timestamp > input.resumableCutoff)) return "resumable";
 	if (timestamp === undefined) return "unknown-age";
 	if (timestamp > input.cutoff) return "recent";
@@ -552,8 +539,6 @@ function resultSkipReason(input: {
 	if (input.data.mode === "workflow" || completionMode(input.data) === "workflow" || typeof input.data.parentWorkflowRunId === "string" || typeof input.data.workflowKey === "string") return "workflow-reference";
 	if (hasUnresolvedResultHandoff(input.data)) return "handoff-reference";
 	const timestamp = resultTimestamp(input.data, input.candidate.path);
-	// Symmetric age ceiling on the result side: the referenced session keeps the result
-	// recoverable only while the resumable window lasts. Unknown ages fail closed.
 	if (resultHasResumableSession(input.data) && (timestamp === undefined || timestamp > input.resumableCutoff)) return "resumable";
 	if (input.candidate.kind === "archive" && fs.existsSync(path.join(input.resultsDir, "completion-replay", `${encodeURIComponent(runId)}.json`))) return "replay-reference";
 	if (!terminalResult(input.data) && input.candidate.kind !== "replay" && input.candidate.kind !== "archive" && input.candidate.kind !== "tombstone") return "non-terminal-result";
@@ -759,7 +744,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 		if (markCancelled()) return finish();
 		const protectedRunIds = new Set(options.protectedRunIds ?? []);
 		const cutoff = currentTime - retentionMs;
-		const resumableCutoff = currentTime - resumableRetentionMs();
+		const resumableCutoff = currentTime - RESUMABLE_RETENTION_MS;
 		const cursor = readCursor(maintenanceRoot);
 		const runBudget = Math.ceil(batchSize / 2);
 		const resultBudget = batchSize - runBudget;

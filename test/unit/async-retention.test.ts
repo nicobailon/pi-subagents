@@ -262,65 +262,6 @@ describe("async retention cleanup", () => {
 		}
 	});
 
-	it("restores the permanent resumable skip when PI_SUBAGENT_RESUMABLE_RETENTION_DAYS disables the window", async () => {
-		const roots = makeRoots();
-		const envName = "PI_SUBAGENT_RESUMABLE_RETENTION_DAYS";
-		try {
-			const sessionFile = path.join(roots.root, "resumable-session.jsonl");
-			fs.writeFileSync(sessionFile, "{}\n");
-			const expired = NOW - (RESUMABLE_RETENTION_DAYS + 1) * DAY_MS;
-			const runDir = writeOldRun(roots.asyncDirRoot, "expired-resumable", { endedAt: expired });
-			fs.writeFileSync(path.join(runDir, "recovery-descriptor.json"), JSON.stringify({ sourceRunId: "expired-resumable", sessionFile }));
-			fs.utimesSync(path.join(runDir, "status.json"), expired / 1000, expired / 1000);
-			fs.utimesSync(runDir, expired / 1000, expired / 1000);
-			const resultPath = writeOldResult(roots.resultsDir, "expired-resumable-result", { endedAt: expired, sessionFile });
-			fs.utimesSync(resultPath, expired / 1000, expired / 1000);
-
-			for (const disabled of ["0", "false"]) {
-				process.env[envName] = disabled;
-				const kept = await cleanupAsyncRetention(cleanupOptions(roots));
-				assert.equal(fs.existsSync(runDir), true, disabled);
-				assert.equal(fs.existsSync(resultPath), true, disabled);
-				assert.equal(kept.skipped.resumable, 2, disabled);
-				assert.equal(kept.deletedRuns, 0, disabled);
-				assert.equal(kept.deletedResults, 0, disabled);
-			}
-
-			process.env[envName] = "not-a-number";
-			const reclaimed = await cleanupAsyncRetention(cleanupOptions(roots));
-			assert.equal(fs.existsSync(runDir), false);
-			assert.equal(fs.existsSync(resultPath), false);
-			assert.equal(reclaimed.deletedRuns, 1);
-			assert.equal(reclaimed.deletedResults, 1);
-		} finally {
-			delete process.env[envName];
-			fs.rmSync(roots.root, { recursive: true, force: true });
-		}
-	});
-
-	it("honors a custom positive PI_SUBAGENT_RESUMABLE_RETENTION_DAYS window", async () => {
-		const roots = makeRoots();
-		const envName = "PI_SUBAGENT_RESUMABLE_RETENTION_DAYS";
-		try {
-			const sessionFile = path.join(roots.root, "resumable-session.jsonl");
-			fs.writeFileSync(sessionFile, "{}\n");
-			const midAge = NOW - 50 * DAY_MS;
-			const runDir = writeOldRun(roots.asyncDirRoot, "custom-window-resumable", { endedAt: midAge });
-			fs.writeFileSync(path.join(runDir, "recovery-descriptor.json"), JSON.stringify({ sourceRunId: "custom-window-resumable", sessionFile }));
-			fs.utimesSync(path.join(runDir, "status.json"), midAge / 1000, midAge / 1000);
-			fs.utimesSync(runDir, midAge / 1000, midAge / 1000);
-
-			process.env[envName] = "45";
-			const result = await cleanupAsyncRetention(cleanupOptions(roots));
-			assert.equal(fs.existsSync(runDir), false);
-			assert.equal(result.deletedRuns, 1);
-			assert.equal(result.skipped.resumable, undefined);
-		} finally {
-			delete process.env[envName];
-			fs.rmSync(roots.root, { recursive: true, force: true });
-		}
-	});
-
 	it("reclaims runs bound to terminal or pruned missions and keeps pending syncs and unreadable records", async () => {
 		const roots = makeRoots();
 		try {
