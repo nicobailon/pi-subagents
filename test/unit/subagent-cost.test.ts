@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 
 import { collectSubagentCost, formatSubagentCostReport } from "../../src/slash/subagent-cost.ts";
+import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { DIRS, SLASH_RESULT_TYPE } from "../../src/shared/types.ts";
 
 function collectWithErrors(branch: unknown[]) {
@@ -93,5 +94,51 @@ describe("collectSubagentCost", () => {
 		assert.equal(report.childTotal.input, 370);
 		assert.ok(Math.abs(report.childTotal.cost - 0.0324) < 1e-9);
 		assert.equal(report.unresolvedAsyncChildren, 0);
+	});
+
+	it("counts background runs known only from completion notices, such as RPC spawn launches", () => {
+		const id = `${process.pid}-${Date.now()}`;
+		const singleRunId = `rpc-single-${id}`;
+		const workflowRunId = `rpc-workflow-${id}`;
+		const workflowChildRunId = `rpc-workflow-child-${id}`;
+		const toolRunId = `tool-single-${id}`;
+		const artifactsDir = getArtifactsDir(null, process.cwd(), "session");
+		fs.mkdirSync(artifactsDir, { recursive: true });
+		const usage = { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 };
+		const writeSingle = (runId: string, agent: string) => {
+			fs.mkdirSync(path.join(DIRS.async, runId), { recursive: true });
+			fs.writeFileSync(path.join(DIRS.async, runId, "status.json"), JSON.stringify({ runId, mode: "single", state: "complete", startedAt: Date.now(), cwd: process.cwd(), steps: [{ agent, status: "complete" }] }), "utf-8");
+			fs.writeFileSync(getArtifactPaths(artifactsDir, runId, agent).metadataPath, JSON.stringify({ runId, agent, usage }), "utf-8");
+		};
+		writeSingle(singleRunId, "scout");
+		writeSingle(toolRunId, "worker");
+		fs.mkdirSync(path.join(DIRS.async, workflowRunId), { recursive: true });
+		fs.writeFileSync(path.join(DIRS.async, workflowRunId, "workflow-receipt.json"), JSON.stringify({
+			version: 1,
+			workflowRunId,
+			state: "complete",
+			createdAt: Date.now(),
+			entries: { review: { key: "review", agent: "reviewer", latestRunId: workflowChildRunId, continuation: { runIds: [workflowChildRunId] }, resumability: { state: "resumable" } } },
+		}), "utf-8");
+		fs.writeFileSync(getArtifactPaths(artifactsDir, workflowChildRunId, "reviewer", 0).metadataPath, JSON.stringify({ runId: workflowChildRunId, agent: "reviewer", usage }), "utf-8");
+		const notice = (runs: unknown[]) => ({ type: "custom_message", customType: "subagent-notify", content: "Background task completed", display: false, details: { runs } });
+		try {
+			const { report, errors } = collectWithErrors([
+				notice([
+					{ agent: "scout", status: "completed", source: "async", runId: singleRunId, asyncDir: path.join(DIRS.async, singleRunId) },
+					{ agent: "workflow", status: "completed", source: "async", runId: workflowRunId, workflowRunId, asyncDir: path.join(DIRS.async, workflowRunId) },
+				]),
+				// A tool-launched run also gets a notice; it must count once.
+				{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "single", runId: toolRunId, asyncId: toolRunId, results: [] } } },
+				notice([{ agent: "worker", status: "completed", source: "async", runId: toolRunId, asyncDir: path.join(DIRS.async, toolRunId) }]),
+			]);
+			assert.deepEqual(errors, []);
+			assert.deepEqual(report.children.map((child) => [child.agent, child.runId]).sort(), [["reviewer", workflowChildRunId], ["scout", singleRunId], ["worker", toolRunId]]);
+			assert.equal(report.childTotal.input, 300);
+			assert.equal(report.childTotal.output, 30);
+			assert.equal(report.unresolvedAsyncChildren, 0);
+		} finally {
+			for (const runId of [singleRunId, workflowRunId, toolRunId]) fs.rmSync(path.join(DIRS.async, runId), { recursive: true, force: true });
+		}
 	});
 });

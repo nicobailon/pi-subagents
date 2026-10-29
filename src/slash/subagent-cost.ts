@@ -121,6 +121,18 @@ function detailsFromSessionEntry(entry: unknown): Details | undefined {
 	return isSubagentDetails(message.details) ? message.details : undefined;
 }
 
+/** Background runs a `subagent-notify` completion reports; an RPC `spawn` launch has no tool result, so this is its only record. */
+function notifiedAsyncRuns(entry: unknown): Array<{ runId: string; workflow: boolean }> {
+	if (!entry || typeof entry !== "object") return [];
+	const record = entry as { type?: unknown; customType?: unknown; details?: unknown };
+	if (record.type !== "custom_message" || record.customType !== "subagent-notify") return [];
+	const runs = (record.details as { runs?: unknown } | undefined)?.runs;
+	if (!Array.isArray(runs)) return [];
+	return runs.flatMap((run: { runId?: unknown; workflowRunId?: unknown; source?: unknown }) =>
+		// A detached foreground task keeps no async status directory to read usage from.
+		run && typeof run.runId === "string" && run.source !== "foreground" ? [{ runId: run.runId, workflow: run.workflowRunId === run.runId }] : []);
+}
+
 function metadataUsage(
 	artifactsDirs: string[],
 	input: { runId: string; agent: string },
@@ -147,8 +159,9 @@ function metadataUsage(
 /**
  * Collect parent and child usage for the current session branch. Foreground
  * children come from persisted `subagent`/`bg_wait` tool-result details; async
- * workflow children are resolved through receipts, and other async runs through
- * their status steps, then artifact metadata.
+ * runs come from those results and `subagent-notify` completions. Async workflow
+ * children are resolved through receipts, and other async runs through their
+ * status steps, then artifact metadata.
  */
 export function collectSubagentCost(
 	ctx: ExtensionContext,
@@ -185,6 +198,7 @@ export function collectSubagentCost(
 		const message = entry.type === "message" ? (entry as { message?: unknown }).message : undefined;
 		const parentUsage = assistantUsageFromMessage(message) ?? compactionUsageFromEntry(entry);
 		if (parentUsage) addUsage(parent, parentUsage);
+		for (const run of notifiedAsyncRuns(entry)) (run.workflow ? workflowRunIds : asyncRunIds).add(run.runId);
 		const details = detailsFromSessionEntry(entry);
 		if (!details) continue;
 		// Only async workflows persist a receipt file; foreground workflow child usage is already in results.
