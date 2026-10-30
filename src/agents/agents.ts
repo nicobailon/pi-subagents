@@ -2845,7 +2845,7 @@ function getAgentDiscoverySources(cwd: string, preferredModelProvider?: string, 
 	const key = discoveryCacheKey(cwd, preferredModelProvider, globalNpmRoot, projectTrusted);
 	const cached = agentDiscoveryCache.get(key);
 	if (cached && cached.fingerprint === discoveryFingerprint(cached.sources)) {
-		if (includeChains) {
+		if (includeChains && !cached.sources.userChains) {
 			ensureDiscoveryChains(cached.sources);
 			cached.fingerprint = discoveryFingerprint(cached.sources);
 		}

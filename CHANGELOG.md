@@ -6,6 +6,8 @@
 
 - On Node, workflow scripts now run in a fresh permission-restricted process with no inherited startup flags or credentials, and cannot write files or start processes through Node APIs even outside the VM. A supervisor exits when the parent disconnects, including when the script is busy. Bun keeps its existing worker boundary. Thanks to [@XLi-hub](https://github.com/XLi-hub) for #3104.
 
+- Warm agent discovery checks watched files once when chain definitions are already loaded, instead of repeating the same filesystem scan. Freshness checks and discovery results are unchanged. Thanks to [@ArietidsZ](https://github.com/ArietidsZ) for #3115.
+
 ### Fixed
 
 - The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.

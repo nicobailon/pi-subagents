@@ -75,6 +75,42 @@ describe("agent discovery snapshots", () => {
 		}
 	});
 
+	it("fingerprints already loaded chain snapshots only once per warm lookup", (t) => {
+		const agentPath = path.join(project, ".pi", "agents", "warm.md");
+		const chainPath = path.join(project, ".pi", "chains", "warm.chain.md");
+		writeAgent(agentPath, "warm", "Warm agent");
+		fs.mkdirSync(path.dirname(chainPath), { recursive: true });
+		fs.writeFileSync(chainPath, "---\nname: warm-chain\ndescription: Warm chain\n---\n\n## warm\nInspect\n");
+		const options = { includeChains: true, globalNpmRoot: null };
+		const expected = discoverAgentSnapshot(project, "both", undefined, options);
+		assert.equal(expected.all.chains.some((chain) => chain.name === "warm-chain"), true);
+		const mutableFs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
+		const stat = t.mock.method(mutableFs, "statSync");
+		try {
+			syncBuiltinESMExports();
+			assert.deepEqual(discoverAgentSnapshot(project, "both", undefined, options), expected);
+			for (const watched of [agentPath, chainPath]) {
+				assert.equal(stat.mock.calls.filter((call) => String(call.arguments[0]) === watched).length, 1);
+			}
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+		}
+	});
+
+	it("adds chain watch paths when a no-chain snapshot is upgraded", () => {
+		const chainPath = path.join(project, ".pi", "chains", "lazy.chain.md");
+		writeAgent(path.join(project, ".pi", "agents", "lazy.md"), "lazy", "Lazy agent");
+		fs.mkdirSync(path.dirname(chainPath), { recursive: true });
+		const writeChain = (description: string) => fs.writeFileSync(chainPath,
+			`---\nname: lazy-chain\ndescription: ${description}\n---\n\n## lazy\nInspect\n`);
+		writeChain("First chain");
+		assert.equal(discoverAgentSnapshot(project, "both", undefined, { includeChains: false, globalNpmRoot: null }).all.chains.length, 0);
+		assert.equal(discoverAgentSnapshot(project, "both", undefined, { globalNpmRoot: null }).all.chains[0]?.description, "First chain");
+		writeChain("Changed chain description");
+		assert.equal(discoverAgentSnapshot(project, "both", undefined, { globalNpmRoot: null }).all.chains[0]?.description, "Changed chain description");
+	});
+
 	it("keeps effective and all-source projections distinct in one snapshot", () => {
 		const userAgentPath = path.join(home, ".pi", "agent", "agents", "shared.md");
 		const projectAgentPath = path.join(project, ".pi", "agents", "shared.md");
