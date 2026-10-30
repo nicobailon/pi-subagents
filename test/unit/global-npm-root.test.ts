@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getEventListeners } from "node:events";
 import { afterEach, describe, it } from "node:test";
 import { resolveGlobalNpmRoot } from "../../src/agents/global-npm-root.ts";
 
@@ -110,4 +111,66 @@ describe("resolveGlobalNpmRoot", () => {
 		assert.equal(completed, false, "the lookup should still be in flight");
 		assert.equal(await lookup, await fs.promises.realpath(root));
 	});
+	it("does not launch npm when already cancelled", async () => {
+		const { dir, env } = fixture("exit 1");
+		const marker = path.join(dir, "called");
+		const executable = path.join(dir, "bin", process.platform === "win32" ? "npm.cmd" : "npm");
+		fs.writeFileSync(executable, process.platform === "win32" ? `@echo off\r\necho called > "${marker}"\r\n` : `#!/bin/sh\necho called > '${marker}'\n`, { mode: 0o755 });
+		const controller = new AbortController();controller.abort();
+		assert.equal(await resolveGlobalNpmRoot({ env, signal: controller.signal }), null);
+		assert.equal(fs.existsSync(marker), false);
+	});
+
+	it("cancels a pending lookup and terminates its owned POSIX process", async () => {
+		if (process.platform === "win32") return; // npm.cmd descendants are outside this ownership assertion.
+		const { dir, env } = fixture("exit 1");
+		const pidFile = path.join(dir, "npm.pid");
+		// Shell redirection exposes an empty receipt before echo writes the PID.
+		fs.writeFileSync(path.join(dir, "bin", "npm"), `#!/bin/sh\n: > '${pidFile}'\nsleep 0.05\necho $$ > '${pidFile}'\nexec sleep 30\n`, { mode: 0o755 });
+		const controller = new AbortController();
+		const lookup = resolveGlobalNpmRoot({ env, timeoutMs: 5000, signal: controller.signal });
+		try {
+			const deadline = Date.now() + 3000;
+			let pid: number | undefined;
+			while (Date.now() < deadline) {
+				try {
+					const receipt = fs.readFileSync(pidFile, "utf8");
+					const candidate = Number(receipt);
+					if (/^[1-9]\d*\n$/.test(receipt) && Number.isSafeInteger(candidate) && candidate > 1) {
+						pid = candidate;
+						break;
+					}
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				}
+				await new Promise(resolve => setTimeout(resolve, 10));
+			}
+			assert.ok(pid !== undefined, "owned npm must publish a complete positive PID");
+			controller.abort();
+			assert.equal(await lookup, null);
+			for (let waited = 0; waited < 3000; waited += 20) {
+				try { process.kill(pid, 0); } catch { break; }
+				await new Promise(resolve => setTimeout(resolve, 20));
+			}
+			assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, `cancelled owned npm ${pid} must exit`);
+			assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+		} finally { controller.abort(); await lookup; }
+	});
+
+	it("removes cancellation listeners after success and timeout", async () => {
+		const { dir, env } = fixture("exit 1");
+		const root = path.join(dir, "root");fs.mkdirSync(root);
+		const executable = path.join(dir, "bin", process.platform === "win32" ? "npm.cmd" : "npm");
+		fs.writeFileSync(executable, process.platform === "win32" ? `@echo off\r\n${printRoot(root)}\r\n` : `#!/bin/sh\n${printRoot(root)}\n`, {mode: 0o755});
+		const success = new AbortController();
+		assert.equal(await resolveGlobalNpmRoot({env, signal: success.signal}), await fs.promises.realpath(root));
+		assert.equal(getEventListeners(success.signal, "abort").length, 0);
+		success.abort();
+		const slow = fixture(process.platform === "win32" ? "ping -n 4 127.0.0.1 > nul" : "exec sleep 2");
+		const timeout = new AbortController();
+		assert.equal(await resolveGlobalNpmRoot({env: slow.env, timeoutMs: 80, signal: timeout.signal}), null);
+		assert.equal(getEventListeners(timeout.signal, "abort").length, 0);
+		timeout.abort();
+	});
+
 });

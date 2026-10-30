@@ -30,6 +30,7 @@ it("session startup yields to the event loop and both first advertisements await
 		fs.writeFileSync(path.join(newerPackage, "agents", "new-specialist.md"), agent("new-specialist"));
 		fs.writeFileSync(path.join(localDir, "local-specialist.md"), agent("local-specialist"));
 		const oldDone = path.join(temp, "old-lookup-finished");
+		const oldPid = path.join(temp, "old-lookup-pid");
 		const oldRelease = path.join(temp, "old-lookup-release");
 		fs.writeFileSync(path.join(bin, "fake-npm.cjs"), `
 const fs = require("node:fs");
@@ -37,7 +38,9 @@ const phase = process.env.TEST_NPM_PHASE;
 if (phase === "failure") { console.error("private npm failure"); process.exit(1); }
 const print = () => { if (phase !== "timeout") console.log(phase === "latest" ? ${JSON.stringify(newerRoot)} : ${JSON.stringify(globalRoot)}); };
 if (phase === "old") {
+	process.on("SIGTERM", () => process.exit(0));
 	process.on("exit", () => fs.writeFileSync(${JSON.stringify(oldDone)}, "done"));
+	fs.writeFileSync(${JSON.stringify(oldPid)}, String(process.pid));
 	// The stale lookup answers only after the test releases it; the cap only ends an orphan.
 	const cap = Date.now() + 30000;
 	const poll = setInterval(() => { if (fs.existsSync(${JSON.stringify(oldRelease)}) || Date.now() > cap) { clearInterval(poll); print(); } }, 25);
@@ -48,7 +51,7 @@ if (phase === "old") {
 			? `@echo off\r\n"${process.execPath}" "%~dp0fake-npm.cjs" %*\r\n`
 			: `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/fake-npm.cjs" "$@"\n`);
 		if (process.platform !== "win32") fs.chmodSync(npm, 0o755);
-		const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, HOME: path.join(temp, "home"), USERPROFILE: path.join(temp, "home"), PI_CODING_AGENT_DIR: path.join(temp, "home"), TEST_PROJECT: path.join(fixtureRoot, "project"), TEST_OLD_DONE: oldDone, TEST_OLD_RELEASE: oldRelease, TEST_NPM_PHASE: "initial", APPDATA: path.join(temp, "missing-appdata") };
+		const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, HOME: path.join(temp, "home"), USERPROFILE: path.join(temp, "home"), PI_CODING_AGENT_DIR: path.join(temp, "home"), TEST_PROJECT: path.join(fixtureRoot, "project"), TEST_OLD_DONE: oldDone, TEST_OLD_PID: oldPid, TEST_OLD_RELEASE: oldRelease, TEST_NPM_PHASE: "initial", APPDATA: path.join(temp, "missing-appdata") };
 		delete env.PI_OFFLINE;
 		delete env[SUBAGENT_CHILD_ENV];
 		const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", String.raw`
@@ -111,7 +114,9 @@ if (phase === "old") {
 			process.env.TEST_NPM_PHASE = "old";
 			const oldStarted = Date.now();
 			start({ reason: "reload" }, ctx);
-			await new Promise((resolve) => setTimeout(resolve, 50));
+			const readyDeadline = Date.now() + 3000;
+			while (!fs.existsSync(process.env.TEST_OLD_PID) && Date.now() < readyDeadline) await new Promise(resolve => setTimeout(resolve, 10));
+			assert.equal(fs.existsSync(process.env.TEST_OLD_PID), true);
 			const waitingOnOld = advertise();
 			const waitingLoader = tools.get("subagents_enable").execute("reload", {}, new AbortController().signal, undefined, ctx);
 			const registration = registerRuntimeAgent({ pi, name: "runtime-test", definition: { description: "Test", systemPrompt: "Test" } });
@@ -120,10 +125,13 @@ if (phase === "old") {
 			const mergedExecution = tools.get("subagent").execute("merged-runtime", { agent: "new-specialist", task: "Probe", async: false }, new AbortController().signal, undefined, ctx)
 				.then((result) => JSON.stringify(result), (error) => error.message);
 			const [latest, reloadedLoader] = await Promise.all([waitingOnOld, waitingLoader]);
-			// The stale lookup stays pending until released below, so a prompt that waited on it could only
-			// resolve when the 5 s npm lookup timeout ended that lookup.
+			// The latest catalog must not wait for the obsolete lookup timeout.
 			assert.ok(Date.now() - oldStarted < 5000, "old lookup held the new session's prompt");
-			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), false, "stale lookup finished before its release");
+			if (process.platform !== "win32") {
+				const cancelledDeadline = Date.now() + 3000;
+				while (!fs.existsSync(process.env.TEST_OLD_DONE) && Date.now() < cancelledDeadline) await new Promise(resolve => setTimeout(resolve, 10));
+				assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true, "superseded owned lookup must exit without release");
+			}
 			fs.writeFileSync(process.env.TEST_OLD_RELEASE, "release");
 			assert.match(latest, /<name>new-specialist<\/name>/);
 			assert.match(reloadedLoader.content[0].text, /<name>new-specialist<\/name>/);
@@ -141,8 +149,7 @@ if (phase === "old") {
 				.then((result) => JSON.stringify(result), (error) => error.message);
 			assert.match(runtime, /new-specialist/, "execution must resolve the advertised agent");
 			assert.doesNotMatch(runtime, /Unknown agent|not found/i);
-			// The released stale npm child prints its result and writes the marker as it exits. Then give the parent
-			// time to handle the closed child before checking.
+			// Windows shell descendants may need the release; POSIX owned children were cancelled above.
 			const oldDeadline = Date.now() + 15_000;
 			while (!fs.existsSync(process.env.TEST_OLD_DONE) && Date.now() < oldDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
 			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true, "old lookup completed");
@@ -155,6 +162,33 @@ if (phase === "old") {
 			const local = await advertise();
 			assert.match(local, /<name>local-specialist<\/name>/);
 			assert.doesNotMatch(local, /<name>(global|new)-specialist<\/name>/);
+			fs.rmSync(process.env.TEST_OLD_DONE, {force: true});
+			fs.rmSync(process.env.TEST_OLD_PID, {force: true});
+			fs.rmSync(process.env.TEST_OLD_RELEASE, {force: true});
+			process.env.TEST_NPM_PHASE = "old";
+			start({ reason: "reload" }, ctx);
+			const shutdownReady = Date.now() + 3000;
+			while (!fs.existsSync(process.env.TEST_OLD_PID) && Date.now() < shutdownReady) await new Promise(resolve => setTimeout(resolve, 10));
+			assert.equal(fs.existsSync(process.env.TEST_OLD_PID), true);
+			const waitingAtShutdown = advertise();
+			await Promise.all(hooks.get("session_shutdown").map(handler => handler({reason: "exit"}, ctx)));
+			let shutdownWatchdog;
+			try {
+				const shutdownResult = await Promise.race([waitingAtShutdown, new Promise((_, reject) => { shutdownWatchdog = setTimeout(() => reject(new Error("shutdown barrier did not settle before releasing old lookup")), 1000); })]);
+				assert.equal(shutdownResult, undefined);
+			} finally {
+				clearTimeout(shutdownWatchdog);
+				fs.writeFileSync(process.env.TEST_OLD_RELEASE, "release");
+			}
+			const shutdownDone = Date.now() + 3000;
+			while (!fs.existsSync(process.env.TEST_OLD_DONE) && Date.now() < shutdownDone) await new Promise(resolve => setTimeout(resolve, 10));
+			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true);
+			await new Promise(resolve => setTimeout(resolve, 50));
+			assert.equal(await advertise(), undefined, "shutdown must not republish a late catalog");
+			process.env.TEST_NPM_PHASE = "latest";
+			start({ reason: "reload" }, ctx);
+			assert.match(await advertise(), /<name>new-specialist<\/name>/, "new session must recover its own catalog");
+			process.env.TEST_NPM_PHASE = "failure";
 			fs.writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, "settings.json"), "{");
 			start({ reason: "reload" }, ctx);
 			await assert.rejects(tools.get("subagent").execute("invalid", { action: "list" }, new AbortController().signal, undefined, ctx), /Failed to parse settings file/);

@@ -409,6 +409,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	let advertisedAgents: AgentConfig[] = [];
 	let advertisedContext: Pick<ExtensionContext, "cwd" | "model"> & { projectTrusted?: boolean } | undefined;
 	let advertisementGeneration = 0;
+	let advertisementLookup: AbortController | undefined;
 	let globalRoot: string | null = null;
 	let advertisementReady: Promise<void | { error: unknown }> = Promise.resolve();
 	let notifySessionChange = () => {};
@@ -430,12 +431,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const beginAdvertisement = (ctx: ExtensionContext) => {
 		const generation = ++advertisementGeneration;
+		advertisementLookup?.abort();
+		advertisementLookup = new AbortController();
 		notifySessionChange();
 		sessionChanged = new Promise<void>((resolve) => { notifySessionChange = resolve; });
 		advertisedAgents = [];
 		advertisedContext = { cwd: ctx.cwd, model: ctx.model, projectTrusted: typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined };
 		globalRoot = null;
-		advertisementReady = resolveGlobalNpmRoot().then((root) => {
+		advertisementReady = resolveGlobalNpmRoot({ signal: advertisementLookup.signal }).then((root) => {
 			if (generation !== advertisementGeneration) return;
 			globalRoot = root;
 			refreshAdvertisedAgents();
@@ -1054,6 +1057,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		cleanup(shutdownReason) {
 			if (runtimeCleaned) return;
 			runtimeCleaned = true;
+			++advertisementGeneration;
+			advertisementLookup?.abort();
+			advertisementLookup = undefined;
+			advertisedContext = undefined;
+			globalRoot = null;
+			advertisedAgents = [];
+			advertisementReady = Promise.resolve();
+			notifySessionChange();
 			// Synchronously, so a reload's new runtime finds these runs unclaimed when it scans.
 			cancelPendingWorkflowAutoResumes((entry) => entry.owner === autoResumeOwner);
 			programStatus.dispose(shutdownReason);

@@ -7,7 +7,10 @@ export async function resolveGlobalNpmRoot(options: {
 	env?: NodeJS.ProcessEnv;
 	platform?: NodeJS.Platform;
 	timeoutMs?: number;
+	signal?: AbortSignal;
 } = {}): Promise<string | null> {
+	const signal = options.signal;
+	if (signal?.aborted) return null;
 	const env = options.env ?? process.env;
 	const offline = env.PI_OFFLINE?.toLowerCase();
 	if (offline === "1" || offline === "true" || offline === "yes") return null;
@@ -15,19 +18,25 @@ export async function resolveGlobalNpmRoot(options: {
 	if ((options.platform ?? process.platform) === "win32" && env.APPDATA) {
 		const appDataRoot = path.join(env.APPDATA, "npm", "node_modules");
 		try {
-			if ((await fs.stat(appDataRoot)).isDirectory()) return await fs.realpath(appDataRoot);
+			if ((await fs.stat(appDataRoot)).isDirectory()) {
+				const root = await fs.realpath(appDataRoot);
+				return signal?.aborted ? null : root;
+			}
 		} catch {
 			// Invalid APPDATA roots fall back to npm (including disappearing directories).
 		}
 	}
 
+	if (signal?.aborted) return null;
 	const timeoutMs = options.timeoutMs ?? 5000;
 	const output = await new Promise<string | null>((resolve) => {
 		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		const finish = (value: string | null) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			signal?.removeEventListener("abort", cancel);
 			resolve(value);
 		};
 		const commandOptions = {
@@ -43,15 +52,19 @@ export async function resolveGlobalNpmRoot(options: {
 		const child = (options.platform ?? process.platform) === "win32"
 			? exec("npm root -g", commandOptions, callback)
 			: execFile("npm", ["root", "-g"], commandOptions, callback);
-		// Resolve at the deadline even if inherited pipes hold the callback open.
-		const timer = setTimeout(() => {
+		const cancel = () => {
 			child.kill();
 			finish(null);
-		}, timeoutMs);
+		};
+		// Resolve at the deadline even if inherited pipes hold the callback open.
+		timer = setTimeout(cancel, timeoutMs);
+		signal?.addEventListener("abort", cancel, { once: true });
+		if (signal?.aborted) cancel();
 	});
-	if (!output) return null;
+	if (!output || signal?.aborted) return null;
 	try {
-		return await fs.realpath(output);
+		const root = await fs.realpath(output);
+		return signal?.aborted ? null : root;
 	} catch {
 		return null;
 	}

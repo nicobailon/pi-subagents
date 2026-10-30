@@ -12,6 +12,8 @@
 - A direct MCP tool selector with a long run of slashes no longer takes quadratic time to normalize. Trailing slashes are trimmed with one backward pass over that run; before, a regex rescanned the selector from every index whenever it ended in anything else. Selector results are unchanged. Thanks to [@Yivas](https://github.com/Yivas) for #3112.
 - The read-only review check scans a `git` command line in one pass. A task prompt holding a long run of `git` options made the old pattern backtrack exponentially and freeze the workflow, and a 198,000-character prompt that never finished now takes milliseconds. Thanks to @Yivas for #3110.
 
+- Pending global npm discovery is cancelled when a session or extension runtime is replaced or shut down, and retired runtimes cannot publish a late agent catalog. Thanks to [@ArietidsZ](https://github.com/ArietidsZ) for #3117.
+
 ## [0.84.0] - 2026-10-28
 
 ### Highlights
