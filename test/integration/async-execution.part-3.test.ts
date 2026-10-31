@@ -23,6 +23,7 @@ import { readActiveRunIndex } from "../../src/runs/background/active-run-index.t
 import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { writeRetainedRequiredChildExtensions } from "../../src/shared/required-child-extensions.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
+import { registerSubagentLaunchCheck, type SubagentLaunch } from "../../src/api/launch-check.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
 import { INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR, STRUCTURED_OUTPUT_FOLLOW_UP, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
@@ -1946,6 +1947,44 @@ syncBuiltinESMExports();
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
 		}
+	});
+
+	it("refuses a resume from its launch check and starts no runner", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const parentSessionFile = path.join(tempDir, "check-resume-parent.jsonl");
+		const sessionFile = path.join(tempDir, "check-resume-child.jsonl");
+		const header = JSON.stringify({ type: "session", version: 1, id: "check-resume", cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${header}\n`);
+		fs.writeFileSync(sessionFile, `${header}\n`);
+		const sessionId = `check-resume-session-${Date.now()}-${Math.random()}`;
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			sessionManager: { getSessionId: () => sessionId, getSessionFile: () => parentSessionFile, getLeafId: () => "leaf", openSession: () => ({ createBranchedSession: () => sessionFile }) },
+		};
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
+		mockPi.onCall({ output: "Initial work" });
+		const launch = await executor.execute("check-resume-launch", { agent: "worker", task: "Do work", async: true, context: "fork", acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		const sourceId = launch.details.asyncId!;
+		assert.equal((await readAsyncPayload(sourceId)).success, true);
+		const runDirectories = () => fs.readdirSync(ASYNC_DIR).sort();
+		const before = runDirectories();
+		const callsBefore = mockPi.callCount();
+
+		const seen: SubagentLaunch[] = [];
+		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-policy", check: (description) => { seen.push(description); return { allow: false, reason: "no revival today" }; } });
+		try {
+			const refused = await executor.execute("check-resume-call", { action: "resume", id: sourceId, message: "Continue", acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+			assert.equal(refused.isError, true);
+			assert.equal(refused.content[0]?.text, "Launch check from test-policy denied agent 'worker': no revival today");
+			assert.deepEqual(seen.map((description) => ({ origin: description.origin, background: description.background, task: description.task })), [{ origin: { kind: "resume", sourceRunId: sourceId, requestId: "check-resume-call" }, background: true, task: "Continue" }]);
+			assert.deepEqual(runDirectories(), before);
+			assert.equal(mockPi.callCount(), callsBefore);
+		} finally { registration.dispose(); }
+
+		mockPi.onCall({ output: "Resumed after the check was removed" });
+		const resumed = await executor.execute("check-resume-allowed", { action: "resume", id: sourceId, message: "Continue", acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+		assert.ok(!resumed.isError, resumed.content[0]?.text);
+		assert.equal((await readAsyncPayload(resumed.details.asyncId!)).success, true);
 	});
 
 	it("uses the append request discovery context for a missing appended agent", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {

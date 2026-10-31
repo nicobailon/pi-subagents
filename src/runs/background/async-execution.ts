@@ -89,6 +89,7 @@ import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
 import { lookupRunnerLauncher, resolveAgentRunnerLauncher, runnerLauncherPlacementError } from "../shared/runner-launcher.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT, type RunnerLauncher } from "../../shared/types.ts";
+import { evaluateSubagentLaunchChecks, type SubagentLaunchOrigin } from "../shared/launch-check.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
@@ -360,6 +361,9 @@ interface AsyncSingleParams {
 		requestDigest: string;
 	};
 	extensionBindings?: ExtensionBindings;
+	launchOrigin?: SubagentLaunchOrigin;
+	/** Aborts a launch check that is still answering. */
+	signal?: AbortSignal;
 }
 
 interface AsyncExecutionResult {
@@ -1968,20 +1972,6 @@ export function executeAsyncSingle(
 	const asyncDir = inheritedNestedRoute
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
 		: path.join(DIRS.async, id);
-	let runFanoutBudget: RunFanoutBudgetDescriptor;
-	try {
-		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
-		fs.mkdirSync(asyncDir, { recursive: true });
-		writeRunFanoutBudgetDescriptor(asyncDir, runFanoutBudget);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return {
-			content: [{ type: "text", text: `Failed to create async run directory '${asyncDir}': ${message}` }],
-			isError: true,
-			details: { mode: "single" as const, results: [] },
-		};
-	}
-
 	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, instructionCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
 	const systemPrompt = buildEffectiveSystemPrompt({ agent: agentConfig, resolvedSkills, cwd: runnerCwd });
@@ -2077,9 +2067,6 @@ export function executeAsyncSingle(
 	const toolTimeoutMs = resolvedToolTimeout.toolTimeoutMs;
 	const initialUsageBudget = usageBudgetState(params.usageBudget, undefined);
 	const resolvedSessionDir = params.sessionDir ?? (sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined);
-	const structuredOutput = params.structuredOutputSchema
-		? createStructuredOutputRuntime(params.structuredOutputSchema, path.join(asyncDir, "structured-output"), { acceptanceReport: resolveAcceptanceReportMode(params.acceptance) })
-		: undefined;
 	let selectedModel = model;
 	let requestedModel: string | undefined;
 	if (!externalRunner) {
@@ -2143,6 +2130,39 @@ export function executeAsyncSingle(
 		async: true,
 		agentContract: params.agentContract,
 	});
+	const pendingLaunchCheck = evaluateSubagentLaunchChecks({
+		sessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+		agent: agentConfig.name,
+		...(params.signal ? { signal: params.signal } : {}),
+		describe: () => ({
+			origin: params.launchOrigin ?? { kind: "request", requestId: id },
+			agent: agentConfig.name,
+			task: params.goal ?? task,
+			cwd: machine?.cwd ?? runnerCwd,
+			worktree: params.worktree === true,
+			...(selectedModel ? { model: selectedModel } : {}),
+			verify: resolvedAcceptance.verify,
+			...(outputPath ? { outputPath } : {}),
+			background: true,
+		}),
+	});
+	const startRunner = (): AsyncExecutionResult | Promise<AsyncExecutionResult> => {
+	let runFanoutBudget: RunFanoutBudgetDescriptor;
+	try {
+		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		writeRunFanoutBudgetDescriptor(asyncDir, runFanoutBudget);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			content: [{ type: "text", text: `Failed to create async run directory '${asyncDir}': ${message}` }],
+			isError: true,
+			details: { mode: "single" as const, results: [] },
+		};
+	}
+	const structuredOutput = params.structuredOutputSchema
+		? createStructuredOutputRuntime(params.structuredOutputSchema, path.join(asyncDir, "structured-output"), { acceptanceReport: resolveAcceptanceReportMode(params.acceptance) })
+		: undefined;
 	const recoveryAgentConfig = params.recoveryAgentConfig ?? agentConfig;
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		...(ctx.modelResponseAliases ? { modelResponseAliases: ctx.modelResponseAliases } : {}),
@@ -2444,4 +2464,7 @@ export function executeAsyncSingle(
 	};
 	};
 	return spawnResultOrPromise instanceof Promise ? spawnResultOrPromise.then(finishSpawnResult) : finishSpawnResult(spawnResultOrPromise);
+	};
+	if (pendingLaunchCheck === undefined) return startRunner();
+	return pendingLaunchCheck.then((denial) => denial === undefined ? startRunner() : formatAsyncStartError("single", denial));
 }

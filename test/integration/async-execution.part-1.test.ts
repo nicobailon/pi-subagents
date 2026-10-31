@@ -15,6 +15,7 @@ import { syncBuiltinESMExports } from "node:module";
 import * as path from "node:path";
 import { createEventBus, events, makeAgent, makeMinimalCtx, resolveMockPiCallArgs } from "../support/helpers.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
+import { registerSubagentLaunchCheck, type SubagentLaunch } from "../../src/api/launch-check.ts";
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
 import type { WorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
@@ -48,6 +49,66 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		getSubagentSessionRoot: () => tempDir,
 		expandTilde: (value: string) => value,
 		discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+	});
+
+	const launchCheckAsyncParams = (sessionId: string, overrides: Record<string, unknown> = {}) => ({
+		agent: "worker",
+		task: "Checked background work",
+		agentConfig: makeAgent("worker", { model: "mock/test-model", thinking: "high" }),
+		availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model" }],
+		ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId, parentSessionId: sessionId },
+		artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+		shareEnabled: false,
+		maxSubagentDepth: 2,
+		acceptance: { level: "verified", verify: [{ id: "tests", command: "npm test", cwd: "packages/app", env: { SECRET: "x" } }] },
+		...overrides,
+	});
+
+	it("refuses a background start before it creates a run directory or spawns a runner", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sessionId = `async-launch-check-${Date.now()}-${Math.random()}`;
+		const id = `async-launch-refused-${Date.now().toString(36)}`;
+		const seen: SubagentLaunch[] = [];
+		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-policy", check: (launch) => { seen.push(launch); return { allow: false, reason: "no background work" }; } });
+		try {
+			const pending = executeAsyncSingle(id, launchCheckAsyncParams(sessionId, { launchOrigin: { kind: "workflow", workflowRunId: "wf-1", key: "review" }, worktree: true, output: "report.md", outputBaseDir: path.join(tempDir, "reports") }));
+			assert.ok(pending instanceof Promise, "a registered check makes the start asynchronous");
+			const refused = await pending;
+			assert.equal(refused.isError, true);
+			assert.equal(refused.content[0]?.text, "Launch check from test-policy denied agent 'worker': no background work");
+			assert.equal(fs.existsSync(path.join(ASYNC_DIR, id)), false);
+			assert.equal(mockPi.callCount(), 0);
+			assert.deepEqual(seen, [{
+				origin: { kind: "workflow", workflowRunId: "wf-1", key: "review" },
+				agent: "worker",
+				task: "Checked background work",
+				cwd: tempDir,
+				worktree: true,
+				model: "mock/test-model:high",
+				verify: [{ id: "tests", command: "npm test", cwd: "packages/app" }],
+				outputPath: path.join(tempDir, "reports", "report.md"),
+				background: true,
+			}]);
+		} finally { registration.dispose(); }
+	});
+
+	it("lets a waiting launch check allow a background child that then runs on the model it was shown", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sessionId = `async-launch-check-${Date.now()}-${Math.random()}`;
+		const id = `async-launch-allowed-${Date.now().toString(36)}`;
+		const seen: SubagentLaunch[] = [];
+		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-audit", check: async (launch) => { seen.push(launch); await new Promise((resolve) => setTimeout(resolve, 30)); return { allow: true }; } });
+		mockPi.onCall({ output: "Checked and done" });
+		try {
+			const started = await executeAsyncSingle(id, launchCheckAsyncParams(sessionId, { acceptance: false }));
+			assert.equal(started.isError, undefined, started.content[0]?.text);
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, true);
+			assert.equal(payload.results[0]?.output, "Checked and done");
+			assert.equal(seen.length, 1);
+			assert.deepEqual(seen[0]?.origin, { kind: "request", requestId: id });
+			assert.deepEqual(seen[0]?.verify, []);
+			const args = readMockPiArgs(mockPi, 0);
+			assert.equal(args[args.indexOf("--model") + 1], seen[0]?.model);
+		} finally { registration.dispose(); }
 	});
 
 	it("executes a registered mixed background workflow with captured grants after disposal", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

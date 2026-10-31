@@ -1799,6 +1799,8 @@ async function resumeExternalJobFollowUp(input: {
 	intercomBridge: IntercomBridgeState;
 	parentSessionFile: string | null;
 	absoluteDeadlineAt?: number;
+	launchOrigin: SubagentLaunchOrigin;
+	signal?: AbortSignal;
 }): Promise<AgentToolResult<Details>> {
 	if (input.target.kind === "live" || input.target.state === "running" || input.target.state === "queued") {
 		return { content: [{ type: "text", text: externalJobStillRunningMessage(input.target.runId) }], isError: true, details: { mode: "management", results: [] } };
@@ -1899,6 +1901,8 @@ async function resumeExternalJobFollowUp(input: {
 		capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(input.ctx.sessionManager.getSessionId() ?? undefined),
 		runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 		activeAsyncCapacity,
+		launchOrigin: input.launchOrigin,
+		signal: input.signal,
 		externalJobFollowUp: { sourceRunId: input.target.runId, sourceStepIndex: input.target.index, parentProviderJobId: externalJob.providerJobId, requestId, requestDigest },
 	}));
 	if (result.isError) {
@@ -1947,6 +1951,7 @@ async function resumeAsyncRun(input: {
 	parentModel?: ParentModel;
 	absoluteDeadlineAt?: number;
 	signal?: AbortSignal;
+	launchOrigin: SubagentLaunchOrigin;
 	onLaunch?: (launch: { agent: string; sessionName?: string; sessionFile?: string; async: boolean; runId?: string }) => void;
 }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
@@ -2090,6 +2095,8 @@ async function resumeAsyncRun(input: {
 			intercomBridge,
 			parentSessionFile,
 			absoluteDeadlineAt: input.absoluteDeadlineAt,
+			launchOrigin: input.launchOrigin,
+			signal: input.signal,
 		});
 		const resumedRunId = resumed.details.runId ?? resumed.details.asyncId;
 		if (!resumed.isError && resumedRunId) input.onLaunch?.({ agent: target.agent, async: true, runId: resumedRunId });
@@ -2371,6 +2378,8 @@ async function resumeAsyncRun(input: {
 		parentWorkflowRunId: input.params.workflowParentRunId,
 		workflowKey: input.params.workflowKey,
 		activeAsyncCapacity,
+		launchOrigin: input.launchOrigin,
+		signal: input.signal,
 	}));
 	const notifyLaunch = (): void => input.onLaunch?.({ agent: target.agent, sessionFile: revivalSessionFile, async: true, runId });
 	if (result.isError) {
@@ -3709,6 +3718,8 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			workflowKey: params.workflowKey,
 			lane: params.lane,
 			workflowAwaitAsync: params.workflowAwaitAsync,
+			launchOrigin: data.launchOrigin,
+			signal: data.signal,
 		}));
 		return waitForWorkflowAsyncSingleResult(params, asyncResult, { runId: id, task: params.task ?? "", signal: data.signal, state: deps.state, pi: deps.pi, kill: deps.kill });
 	}
@@ -5524,6 +5535,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
 		const markedLaunchOrigin = launchOrigins.get(params);
 		const scheduleId = scheduledLaunchIds.get(params);
+		const resumeOrigin = (sourceRunId: string): SubagentLaunchOrigin => ({ kind: "resume", sourceRunId, requestId: _id });
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
 		const retainedRequiredExtensions = workflowRetainedRequiredExtensions.get(params);
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
@@ -7336,6 +7348,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					deps,
 					parentModel: requestParentModel,
 					signal,
+					launchOrigin: markedLaunchOrigin ?? resumeOrigin(paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId ?? ""),
 					...(workflowLaunchObserver ? { onLaunch: (launch: Parameters<NonNullable<typeof workflowLaunchObserver>>[0]) => {
 						workflowLaunchObservers.delete(params);
 						workflowLaunchObserver(launch);
@@ -7376,7 +7389,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								? {}
 								: {
 										recover: ({ absoluteDeadlineAt, ...limits }) =>
-											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt })),
+											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt, launchOrigin: resumeOrigin(runId) })),
 									}
 							),
 						}));
@@ -7429,6 +7442,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										deps,
 										parentModel: requestParentModel,
 										absoluteDeadlineAt,
+										launchOrigin: resumeOrigin(resolved!.id),
 									})),
 							}
 					),
