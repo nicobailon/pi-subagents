@@ -71,7 +71,7 @@ import { retainLiveForegroundNestedRoute } from "../../integrations/pi-web-sessi
 import { HERDR_FOREGROUND_CONTROL_CHANGED_EVENT } from "../../integrations/herdr-status.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
-import { evaluateSubagentLaunchChecks, type SubagentLaunchOrigin } from "../shared/launch-check.ts";
+import { evaluateSubagentLaunchChecks, hasSubagentLaunchChecks, type SubagentLaunchOrigin } from "../shared/launch-check.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContract } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
@@ -1257,6 +1257,16 @@ function duplicateNames(names: string[]): string[] {
 	return [...duplicates];
 }
 
+/** A background runner starts these steps later, where the parent's launch checks cannot run. */
+function refuseRunnerOwnedSteps(ctx: ExtensionContext, what: string): AgentToolResult<Details> | undefined {
+	if (!hasSubagentLaunchChecks(ctx.sessionManager.getSessionId() ?? undefined)) return undefined;
+	return {
+		content: [{ type: "text", text: `Cannot ${what} while a launch check is registered for this session: a background runner would start those steps later, where the check cannot run.` }],
+		isError: true,
+		details: { mode: "management", results: [] },
+	};
+}
+
 function appendStepToAsyncChain(input: {
 	params: SubagentParamsLike;
 	requestCwd: string;
@@ -1279,6 +1289,8 @@ function appendStepToAsyncChain(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
+	const runnerOwnedRefusal = refuseRunnerOwnedSteps(input.ctx, `append step to run '${targetRunId}'`);
+	if (runnerOwnedRefusal) return runnerOwnedRefusal;
 	const chain = [input.params.step];
 	const validationParams = { ...input.params, chain } as SubagentParamsLike;
 	const acceptancePolicyErrors = validateExecutionAcceptancePolicy(validationParams);
@@ -1956,6 +1968,8 @@ async function resumeAsyncRun(input: {
 }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
 	const attachChain = (input.params.chain?.length ?? 0) > 0 ? input.params.chain as ChainStep[] : undefined;
+	const runnerOwnedRefusal = attachChain ? refuseRunnerOwnedSteps(input.ctx, "resume with a chain") : undefined;
+	if (runnerOwnedRefusal) return runnerOwnedRefusal;
 	if (!followUp && !attachChain) {
 		return {
 			content: [{ type: "text", text: "action='resume' requires message." }],

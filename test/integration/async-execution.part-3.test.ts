@@ -1987,6 +1987,33 @@ syncBuiltinESMExports();
 		assert.equal((await readAsyncPayload(resumed.details.asyncId!)).success, true);
 	});
 
+	it("refuses steps handed to a background runner while a launch check is registered", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const sessionId = `check-runner-steps-${Date.now()}-${Math.random()}`;
+		const ctx = makeMinimalCtx(tempDir);
+		ctx.sessionManager.getSessionId = () => sessionId;
+		const runId = `check-runner-steps-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ runId, sessionId: "session-123", mode: "chain", state: "running", startedAt: 100, lastUpdate: 200, cwd: tempDir, steps: [{ agent: "worker", status: "running" }] }, null, 2), "utf-8");
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
+		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-policy", check: () => ({ allow: true }) });
+		try {
+			const before = fs.readdirSync(ASYNC_DIR).sort();
+			const appended = await executor.execute("check-append", { action: "append-step", id: runId, step: { agent: "worker", task: "Later" } }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+			assert.equal(appended.isError, true);
+			assert.match(appended.content[0]?.text ?? "", /^Cannot append step to run '.*' while a launch check is registered for this session/);
+			assert.equal(readPendingChainAppendRequests(asyncDir).length, 0);
+			const attached = await executor.execute("check-attach", { action: "resume", id: runId, message: "Continue", chain: [{ agent: "worker", task: "Later" }] }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+			assert.equal(attached.isError, true);
+			assert.match(attached.content[0]?.text ?? "", /^Cannot resume with a chain while a launch check is registered for this session/);
+			assert.deepEqual(fs.readdirSync(ASYNC_DIR).sort(), before);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			registration.dispose();
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
 	it("uses the append request discovery context for a missing appended agent", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
 		const runId = `append-missing-agent-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, runId);
