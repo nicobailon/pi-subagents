@@ -15,6 +15,7 @@
     "./inspectors": "./src/api/inspectors.ts",
     "./delegation": "./src/api/delegation.ts",
     "./capability-ceiling": "./src/api/capability-ceiling.ts",
+    "./launch-check": "./src/api/launch-check.ts",
     "./workflow-resources": "./src/api/workflow-resources.ts",
     "./required-child-extensions": "./src/api/required-child-extensions.ts",
     "./preflight": "./src/api/preflight.ts",

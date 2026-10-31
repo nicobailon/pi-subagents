@@ -128,6 +128,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./external-job-provider": "./src/api/external-job-provider.ts",
 		"./external-runs": "./src/api/external-runs.ts",
 		"./capability-ceiling": "./src/api/capability-ceiling.ts",
+		"./launch-check": "./src/api/launch-check.ts",
 		"./workflow-resources": "./src/api/workflow-resources.ts",
 		"./required-child-extensions": "./src/api/required-child-extensions.ts",
 		"./delegation": "./src/api/delegation.ts",
@@ -164,6 +165,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof workflowResources.registerWorkflowResource, "function");
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_VERSION, 1);
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");
+	const launchCheck = await import("pi-subagents/launch-check");
+	assert.deepEqual(Object.keys(launchCheck), ["registerSubagentLaunchCheck"]);
+	assert.equal(typeof launchCheck.registerSubagentLaunchCheck, "function");
 	const delegation = await import("pi-subagents/delegation");
 	assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");
 	const preflight = await import("pi-subagents/preflight");
