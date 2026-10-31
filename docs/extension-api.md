@@ -1,6 +1,6 @@
 # Extension and integration APIs
 
-Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight, capability ceilings, the background-work provider contract, and the Herdr integration.
+Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight, capability ceilings, launch checks, the background-work provider contract, and the Herdr integration.
 
 ## Trusted workflow resources
 
@@ -445,6 +445,64 @@ Semantics:
 `denyExtensions` suppresses ambient, configured, and MCP provider extensions while retaining the package runtime needed for child protocol enforcement. This is a same-process policy boundary, not a sandbox against malicious code already running in the parent process.
 
 Schedules created while a ceiling is active are rejected until durable schedule persistence is available; unrestricted schedules remain subject to any policy active when they fire. Public status exposes bounded audit counts and sources, never full extension paths.
+
+## Launch checks
+
+A permission extension sees the `subagent` tool call, but with `workflow: true` that call is only `{ workflow: true }`. It cannot see the agents the script starts, the verify commands those agents bring from `gate` or from agent defaults, or their output files. Launch checks let a parent extension approve or refuse each child start itself, including starts made by workflows, resumes, and schedules:
+
+```ts
+import { registerSubagentLaunchCheck } from "pi-subagents/launch-check";
+
+pi.on("session_start", (_event, ctx) => {
+  const registration = registerSubagentLaunchCheck({
+    sessionId: ctx.sessionManager.getSessionId(),
+    source: "my-permissions",
+    check: async (launch, signal) => {
+      if (launch.origin.kind === "request" && approvedToolCalls.has(launch.origin.requestId)) return { allow: true };
+      if (launch.verify.some((v) => !isAllowedCommand(v.command))) return { allow: false, reason: "verify command not allowed" };
+      return (await askUser(launch, signal)) ? { allow: true } : { allow: false, reason: "declined" };
+    },
+  });
+  // registration.dispose() removes only this registration.
+});
+```
+
+Register with **`ctx.sessionManager.getSessionId()`**, as for ceilings, and dispose in `session_shutdown`. The subpath exports `registerSubagentLaunchCheck` and the types `SubagentLaunch`, `SubagentLaunchDecision`, `SubagentLaunchOrigin`, `RegisterSubagentLaunchCheckOptions`, and `SubagentLaunchCheckHandle`.
+
+The invariant: before pi-subagents starts a child agent session or spawns a background runner for a child, it awaits every check registered for the launching session, in registration order. The first refusal wins. With no registration, nothing changes.
+
+Each check receives a frozen description and the launch's abort signal:
+
+| Field | Meaning |
+|-------|---------|
+| `origin` | Where the start came from. Set by pi-subagents, never by a tool argument or a script. |
+| `agent` | The canonical agent name. |
+| `task` | The task the child is given. |
+| `cwd` | Absolute directory the child starts in. With `worktree`, the directory the new worktree is created from; a background worktree does not exist yet. |
+| `worktree` | Whether the child runs in a managed worktree. |
+| `model` | The model the child will actually run on, including a thinking suffix. Omitted for external runners. |
+| `verify` | The `id`, `command`, and optional `cwd` of each verify command that will run after the child finishes, from `gate`, `acceptance.verify`, and the agent's default acceptance. |
+| `outputPath` | Absolute path of the final output file, when the child has one. |
+| `background` | Whether the child runs in a detached runner. |
+
+The origin kinds are:
+
+- `request`: a `subagent` tool call, slash command, RPC spawn, or delegation. `requestId` is the tool call id for tool calls, so an extension can recognize a call it already approved in `tool_call`.
+- `workflow`: a child started by a workflow script, including the `chain` and `tasks` inputs, which compile to workflows. It carries `workflowRunId` and the script's `key`, plus `scheduleId` when a schedule fired the workflow.
+- `resume`: a retained child restarted by `action: "resume"` or by steering a stopped run. It carries `sourceRunId` and the `requestId` of the call.
+
+A refused start fails that child like any other failed child. A direct call returns an error result. In a workflow, `await runs.run(...)` throws the reason unless the script catches it, and `runs.all` marks that child `ok: false` and still runs its siblings. The message is `Launch check from <source> denied agent '<agent>': <reason>`, with the reason stripped of control characters and bounded.
+
+A check that throws or rejects, returns anything but `{ allow: true }` or `{ allow: false, reason }` with a non-empty reason, or is still waiting when the launch signal aborts also refuses the start. A check may wait, for example to ask the user. It has no timeout of its own, and results are not cached, persisted, or sent to other processes. Checks in a `runs.all` batch can run at the same time, so an extension that prompts the user serializes its own prompts.
+
+Limits:
+
+- A check covers starts made by the session it registered for. A child's own nested launches use the child's session, so the parent's check is not consulted. An extension that also loads in children, for example through required child extensions, registers there.
+- It checks the commands a child will run after it finishes, not each command as it runs. It does not cover `runs.host` or the files the child writes besides its output path. Native child permission rules remain the control for what a child does.
+- pi-subagents' own abort recovery reopens the same approved child with the same agent, cwd, verify commands, and output, like a provider retry. It is not checked again.
+- A refused start can leave pi-subagents' own records, such as workflow trace and journal entries, a forked copy of the parent conversation for `context: "fork"`, or a retained worktree marked to keep by a refused resume. No worktree is created, no child runs, no command runs, and no output is written.
+- A child that a workflow journal reuses starts nothing, so nothing is checked.
+- While the session has any check registered, `action: "resume"` with `chain` and `action: "append-step"` are refused, because a background runner would start those steps later where the check cannot run.
 
 ## Background-work provider API
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Permission extensions can now approve or refuse each child agent start with `registerSubagentLaunchCheck` from `pi-subagents/launch-check`. The check runs before pi-subagents starts a child session or background runner and sees the agent, task, directory, model, the verify commands the child will run afterward, the output path, and whether the start came from a tool call, a workflow script, or a resume. It can wait, for example to ask you. A refused start fails that child like any other failed child, and a check that throws or answers badly refuses too. Before, a check could see only the `subagent` tool call, which for `workflow: true` hides what the script starts. It checks the verify commands a child brings but does not intercept each command as it runs. [extension-api.md](docs/extension-api.md#launch-checks) lists what it covers. Thanks to [@ducn1806](https://github.com/ducn1806) for the proposal. (#3109)
+
 ### Changed
 
 - On Node, workflow scripts now run in a fresh permission-restricted process with no inherited startup flags or credentials, and cannot write files or start processes through Node APIs even outside the VM. A supervisor exits when the parent disconnects, including when the script is busy. Bun keeps its existing worker boundary. Thanks to [@XLi-hub](https://github.com/XLi-hub) for #3104.
