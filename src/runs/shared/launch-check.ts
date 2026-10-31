@@ -15,7 +15,13 @@ export interface SubagentLaunch {
 	readonly cwd: string;
 	readonly worktree: boolean;
 	readonly model?: string;
-	readonly verify: readonly { readonly id: string; readonly command: string; readonly cwd?: string }[];
+	readonly verify: readonly {
+		readonly id: string;
+		readonly command: string;
+		readonly cwd?: string;
+		/** Environment overrides declared for this command, applied on top of the inherited process environment. */
+		readonly env?: Readonly<Record<string, string>>;
+	}[];
 	readonly outputPath?: string;
 	readonly background: boolean;
 }
@@ -48,10 +54,10 @@ function registry(): Registry {
 }
 
 function validateText(value: unknown, field: string): string {
-	if (typeof value !== "string" || !value.trim() || /[\u0000-\u001f\u007f]/u.test(value) || Buffer.byteLength(value.trim(), "utf8") > 256) {
-		throw new Error(`Invalid launch check ${field}; expected a non-empty string without control characters (max 256 UTF-8 bytes).`);
+	if (typeof value !== "string" || !value.trim() || value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value) || Buffer.byteLength(value, "utf8") > 256) {
+		throw new Error(`Invalid launch check ${field}; expected a non-empty string without surrounding whitespace or control characters (max 256 UTF-8 bytes).`);
 	}
-	return value.trim();
+	return value;
 }
 
 export function registerSubagentLaunchCheck(options: RegisterSubagentLaunchCheckOptions): SubagentLaunchCheckHandle {
@@ -82,13 +88,20 @@ function freezeLaunch(launch: SubagentLaunch): SubagentLaunch {
 	return Object.freeze({
 		...launch,
 		origin: Object.freeze({ ...launch.origin }),
-		verify: Object.freeze(launch.verify.map(({ id, command, cwd }) => Object.freeze({ id, command, ...(cwd !== undefined ? { cwd } : {}) }))),
+		verify: Object.freeze(launch.verify.map(({ id, command, cwd, env }) => Object.freeze({
+			id,
+			command,
+			...(cwd !== undefined ? { cwd } : {}),
+			...(env !== undefined ? { env: Object.freeze({ ...env }) } : {}),
+		}))),
 	});
 }
 
 function boundedReason(reason: string): string {
 	const cleaned = reason.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim();
-	return cleaned.length > MAX_REASON_LENGTH ? `${cleaned.slice(0, MAX_REASON_LENGTH)}...` : cleaned;
+	if (cleaned.length <= MAX_REASON_LENGTH) return cleaned;
+	const cut = /[\ud800-\udbff]/u.test(cleaned[MAX_REASON_LENGTH - 1] ?? "") ? MAX_REASON_LENGTH - 1 : MAX_REASON_LENGTH;
+	return `${cleaned.slice(0, cut)}...`;
 }
 
 function describeFailure(error: unknown): string {
@@ -97,12 +110,18 @@ function describeFailure(error: unknown): string {
 
 const ABORTED_MESSAGE = "the launch was aborted before the check answered";
 
-function waitForDecision(pending: SubagentLaunchDecision | Promise<SubagentLaunchDecision>, signal: AbortSignal): Promise<SubagentLaunchDecision> {
-	return new Promise((resolve, reject) => {
-		const onAbort = () => reject(new Error(ABORTED_MESSAGE));
+function waitForDecision(check: RegisterSubagentLaunchCheckOptions["check"], launch: SubagentLaunch, signal: AbortSignal): Promise<SubagentLaunchDecision> {
+	let onAbort: (() => void) | undefined;
+	return new Promise<SubagentLaunchDecision>((resolve, reject) => {
+		onAbort = () => reject(new Error(ABORTED_MESSAGE));
 		signal.addEventListener("abort", onAbort, { once: true });
-		Promise.resolve(pending).then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
-	});
+		try {
+			Promise.resolve(check(launch, signal)).then(resolve, reject);
+		} catch (error) {
+			reject(error);
+		}
+		if (signal.aborted) onAbort();
+	}).finally(() => signal.removeEventListener("abort", onAbort!));
 }
 
 type PendingLaunchDenial = Promise<string | undefined> | undefined;
@@ -114,9 +133,8 @@ export function evaluateSubagentLaunchChecks(input: {
 	signal?: AbortSignal;
 }): PendingLaunchDenial {
 	if (input.sessionId === undefined) return undefined;
-	const registrations = registry().get(input.sessionId);
-	if (!registrations) return undefined;
-	const snapshot = [...registrations.values()];
+	const sessionId = input.sessionId;
+	if (!registry().has(sessionId)) return undefined;
 	return (async () => {
 		const signal = input.signal ?? new AbortController().signal;
 		let launch: SubagentLaunch;
@@ -125,21 +143,30 @@ export function evaluateSubagentLaunchChecks(input: {
 		} catch (error) {
 			return `Launch of agent '${input.agent}' was refused because it could not be described for launch checks: ${describeFailure(error)}`;
 		}
-		for (const { source, check } of snapshot) {
-			const denied = (reason: string) => `Launch check from ${source} denied agent '${input.agent}': ${reason}`;
-			if (signal.aborted) return denied(ABORTED_MESSAGE);
+		const answered = new Set<symbol>();
+		let lastSource: string | undefined;
+		while (true) {
+			const next = [...(registry().get(sessionId) ?? [])].find(([token]) => !answered.has(token));
+			const source = next?.[1].source ?? lastSource;
+			if (signal.aborted && source !== undefined) return `Launch check from ${source} denied agent '${input.agent}': ${ABORTED_MESSAGE}`;
+			if (!next) return undefined;
+			const [token, registration] = next;
+			lastSource = registration.source;
+			const denied = (reason: string) => `Launch check from ${registration.source} denied agent '${input.agent}': ${reason}`;
 			let decision: SubagentLaunchDecision;
 			try {
-				decision = await waitForDecision(check(launch, signal), signal);
+				decision = await waitForDecision(registration.check, launch, signal);
 			} catch (error) {
 				return denied(describeFailure(error));
 			}
 			if (typeof decision !== "object" || decision === null) return denied("returned an invalid decision");
-			if (decision.allow === true) continue;
+			if (decision.allow === true) {
+				answered.add(token);
+				continue;
+			}
 			if (decision.allow !== false) return denied("returned an invalid decision");
 			const reason = typeof decision.reason === "string" ? boundedReason(decision.reason) : "";
 			return denied(reason || "returned a denial without a reason");
 		}
-		return undefined;
 	})();
 }

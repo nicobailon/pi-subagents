@@ -361,7 +361,7 @@ interface AsyncSingleParams {
 		requestDigest: string;
 	};
 	extensionBindings?: ExtensionBindings;
-	launchOrigin?: SubagentLaunchOrigin;
+	launchOrigin: SubagentLaunchOrigin;
 	launchCheckSignal?: AbortSignal;
 }
 
@@ -2051,11 +2051,6 @@ export function executeAsyncSingle(
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
-	const deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
-	const timeoutMs = params.absoluteDeadlineAt !== undefined && deadlineAt !== undefined
-		? deadlineAt - Date.now()
-		: params.timeoutMs;
-	if (timeoutMs !== undefined && timeoutMs <= 0) return formatAsyncStartError("single", "The source run's absolute deadline expired before recovery could launch.");
 	const resolvedToolTimeout = resolveToolTimeoutMs({
 		callValue: params.toolTimeoutMs,
 		agentValue: agentConfig.defaultToolTimeoutMs,
@@ -2134,9 +2129,9 @@ export function executeAsyncSingle(
 		agent: agentConfig.name,
 		...(params.launchCheckSignal ? { signal: params.launchCheckSignal } : {}),
 		describe: () => ({
-			origin: params.launchOrigin ?? { kind: "request", requestId: id },
+			origin: params.launchOrigin,
 			agent: agentConfig.name,
-			task: params.goal ?? task,
+			task,
 			cwd: machine?.cwd ?? runnerCwd,
 			worktree: params.worktree === true,
 			...(selectedModel ? { model: selectedModel } : {}),
@@ -2145,7 +2140,160 @@ export function executeAsyncSingle(
 			background: true,
 		}),
 	});
-	const startRunner = (): AsyncExecutionResult | Promise<AsyncExecutionResult> => {
+	const resolved: ResolvedAsyncSingle = {
+		asyncDir,
+		capabilityCeiling,
+		contextLimit,
+		definitionDigest,
+		effectiveThinking,
+		extensionBindings,
+		externalRunner,
+		id,
+		inheritedNestedRoute,
+		initialUsageBudget,
+		lane,
+		launchContractDigest,
+		launchResolvedExtensions,
+		launcher,
+		machine,
+		machineEnv,
+		model,
+		modelOrigin,
+		nestedAddress,
+		outputMode,
+		outputPath,
+		parentExtensionProvider,
+		permissionRules,
+		requestedModel,
+		requiredExtensions,
+		resolvedAcceptance,
+		resolvedSessionDir,
+		resolvedSkills,
+		resolvedToolBudget,
+		runnerCwd,
+		selectedModel,
+		singleClaudeCodeOverride,
+		systemPrompt,
+		task,
+		taskText,
+		thinkingCeiling,
+		toolPlan,
+		toolTimeoutMs,
+	};
+	if (pendingLaunchCheck === undefined) return startAsyncSingleRunner(params, resolved);
+	return pendingLaunchCheck.then((denial) => denial === undefined ? startAsyncSingleRunner(params, resolved) : formatAsyncStartError("single", denial));
+}
+
+interface ResolvedAsyncSingle {
+	asyncDir: string;
+	capabilityCeiling: ResolvedSubagentCapabilityCeiling | undefined;
+	contextLimit: number | undefined;
+	definitionDigest: string;
+	effectiveThinking: string | false | undefined;
+	extensionBindings: ExtensionBindings | undefined;
+	externalRunner: boolean;
+	id: string;
+	inheritedNestedRoute: NestedRouteInfo | undefined;
+	initialUsageBudget: ReturnType<typeof usageBudgetState>;
+	lane: WorkflowLaneMetadata | undefined;
+	launchContractDigest: string;
+	launchResolvedExtensions: ReturnType<typeof projectLaunchResolvedChildExtensions> | undefined;
+	launcher: RunnerLauncher | undefined;
+	machine: PlacementMachineReference | undefined;
+	machineEnv: Record<string, string> | undefined;
+	model: string | undefined;
+	modelOrigin: ModelOrigin;
+	nestedAddress: ReturnType<typeof inheritedNestedParentAddressOf>;
+	outputMode: NonNullable<AsyncSingleParams["outputMode"]>;
+	outputPath: string | undefined;
+	parentExtensionProvider: string | undefined;
+	permissionRules: ReturnType<typeof resolvePermissionRules>;
+	requestedModel: string | undefined;
+	requiredExtensions: RequiredChildExtensionSnapshot;
+	resolvedAcceptance: ReturnType<typeof resolveEffectiveAcceptance>;
+	resolvedSessionDir: string | undefined;
+	resolvedSkills: ReturnType<typeof resolveSkillsWithFallback>["resolved"];
+	resolvedToolBudget: { budget?: ResolvedToolBudget; error?: string; };
+	runnerCwd: string;
+	selectedModel: string | undefined;
+	singleClaudeCodeOverride: ClaudeCodeOverride | undefined;
+	systemPrompt: string;
+	task: string;
+	taskText: string;
+	thinkingCeiling: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | undefined;
+	toolPlan: ReturnType<typeof resolvePiLaunchToolPlan>;
+	toolTimeoutMs: number | undefined;
+}
+
+function startAsyncSingleRunner(params: AsyncSingleParams, resolved: ResolvedAsyncSingle): AsyncExecutionResult | Promise<AsyncExecutionResult> {
+	const {
+		agent,
+		agentConfig,
+		artifactConfig,
+		artifactsDir,
+		availableModels,
+		baseRef,
+		childIntercomTarget,
+		controlConfig,
+		controlIntercomTarget,
+		ctx,
+		maxOutput,
+		maxSubagentDepth,
+		nestedRoute,
+		sessionFile,
+		sessionRoot,
+		shareEnabled,
+		worktreeBaseDir,
+		worktreeBranchPrefix,
+		worktreeProvider,
+		worktreeSetupHook,
+		worktreeSetupHookTimeoutMs,
+	} = params;
+	const {
+		asyncDir,
+		capabilityCeiling,
+		contextLimit,
+		definitionDigest,
+		effectiveThinking,
+		extensionBindings,
+		externalRunner,
+		id,
+		inheritedNestedRoute,
+		initialUsageBudget,
+		lane,
+		launchContractDigest,
+		launchResolvedExtensions,
+		launcher,
+		machine,
+		machineEnv,
+		model,
+		modelOrigin,
+		nestedAddress,
+		outputMode,
+		outputPath,
+		parentExtensionProvider,
+		permissionRules,
+		requestedModel,
+		requiredExtensions,
+		resolvedAcceptance,
+		resolvedSessionDir,
+		resolvedSkills,
+		resolvedToolBudget,
+		runnerCwd,
+		selectedModel,
+		singleClaudeCodeOverride,
+		systemPrompt,
+		task,
+		taskText,
+		thinkingCeiling,
+		toolPlan,
+		toolTimeoutMs,
+	} = resolved;
+	const deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
+	const timeoutMs = params.absoluteDeadlineAt !== undefined && deadlineAt !== undefined
+		? deadlineAt - Date.now()
+		: params.timeoutMs;
+	if (timeoutMs !== undefined && timeoutMs <= 0) return formatAsyncStartError("single", "The source run's absolute deadline expired before recovery could launch.");
 	let runFanoutBudget: RunFanoutBudgetDescriptor;
 	try {
 		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
@@ -2463,7 +2611,4 @@ export function executeAsyncSingle(
 	};
 	};
 	return spawnResultOrPromise instanceof Promise ? spawnResultOrPromise.then(finishSpawnResult) : finishSpawnResult(spawnResultOrPromise);
-	};
-	if (pendingLaunchCheck === undefined) return startRunner();
-	return pendingLaunchCheck.then((denial) => denial === undefined ? startRunner() : formatAsyncStartError("single", denial));
 }

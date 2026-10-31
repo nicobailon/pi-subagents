@@ -97,6 +97,95 @@ describe("subagent launch checks", () => {
 		}
 	});
 
+	it("refuses when a check aborts the launch synchronously and then allows", async () => {
+		const sessionId = uniqueSession();
+		const controller = new AbortController();
+		const handle = registerSubagentLaunchCheck({ sessionId, source: "racing", check: () => { controller.abort(); return { allow: true }; } });
+		try {
+			assert.equal(await evaluateSubagentLaunchChecks({ sessionId, agent: "worker", describe: () => launch(), signal: controller.signal }), "Launch check from racing denied agent 'worker': the launch was aborted before the check answered");
+		} finally {
+			handle.dispose();
+		}
+	});
+
+	it("refuses promptly when a check aborts the launch synchronously and never settles", async () => {
+		const sessionId = uniqueSession();
+		const controller = new AbortController();
+		const handle = registerSubagentLaunchCheck({ sessionId, source: "hanging", check: () => { controller.abort(); return new Promise<SubagentLaunchDecision>(() => {}); } });
+		try {
+			const denial = await Promise.race([
+				evaluateSubagentLaunchChecks({ sessionId, agent: "worker", describe: () => launch(), signal: controller.signal }),
+				new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 200)),
+			]);
+			assert.match(denial ?? "", /^Launch check from hanging denied .*aborted before the check answered$/);
+		} finally {
+			handle.dispose();
+		}
+	});
+
+	it("refuses when the launch aborts after one check allowed and before the next starts", async () => {
+		const sessionId = uniqueSession();
+		const controller = new AbortController();
+		const calls: string[] = [];
+		const handles = [
+			registerSubagentLaunchCheck({ sessionId, source: "first", check: async () => { calls.push("first"); await Promise.resolve(); controller.abort(); return { allow: true }; } }),
+			registerSubagentLaunchCheck({ sessionId, source: "second", check: () => { calls.push("second"); return { allow: true }; } }),
+		];
+		try {
+			assert.match(await evaluateSubagentLaunchChecks({ sessionId, agent: "worker", describe: () => launch(), signal: controller.signal }) ?? "", /aborted before the check answered$/);
+			assert.deepEqual(calls, ["first"]);
+		} finally {
+			for (const handle of handles) handle.dispose();
+		}
+	});
+
+	it("asks a check registered while another check waits before it allows the start", async () => {
+		const sessionId = uniqueSession();
+		const calls: string[] = [];
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		const first = registerSubagentLaunchCheck({ sessionId, source: "first", check: async () => { calls.push("first"); await gate; return { allow: true }; } });
+		const later: Array<{ dispose(): void }> = [];
+		try {
+			const pending = evaluateSubagentLaunchChecks({ sessionId, agent: "worker", describe: () => launch() });
+			later.push(registerSubagentLaunchCheck({ sessionId, source: "late-allow", check: () => { calls.push("late-allow"); return { allow: true }; } }));
+			later.push(registerSubagentLaunchCheck({ sessionId, source: "late-refuse", check: () => { calls.push("late-refuse"); return { allow: false, reason: "registered mid-wait" }; } }));
+			later.push(registerSubagentLaunchCheck({ sessionId, source: "after-refusal", check: () => { calls.push("after-refusal"); return { allow: true }; } }));
+			release();
+			assert.equal(await pending, "Launch check from late-refuse denied agent 'worker': registered mid-wait");
+			assert.deepEqual(calls, ["first", "late-allow", "late-refuse"]);
+		} finally {
+			first.dispose();
+			for (const handle of later) handle.dispose();
+		}
+	});
+
+	it("does not rerun an allowed check or ask one disposed while another waited", async () => {
+		const sessionId = uniqueSession();
+		const calls: string[] = [];
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		const handles = [
+			registerSubagentLaunchCheck({ sessionId, source: "first", check: () => { calls.push("first"); return { allow: true }; } }),
+			registerSubagentLaunchCheck({ sessionId, source: "waiting", check: async () => { calls.push("waiting"); await gate; return { allow: true }; } }),
+		];
+		const doomed = registerSubagentLaunchCheck({ sessionId, source: "doomed", check: () => { calls.push("doomed"); return { allow: false, reason: "gone" }; } });
+		const added = registerSubagentLaunchCheck({ sessionId, source: "added", check: () => { calls.push("added"); return { allow: true }; } });
+		handles.push(added);
+		try {
+			const pending = evaluateSubagentLaunchChecks({ sessionId, agent: "worker", describe: () => launch() });
+			doomed.dispose();
+			const extra = registerSubagentLaunchCheck({ sessionId, source: "extra", check: () => { calls.push("extra"); return { allow: true }; } });
+			handles.push(extra);
+			release();
+			assert.equal(await pending, undefined);
+			assert.deepEqual(calls, ["first", "waiting", "added", "extra"]);
+		} finally {
+			for (const handle of handles) handle.dispose();
+			doomed.dispose();
+		}
+	});
+
 	it("refuses a launch that cannot be described", async () => {
 		const sessionId = uniqueSession();
 		let called = false;
@@ -124,25 +213,42 @@ describe("subagent launch checks", () => {
 		}
 	});
 
+	it("does not split a surrogate pair when it bounds a reason", async () => {
+		const sessionId = uniqueSession();
+		const handle = registerSubagentLaunchCheck({ sessionId, source: "emoji", check: () => ({ allow: false, reason: `${"x".repeat(499)}\u{1F600}${"y".repeat(50)}` }) });
+		try {
+			const denial = await evaluateSubagentLaunchChecks({ sessionId, agent: "worker", describe: () => launch() });
+			assert.ok(denial);
+			assert.doesNotMatch(denial, /\p{Surrogate}/u);
+			assert.ok(denial.endsWith(`${"x".repeat(499)}...`));
+		} finally {
+			handle.dispose();
+		}
+	});
+
 	it("hands every check a deep-frozen copy that does not alias the caller's objects", async () => {
 		const sessionId = uniqueSession();
-		const verify = [{ id: "gate", command: "npm test", cwd: "/work" }];
+		const verify = [{ id: "gate", command: "npm test", cwd: "/work", env: { NODE_OPTIONS: "--require ./hook.cjs" } }];
 		const source = launch({ verify });
 		const frozen: boolean[] = [];
+		const seenVerify: unknown[] = [];
 		const handle = registerSubagentLaunchCheck({
 			sessionId,
 			source: "freeze",
 			check: (description) => {
-				frozen.push(Object.isFrozen(description), Object.isFrozen(description.origin), Object.isFrozen(description.verify), Object.isFrozen(description.verify[0]));
+				frozen.push(Object.isFrozen(description), Object.isFrozen(description.origin), Object.isFrozen(description.verify), Object.isFrozen(description.verify[0]), Object.isFrozen(description.verify[0]?.env));
+				seenVerify.push(description.verify);
 				assert.throws(() => { (description as { agent: string }).agent = "other"; }, TypeError);
 				return { allow: true };
 			},
 		});
 		try {
 			await evaluateSubagentLaunchChecks({ sessionId, agent: "worker", describe: () => source });
-			assert.deepEqual(frozen, [true, true, true, true]);
+			assert.deepEqual(frozen, [true, true, true, true, true]);
+			assert.deepEqual(seenVerify, [[{ id: "gate", command: "npm test", cwd: "/work", env: { NODE_OPTIONS: "--require ./hook.cjs" } }]]);
 			assert.equal(Object.isFrozen(source), false);
 			assert.equal(Object.isFrozen(verify[0]), false);
+			assert.equal(Object.isFrozen(verify[0]?.env), false);
 		} finally {
 			handle.dispose();
 		}
@@ -200,6 +306,8 @@ describe("subagent launch checks", () => {
 		assert.throws(() => registerSubagentLaunchCheck({ sessionId: "x", source: "bad\nsource", check }), /Invalid launch check source/);
 		assert.throws(() => registerSubagentLaunchCheck({ sessionId: "x", source: "s".repeat(300), check }), /Invalid launch check source/);
 		assert.throws(() => registerSubagentLaunchCheck({ sessionId: "x", source: "x", check: undefined as never }), /expected a function/);
+		assert.throws(() => registerSubagentLaunchCheck({ sessionId: " padded ", source: "x", check }), /Invalid launch check sessionId/);
+		assert.throws(() => registerSubagentLaunchCheck({ sessionId: "x", source: "x ", check }), /Invalid launch check source/);
 		assert.equal(hasSubagentLaunchChecks("x"), false);
 	});
 });

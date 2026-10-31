@@ -24,6 +24,10 @@ import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudget
 import { writeRetainedRequiredChildExtensions } from "../../src/shared/required-child-extensions.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 import { registerSubagentLaunchCheck, type SubagentLaunch } from "../../src/api/launch-check.ts";
+import { interruptRequestPath, steerInboxClosedPath } from "../../src/runs/background/control-channel.ts";
+import { createSteeringStatus } from "../../src/runs/background/steering.ts";
+import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
+import { resultFilePath } from "../../src/runs/background/result-files.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
 import { INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR, STRUCTURED_OUTPUT_FOLLOW_UP, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
@@ -1973,10 +1977,11 @@ syncBuiltinESMExports();
 		const seen: SubagentLaunch[] = [];
 		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-policy", check: (description) => { seen.push(description); return { allow: false, reason: "no revival today" }; } });
 		try {
-			const refused = await executor.execute("check-resume-call", { action: "resume", id: sourceId, message: "Continue", acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+			const refused = await executor.execute("check-resume-call", { action: "resume", id: sourceId.slice(0, 8), message: "Continue", acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
 			assert.equal(refused.isError, true);
 			assert.equal(refused.content[0]?.text, "Launch check from test-policy denied agent 'worker': no revival today");
-			assert.deepEqual(seen.map((description) => ({ origin: description.origin, background: description.background, task: description.task })), [{ origin: { kind: "resume", sourceRunId: sourceId, requestId: "check-resume-call" }, background: true, task: "Continue" }]);
+			assert.deepEqual(seen.map((description) => ({ origin: description.origin, background: description.background })), [{ origin: { kind: "resume", sourceRunId: sourceId, requestId: "check-resume-call" }, background: true }]);
+			assert.match(seen[0]?.task ?? "", new RegExp(`^You are reviving a previous subagent conversation\\.\\n[\\s\\S]*Original run: ${sourceId}\\n[\\s\\S]*Follow-up:\\nContinue$`));
 			assert.deepEqual(runDirectories(), before);
 			assert.equal(mockPi.callCount(), callsBefore);
 		} finally { registration.dispose(); }
@@ -1985,6 +1990,62 @@ syncBuiltinESMExports();
 		const resumed = await executor.execute("check-resume-allowed", { action: "resume", id: sourceId, message: "Continue", acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
 		assert.ok(!resumed.isError, resumed.content[0]?.text);
 		assert.equal((await readAsyncPayload(resumed.details.asyncId!)).success, true);
+	});
+
+	it("stops a steering recovery whose launch check is waiting when the caller cancels", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const parentSessionFile = path.join(tempDir, "check-steer-parent.jsonl");
+		const sessionFile = path.join(tempDir, "check-steer-child.jsonl");
+		const header = JSON.stringify({ type: "session", version: 1, id: "check-steer", cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${header}\n`);
+		fs.writeFileSync(sessionFile, `${header}\n`);
+		const sessionId = `check-steer-session-${Date.now()}-${Math.random()}`;
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			sessionManager: { getSessionId: () => sessionId, getSessionFile: () => parentSessionFile, getLeafId: () => "leaf", openSession: () => ({ createBranchedSession: () => sessionFile }) },
+		};
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
+		mockPi.onCall({ output: "Initial work" });
+		const launch = await executor.execute("check-steer-launch", { agent: "worker", task: "Do work", async: true, context: "fork", acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		const sourceId = launch.details.asyncId!;
+		assert.equal((await readAsyncPayload(sourceId)).success, true);
+
+		const asyncDir = path.join(ASYNC_DIR, sourceId);
+		fs.rmSync(resultFilePath(RESULTS_DIR, sourceId), { force: true });
+		fs.rmSync(steerInboxClosedPath(asyncDir), { force: true });
+		const statusPath = path.join(asyncDir, "status.json");
+		const finished = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+		let statusMtimeMs = Date.now();
+		const writeStatus = (status: unknown): void => {
+			writeAtomicJson(statusPath, status);
+			statusMtimeMs = Math.max(statusMtimeMs + 1, Date.now());
+			fs.utimesSync(statusPath, new Date(statusMtimeMs), new Date(statusMtimeMs));
+		};
+		const running = { ...finished, state: "running", pid: process.pid, endedAt: undefined, steps: [{ ...finished.steps[0], status: "running", sessionFile }], steering: createSteeringStatus() };
+		writeStatus(running);
+		const pauseOnInterrupt = setInterval(() => {
+			if (fs.existsSync(interruptRequestPath(asyncDir))) writeStatus({ ...running, state: "paused", endedAt: Date.now(), steps: [{ ...running.steps[0], status: "paused" }] });
+		}, 25);
+		const runDirectories = () => fs.readdirSync(ASYNC_DIR).sort();
+		const before = runDirectories();
+		const callsBefore = mockPi.callCount();
+
+		const controller = new AbortController();
+		const seen: SubagentLaunch[] = [];
+		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-slow", check: (description) => { seen.push(description); setTimeout(() => controller.abort(), 20); return new Promise(() => {}); } });
+		try {
+			const steered = await Promise.race([
+				executor.execute("check-steer-call", { action: "steer", id: sourceId, message: "Change course" }, controller.signal, undefined, ctx) as Promise<AsyncExecutionResult>,
+				new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("steering recovery kept waiting for its launch check after the caller cancelled")), 12_000)),
+			]);
+			assert.match(steered.content[0]?.text ?? "", /Launch check from test-slow denied agent 'worker': the launch was aborted before the check answered/);
+			assert.deepEqual(seen.map((description) => description.origin), [{ kind: "resume", sourceRunId: sourceId, requestId: "check-steer-call" }]);
+			assert.deepEqual(runDirectories(), before);
+			assert.equal(mockPi.callCount(), callsBefore);
+		} finally {
+			clearInterval(pauseOnInterrupt);
+			registration.dispose();
+		}
 	});
 
 	it("refuses steps handed to a background runner while a launch check is registered", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

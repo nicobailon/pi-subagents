@@ -84,7 +84,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				cwd: tempDir,
 				worktree: true,
 				model: "mock/test-model:high",
-				verify: [{ id: "tests", command: "npm test", cwd: "packages/app" }],
+				verify: [{ id: "tests", command: "npm test", cwd: "packages/app", env: { SECRET: "x" } }],
 				outputPath: path.join(tempDir, "reports", "report.md"),
 				background: true,
 			}]);
@@ -98,16 +98,58 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-audit", check: async (launch) => { seen.push(launch); await new Promise((resolve) => setTimeout(resolve, 30)); return { allow: true }; } });
 		mockPi.onCall({ output: "Checked and done" });
 		try {
-			const started = await executeAsyncSingle(id, launchCheckAsyncParams(sessionId, { acceptance: false }));
+			const started = await executeAsyncSingle(id, launchCheckAsyncParams(sessionId, { acceptance: false, launchOrigin: { kind: "request", requestId: "call-allowed" } }));
 			assert.equal(started.isError, undefined, started.content[0]?.text);
 			const payload = await readAsyncPayload(id);
 			assert.equal(payload.success, true);
 			assert.equal(payload.results[0]?.output, "Checked and done");
 			assert.equal(seen.length, 1);
-			assert.deepEqual(seen[0]?.origin, { kind: "request", requestId: id });
+			assert.deepEqual(seen[0]?.origin, { kind: "request", requestId: "call-allowed" });
 			assert.deepEqual(seen[0]?.verify, []);
 			const args = readMockPiArgs(mockPi, 0);
 			assert.equal(args[args.indexOf("--model") + 1], seen[0]?.model);
+		} finally { registration.dispose(); }
+	});
+
+	it("starts the child timeout and the absolute-deadline guard after the launch check answers", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sessionId = `async-launch-check-${Date.now()}-${Math.random()}`;
+		let answeredAt = 0;
+		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-slow", check: async () => { await new Promise((resolve) => setTimeout(resolve, 80)); answeredAt = Date.now(); return { allow: true }; } });
+		mockPi.onCall({ output: "Done after waiting" });
+		try {
+			const started = await executeAsyncSingle(`async-launch-timeout-${Date.now().toString(36)}`, launchCheckAsyncParams(sessionId, { acceptance: false, launchOrigin: { kind: "request", requestId: "call-timeout" }, timeoutMs: 60_000 }));
+			assert.equal(started.isError, undefined, started.content[0]?.text);
+			assert.ok(started.details.deadlineAt! >= answeredAt + 60_000, `deadline ${started.details.deadlineAt} should start after the check answered at ${answeredAt}`);
+			assert.ok(started.details.timeoutMs! >= 59_000 && started.details.timeoutMs! <= 60_000);
+			await readAsyncPayload(started.details.asyncId!);
+			const expiredId = `async-launch-expired-${Date.now().toString(36)}`;
+			const expired = await executeAsyncSingle(expiredId, launchCheckAsyncParams(sessionId, { acceptance: false, launchOrigin: { kind: "request", requestId: "call-expired" }, absoluteDeadlineAt: Date.now() + 20 }));
+			assert.equal(expired.isError, true);
+			assert.match(expired.content[0]?.text ?? "", /absolute deadline expired before recovery could launch/);
+			assert.equal(fs.existsSync(path.join(ASYNC_DIR, expiredId)), false);
+		} finally { registration.dispose(); }
+	});
+
+	it("checks an async workflow child with its workflow origin and fails it like any refused child", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const ctx = makeMinimalCtx(tempDir);
+		const sessionId = `async-workflow-check-${Date.now()}-${Math.random()}`;
+		ctx.sessionManager.getSessionId = () => sessionId;
+		const seen: SubagentLaunch[] = [];
+		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-policy", check: (launch) => { seen.push(launch); return launch.agent === "worker" ? { allow: false, reason: "no background children" } : { allow: true }; } });
+		try {
+			const result = await makeLifecycleExecutor(createEventBus()).execute("async-workflow-child-check", {
+				workflowScript: `const [bg] = await runs.all([{ key: "bg", agent: "worker", task: "Background child", async: true, acceptance: false }]); return JSON.stringify({ ok: bg.ok, error: bg.error });`,
+				async: false,
+				mission: false,
+			}, new AbortController().signal, undefined, ctx);
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			const outcome = JSON.parse(String(result.content[0]?.text).match(/\{"ok".*\}/)![0]) as { ok: boolean; error: string };
+			assert.equal(outcome.ok, false);
+			assert.equal(outcome.error, "Launch check from test-policy denied agent 'worker': no background children");
+			assert.equal(mockPi.callCount(), 0);
+			assert.equal(seen.length, 1);
+			assert.equal(seen[0]?.background, true);
+			assert.deepEqual({ ...seen[0]?.origin, workflowRunId: undefined }, { kind: "workflow", workflowRunId: undefined, key: "bg" });
 		} finally { registration.dispose(); }
 	});
 

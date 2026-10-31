@@ -1434,6 +1434,52 @@ Answer only from the supplied synthetic text.
 			} finally { registration.dispose(); }
 		});
 
+		it("tells the check which schedule fired a workflow child", async () => {
+			const ctx = launchCtx();
+			const seen: SubagentLaunch[] = [];
+			const registration = registerSubagentLaunchCheck({ sessionId: ctx.sessionManager.getSessionId(), source: "test-audit", check: (launch) => { seen.push(launch); return { allow: true }; } });
+			try {
+				mockPi.onCall({ output: "Nightly work done" });
+				const result = await makeExecutor([makeAgent("worker")]).executeScheduled("launch-check-scheduled", {
+					workflowScript: `return await runs.run("nightly-child", { agent: "worker", task: "Nightly" });`,
+					async: false,
+					scheduleOrigin: { id: "nightly" },
+				}, new AbortController().signal, ctx);
+				assert.equal(result.isError, undefined, result.content[0]?.text);
+				assert.equal(seen.length, 1);
+				const origin = seen[0]!.origin;
+				assert.ok(origin.kind === "workflow");
+				assert.deepEqual({ ...origin, workflowRunId: undefined }, { kind: "workflow", workflowRunId: undefined, key: "nightly-child", scheduleId: "nightly" });
+				assert.ok(origin.workflowRunId.length > 0);
+			} finally { registration.dispose(); }
+		});
+
+		it("shows the check the environment overrides a verify command will run with", async () => {
+			const ctx = launchCtx();
+			const seen: SubagentLaunch[] = [];
+			const registration = registerSubagentLaunchCheck({ sessionId: ctx.sessionManager.getSessionId(), source: "test-audit", check: (launch) => { seen.push(launch); return { allow: false, reason: "just looking" }; } });
+			try {
+				const command = `${JSON.stringify(process.execPath)} --version`;
+				const result = await makeExecutor([makeAgent("worker")]).execute("launch-check-env", { async: false, agent: "worker", task: "Work", acceptance: { level: "verified", verify: [{ id: "version", command, cwd: "sub", env: { NODE_OPTIONS: "--require ./hook.cjs" } }] } }, new AbortController().signal, undefined, ctx);
+				assert.equal(result.isError, true);
+				assert.deepEqual(seen.map((launch) => launch.verify), [[{ id: "version", command, cwd: "sub", env: { NODE_OPTIONS: "--require ./hook.cjs" } }]]);
+				assert.equal(mockPi.callCount(), 0);
+			} finally { registration.dispose(); }
+		});
+
+		it("rejects an invalid file-only output setup before it asks the check", async () => {
+			const ctx = launchCtx();
+			let asked = false;
+			const registration = registerSubagentLaunchCheck({ sessionId: ctx.sessionManager.getSessionId(), source: "test-audit", check: () => { asked = true; return { allow: true }; } });
+			try {
+				const result = await makeExecutor([makeAgent("worker")]).execute("launch-check-file-only", { async: false, agent: "worker", task: "Work", outputMode: "file-only" }, new AbortController().signal, undefined, ctx);
+				assert.equal(result.isError, true);
+				assert.doesNotMatch(result.content[0]?.text ?? "", /Launch check/);
+				assert.equal(asked, false);
+				assert.equal(mockPi.callCount(), 0);
+			} finally { registration.dispose(); }
+		});
+
 		it("refuses a direct call before it creates a worktree or starts a child", async () => {
 			execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
 			execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });

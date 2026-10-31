@@ -1962,7 +1962,8 @@ async function resumeAsyncRun(input: {
 	parentModel?: ParentModel;
 	absoluteDeadlineAt?: number;
 	signal?: AbortSignal;
-	launchOrigin: SubagentLaunchOrigin;
+	launchRequestId: string;
+	markedLaunchOrigin?: SubagentLaunchOrigin;
 	onLaunch?: (launch: { agent: string; sessionName?: string; sessionFile?: string; async: boolean; runId?: string }) => void;
 }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
@@ -2012,6 +2013,7 @@ async function resumeAsyncRun(input: {
 		return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
 	}
 
+	const launchOrigin: SubagentLaunchOrigin = input.markedLaunchOrigin ?? { kind: "resume", sourceRunId: target.runId, requestId: input.launchRequestId };
 	if (target.kind === "live" && !attachChain) {
 		return {
 			content: [{
@@ -2108,7 +2110,7 @@ async function resumeAsyncRun(input: {
 			intercomBridge,
 			parentSessionFile,
 			absoluteDeadlineAt: input.absoluteDeadlineAt,
-			launchOrigin: input.launchOrigin,
+			launchOrigin,
 			signal: input.signal,
 		});
 		const resumedRunId = resumed.details.runId ?? resumed.details.asyncId;
@@ -2391,7 +2393,7 @@ async function resumeAsyncRun(input: {
 		parentWorkflowRunId: input.params.workflowParentRunId,
 		workflowKey: input.params.workflowKey,
 		activeAsyncCapacity,
-		launchOrigin: input.launchOrigin,
+		launchOrigin,
 		launchCheckSignal: input.signal,
 	}));
 	const notifyLaunch = (): void => input.onLaunch?.({ agent: target.agent, sessionFile: revivalSessionFile, async: true, runId });
@@ -4217,6 +4219,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 	const sourceCwd = foregroundMachine?.cwd ?? effectiveCwd;
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, sourceCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
+	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
+	if (validationError) return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
 	const pendingLaunchCheck = evaluateSubagentLaunchChecks({
 		sessionId: data.parentPiSessionId,
 		agent: agentConfig.name,
@@ -4307,11 +4311,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const authoredTask = task;
 	if (shouldForkAgent(contextPolicy, params.agent!)) {
 		task = wrapForkTask(task);
-	}
-	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
-	if (validationError) {
-		await cleanupSingleWorktree();
-		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [], parallelHandoff: pendingHandoff } };
 	}
 	const structuredRuntime = params.outputSchema
 		? createStructuredOutputRuntime(params.outputSchema, artifactConfig.enabled ? path.join(artifactsDir, "structured-output", runId) : undefined, { acceptanceReport: resolveAcceptanceReportMode(params.acceptance) })
@@ -4694,6 +4693,12 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 
 const launchOrigins = new WeakMap<object, SubagentLaunchOrigin>();
 const scheduledLaunchIds = new WeakMap<object, string>();
+function carryLaunchMarkers(from: object, to: object): void {
+	const origin = launchOrigins.get(from);
+	if (origin) launchOrigins.set(to, origin);
+	const scheduleId = scheduledLaunchIds.get(from);
+	if (scheduleId) scheduledLaunchIds.set(to, scheduleId);
+}
 const workflowLaunchObservers = new WeakMap<object, (launch: { agent: string; sessionName?: string; sessionFile?: string; async: boolean; runId?: string }) => void>();
 const workflowOwnedUsageBudgets = new WeakMap<object, UsageBudgetConfig>();
 const workflowRetainedRequiredExtensions = new WeakMap<object, RequiredChildExtensionSnapshot>();
@@ -5547,7 +5552,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
 		const markedLaunchOrigin = launchOrigins.get(params);
 		const scheduleId = scheduledLaunchIds.get(params);
-		const resumeOrigin = (sourceRunId: string): SubagentLaunchOrigin => ({ kind: "resume", sourceRunId, requestId: _id });
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
 		const retainedRequiredExtensions = workflowRetainedRequiredExtensions.get(params);
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
@@ -7360,7 +7364,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					deps,
 					parentModel: requestParentModel,
 					signal,
-					launchOrigin: markedLaunchOrigin ?? resumeOrigin(paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId ?? ""),
+					launchRequestId: _id,
+					...(markedLaunchOrigin ? { markedLaunchOrigin } : {}),
 					...(workflowLaunchObserver ? { onLaunch: (launch: Parameters<NonNullable<typeof workflowLaunchObserver>>[0]) => {
 						workflowLaunchObservers.delete(params);
 						workflowLaunchObserver(launch);
@@ -7401,7 +7406,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								? {}
 								: {
 										recover: ({ absoluteDeadlineAt, ...limits }) =>
-											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt, launchOrigin: resumeOrigin(runId) })),
+											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt, signal, launchRequestId: _id })),
 									}
 							),
 						}));
@@ -7454,7 +7459,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										deps,
 										parentModel: requestParentModel,
 										absoluteDeadlineAt,
-										launchOrigin: resumeOrigin(resolved!.id),
+										signal,
+										launchRequestId: _id,
 									})),
 							}
 					),
@@ -8272,6 +8278,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	): Promise<AgentToolResult<Details>> => {
 		const normalizedAction = typeof params.action === "string" ? params.action.trim() : params.action;
 		const requestParams = normalizedAction ? { ...params, action: normalizedAction } : params;
+		if (requestParams !== params) carryLaunchMarkers(params, requestParams);
 		if (normalizedAction) return execute(id, requestParams, signal, onUpdate, ctx).then(withAggregatedToolUsage);
 		const { depth } = checkSubagentDepth(deps.config.maxSubagentDepth, deps.childRuntime);
 		const dispatchParams = applyForceTopLevelAsyncOverride(requestParams, depth, deps.config.forceTopLevelAsync === true);
@@ -8351,8 +8358,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (workflowLaunch && publicParams.action === undefined) publicWorkflowLaunches.set(publicParams, workflowLaunch);
 		if (workflowResumeLaunch) workflowResumeLaunches.set(publicParams, workflowResumeLaunch);
 		publicExecutions.add(publicParams);
-		const scheduledId = scheduledLaunchIds.get(params);
-		if (scheduledId) scheduledLaunchIds.set(publicParams, scheduledId);
+		carryLaunchMarkers(params, publicParams);
 		return executeWithSingleDispatchGuard(id, publicParams, signal, onUpdate, ctx);
 	};
 
