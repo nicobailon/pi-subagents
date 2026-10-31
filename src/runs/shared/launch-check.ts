@@ -131,11 +131,7 @@ export type LaunchAdmissionStep =
 	| { readonly done: false; readonly wait: Promise<void> };
 
 export interface LaunchAdmission {
-	/**
-	 * Synchronous. A `done` step is the final test: every check registered right now has allowed and the
-	 * signal is not aborted, or the start is refused. Act on it in the same tick, with nothing awaited between.
-	 */
-	poll(): LaunchAdmissionStep;
+	commitOrWait(): LaunchAdmissionStep;
 }
 
 interface LaunchAdmissionInput {
@@ -177,7 +173,7 @@ export function openLaunchAdmission(input: LaunchAdmissionInput): LaunchAdmissio
 		return running;
 	};
 	return {
-		poll() {
+		commitOrWait() {
 			if (refusal !== undefined) return { done: true, refusal };
 			if (running !== undefined) return { done: false, wait: running };
 			const next = [...(registry().get(sessionId) ?? [])].find(([token]) => !answered.has(token));
@@ -204,7 +200,7 @@ export function admitSubagentLaunch<R>(input: LaunchAdmissionInput, commit: (ref
 	const admission = openLaunchAdmission(input);
 	if (admission === undefined) return commit(undefined);
 	const settle = (): R | Promise<R> => {
-		const step = admission.poll();
+		const step = admission.commitOrWait();
 		return step.done ? commit(step.refusal) : step.wait.then(settle);
 	};
 	return settle();

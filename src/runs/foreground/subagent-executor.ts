@@ -4248,10 +4248,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			};
 		},
 	});
-	let launchStep = launchAdmission?.poll();
+	let launchStep = launchAdmission?.commitOrWait();
 	while (launchStep?.done === false) {
 		await launchStep.wait;
-		launchStep = launchAdmission?.poll();
+		launchStep = launchAdmission?.commitOrWait();
 	}
 	const launchDenial = launchStep?.refusal;
 	if (launchDenial !== undefined) return toExecutionErrorResult(params, new Error(launchDenial), data.contextPolicy.contextSummary);
