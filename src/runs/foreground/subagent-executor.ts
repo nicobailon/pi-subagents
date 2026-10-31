@@ -1257,7 +1257,6 @@ function duplicateNames(names: string[]): string[] {
 	return [...duplicates];
 }
 
-/** A background runner starts these steps later, where the parent's launch checks cannot run. */
 function refuseRunnerOwnedSteps(ctx: ExtensionContext, what: string): AgentToolResult<Details> | undefined {
 	if (!hasSubagentLaunchChecks(ctx.sessionManager.getSessionId() ?? undefined)) return undefined;
 	return {
@@ -1914,7 +1913,7 @@ async function resumeExternalJobFollowUp(input: {
 		runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 		activeAsyncCapacity,
 		launchOrigin: input.launchOrigin,
-		signal: input.signal,
+		launchCheckSignal: input.signal,
 		externalJobFollowUp: { sourceRunId: input.target.runId, sourceStepIndex: input.target.index, parentProviderJobId: externalJob.providerJobId, requestId, requestDigest },
 	}));
 	if (result.isError) {
@@ -2393,7 +2392,7 @@ async function resumeAsyncRun(input: {
 		workflowKey: input.params.workflowKey,
 		activeAsyncCapacity,
 		launchOrigin: input.launchOrigin,
-		signal: input.signal,
+		launchCheckSignal: input.signal,
 	}));
 	const notifyLaunch = (): void => input.onLaunch?.({ agent: target.agent, sessionFile: revivalSessionFile, async: true, runId });
 	if (result.isError) {
@@ -3733,7 +3732,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			lane: params.lane,
 			workflowAwaitAsync: params.workflowAwaitAsync,
 			launchOrigin: data.launchOrigin,
-			signal: data.signal,
+			launchCheckSignal: data.signal,
 		}));
 		return waitForWorkflowAsyncSingleResult(params, asyncResult, { runId: id, task: params.task ?? "", signal: data.signal, state: deps.state, pi: deps.pi, kill: deps.kill });
 	}
@@ -4693,7 +4692,6 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 	};
 }
 
-/** Host-set provenance for a launch request; a caller cannot reach it through request fields. */
 const launchOrigins = new WeakMap<object, SubagentLaunchOrigin>();
 const scheduledLaunchIds = new WeakMap<object, string>();
 const workflowLaunchObservers = new WeakMap<object, (launch: { agent: string; sessionName?: string; sessionFile?: string; async: boolean; runId?: string }) => void>();

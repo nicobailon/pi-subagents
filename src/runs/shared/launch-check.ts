@@ -105,16 +105,14 @@ function waitForDecision(pending: SubagentLaunchDecision | Promise<SubagentLaunc
 	});
 }
 
-/**
- * Returns undefined at once, without building the description, when the session has no
- * registration. Otherwise resolves to the denial message, or undefined when every check allows.
- */
+type PendingLaunchDenial = Promise<string | undefined> | undefined;
+
 export function evaluateSubagentLaunchChecks(input: {
 	sessionId: string | undefined;
 	agent: string;
 	describe: () => SubagentLaunch;
 	signal?: AbortSignal;
-}): Promise<string | undefined> | undefined {
+}): PendingLaunchDenial {
 	if (input.sessionId === undefined) return undefined;
 	const registrations = registry().get(input.sessionId);
 	if (!registrations) return undefined;

@@ -362,8 +362,7 @@ interface AsyncSingleParams {
 	};
 	extensionBindings?: ExtensionBindings;
 	launchOrigin?: SubagentLaunchOrigin;
-	/** Aborts a launch check that is still answering. */
-	signal?: AbortSignal;
+	launchCheckSignal?: AbortSignal;
 }
 
 interface AsyncExecutionResult {
@@ -2133,7 +2132,7 @@ export function executeAsyncSingle(
 	const pendingLaunchCheck = evaluateSubagentLaunchChecks({
 		sessionId: ctx.parentSessionId ?? ctx.currentSessionId,
 		agent: agentConfig.name,
-		...(params.signal ? { signal: params.signal } : {}),
+		...(params.launchCheckSignal ? { signal: params.launchCheckSignal } : {}),
 		describe: () => ({
 			origin: params.launchOrigin ?? { kind: "request", requestId: id },
 			agent: agentConfig.name,
