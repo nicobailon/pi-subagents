@@ -46,7 +46,7 @@ import {
 	type SubagentDelegationResponse,
 	type SubagentDelegationStarted,
 } from "../../src/api/delegation.ts";
-import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_PROCESS_TERMINAL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
+import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_PROCESS_TERMINAL_EVENT, TEMP_ARTIFACTS_DIR, wrapForkTask, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
 import { removeResultIndex, writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
@@ -1512,6 +1512,83 @@ Answer only from the supplied synthetic text.
 				const result = await pending;
 				assert.equal(result.isError, true);
 				assert.match(result.content[0]?.text ?? "", /Launch check from test-slow denied agent 'worker': the launch was aborted before the check answered/);
+				assert.equal(mockPi.callCount(), 0);
+			} finally { registration.dispose(); }
+		});
+
+		it("commits a foreground start in the same tick that tests the abort signal and the registered checks", async () => {
+			const afterMicrotasks = (hops: number, action: () => void): void => {
+				if (hops <= 0) return action();
+				queueMicrotask(() => afterMicrotasks(hops - 1, action));
+			};
+			const historyDir = path.join(DIRS.results, "foreground-history");
+			const historyFiles = () => fs.existsSync(historyDir) ? fs.readdirSync(historyDir).sort().join("|") : "";
+			for (let hops = 1; hops <= 6; hops++) {
+				const ctx = launchCtx();
+				const controller = new AbortController();
+				let historyBeforeAbort = "";
+				let historyAtAbort = "";
+				const aborter = registerSubagentLaunchCheck({ sessionId: ctx.sessionManager.getSessionId(), source: "test-racing", check: async () => {
+					historyBeforeAbort = historyFiles();
+					afterMicrotasks(hops, () => { historyAtAbort = historyFiles(); controller.abort(); });
+					return { allow: true };
+				} });
+				mockPi.onCall({ output: "Started before the abort" });
+				try {
+					const result = await makeExecutor([makeAgent("worker")]).execute(`launch-check-gap-abort-${hops}`, { async: false, agent: "worker", task: "Work" }, controller.signal, undefined, ctx);
+					await new Promise((resolve) => setImmediate(resolve));
+					if (historyAtAbort === historyBeforeAbort) {
+						assert.equal(result.isError, true, `a launch aborted after ${hops} microtasks and before its start still started`);
+						assert.match(result.content[0]?.text ?? "", /aborted before the check answered$/);
+						assert.equal(historyFiles(), historyBeforeAbort);
+					}
+				} finally { aborter.dispose(); }
+
+				const lateCtx = launchCtx();
+				let historyBeforeRegistration = "";
+				let historyAtRegistration = "";
+				let lateAsked = false;
+				const registrations: Array<{ dispose(): void }> = [];
+				registrations.push(registerSubagentLaunchCheck({ sessionId: lateCtx.sessionManager.getSessionId(), source: "test-first", check: async () => {
+					historyBeforeRegistration = historyFiles();
+					afterMicrotasks(hops, () => {
+						historyAtRegistration = historyFiles();
+						registrations.push(registerSubagentLaunchCheck({ sessionId: lateCtx.sessionManager.getSessionId(), source: "test-late", check: () => { lateAsked = true; return { allow: false, reason: "registered late" }; } }));
+					});
+					return { allow: true };
+				} }));
+				mockPi.onCall({ output: "Started before the registration" });
+				try {
+					const result = await makeExecutor([makeAgent("worker")]).execute(`launch-check-gap-late-${hops}`, { async: false, agent: "worker", task: "Work" }, new AbortController().signal, undefined, lateCtx);
+					await new Promise((resolve) => setImmediate(resolve));
+					if (historyAtRegistration === historyBeforeRegistration) {
+						assert.equal(lateAsked, true, `a check registered after ${hops} microtasks and before the start was skipped`);
+						assert.match(result.content[0]?.text ?? "", /Launch check from test-late denied agent 'worker': registered late$/);
+						assert.equal(historyFiles(), historyBeforeRegistration);
+					}
+				} finally { for (const registration of registrations) registration.dispose(); }
+			}
+		});
+
+		it("shows the check the fork-wrapped task a foreground fork child is given", async () => {
+			const parentSessionFile = path.join(mockPi.dir, "launch-check-fork-parent.jsonl");
+			const childSessionFile = path.join(mockPi.dir, "launch-check-fork-child.jsonl");
+			fs.writeFileSync(parentSessionFile, `${JSON.stringify({ type: "session", version: 3, id: "parent", cwd: tempDir })}\n`, "utf-8");
+			const ctx = launchCtx();
+			Object.assign(ctx.sessionManager, {
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "parent-leaf",
+				openSession: () => ({ createBranchedSession: () => {
+					fs.writeFileSync(childSessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
+					return childSessionFile;
+				} }),
+			});
+			const seen: SubagentLaunch[] = [];
+			const registration = registerSubagentLaunchCheck({ sessionId: ctx.sessionManager.getSessionId(), source: "test-audit", check: (launch) => { seen.push(launch); return { allow: false, reason: "just looking" }; } });
+			try {
+				const result = await makeExecutor([makeAgent("worker")]).execute("launch-check-fork-task", { async: false, agent: "worker", task: "Do the work", context: "fork" }, new AbortController().signal, undefined, ctx);
+				assert.equal(result.isError, true);
+				assert.deepEqual(seen.map((launch) => launch.task), [wrapForkTask("Do the work")]);
 				assert.equal(mockPi.callCount(), 0);
 			} finally { registration.dispose(); }
 		});

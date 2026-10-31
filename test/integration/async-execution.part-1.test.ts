@@ -130,6 +130,61 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		} finally { registration.dispose(); }
 	});
 
+	it("commits a background start in the same tick that tests the abort signal and the registered checks", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const afterMicrotasks = (hops: number, action: () => void): void => {
+			if (hops <= 0) return action();
+			queueMicrotask(() => afterMicrotasks(hops - 1, action));
+		};
+		for (let hops = 1; hops <= 8; hops++) {
+			const sessionId = `async-launch-gap-${Date.now()}-${Math.random()}`;
+			const abortId = `async-gap-abort-${hops}-${Date.now().toString(36)}`;
+			const controller = new AbortController();
+			let startedBeforeAbort = false;
+			const aborter = registerSubagentLaunchCheck({ sessionId, source: "test-racing", check: async () => {
+				afterMicrotasks(hops, () => { startedBeforeAbort = fs.existsSync(path.join(ASYNC_DIR, abortId)); controller.abort(); });
+				return { allow: true };
+			} });
+			mockPi.onCall({ output: "Started before the abort" });
+			try {
+				const result = await executeAsyncSingle(abortId, launchCheckAsyncParams(sessionId, { acceptance: false, launchOrigin: { kind: "request", requestId: abortId }, launchCheckSignal: controller.signal }));
+				await new Promise((resolve) => setImmediate(resolve));
+				if (startedBeforeAbort) {
+					assert.equal(result.isError, undefined, result.content[0]?.text);
+					assert.equal((await readAsyncPayload(abortId)).success, true);
+				} else {
+					assert.equal(result.isError, true, `a launch aborted after ${hops} microtasks and before its start still started`);
+					assert.match(result.content[0]?.text ?? "", /aborted before the check answered$/);
+					assert.equal(fs.existsSync(path.join(ASYNC_DIR, abortId)), false);
+				}
+			} finally { aborter.dispose(); }
+
+			const lateId = `async-gap-late-${hops}-${Date.now().toString(36)}`;
+			let startedBeforeRegistration = false;
+			let lateAsked = false;
+			const registrations: Array<{ dispose(): void }> = [];
+			registrations.push(registerSubagentLaunchCheck({ sessionId, source: "test-first", check: async () => {
+				afterMicrotasks(hops, () => {
+					startedBeforeRegistration = fs.existsSync(path.join(ASYNC_DIR, lateId));
+					registrations.push(registerSubagentLaunchCheck({ sessionId, source: "test-late", check: () => { lateAsked = true; return { allow: false, reason: "registered late" }; } }));
+				});
+				return { allow: true };
+			} }));
+			mockPi.onCall({ output: "Started before the registration" });
+			try {
+				const result = await executeAsyncSingle(lateId, launchCheckAsyncParams(sessionId, { acceptance: false, launchOrigin: { kind: "request", requestId: lateId } }));
+				await new Promise((resolve) => setImmediate(resolve));
+				if (startedBeforeRegistration) {
+					assert.equal(result.isError, undefined, result.content[0]?.text);
+					assert.equal((await readAsyncPayload(lateId)).success, true);
+				} else {
+					assert.equal(lateAsked, true, `a check registered after ${hops} microtasks and before the start was skipped`);
+					assert.equal(result.content[0]?.text, "Launch check from test-late denied agent 'worker': registered late");
+					assert.equal(fs.existsSync(path.join(ASYNC_DIR, lateId)), false);
+				}
+			} finally { for (const registration of registrations) registration.dispose(); }
+		}
+	});
+
 	it("checks an async workflow child with its workflow origin and fails it like any refused child", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const ctx = makeMinimalCtx(tempDir);
 		const sessionId = `async-workflow-check-${Date.now()}-${Math.random()}`;
@@ -150,6 +205,30 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(seen.length, 1);
 			assert.equal(seen[0]?.background, true);
 			assert.deepEqual({ ...seen[0]?.origin, workflowRunId: undefined }, { kind: "workflow", workflowRunId: undefined, key: "bg" });
+		} finally { registration.dispose(); }
+	});
+
+	it("checks a child of a fully async workflow with its workflow origin and fails it like any refused child", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const ctx = makeMinimalCtx(tempDir);
+		const sessionId = `async-host-check-${Date.now()}-${Math.random()}`;
+		ctx.sessionManager.getSessionId = () => sessionId;
+		const seen: SubagentLaunch[] = [];
+		const registration = registerSubagentLaunchCheck({ sessionId, source: "test-policy", check: (launch) => { seen.push(launch); return launch.agent === "worker" ? { allow: false, reason: "no hosted children" } : { allow: true }; } });
+		try {
+			const launched = await makeAsyncExecutor([makeAgent("worker")]).executePublic("async-host-child-check", {
+				workflowScript: `const [child] = await runs.all([{ key: "hosted", agent: "worker", task: "Hosted child", acceptance: false }]); return JSON.stringify({ ok: child.ok, error: child.error });`,
+				async: true,
+				mission: false,
+			}, new AbortController().signal, undefined, ctx);
+			assert.equal(launched.isError, undefined, launched.content[0]?.text);
+			const id = launched.details?.asyncId;
+			assert.ok(id);
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.success, true, payload.error);
+			assert.equal(payload.results[0]?.error, "Launch check from test-policy denied agent 'worker': no hosted children");
+			assert.equal(payload.results[0]?.success, false);
+			assert.equal(mockPi.callCount(), 0);
+			assert.deepEqual(seen.map((launch) => ({ ...launch.origin, workflowRunId: undefined })), [{ kind: "workflow", workflowRunId: undefined, key: "hosted" }]);
 		} finally { registration.dispose(); }
 	});
 

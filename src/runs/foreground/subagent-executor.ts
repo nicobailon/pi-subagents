@@ -71,7 +71,7 @@ import { retainLiveForegroundNestedRoute } from "../../integrations/pi-web-sessi
 import { HERDR_FOREGROUND_CONTROL_CHANGED_EVENT } from "../../integrations/herdr-status.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
-import { evaluateSubagentLaunchChecks, hasSubagentLaunchChecks, type SubagentLaunchOrigin } from "../shared/launch-check.ts";
+import { hasSubagentLaunchChecks, openLaunchAdmission, type SubagentLaunchOrigin } from "../shared/launch-check.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContract } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
@@ -1811,7 +1811,7 @@ async function resumeExternalJobFollowUp(input: {
 	parentSessionFile: string | null;
 	absoluteDeadlineAt?: number;
 	launchOrigin: SubagentLaunchOrigin;
-	signal?: AbortSignal;
+	launchCheckSignal?: AbortSignal;
 }): Promise<AgentToolResult<Details>> {
 	if (input.target.kind === "live" || input.target.state === "running" || input.target.state === "queued") {
 		return { content: [{ type: "text", text: externalJobStillRunningMessage(input.target.runId) }], isError: true, details: { mode: "management", results: [] } };
@@ -1913,7 +1913,7 @@ async function resumeExternalJobFollowUp(input: {
 		runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 		activeAsyncCapacity,
 		launchOrigin: input.launchOrigin,
-		launchCheckSignal: input.signal,
+		launchCheckSignal: input.launchCheckSignal,
 		externalJobFollowUp: { sourceRunId: input.target.runId, sourceStepIndex: input.target.index, parentProviderJobId: externalJob.providerJobId, requestId, requestDigest },
 	}));
 	if (result.isError) {
@@ -1962,6 +1962,7 @@ async function resumeAsyncRun(input: {
 	parentModel?: ParentModel;
 	absoluteDeadlineAt?: number;
 	signal?: AbortSignal;
+	launchCheckSignal?: AbortSignal;
 	launchRequestId: string;
 	markedLaunchOrigin?: SubagentLaunchOrigin;
 	onLaunch?: (launch: { agent: string; sessionName?: string; sessionFile?: string; async: boolean; runId?: string }) => void;
@@ -2111,7 +2112,7 @@ async function resumeAsyncRun(input: {
 			parentSessionFile,
 			absoluteDeadlineAt: input.absoluteDeadlineAt,
 			launchOrigin,
-			signal: input.signal,
+			launchCheckSignal: input.launchCheckSignal ?? input.signal,
 		});
 		const resumedRunId = resumed.details.runId ?? resumed.details.asyncId;
 		if (!resumed.isError && resumedRunId) input.onLaunch?.({ agent: target.agent, async: true, runId: resumedRunId });
@@ -2394,7 +2395,7 @@ async function resumeAsyncRun(input: {
 		workflowKey: input.params.workflowKey,
 		activeAsyncCapacity,
 		launchOrigin,
-		launchCheckSignal: input.signal,
+		launchCheckSignal: input.launchCheckSignal ?? input.signal,
 	}));
 	const notifyLaunch = (): void => input.onLaunch?.({ agent: target.agent, sessionFile: revivalSessionFile, async: true, runId });
 	if (result.isError) {
@@ -4221,7 +4222,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, sourceCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
-	const pendingLaunchCheck = evaluateSubagentLaunchChecks({
+	const launchAdmission = openLaunchAdmission({
 		sessionId: data.parentPiSessionId,
 		agent: agentConfig.name,
 		signal,
@@ -4237,7 +4238,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			return {
 				origin: data.launchOrigin,
 				agent: agentConfig.name,
-				task,
+				task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(task) : task,
 				cwd: sourceCwd,
 				worktree: params.worktree === true,
 				...(launchModel ? { model: launchModel } : {}),
@@ -4247,7 +4248,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			};
 		},
 	});
-	const launchDenial = pendingLaunchCheck === undefined ? undefined : await pendingLaunchCheck;
+	let launchStep = launchAdmission?.poll();
+	while (launchStep?.done === false) {
+		await launchStep.wait;
+		launchStep = launchAdmission?.poll();
+	}
+	const launchDenial = launchStep?.refusal;
 	if (launchDenial !== undefined) return toExecutionErrorResult(params, new Error(launchDenial), data.contextPolicy.contextSummary);
 	let pendingHandoff: Details["parallelHandoff"];
 	const { setup: worktreeSetup, errorResult: worktreeSetupError } = params.worktree ? await createSingleWorktreeSetup(
@@ -7406,7 +7412,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								? {}
 								: {
 										recover: ({ absoluteDeadlineAt, ...limits }) =>
-											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt, signal, launchRequestId: _id })),
+											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt, launchCheckSignal: signal, launchRequestId: _id })),
 									}
 							),
 						}));
@@ -7459,7 +7465,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										deps,
 										parentModel: requestParentModel,
 										absoluteDeadlineAt,
-										signal,
+										launchCheckSignal: signal,
 										launchRequestId: _id,
 									})),
 							}

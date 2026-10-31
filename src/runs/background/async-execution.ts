@@ -89,7 +89,7 @@ import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
 import { lookupRunnerLauncher, resolveAgentRunnerLauncher, runnerLauncherPlacementError } from "../shared/runner-launcher.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT, type RunnerLauncher } from "../../shared/types.ts";
-import { evaluateSubagentLaunchChecks, type SubagentLaunchOrigin } from "../shared/launch-check.ts";
+import { admitSubagentLaunch, type SubagentLaunchOrigin } from "../shared/launch-check.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
@@ -2124,22 +2124,6 @@ export function executeAsyncSingle(
 		async: true,
 		agentContract: params.agentContract,
 	});
-	const pendingLaunchCheck = evaluateSubagentLaunchChecks({
-		sessionId: ctx.parentSessionId ?? ctx.currentSessionId,
-		agent: agentConfig.name,
-		...(params.launchCheckSignal ? { signal: params.launchCheckSignal } : {}),
-		describe: () => ({
-			origin: params.launchOrigin,
-			agent: agentConfig.name,
-			task,
-			cwd: machine?.cwd ?? runnerCwd,
-			worktree: params.worktree === true,
-			...(selectedModel ? { model: selectedModel } : {}),
-			verify: resolvedAcceptance.verify,
-			...(outputPath ? { outputPath } : {}),
-			background: true,
-		}),
-	});
 	const resolved: ResolvedAsyncSingle = {
 		asyncDir,
 		capabilityCeiling,
@@ -2180,8 +2164,22 @@ export function executeAsyncSingle(
 		toolPlan,
 		toolTimeoutMs,
 	};
-	if (pendingLaunchCheck === undefined) return startAsyncSingleRunner(params, resolved);
-	return pendingLaunchCheck.then((denial) => denial === undefined ? startAsyncSingleRunner(params, resolved) : formatAsyncStartError("single", denial));
+	return admitSubagentLaunch({
+		sessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+		agent: agentConfig.name,
+		...(params.launchCheckSignal ? { signal: params.launchCheckSignal } : {}),
+		describe: () => ({
+			origin: params.launchOrigin,
+			agent: agentConfig.name,
+			task,
+			cwd: machine?.cwd ?? runnerCwd,
+			worktree: params.worktree === true,
+			...(selectedModel ? { model: selectedModel } : {}),
+			verify: resolvedAcceptance.verify,
+			...(outputPath ? { outputPath } : {}),
+			background: true,
+		}),
+	}, (denial) => denial === undefined ? startAsyncSingleRunner(params, resolved) : formatAsyncStartError("single", denial));
 }
 
 interface ResolvedAsyncSingle {

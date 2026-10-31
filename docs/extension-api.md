@@ -458,8 +458,9 @@ pi.on("session_start", (_event, ctx) => {
     sessionId: ctx.sessionManager.getSessionId(),
     source: "my-permissions",
     check: async (launch, signal) => {
-      if (launch.origin.kind === "request" && approvedToolCalls.has(launch.origin.requestId)) return { allow: true };
-      if (launch.verify.some((v) => !isAllowedCommand(v.command))) return { allow: false, reason: "verify command not allowed" };
+      if (launch.verify.some((v) => !isAllowedVerify(v.command, v.env))) return { allow: false, reason: "verify command not allowed" };
+      const approved = launch.origin.kind === "request" ? approvedCalls.get(launch.origin.requestId) : undefined;
+      if (approved?.agent === launch.agent && approved.task === launch.task) return { allow: true };
       return (await askUser(launch, signal)) ? { allow: true } : { allow: false, reason: "declined" };
     },
   });
@@ -469,7 +470,7 @@ pi.on("session_start", (_event, ctx) => {
 
 Register with **`ctx.sessionManager.getSessionId()`**, as for ceilings, and dispose in `session_shutdown`. `sessionId` and `source` must not have leading or trailing whitespace, so a registration can never be stored under an id that lookups would not find. The subpath exports `registerSubagentLaunchCheck` and the types `SubagentLaunch`, `SubagentLaunchDecision`, `SubagentLaunchOrigin`, `RegisterSubagentLaunchCheckOptions`, and `SubagentLaunchCheckHandle`.
 
-The invariant: before pi-subagents starts a child agent session or spawns a background runner for a child, every check registered for the launching session when the start commits has allowed it. Checks run in registration order and the first refusal wins. A check registered while an earlier one waits is asked too, and a check that already allowed this start is not asked again. With no registration, nothing changes.
+The invariant: before pi-subagents starts a child agent session or spawns a background runner for a child, every check registered for the launching session when the start commits has allowed it and the launch signal has not aborted. The final test of both runs in the same synchronous step as the first start effect, so an abort or a registration cannot land between them. Checks run in registration order and the first refusal wins. A check registered while an earlier one waits is asked too, and a check that already allowed this start is not asked again. With no registration, nothing changes.
 
 Each check receives a frozen description and the launch's abort signal:
 
@@ -477,9 +478,9 @@ Each check receives a frozen description and the launch's abort signal:
 |-------|---------|
 | `origin` | Where the start came from. Set by pi-subagents, never by a tool argument or a script. |
 | `agent` | The canonical agent name. |
-| `task` | The task the child is given. On a resume it is the revival prompt: it names the source run and carries your follow-up message, not the original task, which the retained session holds and which was approved when the source run started. |
+| `task` | The task text the child is given: with `context: "fork"` it carries the fork preamble, and on a resume it is the revival prompt, which names the source run and carries your follow-up message, not the original task, which the retained session holds and which was approved when the source run started. The read and output-file instructions pi-subagents appends are not included; `outputPath` describes the file. |
 | `cwd` | Absolute directory the child starts in. With `worktree`, the directory the new worktree is created from; a background worktree does not exist yet. |
-| `worktree` | Whether the child runs in a managed worktree. |
+| `worktree` | Whether this start creates a new managed worktree, from `cwd`. A resume in a retained worktree reports `false`, with `cwd` set to that checkout. |
 | `model` | The model the child will actually run on, including a thinking suffix. Omitted for external runners. |
 | `verify` | The `id`, `command`, and optional `cwd` and `env` of each verify command that will run after the child finishes, from `gate`, `acceptance.verify`, and the agent's default acceptance. `env` holds the overrides the entry declares, keys and values, which the command runs with on top of the inherited process environment. An override such as `NODE_OPTIONS` or `PATH` changes what an approved command executes, so a policy should check it with the command. |
 | `outputPath` | Absolute path of the final output file, when the child has one. |
@@ -487,13 +488,13 @@ Each check receives a frozen description and the launch's abort signal:
 
 The origin kinds are:
 
-- `request`: a `subagent` tool call, slash command, RPC spawn, or delegation. `requestId` equals the tool call id only for tool calls, so an extension can recognize a call it already approved in `tool_call`. For slash commands, RPC spawns, and delegations the in-process caller supplies it, so do not treat it as proof that the call went through your `tool_call` approval.
+- `request`: a `subagent` tool call, slash command, RPC spawn, or delegation. `requestId` equals the tool call id only for tool calls, so an extension can recognize a call it already approved in `tool_call`. For slash commands, RPC spawns, and delegations the in-process caller supplies it, so do not treat it as proof that the call went through your `tool_call` approval. The example above allows on a `requestId` match only when the agent and task are the ones the approval recorded, and only after the verify commands passed.
 - `workflow`: a child started by a workflow script, including the `chain` and `tasks` inputs, which compile to workflows. It carries `workflowRunId` and the script's `key`, plus `scheduleId` when a schedule fired the workflow.
 - `resume`: a retained child restarted by `action: "resume"` or by steering a stopped run. It carries the id of the run being resumed as `sourceRunId`, however the caller named it, and the `requestId` of the call.
 
 A refused start fails that child like any other failed child. A direct call returns an error result. In a workflow, `await runs.run(...)` throws the reason unless the script catches it, and `runs.all` marks that child `ok: false` and still runs its siblings. The message is `Launch check from <source> denied agent '<agent>': <reason>`, with the reason stripped of control characters and bounded.
 
-A check that throws or rejects, returns anything but `{ allow: true }` or `{ allow: false, reason }` with a non-empty reason, or is still waiting when the launch signal aborts also refuses the start. The launch refuses promptly whenever the signal aborts, even if a check aborted it while running or the last check had just allowed. A check may wait, for example to ask the user. It has no timeout of its own, and results are not cached, persisted, or sent to other processes. A background child's timeout and deadline start after the checks allow, so waiting does not use up the child's time. While a check waits, the launch holds the async capacity slot it reserved, so a slow prompt can make other background launches in the session wait for capacity. Checks in a `runs.all` batch can run at the same time, so an extension that prompts the user serializes its own prompts.
+A check that throws or rejects, returns anything but `{ allow: true }` or `{ allow: false, reason }` with a non-empty reason, or is still waiting when the launch signal aborts also refuses the start. The launch refuses promptly whenever the signal aborts, even if a check aborted it while running or the last check had just allowed. For a steering recovery the signal is the steer call's, and it reaches only the check: cancelling the call after the check allowed does not stop the revived run. A check may wait, for example to ask the user. It has no timeout of its own, and results are not cached, persisted, or sent to other processes. A background child's timeout and deadline start after the checks allow, so waiting does not use up the child's time. While a check waits, the launch holds the async capacity slot it reserved, so a slow prompt can make other background launches in the session wait for capacity. Checks in a `runs.all` batch can run at the same time, so an extension that prompts the user serializes its own prompts.
 
 Limits:
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { registerSubagentLaunchCheck, type SubagentLaunch, type SubagentLaunchDecision } from "../../src/api/launch-check.ts";
-import { evaluateSubagentLaunchChecks, hasSubagentLaunchChecks } from "../../src/runs/shared/launch-check.ts";
+import { admitSubagentLaunch, hasSubagentLaunchChecks, openLaunchAdmission } from "../../src/runs/shared/launch-check.ts";
 
 function launch(overrides: Partial<SubagentLaunch> = {}): SubagentLaunch {
 	return {
@@ -15,6 +15,8 @@ function launch(overrides: Partial<SubagentLaunch> = {}): SubagentLaunch {
 		...overrides,
 	};
 }
+
+const evaluateSubagentLaunchChecks = (input: Parameters<typeof admitSubagentLaunch>[0]) => admitSubagentLaunch<string | undefined>(input, (refusal) => refusal);
 
 const uniqueSession = () => `launch-check-${Date.now()}-${Math.random()}`;
 
@@ -183,6 +185,45 @@ describe("subagent launch checks", () => {
 		} finally {
 			for (const handle of handles) handle.dispose();
 			doomed.dispose();
+		}
+	});
+
+	it("tests abort and registrations in the same tick that commits, whenever they land after a check answers", async () => {
+		const afterMicrotasks = (hops: number, action: () => void) => {
+			if (hops <= 0) return action();
+			queueMicrotask(() => afterMicrotasks(hops - 1, action));
+		};
+		for (let hops = 0; hops <= 8; hops++) {
+			const abortSession = uniqueSession();
+			const controller = new AbortController();
+			const aborter = registerSubagentLaunchCheck({ sessionId: abortSession, source: "aborter", check: async () => { afterMicrotasks(hops, () => controller.abort()); return { allow: true }; } });
+			try {
+				const committed = await admitSubagentLaunch<{ refusal: string | undefined; abortedAtCommit: boolean }>(
+					{ sessionId: abortSession, agent: "worker", describe: () => launch(), signal: controller.signal },
+					(refusal) => ({ refusal, abortedAtCommit: controller.signal.aborted }),
+				);
+				assert.equal(committed.refusal === undefined && committed.abortedAtCommit, false, `committed an aborted launch after ${hops} microtasks`);
+			} finally {
+				aborter.dispose();
+			}
+
+			const lateSession = uniqueSession();
+			const asked: string[] = [];
+			const late: Array<{ dispose(): void }> = [];
+			const first = registerSubagentLaunchCheck({ sessionId: lateSession, source: "first", check: async () => {
+				afterMicrotasks(hops, () => late.push(registerSubagentLaunchCheck({ sessionId: lateSession, source: "late", check: () => { asked.push("late"); return { allow: true }; } })));
+				return { allow: true };
+			} });
+			try {
+				const committed = await admitSubagentLaunch<{ refusal: string | undefined; unaskedAtCommit: boolean }>(
+					{ sessionId: lateSession, agent: "worker", describe: () => launch() },
+					(refusal) => ({ refusal, unaskedAtCommit: late.length > 0 && asked.length === 0 }),
+				);
+				assert.equal(committed.unaskedAtCommit, false, `committed past a check registered after ${hops} microtasks`);
+			} finally {
+				first.dispose();
+				for (const handle of late) handle.dispose();
+			}
 		}
 	});
 

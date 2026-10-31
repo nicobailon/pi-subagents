@@ -13,6 +13,7 @@ export interface SubagentLaunch {
 	readonly task: string;
 	/** Absolute. With `worktree`, the directory the new worktree is created from. */
 	readonly cwd: string;
+	/** Whether this start creates a new managed worktree from `cwd`. A resume in a retained worktree is `false`, with `cwd` set to that checkout. */
 	readonly worktree: boolean;
 	readonly model?: string;
 	readonly verify: readonly {
@@ -125,49 +126,86 @@ function waitForDecision(check: RegisterSubagentLaunchCheckOptions["check"], lau
 	});
 }
 
-type PendingLaunchDenial = Promise<string | undefined> | undefined;
+export type LaunchAdmissionStep =
+	| { readonly done: true; readonly refusal?: string }
+	| { readonly done: false; readonly wait: Promise<void> };
 
-export function evaluateSubagentLaunchChecks(input: {
+export interface LaunchAdmission {
+	/**
+	 * Synchronous. A `done` step is the final test: every check registered right now has allowed and the
+	 * signal is not aborted, or the start is refused. Act on it in the same tick, with nothing awaited between.
+	 */
+	poll(): LaunchAdmissionStep;
+}
+
+interface LaunchAdmissionInput {
 	sessionId: string | undefined;
 	agent: string;
 	describe: () => SubagentLaunch;
 	signal?: AbortSignal;
-}): PendingLaunchDenial {
+}
+
+export function openLaunchAdmission(input: LaunchAdmissionInput): LaunchAdmission | undefined {
 	if (input.sessionId === undefined) return undefined;
 	const sessionId = input.sessionId;
 	if (!registry().has(sessionId)) return undefined;
-	return (async () => {
-		const signal = input.signal ?? new AbortController().signal;
-		let launch: SubagentLaunch;
-		try {
-			launch = freezeLaunch(input.describe());
-		} catch (error) {
-			return `Launch of agent '${input.agent}' was refused because it could not be described for launch checks: ${describeFailure(error)}`;
-		}
-		const answered = new Set<symbol>();
-		let lastSource: string | undefined;
-		while (true) {
-			const next = [...(registry().get(sessionId) ?? [])].find(([token]) => !answered.has(token));
-			const source = next?.[1].source ?? lastSource;
-			if (signal.aborted && source !== undefined) return `Launch check from ${source} denied agent '${input.agent}': ${ABORTED_MESSAGE}`;
-			if (!next) return undefined;
-			const [token, registration] = next;
-			lastSource = registration.source;
-			const denied = (reason: string) => `Launch check from ${registration.source} denied agent '${input.agent}': ${reason}`;
-			let decision: SubagentLaunchDecision;
-			try {
-				decision = await waitForDecision(registration.check, launch, signal);
-			} catch (error) {
-				return denied(describeFailure(error));
-			}
-			if (typeof decision !== "object" || decision === null) return denied("returned an invalid decision");
+	const signal = input.signal ?? new AbortController().signal;
+	const answered = new Set<symbol>();
+	let launch: SubagentLaunch | undefined;
+	let lastSource: string | undefined;
+	let refusal: string | undefined;
+	let running: Promise<void> | undefined;
+	const denied = (source: string, reason: string) => {
+		refusal = `Launch check from ${source} denied agent '${input.agent}': ${reason}`;
+	};
+	const ask = (token: symbol, registration: Registration, description: SubagentLaunch) => {
+		lastSource = registration.source;
+		running = waitForDecision(registration.check, description, signal).then((decision) => {
+			running = undefined;
+			if (typeof decision !== "object" || decision === null) return denied(registration.source, "returned an invalid decision");
 			if (decision.allow === true) {
 				answered.add(token);
-				continue;
+				return;
 			}
-			if (decision.allow !== false) return denied("returned an invalid decision");
+			if (decision.allow !== false) return denied(registration.source, "returned an invalid decision");
 			const reason = typeof decision.reason === "string" ? boundedReason(decision.reason) : "";
-			return denied(reason || "returned a denial without a reason");
-		}
-	})();
+			denied(registration.source, reason || "returned a denial without a reason");
+		}, (error) => {
+			running = undefined;
+			denied(registration.source, describeFailure(error));
+		});
+		return running;
+	};
+	return {
+		poll() {
+			if (refusal !== undefined) return { done: true, refusal };
+			if (running !== undefined) return { done: false, wait: running };
+			const next = [...(registry().get(sessionId) ?? [])].find(([token]) => !answered.has(token));
+			const source = next?.[1].source ?? lastSource;
+			if (signal.aborted && source !== undefined) {
+				denied(source, ABORTED_MESSAGE);
+				return { done: true, refusal };
+			}
+			if (!next) return { done: true };
+			if (launch === undefined) {
+				try {
+					launch = freezeLaunch(input.describe());
+				} catch (error) {
+					refusal = `Launch of agent '${input.agent}' was refused because it could not be described for launch checks: ${describeFailure(error)}`;
+					return { done: true, refusal };
+				}
+			}
+			return { done: false, wait: ask(next[0], next[1], launch) };
+		},
+	};
+}
+
+export function admitSubagentLaunch<R>(input: LaunchAdmissionInput, commit: (refusal: string | undefined) => R | Promise<R>): R | Promise<R> {
+	const admission = openLaunchAdmission(input);
+	if (admission === undefined) return commit(undefined);
+	const settle = (): R | Promise<R> => {
+		const step = admission.poll();
+		return step.done ? commit(step.refusal) : step.wait.then(settle);
+	};
+	return settle();
 }
