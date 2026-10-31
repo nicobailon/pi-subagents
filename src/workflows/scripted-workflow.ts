@@ -276,7 +276,83 @@ const RECOVERY_REVIEW_DELEGATION_PATTERN = /\b(?:launch|start|spawn|run)\b[^,.;!
 const RECOVERY_REVIEW_ANAPHORIC_MUTATION_PATTERN = /\b(?:do|run|execute|perform|apply)\s+(?:it|that|this|(?:the\s+)?(?:(?:\d+(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|next|previous(?:ly)?|prior|above|quoted|blocked)\s+){0,4}(?:command|example|operation|action|phrase|instruction|request|one))(?!(?:\s+(?:(?:now|still|also|already)\s+)*(?:is|are|remains?)\s+blocked\b))(?:(?:[\s,]+\w+){0,4}[\s,]+anyway|(?:(?!\b(?:and|but|then|however|nevertheless|nonetheless|yet)\b)[^,.;!?\n]){0,80})(?=\s*(?:[,.;!?\n)]|\b(?:and|but|then|however|nevertheless|nonetheless|yet)\b|$))/i;
 const RECOVERY_REVIEW_MUTATING_PATH_COMMAND_PATTERN = /(?:^|[\s;,.`'"([{])(?:\S*\/)?(?:rm|rmdir|unlink|truncate|mv|cp|chmod|chown)\b/i;
 const RECOVERY_REVIEW_WORD_CHARACTER_PATTERN = /^\w$/;
-const RECOVERY_REVIEW_DASH_LIVE_ACTION_PATTERN = /(?:[—–]|--|\s-\s|:|\s\/\s)\s*(?:then\s+)?(?:(?:add|append|apply|change|cherry[ -]pick|clean|commit|copy|create|delete|edit|fix|implement|insert|make|merge|move|modify|mutate|open|patch|prepend|push|rebase|refactor|remove|rename|replace|revert|revise|rewrite|save|stage|stash|tag|touch|update|write)\b|(?:launch|start|spawn|run)\b[^,.;!?\n]*(?:workers?|reviewers?|agents?|subagents?|children|child|runs?)\b|(?:\S*\/)?(?:rm|rmdir|unlink|truncate|mv|cp|chmod|chown)\b|git\b[^,.;!?\n]*\b(?:add|branch|cherry-pick|clean|commit|merge|rebase|reset|restore|revert|stash|tag|checkout|switch)\b)/i;
+// The separator and its four branches used to be one pattern, and three of those branches scanned
+// to the end of the line or of the path from every separator, so a prompt holding many separators
+// rescanned the same suffix once per separator. Each branch is now checked at its own anchor, and
+// the rest of the line or path it needs comes from a table built in one backward pass. Every
+// sub-pattern below is one branch of the former pattern, unchanged, so a separator still reaches
+// the same four branches at the same anchor.
+const RECOVERY_REVIEW_DASH_SEPARATOR_AT_PATTERN = /(?:[—–]|--|\s-\s|:|\s\/\s)/iy;
+// The same separator without the sticky anchor: it decides whether the tables are needed at all.
+const RECOVERY_REVIEW_DASH_SEPARATOR_EXISTS_PATTERN = /(?:[—–]|--|\s-\s|:|\s\/\s)/i;
+const RECOVERY_REVIEW_DASH_ACTION_AT_PATTERN = /(?:add|append|apply|change|cherry[ -]pick|clean|commit|copy|create|delete|edit|fix|implement|insert|make|merge|move|modify|mutate|open|patch|prepend|push|rebase|refactor|remove|rename|replace|revert|revise|rewrite|save|stage|stash|tag|touch|update|write)\b/iy;
+const RECOVERY_REVIEW_DASH_LAUNCH_AT_PATTERN = /(?:launch|start|spawn|run)\b/iy;
+const RECOVERY_REVIEW_DASH_WORKER_AT_PATTERN = /(?:workers?|reviewers?|agents?|subagents?|children|child|runs?)\b/iy;
+const RECOVERY_REVIEW_DASH_GIT_AT_PATTERN = /git\b/iy;
+const RECOVERY_REVIEW_DASH_GIT_COMMAND_AT_PATTERN = /\b(?:add|branch|cherry-pick|clean|commit|merge|rebase|reset|restore|revert|stash|tag|checkout|switch)\b/iy;
+const RECOVERY_REVIEW_DASH_FILE_COMMAND_AT_PATTERN = /(?:rm|rmdir|unlink|truncate|mv|cp|chmod|chown)\b/iy;
+const RECOVERY_REVIEW_DASH_THEN_AT_PATTERN = /then/iy;
+const RECOVERY_REVIEW_DASH_LINE_STOP_CHARACTERS = ",.;!?\n";
+const RECOVERY_REVIEW_WHITESPACE_CHARACTER_PATTERN = /^\s$/;
+
+// A sticky pattern is one branch of the former pattern: lastIndex anchors it where the separator
+// scan arrived, so a check costs only the branch it matches. No check yields, so the shared
+// lastIndex cannot interleave with another call.
+function matchesDashBranchAt(pattern: RegExp, text: string, index: number): boolean {
+	pattern.lastIndex = index;
+	return pattern.test(text);
+}
+
+function dashBranchLengthAt(pattern: RegExp, text: string, index: number): number {
+	pattern.lastIndex = index;
+	const match = pattern.exec(text);
+	return match === null ? 0 : match[0].length;
+}
+
+function skipDashSeparatorWhitespace(text: string, index: number): number {
+	while (index < text.length && RECOVERY_REVIEW_WHITESPACE_CHARACTER_PATTERN.test(text.charAt(index))) index++;
+	return index;
+}
+
+// The tables replace the forward scans the former pattern repeated from every separator.
+// workerAhead[i] says whether the rest of the line still holds the worker word, gitCommandAhead[i]
+// the same for a git command, and pathCommandAhead[i] whether the rest of the path holds a file
+// command behind a slash.
+function acceptsDashLiveActionAt(text: string, index: number, workerAhead: Uint8Array, gitCommandAhead: Uint8Array, pathCommandAhead: Uint8Array): boolean {
+	if (matchesDashBranchAt(RECOVERY_REVIEW_DASH_ACTION_AT_PATTERN, text, index)) return true;
+	const launchLength = dashBranchLengthAt(RECOVERY_REVIEW_DASH_LAUNCH_AT_PATTERN, text, index);
+	if (launchLength > 0 && workerAhead[index + launchLength] === 1) return true;
+	if (matchesDashBranchAt(RECOVERY_REVIEW_DASH_FILE_COMMAND_AT_PATTERN, text, index) || pathCommandAhead[index] === 1) return true;
+	return matchesDashBranchAt(RECOVERY_REVIEW_DASH_GIT_AT_PATTERN, text, index) && gitCommandAhead[index + 3] === 1;
+}
+
+function mentionsDashLiveAction(text: string): boolean {
+	// Without a separator no branch can start, so a prompt that has none costs one scan.
+	if (!RECOVERY_REVIEW_DASH_SEPARATOR_EXISTS_PATTERN.test(text)) return false;
+	const workerAhead = new Uint8Array(text.length + 1);
+	const gitCommandAhead = new Uint8Array(text.length + 1);
+	const pathCommandAhead = new Uint8Array(text.length + 1);
+	for (let index = text.length - 1; index >= 0; index--) {
+		const character = text.charAt(index);
+		const lineCharacter = !RECOVERY_REVIEW_DASH_LINE_STOP_CHARACTERS.includes(character);
+		const pathCharacter = !RECOVERY_REVIEW_WHITESPACE_CHARACTER_PATTERN.test(character);
+		workerAhead[index] = matchesDashBranchAt(RECOVERY_REVIEW_DASH_WORKER_AT_PATTERN, text, index) || (lineCharacter && workerAhead[index + 1] === 1) ? 1 : 0;
+		gitCommandAhead[index] = matchesDashBranchAt(RECOVERY_REVIEW_DASH_GIT_COMMAND_AT_PATTERN, text, index) || (lineCharacter && gitCommandAhead[index + 1] === 1) ? 1 : 0;
+		pathCommandAhead[index] = (character === "/" && matchesDashBranchAt(RECOVERY_REVIEW_DASH_FILE_COMMAND_AT_PATTERN, text, index + 1)) || (pathCharacter && pathCommandAhead[index + 1] === 1) ? 1 : 0;
+	}
+	for (let index = 0; index < text.length; index++) {
+		const separatorLength = dashBranchLengthAt(RECOVERY_REVIEW_DASH_SEPARATOR_AT_PATTERN, text, index);
+		if (separatorLength === 0) continue;
+		// \s* and then\s+ only cross whitespace, and no branch starts with whitespace, so the end
+		// of that whitespace run is the only anchor the former pattern could accept.
+		const anchor = skipDashSeparatorWhitespace(text, index + separatorLength);
+		if (acceptsDashLiveActionAt(text, anchor, workerAhead, gitCommandAhead, pathCommandAhead)) return true;
+		if (!matchesDashBranchAt(RECOVERY_REVIEW_DASH_THEN_AT_PATTERN, text, anchor)) continue;
+		const afterThen = skipDashSeparatorWhitespace(text, anchor + 4);
+		if (afterThen > anchor + 4 && acceptsDashLiveActionAt(text, afterThen, workerAhead, gitCommandAhead, pathCommandAhead)) return true;
+	}
+	return false;
+}
 
 type GitCommandState = {
 	edges: Array<{ character: RegExp; next: GitCommandState }>;
@@ -465,7 +541,7 @@ function isExplicitReadOnlyRecoveryReview(params: Record<string, unknown>): bool
 		&& !RECOVERY_REVIEW_DELEGATION_PATTERN.test(taskMutationText)
 		&& !RECOVERY_REVIEW_ANAPHORIC_MUTATION_PATTERN.test(taskMutationText)
 		&& !mentionsMutatingCommand(taskMutationText)
-		&& !RECOVERY_REVIEW_DASH_LIVE_ACTION_PATTERN.test(taskDashLiveActionText);
+		&& !mentionsDashLiveAction(taskDashLiveActionText);
 }
 
 function recoveryBarrierMessage(sourceKey: string, target: string): string {
