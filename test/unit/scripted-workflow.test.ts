@@ -1825,6 +1825,84 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 
+	it("preserves file-command detection after a durable acceptance metadata rejection", async () => {
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "a".repeat(64),
+		};
+		for (const [command, blocked] of [
+			["rm -rf .", true],
+			["/usr/bin/rmdir dir", true],
+			["folder'part/unlink file", true],
+			['folder"part/truncate file', true],
+			["folder;part/mv a b", true],
+			["folder,part/cp a b", true],
+			["folder(part[part{part/CHMOD file", true],
+			["folder`part/chown file", true],
+			["folder.part/rmé", true],
+			["xrm", false],
+			["folder-rm", false],
+			["/usr/bin/rm_", false],
+			["/usr/bin/rmdirx", false],
+			["folder'part/rmx", false],
+			["folder\\rm", false],
+		] as const) {
+			const launches: string[] = [];
+			const task = `Read-only review. Do not edit files. ${command}`;
+			const result = runWorkflowScript({
+				script: `
+					await runs.run("writer", { agent: "worker", task: "write" });
+					return await runs.run("review", { agent: "reviewer", task: ${JSON.stringify(task)}, acceptance: false });
+				`,
+				launch(key) {
+					launches.push(key);
+					return Promise.resolve(key === "writer"
+						? { key, ok: false, output: "saved writer report", recovery, artifactPaths: [recovery.reportPath] }
+						: { key, ok: true, output: "review complete", artifactPaths: [] });
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			});
+			if (blocked) {
+				await assert.rejects(result, (error: unknown) => error instanceof WorkflowScriptError && /only explicit read-only review children with acceptance:false may follow/.test(error.message), command);
+			} else {
+				assert.equal((await result).children.at(-1)?.ok, true, command);
+			}
+			assert.deepEqual(launches, blocked ? ["writer"] : ["writer", "review"], command);
+		}
+	});
+
+	it("checks long file-command prefixes promptly after acceptance metadata recovery", async () => {
+		const recovery = {
+			status: "available-for-review" as const,
+			reason: "acceptance-metadata-rejected" as const,
+			reportPath: "/tmp/writer-report.md",
+			reportHash: "a".repeat(64),
+		};
+		const start = performance.now();
+		for (const prefix of ["'".repeat(100_000), '"'.repeat(100_000), ";,.([{`".repeat(15_000), "/".repeat(100_000)]) {
+			const launches: string[] = [];
+			const task = `Read-only review. Do not edit files. ${prefix}`;
+			const result = await runWorkflowScript({
+				script: `
+					await runs.run("writer", { agent: "worker", task: "write" });
+					return await runs.run("review", { agent: "reviewer", task: ${JSON.stringify(task)}, acceptance: false });
+				`,
+				launch(key) {
+					launches.push(key);
+					return Promise.resolve(key === "writer"
+						? { key, ok: false, output: "saved writer report", recovery, artifactPaths: [recovery.reportPath] }
+						: { key, ok: true, output: "review complete", artifactPaths: [] });
+				},
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			});
+			assert.deepEqual(launches, ["writer", "review"]);
+			assert.equal(result.children.at(-1)?.ok, true);
+		}
+		assert.ok(performance.now() - start < 10_000, "long file-command prefixes should finish within 10 seconds");
+	});
+
 	it("keeps non-matching git syntax allowed and scans adversarial option streams in bounded time", async () => {
 		const recovery = {
 			status: "available-for-review" as const,

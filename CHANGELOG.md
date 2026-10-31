@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Checking a read-only review after rejected acceptance metadata no longer stalls on long runs of quotes or other file-command separators. The file-command check no longer rescans the same suffix for each separator, while keeping the same command detection. Thanks to [@Yivas](https://github.com/Yivas) for #3113.
 - The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
 - A direct MCP tool selector with a long run of slashes no longer takes quadratic time to normalize. Trailing slashes are trimmed with one backward pass over that run; before, a regex rescanned the selector from every index whenever it ended in anything else. Selector results are unchanged. Thanks to [@Yivas](https://github.com/Yivas) for #3112.
 - The read-only review check scans a `git` command line in one pass. A task prompt holding a long run of `git` options made the old pattern backtrack exponentially and freeze the workflow, and a 198,000-character prompt that never finished now takes milliseconds. Thanks to @Yivas for #3110.
