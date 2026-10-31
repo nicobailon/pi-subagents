@@ -4,8 +4,7 @@ export const SUBAGENT_LAUNCH_CHECK_REGISTRY_KEY = "pi-subagents.launch-check.v1"
 
 export type SubagentLaunchOrigin =
 	| { readonly kind: "request"; readonly requestId: string }
-	| { readonly kind: "workflow"; readonly workflowRunId: string; readonly key: string }
-	| { readonly kind: "schedule"; readonly scheduleId: string }
+	| { readonly kind: "workflow"; readonly workflowRunId: string; readonly key: string; readonly scheduleId?: string }
 	| { readonly kind: "resume"; readonly sourceRunId: string; readonly requestId: string };
 
 export interface SubagentLaunch {
@@ -83,7 +82,7 @@ function freezeLaunch(launch: SubagentLaunch): SubagentLaunch {
 	return Object.freeze({
 		...launch,
 		origin: Object.freeze({ ...launch.origin }),
-		verify: Object.freeze(launch.verify.map((entry) => Object.freeze({ ...entry }))),
+		verify: Object.freeze(launch.verify.map(({ id, command, cwd }) => Object.freeze({ id, command, ...(cwd !== undefined ? { cwd } : {}) }))),
 	});
 }
 

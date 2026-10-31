@@ -66,6 +66,7 @@ import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../sr
 import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
+import { registerSubagentLaunchCheck, type SubagentLaunch } from "../../src/api/launch-check.ts";
 import { appendWorkflowChildJournal, runtimeReplacedAbortReason, workflowChildFingerprint } from "../../src/workflows/workflow-reuse.ts";
 import { updateTerminalRunIndex } from "../../src/runs/background/terminal-run-index.ts";
 import { getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
@@ -1343,6 +1344,144 @@ Answer only from the supplied synthetic text.
 			assert.ok(result.details.workflow?.receipt?.entries.review.latestRunId);
 			assert.deepEqual(result.details.workflow?.receipt?.hostSteps?.map(({ id, state, exitCode }) => ({ id, state, exitCode })), [{ id: "check", state: "done", exitCode: 0 }]);
 		} finally { registration.dispose(); }
+	});
+
+	describe("launch checks", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, () => {
+		const launchCtx = () => {
+			const ctx = makeMinimalCtx(tempDir);
+			const sessionId = `launch-check-${Date.now()}-${Math.random()}`;
+			ctx.sessionManager.getSessionId = () => sessionId;
+			return ctx;
+		};
+		const noWorktrees = () => execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: tempDir, encoding: "utf-8" }).split("\n").filter((line) => line.startsWith("worktree ")).length;
+
+		it("refuses one workflow child, still runs its sibling, and reports where each start came from", async () => {
+			const ctx = launchCtx();
+			const seen: SubagentLaunch[] = [];
+			const registration = registerSubagentLaunchCheck({
+				sessionId: ctx.sessionManager.getSessionId(),
+				source: "test-policy",
+				check: (launch) => { seen.push(launch); return launch.agent === "reviewer" ? { allow: false, reason: "reviewer is not allowed" } : { allow: true }; },
+			});
+			try {
+				mockPi.onCall({ output: "Scout finished" });
+				const result = await makeExecutor([makeAgent("reviewer"), makeAgent("scout")]).execute("launch-check-all", {
+					workflowScript: `const [review, scout] = await runs.all([{ key: "review", agent: "reviewer", task: "Review it" }, { key: "scout", agent: "scout", task: "Scout it" }]); return JSON.stringify({ review: { ok: review.ok, error: review.error }, scout: { ok: scout.ok } });`,
+					async: false,
+				}, new AbortController().signal, undefined, ctx);
+				assert.equal(result.isError, undefined, result.content[0]?.text);
+				const outcome = JSON.parse(String(result.content[0]?.text).match(/\{"review".*\}/)![0]) as { review: { ok: boolean; error: string }; scout: { ok: boolean } };
+				assert.equal(outcome.review.ok, false);
+				assert.equal(outcome.review.error, "Launch check from test-policy denied agent 'reviewer': reviewer is not allowed");
+				assert.equal(outcome.scout.ok, true);
+				assert.equal(mockPi.callCount(), 1);
+				assert.deepEqual(seen.map((launch) => [launch.agent, launch.origin.kind === "workflow" ? launch.origin.key : launch.origin.kind]).sort(), [["reviewer", "review"], ["scout", "scout"]]);
+				assert.ok(seen.every((launch) => launch.origin.kind === "workflow" && launch.origin.workflowRunId.length > 0 && !launch.background));
+			} finally { registration.dispose(); }
+		});
+
+		it("makes a refused runs.run throw its reason unless the script catches it", async () => {
+			const ctx = launchCtx();
+			const registration = registerSubagentLaunchCheck({ sessionId: ctx.sessionManager.getSessionId(), source: "test-policy", check: () => ({ allow: false, reason: "nobody starts today" }) });
+			try {
+				const executor = makeExecutor([makeAgent("worker")]);
+				const uncaught = await executor.execute("launch-check-run-throws", { workflowScript: `await runs.run("main", { agent: "worker", task: "Work" }); return "unreachable";`, async: false }, new AbortController().signal, undefined, ctx);
+				assert.equal(uncaught.isError, true);
+				assert.match(uncaught.content[0]?.text ?? "", /Launch check from test-policy denied agent 'worker': nobody starts today/);
+				assert.doesNotMatch(uncaught.content[0]?.text ?? "", /unreachable/);
+				const caught = await executor.execute("launch-check-run-caught", { workflowScript: `try { await runs.run("main", { agent: "worker", task: "Work" }); } catch (error) { return "caught: " + error.message; }`, async: false }, new AbortController().signal, undefined, ctx);
+				assert.equal(caught.isError, undefined, caught.content[0]?.text);
+				assert.match(caught.content[0]?.text ?? "", /caught: .*Launch check from test-policy denied agent 'worker': nobody starts today/);
+				assert.equal(mockPi.callCount(), 0);
+			} finally { registration.dispose(); }
+		});
+
+		it("shows the check the resolved verify commands, output path and model, and runs the child exactly as described", async () => {
+			const ctx = launchCtx();
+			const seen: SubagentLaunch[] = [];
+			const waited: string[] = [];
+			const registration = registerSubagentLaunchCheck({
+				sessionId: ctx.sessionManager.getSessionId(),
+				source: "test-audit",
+				check: async (launch) => { seen.push(launch); await new Promise((resolve) => setTimeout(resolve, 20)); waited.push(launch.agent); return { allow: true }; },
+			});
+			try {
+				const defaultVerify = `${JSON.stringify(process.execPath)} -e "process.exit(0)"`;
+				const gateCommand = `${JSON.stringify(process.execPath)} -e "process.exit(0)" gate`;
+				mockPi.onCall({ matchArgIncludes: "Check defaults", output: "Defaults checked" });
+				mockPi.onCall({ matchArgIncludes: "Check gate", output: "Gate checked" });
+				const result = await makeExecutor([
+					makeAgent("checker", { defaultAcceptance: { level: "verified", verify: [{ id: "agent-default", command: defaultVerify }] } }),
+					makeAgent("gated"),
+				]).execute("launch-check-fields", {
+					workflowScript: `return await runs.all([{ key: "defaults", agent: "checker", task: "Check defaults", model: "mock/special", output: "defaults.md" }, { key: "gate", agent: "gated", task: "Check gate", gate: ${JSON.stringify(gateCommand)} }]);`,
+					async: false,
+				}, new AbortController().signal, undefined, ctx);
+				assert.equal(result.isError, undefined, result.content[0]?.text);
+				assert.equal(mockPi.callCount(), 2);
+				const byAgent = Object.fromEntries(seen.map((launch) => [launch.agent, launch]));
+				assert.deepEqual(byAgent.checker?.verify, [{ id: "agent-default", command: defaultVerify }]);
+				assert.deepEqual(byAgent.gated?.verify, [{ id: "gate", command: gateCommand }]);
+				assert.equal(byAgent.checker?.cwd, tempDir);
+				assert.equal(byAgent.checker?.task, "Check defaults");
+				assert.equal(byAgent.checker?.model, "mock/special");
+				assert.ok(path.isAbsolute(byAgent.checker?.outputPath ?? ""));
+				assert.equal(fs.readFileSync(byAgent.checker!.outputPath!, "utf-8"), "Defaults checked");
+				assert.equal(byAgent.gated?.outputPath, undefined);
+				const modelFlags = readAllCallArgs(true).map((args) => args[args.indexOf("--model") + 1]);
+				assert.ok(modelFlags.includes("mock/special"), JSON.stringify(modelFlags));
+				assert.deepEqual(waited.sort(), ["checker", "gated"]);
+			} finally { registration.dispose(); }
+		});
+
+		it("refuses a direct call before it creates a worktree or starts a child", async () => {
+			execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+			execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+			execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+			fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n", "utf-8");
+			execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+			execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+			const ctx = launchCtx();
+			const seen: SubagentLaunch[] = [];
+			const worktreesDuringCheck: number[] = [];
+			const registration = registerSubagentLaunchCheck({ sessionId: ctx.sessionManager.getSessionId(), source: "test-policy", check: (launch) => { seen.push(launch); worktreesDuringCheck.push(noWorktrees()); return { allow: false, reason: "no isolated work" }; } });
+			try {
+				const result = await makeExecutor([makeAgent("worker")]).execute("launch-check-direct", { async: false, agent: "worker", task: "Implement feature", worktree: true }, new AbortController().signal, undefined, ctx);
+				assert.equal(result.isError, true);
+				assert.match(result.content[0]?.text ?? "", /Launch check from test-policy denied agent 'worker': no isolated work$/);
+				assert.equal(mockPi.callCount(), 0);
+				assert.deepEqual(worktreesDuringCheck, [1]);
+				assert.equal(noWorktrees(), 1);
+				assert.deepEqual(seen.map((launch) => ({ origin: launch.origin, worktree: launch.worktree, cwd: launch.cwd })), [{ origin: { kind: "request", requestId: "launch-check-direct" }, worktree: true, cwd: tempDir }]);
+			} finally { registration.dispose(); }
+		});
+
+		it("refuses a start whose launch signal aborts while the check is waiting", async () => {
+			const ctx = launchCtx();
+			const controller = new AbortController();
+			const registration = registerSubagentLaunchCheck({ sessionId: ctx.sessionManager.getSessionId(), source: "test-slow", check: () => new Promise(() => {}) });
+			try {
+				const pending = makeExecutor([makeAgent("worker")]).execute("launch-check-abort", { async: false, agent: "worker", task: "Work" }, controller.signal, undefined, ctx);
+				setTimeout(() => controller.abort(), 50);
+				const result = await pending;
+				assert.equal(result.isError, true);
+				assert.match(result.content[0]?.text ?? "", /Launch check from test-slow denied agent 'worker': the launch was aborted before the check answered/);
+				assert.equal(mockPi.callCount(), 0);
+			} finally { registration.dispose(); }
+		});
+
+		it("leaves other sessions and disposed registrations alone", async () => {
+			const ctx = launchCtx();
+			const registration = registerSubagentLaunchCheck({ sessionId: `${ctx.sessionManager.getSessionId()}-other`, source: "test-policy", check: () => ({ allow: false, reason: "wrong session" }) });
+			const disposed = registerSubagentLaunchCheck({ sessionId: ctx.sessionManager.getSessionId(), source: "test-policy", check: () => ({ allow: false, reason: "disposed" }) });
+			disposed.dispose();
+			try {
+				mockPi.onCall({ output: "Unchecked" });
+				const result = await makeExecutor([makeAgent("worker")]).execute("launch-check-scope", { async: false, agent: "worker", task: "Work" }, new AbortController().signal, undefined, ctx);
+				assert.equal(result.isError, undefined, result.content[0]?.text);
+				assert.equal(mockPi.callCount(), 1);
+			} finally { registration.dispose(); }
+		});
 	});
 
 	it("denies untrusted and out-of-grant registered commands before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

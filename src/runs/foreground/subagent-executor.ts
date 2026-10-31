@@ -56,10 +56,11 @@ import { isScheduledRunAction } from "../background/scheduled-runs.ts";
 import { encodeIndexSegment } from "../background/index-segment.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { acceptanceHasTypedVerify, normalizeGateAcceptance, resolveAcceptanceReportMode, TYPED_VERIFY_OUTPUT_SCHEMA_CONFLICT, validateAcceptanceInput, validateExecutionAcceptance, validateExecutionAcceptancePolicy } from "../shared/acceptance.ts";
+import { acceptanceHasTypedVerify, normalizeGateAcceptance, resolveAcceptanceReportMode, resolveEffectiveAcceptance, TYPED_VERIFY_OUTPUT_SCHEMA_CONFLICT, validateAcceptanceInput, validateExecutionAcceptance, validateExecutionAcceptancePolicy } from "../shared/acceptance.ts";
 import { canPreferFork, createForkContextResolver, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
+import { applyThinkingSuffix } from "../shared/child-tool-plan.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../shared/types.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
@@ -70,6 +71,7 @@ import { retainLiveForegroundNestedRoute } from "../../integrations/pi-web-sessi
 import { HERDR_FOREGROUND_CONTROL_CHANGED_EVENT } from "../../integrations/herdr-status.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
+import { evaluateSubagentLaunchChecks, type SubagentLaunchOrigin } from "../shared/launch-check.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContract } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
@@ -533,6 +535,7 @@ interface ExecutionContextData {
 	parentSessionId: string | null;
 	parentPiSessionId?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	launchOrigin: SubagentLaunchOrigin;
 	runFanoutBudget: RunFanoutBudgetDescriptor;
 	topLevelAsyncCapacityEligible: boolean;
 	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
@@ -4189,6 +4192,35 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 
 	const sourceCwd = foregroundMachine?.cwd ?? effectiveCwd;
+	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, sourceCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
+	const pendingLaunchCheck = evaluateSubagentLaunchChecks({
+		sessionId: data.parentPiSessionId,
+		agent: agentConfig.name,
+		signal,
+		describe: () => {
+			const thinking = thinkingOverrideForTask();
+			const effectiveThinking = thinking ?? agentConfig.thinking;
+			const { model } = resolveModelSelection(modelOverride ?? agentConfig.model, availableModels, agentConfig.modelProvider ?? currentProvider, {
+				scope: modelScopes,
+				primaryModelFromParent: modelOverrideFromParent,
+				origin: modelOrigin,
+			});
+			const launchModel = applyThinkingSuffix(model, effectiveThinking, thinking !== undefined);
+			return {
+				origin: data.launchOrigin,
+				agent: agentConfig.name,
+				task,
+				cwd: sourceCwd,
+				worktree: params.worktree === true,
+				...(launchModel ? { model: launchModel } : {}),
+				verify: resolveEffectiveAcceptance({ explicit: params.acceptance, agentName: agentConfig.name, acceptanceRole: agentConfig.acceptanceRole, task, mode: "single", agentContract: params.agentContract }).verify,
+				...(outputPath ? { outputPath } : {}),
+				background: false,
+			};
+		},
+	});
+	const launchDenial = pendingLaunchCheck === undefined ? undefined : await pendingLaunchCheck;
+	if (launchDenial !== undefined) return toExecutionErrorResult(params, new Error(launchDenial), data.contextPolicy.contextSummary);
 	let pendingHandoff: Details["parallelHandoff"];
 	const { setup: worktreeSetup, errorResult: worktreeSetupError } = params.worktree ? await createSingleWorktreeSetup(
 		sourceCwd,
@@ -4252,7 +4284,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	if (shouldForkAgent(contextPolicy, params.agent!)) {
 		task = wrapForkTask(task);
 	}
-	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, singleCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) {
 		await cleanupSingleWorktree();
@@ -4637,6 +4668,9 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): AgentToolResul
 	};
 }
 
+/** Host-set provenance for a launch request; a caller cannot reach it through request fields. */
+const launchOrigins = new WeakMap<object, SubagentLaunchOrigin>();
+const scheduledLaunchIds = new WeakMap<object, string>();
 const workflowLaunchObservers = new WeakMap<object, (launch: { agent: string; sessionName?: string; sessionFile?: string; async: boolean; runId?: string }) => void>();
 const workflowOwnedUsageBudgets = new WeakMap<object, UsageBudgetConfig>();
 const workflowRetainedRequiredExtensions = new WeakMap<object, RequiredChildExtensionSnapshot>();
@@ -5488,6 +5522,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (projectScopeError) return projectScopeError;
 		const deps = withSessionProjectTrust(executorDeps, ctx);
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
+		const markedLaunchOrigin = launchOrigins.get(params);
+		const scheduleId = scheduledLaunchIds.get(params);
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
 		const retainedRequiredExtensions = workflowRetainedRequiredExtensions.get(params);
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
@@ -6436,6 +6472,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										inheritedNestedRoute(deps)?.rootRunId,
 									);
 									preparedChildParams = childRequest;
+									launchOrigins.set(childRequest, { kind: "workflow", workflowRunId, key, ...(scheduleId ? { scheduleId } : {}) });
 									if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 									if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
 									workflowLaunchObservers.set(childRequest, (launch) => {
@@ -6725,6 +6762,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								inheritedNestedRoute(deps)?.rootRunId,
 							);
 							preparedChildParams = childRequest;
+							launchOrigins.set(childRequest, { kind: "workflow", workflowRunId: foregroundWorkflowRunId, key, ...(scheduleId ? { scheduleId } : {}) });
 							if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 							if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
 							if (delegatedWorkflowPermit) {
@@ -7982,6 +8020,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			parentSessionId: requestSessionId,
 			parentPiSessionId: requestPiSessionId,
 			capabilityCeiling: intersectSubagentCapabilityCeilings(effectiveParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(requestPiSessionId)),
+			launchOrigin: markedLaunchOrigin ?? { kind: "request", requestId: _id },
 			runFanoutBudget,
 			topLevelAsyncCapacityEligible,
 			activeAsyncCapacity,
@@ -8286,6 +8325,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (workflowLaunch && publicParams.action === undefined) publicWorkflowLaunches.set(publicParams, workflowLaunch);
 		if (workflowResumeLaunch) workflowResumeLaunches.set(publicParams, workflowResumeLaunch);
 		publicExecutions.add(publicParams);
+		const scheduledId = scheduledLaunchIds.get(params);
+		if (scheduledId) scheduledLaunchIds.set(publicParams, scheduledId);
 		return executeWithSingleDispatchGuard(id, publicParams, signal, onUpdate, ctx);
 	};
 
@@ -8389,6 +8430,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			owner = { state, executor: createSubagentExecutor({ ...deps, state }) };
 			ownerExecutors.set(ownerSessionId, owner);
 		}
+		if (params.scheduleOrigin) scheduledLaunchIds.set(params, params.scheduleOrigin.id);
 		return owner.executor.executePublic(id, params, signal, undefined, ctx);
 	};
 
