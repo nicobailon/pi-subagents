@@ -111,17 +111,18 @@ function describeFailure(error: unknown): string {
 const ABORTED_MESSAGE = "the launch was aborted before the check answered";
 
 function waitForDecision(check: RegisterSubagentLaunchCheckOptions["check"], launch: SubagentLaunch, signal: AbortSignal): Promise<SubagentLaunchDecision> {
-	let onAbort: (() => void) | undefined;
-	return new Promise<SubagentLaunchDecision>((resolve, reject) => {
-		onAbort = () => reject(new Error(ABORTED_MESSAGE));
+	return new Promise((resolve, reject) => {
+		const onAbort = () => reject(new Error(ABORTED_MESSAGE));
+		const cleanup = () => signal.removeEventListener("abort", onAbort);
 		signal.addEventListener("abort", onAbort, { once: true });
 		try {
-			Promise.resolve(check(launch, signal)).then(resolve, reject);
+			Promise.resolve(check(launch, signal)).then(resolve, reject).finally(cleanup);
 		} catch (error) {
+			cleanup();
 			reject(error);
 		}
 		if (signal.aborted) onAbort();
-	}).finally(() => signal.removeEventListener("abort", onAbort!));
+	});
 }
 
 type PendingLaunchDenial = Promise<string | undefined> | undefined;
