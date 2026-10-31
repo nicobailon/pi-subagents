@@ -468,9 +468,9 @@ pi.on("session_start", (_event, ctx) => {
 });
 ```
 
-Register with **`ctx.sessionManager.getSessionId()`**, as for ceilings, and dispose in `session_shutdown`. `sessionId` and `source` must not have leading or trailing whitespace, so a registration can never be stored under an id that lookups would not find. The subpath exports `registerSubagentLaunchCheck` and the types `SubagentLaunch`, `SubagentLaunchDecision`, `SubagentLaunchOrigin`, `RegisterSubagentLaunchCheckOptions`, and `SubagentLaunchCheckHandle`.
+Register with **`ctx.sessionManager.getSessionId()`**, as for ceilings, and dispose in `session_shutdown`. `sessionId` and `source` must not have leading or trailing whitespace. The subpath exports `registerSubagentLaunchCheck` and the types `SubagentLaunch`, `SubagentLaunchDecision`, `SubagentLaunchOrigin`, `RegisterSubagentLaunchCheckOptions`, and `SubagentLaunchCheckHandle`.
 
-The invariant: before pi-subagents starts a child agent session or spawns a background runner for a child, every check registered for the launching session when the start commits has allowed it and the launch signal has not aborted. The final test of both runs in the same synchronous step as the first start effect, so an abort or a registration cannot land between them. Checks run in registration order and the first refusal wins. A check registered while an earlier one waits is asked too, and a check that already allowed this start is not asked again. With no registration, nothing changes.
+The invariant: before pi-subagents creates a worktree for a child, starts a child agent session, or spawns a background runner for a child, every check registered for the launching session when the launch is admitted has allowed it and the launch signal has not aborted. The final test runs in the same synchronous step that admits the launch, so an abort or a registration cannot land between them. A check registered after a launch is admitted does not apply to that launch, even while a foreground child's worktree setup is still waiting; an abort during that setup still stops it. Checks run in registration order and the first refusal wins. A check registered while an earlier one waits is asked too, and a check that already allowed this start is not asked again. With no registration, nothing changes.
 
 Each check receives a frozen description and the launch's abort signal:
 
@@ -488,7 +488,7 @@ Each check receives a frozen description and the launch's abort signal:
 
 The origin kinds are:
 
-- `request`: a `subagent` tool call, slash command, RPC spawn, or delegation. `requestId` equals the tool call id only for tool calls, so an extension can recognize a call it already approved in `tool_call`. For slash commands, RPC spawns, and delegations the in-process caller supplies it, so do not treat it as proof that the call went through your `tool_call` approval. The example above allows on a `requestId` match only when the agent and task are the ones the approval recorded, and only after the verify commands passed.
+- `request`: a `subagent` tool call, slash command, RPC spawn, or delegation. `requestId` equals the tool call id only for tool calls, so an extension can recognize a call it already approved in `tool_call`. For slash commands, RPC spawns, and delegations the in-process caller supplies it, so do not treat it as proof that the call went through your `tool_call` approval.
 - `workflow`: a child started by a workflow script, including the `chain` and `tasks` inputs, which compile to workflows. It carries `workflowRunId` and the script's `key`, plus `scheduleId` when a schedule fired the workflow.
 - `resume`: a retained child restarted by `action: "resume"` or by steering a stopped run. It carries the id of the run being resumed as `sourceRunId`, however the caller named it, and the `requestId` of the call.
 
@@ -503,7 +503,7 @@ Limits:
 - pi-subagents' own abort recovery reopens the same approved child with the same agent, cwd, verify commands, and output, like a provider retry. It is not checked again.
 - A refused start can leave pi-subagents' own records, such as workflow trace and journal entries, a forked copy of the parent conversation for `context: "fork"`, or a retained worktree marked to keep by a refused resume. No worktree is created, no child runs, no command runs, and no output is written.
 - A child that a workflow journal reuses starts nothing, so nothing is checked.
-- While the session has any check registered, `action: "resume"` with `chain` and `action: "append-step"` are refused, because a background runner would start those steps later where the check cannot run.
+- `action: "resume"` with `chain` and `action: "append-step"` are refused when the session has any check registered as the action is admitted, because a background runner would start those steps later where the check cannot run.
 
 ## Background-work provider API
 
