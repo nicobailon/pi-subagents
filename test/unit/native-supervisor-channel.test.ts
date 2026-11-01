@@ -1270,7 +1270,7 @@ describe("native supervisor channel", () => {
 			assert.equal(channel.pending.has(requestId), false);
 			await assert.rejects(
 				() => registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: requestId, message: "Too late" }),
-				new RegExp(`No pending supervisor request found for replyTo '${requestId}'`),
+				new RegExp(`Supervisor request '${requestId}' from worker \\[${runId}#0\\] was withdrawn by the child before its ask deadline \\(noticed at \\d{4}-\\d\\d-\\d\\dT[^ ]+Z\\)\\. A child withdraws its request when its run is stopped, interrupted or times out`),
 			);
 		} finally {
 			channel.dispose();
