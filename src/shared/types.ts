@@ -842,8 +842,9 @@ export interface SteeringRecoveryDescriptor {
 	sessionFile?: string;
 	/** Git ref used to allocate managed worktrees for this run. */
 	baseRef?: string;
-	/** Launcher name the run was wrapped with; resume re-reads its argv from current user config. Absence means unwrapped. */
-	launcher?: string;
+	/** Launcher name the run was wrapped with, or null when it ran unwrapped; resume re-reads its argv from current user config.
+	 *  Absence (descriptors written before null was recorded) means unknown: resume uses the agent file's current launcher. */
+	launcher?: string | null;
 	cwd: string;
 	model?: string;
 	modelProvider?: string;

@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Resuming a background run whose saved recovery record does not say which launcher it used, such as a workflow child resumed through its workflow run, now uses the agent file's current `launcher`. Before, the resumed child ran without its launcher. New runs record "no launcher" explicitly, so a run started unwrapped still resumes unwrapped. Thanks to [@ViperJuice](https://github.com/ViperJuice) for the report. (#3116)
 - Checking a read-only review after rejected acceptance metadata no longer stalls on long runs of quotes or other file-command separators. The file-command check no longer rescans the same suffix for each separator, while keeping the same command detection. Thanks to [@Yivas](https://github.com/Yivas) for #3113.
 - The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
 - A direct MCP tool selector with a long run of slashes no longer takes quadratic time to normalize. Trailing slashes are trimmed with one backward pass over that run; before, a regex rescanned the selector from every index whenever it ended in anything else. Selector results are unchanged. Thanks to [@Yivas](https://github.com/Yivas) for #3112.

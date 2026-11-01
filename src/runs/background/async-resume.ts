@@ -341,7 +341,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (typeof parsed[field] !== "string" || !(parsed[field] as string).trim()) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a non-empty string.`);
 	}
 	if (parsed.version !== 1) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': version must be 1.`);
-	if (parsed.launcher !== undefined && (typeof parsed.launcher !== "string" || !RUNNER_LAUNCHER_NAME_PATTERN.test(parsed.launcher))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': launcher must be a launcher name.`);
+	if (parsed.launcher !== undefined && parsed.launcher !== null && (typeof parsed.launcher !== "string" || !RUNNER_LAUNCHER_NAME_PATTERN.test(parsed.launcher))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': launcher must be a launcher name or null.`);
 	try {
 		parsed.runFanoutBudget = validateRunFanoutBudgetDescriptor(parsed.runFanoutBudget);
 	} catch (error) {
@@ -640,8 +640,9 @@ export function applySteeringRecoveryAgentConfig(agentConfig: AgentConfig, descr
 		output: descriptor.outputPath,
 		toolBudget: descriptor.initialToolBudget,
 		maxSubagentDepth: descriptor.maxSubagentDepth,
-		// The recorded launcher wins over the current agent file, including recorded absence.
-		launcher: descriptor.launcher,
+		// A recorded launcher, or a recorded null (ran unwrapped), wins over the current agent file.
+		// A missing field says nothing, so the run never loses the agent file's launcher.
+		launcher: descriptor.launcher === undefined ? agentConfig.launcher : descriptor.launcher ?? undefined,
 	};
 }
 
