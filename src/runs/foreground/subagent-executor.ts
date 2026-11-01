@@ -4269,7 +4269,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		? `[Read from: ${readPaths.join(", ")}]\n\n`
 		: "";
 	task = readsInstruction + task;
-	task = injectSingleOutputInstruction(task, outputPath, agentConfig);
+	task = injectSingleOutputInstruction(task, outputPath, agentConfig, foregroundMachine);
 
 	let effectiveSkills: string[] | undefined;
 	if (skillOverride === false) {

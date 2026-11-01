@@ -12,6 +12,8 @@ export interface PlacementBridgeIdentity { runId?: string; nativeSessionId?: str
 export type PlacementEvidenceProof = { ok: true; cursor: number } | { ok: false; reason: string };
 export type PlacementReconnectCheck = { ok: true; state: PlacementRunState; paneId: string; cursor: number } | { ok: false; reason: string };
 export interface PlacementStartOptions { timeoutMs?: number; pollMs?: number; clock?: { now(): number; wait(ms: number): Promise<void> } }
+/** `stopped` ends a pending prompt retry once the run is aborted or disposed, so a refused prompt is never sent after that. */
+export interface PlacementPromptOptions extends PlacementStartOptions { stopped?: () => boolean }
 /** What to start in a new pane; the pane is created in the machine's cwd with this environment. */
 export interface PlacementLaunchRequest { kind: PlacementAgentKind; name: string; args: string[]; environment?: Record<string, string> }
 export interface PlacementCommandOptions { timeout?: number; maxBuffer?: number }
@@ -34,7 +36,7 @@ export interface PlacementPaneHost<C extends PlacementSockets = PlacementSockets
 	sessionOf(connection: C): string | null;
 	/** Create the pane and start the agent in it; call onPane after the pane exists and before the agent starts. */
 	launch(connection: C, machine: PlacementMachineReference, runId: string, runtimeDir: string, request: PlacementLaunchRequest, onPane: (owned: PlacementOwnedPane) => Promise<void>, options?: PlacementStartOptions): Promise<{ owned: PlacementOwnedPane; terminalId: string }>;
-	prompt(connection: C, identity: HerdrRunIdentity, text: string): Promise<void>;
+	prompt(connection: C, identity: HerdrRunIdentity, text: string, options?: PlacementPromptOptions): Promise<void>;
 	subscribe(connection: C, paneId: string, listener: (event: unknown) => void, onDisconnect: (error: Error) => void): Promise<() => void>;
 	paneEvent(event: unknown, fallback: PlacementRunState): { terminalId: unknown; paneId: unknown; state: PlacementRunState } | undefined;
 	panes(connection: C, identity: HerdrRunIdentity): Promise<P>;

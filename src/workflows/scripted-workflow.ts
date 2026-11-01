@@ -279,7 +279,83 @@ const RECOVERY_REVIEW_ANAPHORIC_MUTATION_PATTERN = /\b(?:do|run|execute|perform|
 // preserves detection while preventing overlapping starts from rescanning the same suffix.
 const RECOVERY_REVIEW_MUTATING_PATH_COMMAND_PATTERN = /(?:^|[\s;,.`'"([{])(?:[^\s;,.`'"([{]*\/)?(?:rm|rmdir|unlink|truncate|mv|cp|chmod|chown)\b/i;
 const RECOVERY_REVIEW_WORD_CHARACTER_PATTERN = /^\w$/;
-const RECOVERY_REVIEW_DASH_LIVE_ACTION_PATTERN = /(?:[—–]|--|\s-\s|:|\s\/\s)\s*(?:then\s+)?(?:(?:add|append|apply|change|cherry[ -]pick|clean|commit|copy|create|delete|edit|fix|implement|insert|make|merge|move|modify|mutate|open|patch|prepend|push|rebase|refactor|remove|rename|replace|revert|revise|rewrite|save|stage|stash|tag|touch|update|write)\b|(?:launch|start|spawn|run)\b[^,.;!?\n]*(?:workers?|reviewers?|agents?|subagents?|children|child|runs?)\b|(?:\S*\/)?(?:rm|rmdir|unlink|truncate|mv|cp|chmod|chown)\b|git\b[^,.;!?\n]*\b(?:add|branch|cherry-pick|clean|commit|merge|rebase|reset|restore|revert|stash|tag|checkout|switch)\b)/i;
+// The separator and its four branches used to be one pattern, and three of those branches scanned
+// to the end of the line or of the path from every separator, so a prompt holding many separators
+// rescanned the same suffix once per separator. Each branch is now checked at its own anchor, and
+// the rest of the line or path it needs comes from a table built in one backward pass. Every
+// sub-pattern below is one branch of the former pattern, unchanged, so a separator still reaches
+// the same four branches at the same anchor.
+const RECOVERY_REVIEW_DASH_SEPARATOR_AT_PATTERN = /(?:[—–]|--|\s-\s|:|\s\/\s)/iy;
+// The same separator without the sticky anchor: it decides whether the tables are needed at all.
+const RECOVERY_REVIEW_DASH_SEPARATOR_EXISTS_PATTERN = /(?:[—–]|--|\s-\s|:|\s\/\s)/i;
+const RECOVERY_REVIEW_DASH_ACTION_AT_PATTERN = /(?:add|append|apply|change|cherry[ -]pick|clean|commit|copy|create|delete|edit|fix|implement|insert|make|merge|move|modify|mutate|open|patch|prepend|push|rebase|refactor|remove|rename|replace|revert|revise|rewrite|save|stage|stash|tag|touch|update|write)\b/iy;
+const RECOVERY_REVIEW_DASH_LAUNCH_AT_PATTERN = /(?:launch|start|spawn|run)\b/iy;
+const RECOVERY_REVIEW_DASH_WORKER_AT_PATTERN = /(?:workers?|reviewers?|agents?|subagents?|children|child|runs?)\b/iy;
+const RECOVERY_REVIEW_DASH_GIT_AT_PATTERN = /git\b/iy;
+const RECOVERY_REVIEW_DASH_GIT_COMMAND_AT_PATTERN = /\b(?:add|branch|cherry-pick|clean|commit|merge|rebase|reset|restore|revert|stash|tag|checkout|switch)\b/iy;
+const RECOVERY_REVIEW_DASH_FILE_COMMAND_AT_PATTERN = /(?:rm|rmdir|unlink|truncate|mv|cp|chmod|chown)\b/iy;
+const RECOVERY_REVIEW_DASH_THEN_AT_PATTERN = /then/iy;
+const RECOVERY_REVIEW_DASH_LINE_STOP_CHARACTERS = ",.;!?\n";
+const RECOVERY_REVIEW_WHITESPACE_CHARACTER_PATTERN = /^\s$/;
+
+// A sticky pattern is one branch of the former pattern: lastIndex anchors it where the separator
+// scan arrived, so a check costs only the branch it matches. No check yields, so the shared
+// lastIndex cannot interleave with another call.
+function matchesDashBranchAt(pattern: RegExp, text: string, index: number): boolean {
+	pattern.lastIndex = index;
+	return pattern.test(text);
+}
+
+function dashBranchLengthAt(pattern: RegExp, text: string, index: number): number {
+	pattern.lastIndex = index;
+	const match = pattern.exec(text);
+	return match === null ? 0 : match[0].length;
+}
+
+function skipDashSeparatorWhitespace(text: string, index: number): number {
+	while (index < text.length && RECOVERY_REVIEW_WHITESPACE_CHARACTER_PATTERN.test(text.charAt(index))) index++;
+	return index;
+}
+
+// The tables replace the forward scans the former pattern repeated from every separator.
+// workerAhead[i] says whether the rest of the line still holds the worker word, gitCommandAhead[i]
+// the same for a git command, and pathCommandAhead[i] whether the rest of the path holds a file
+// command behind a slash.
+function acceptsDashLiveActionAt(text: string, index: number, workerAhead: Uint8Array, gitCommandAhead: Uint8Array, pathCommandAhead: Uint8Array): boolean {
+	if (matchesDashBranchAt(RECOVERY_REVIEW_DASH_ACTION_AT_PATTERN, text, index)) return true;
+	const launchLength = dashBranchLengthAt(RECOVERY_REVIEW_DASH_LAUNCH_AT_PATTERN, text, index);
+	if (launchLength > 0 && workerAhead[index + launchLength] === 1) return true;
+	if (matchesDashBranchAt(RECOVERY_REVIEW_DASH_FILE_COMMAND_AT_PATTERN, text, index) || pathCommandAhead[index] === 1) return true;
+	return matchesDashBranchAt(RECOVERY_REVIEW_DASH_GIT_AT_PATTERN, text, index) && gitCommandAhead[index + 3] === 1;
+}
+
+function mentionsDashLiveAction(text: string): boolean {
+	// Without a separator no branch can start, so a prompt that has none costs one scan.
+	if (!RECOVERY_REVIEW_DASH_SEPARATOR_EXISTS_PATTERN.test(text)) return false;
+	const workerAhead = new Uint8Array(text.length + 1);
+	const gitCommandAhead = new Uint8Array(text.length + 1);
+	const pathCommandAhead = new Uint8Array(text.length + 1);
+	for (let index = text.length - 1; index >= 0; index--) {
+		const character = text.charAt(index);
+		const lineCharacter = !RECOVERY_REVIEW_DASH_LINE_STOP_CHARACTERS.includes(character);
+		const pathCharacter = !RECOVERY_REVIEW_WHITESPACE_CHARACTER_PATTERN.test(character);
+		workerAhead[index] = matchesDashBranchAt(RECOVERY_REVIEW_DASH_WORKER_AT_PATTERN, text, index) || (lineCharacter && workerAhead[index + 1] === 1) ? 1 : 0;
+		gitCommandAhead[index] = matchesDashBranchAt(RECOVERY_REVIEW_DASH_GIT_COMMAND_AT_PATTERN, text, index) || (lineCharacter && gitCommandAhead[index + 1] === 1) ? 1 : 0;
+		pathCommandAhead[index] = (character === "/" && matchesDashBranchAt(RECOVERY_REVIEW_DASH_FILE_COMMAND_AT_PATTERN, text, index + 1)) || (pathCharacter && pathCommandAhead[index + 1] === 1) ? 1 : 0;
+	}
+	for (let index = 0; index < text.length; index++) {
+		const separatorLength = dashBranchLengthAt(RECOVERY_REVIEW_DASH_SEPARATOR_AT_PATTERN, text, index);
+		if (separatorLength === 0) continue;
+		// \s* and then\s+ only cross whitespace, and no branch starts with whitespace, so the end
+		// of that whitespace run is the only anchor the former pattern could accept.
+		const anchor = skipDashSeparatorWhitespace(text, index + separatorLength);
+		if (acceptsDashLiveActionAt(text, anchor, workerAhead, gitCommandAhead, pathCommandAhead)) return true;
+		if (!matchesDashBranchAt(RECOVERY_REVIEW_DASH_THEN_AT_PATTERN, text, anchor)) continue;
+		const afterThen = skipDashSeparatorWhitespace(text, anchor + 4);
+		if (afterThen > anchor + 4 && acceptsDashLiveActionAt(text, afterThen, workerAhead, gitCommandAhead, pathCommandAhead)) return true;
+	}
+	return false;
+}
 
 type GitCommandState = {
 	edges: Array<{ character: RegExp; next: GitCommandState }>;
@@ -468,7 +544,7 @@ function isExplicitReadOnlyRecoveryReview(params: Record<string, unknown>): bool
 		&& !RECOVERY_REVIEW_DELEGATION_PATTERN.test(taskMutationText)
 		&& !RECOVERY_REVIEW_ANAPHORIC_MUTATION_PATTERN.test(taskMutationText)
 		&& !mentionsMutatingCommand(taskMutationText)
-		&& !RECOVERY_REVIEW_DASH_LIVE_ACTION_PATTERN.test(taskDashLiveActionText);
+		&& !mentionsDashLiveAction(taskDashLiveActionText);
 }
 
 function recoveryBarrierMessage(sourceKey: string, target: string): string {
@@ -860,6 +936,42 @@ function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }>
 	});
 }
 
+const MISSING_RUNS_ALL_KEY_RULE = "every runs.all item needs a stable key, for example runs.all([{ key: \"review\", agent, task }]).";
+
+/** True for an object literal whose own keys are all visible: no spread, getter, setter, or computed key. */
+function plainObjectLiteral(node: unknown): node is AstNode {
+	return astNode(node) && node.type === "ObjectExpression" && Array.isArray(node.properties)
+		// `__proto__: base` sets the prototype, and the runtime's destructuring reads a `key` found there.
+		&& node.properties.every((property) => astNode(property) && property.type === "Property" && property.kind === "init" && property.computed !== true && staticPropertyKey(property) !== "__proto__");
+}
+
+/** runs.all items certain to reach the runtime without a key: plain literals in the array, or the one result of a map callback. */
+function keylessRunsAllItems(call: AstNode): Array<{ node: AstNode; index?: number }> {
+	const args = Array.isArray(call.arguments) ? call.arguments : [];
+	const items = args[0];
+	if (!astNode(items)) return [];
+	if (items.type === "ArrayExpression" && Array.isArray(items.elements)) {
+		return items.elements.flatMap((item, index) => keylessItemLiteral(item) ? [{ node: item, index }] : []);
+	}
+	const callee = items.type === "CallExpression" && astNode(items.callee) && items.callee.type === "MemberExpression" && items.callee.computed !== true ? items.callee : undefined;
+	if (!callee || !astNode(callee.property) || callee.property.type !== "Identifier" || callee.property.name !== "map") return [];
+	const callback = Array.isArray(items.arguments) ? items.arguments[0] : undefined;
+	if (!astNode(callback) || (callback.type !== "ArrowFunctionExpression" && callback.type !== "FunctionExpression") || !astNode(callback.body)) return [];
+	let result: unknown = callback.body;
+	if (callback.body.type === "BlockStatement" && Array.isArray(callback.body.body)) {
+		// Only a callback whose single return is its last statement always returns that literal.
+		const returns: AstNode[] = [];
+		walkAst(callback.body, (node) => { if (node.type === "ReturnStatement") returns.push(node); }, false);
+		result = returns.length === 1 && returns[0] === callback.body.body.at(-1) ? returns[0]!.argument : undefined;
+	}
+	return keylessItemLiteral(result) ? [{ node: result }] : [];
+}
+
+/** A thenable item (`{ then: child.then }`) is awaited as a launched child, so only the runtime can check it. */
+function keylessItemLiteral(node: unknown): node is AstNode {
+	return plainObjectLiteral(node) && !directObjectPropertyValue(node, "key") && !directObjectPropertyValue(node, "then");
+}
+
 function containsWorkflowLaunch(node: unknown): boolean {
 	let found = false;
 	walkAst(node, (candidate) => {
@@ -985,7 +1097,13 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 		const location = error && typeof error === "object" && "loc" in error && error.loc && typeof error.loc === "object"
 			? error.loc as { line?: unknown; column?: unknown }
 			: undefined;
-		const message = (error instanceof Error ? error.message : String(error)).replace(/\s+\(\d+:\d+\)$/, "");
+		const parserMessage = (error instanceof Error ? error.message : String(error)).replace(/\s+\(\d+:\d+\)$/, "");
+		const source = script.trim();
+		// A path passed where source is expected parses as a regex or a stray token. Keep the parser's
+		// message too: a one-token script can also be a real syntax error.
+		const message = /^\S+$/.test(source) && (/^(?:~|\.{1,2})?\//.test(source) || /\.(?:[cm]?[jt]s|json)$/.test(source))
+			? `${parserMessage}. The script looks like a file path ('${source}'): options.script takes the script's source text; pass a script file as workflow: "${source}".`
+			: parserMessage;
 		return { ok: false, errors: [{ message, ...(typeof location?.line === "number" ? { line: Math.max(1, location.line - 1) } : {}), ...(typeof location?.column === "number" ? { column: location.column + 1 } : {}) }] };
 	}
 
@@ -1015,6 +1133,10 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 		}
 		if (directRunsCall(node, "all")) {
 			for (const entry of directRunsAllKeys(node)) if (!KEY_PATTERN.test(entry.key)) errors.push({ message: "runs.all item key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", ...nodeLocation(entry.node) });
+			if (!runsRebound) for (const item of keylessRunsAllItems(node)) {
+				const subject = item.index === undefined ? "runs.all items built by this map(...) callback have no key" : `runs.all item ${item.index} has no key`;
+				errors.push({ message: `${subject}; ${MISSING_RUNS_ALL_KEY_RULE}`, ...nodeLocation(item.node) });
+			}
 			const args = Array.isArray(node.arguments) ? node.arguments : [];
 			if (astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements)) {
 				for (const item of args[0].elements) if (astNode(item)) {
