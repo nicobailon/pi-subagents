@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Checking a read-only review after rejected acceptance metadata no longer stalls on long runs of dash, colon, or slash separators. The dash-separated action check now reads the rest of the line or path once instead of rescanning it from every separator, while keeping the same action detection. Thanks to [@Yivas](https://github.com/Yivas) for #3122.
 - Checking a read-only review after rejected acceptance metadata no longer stalls on long runs of quotes or other file-command separators. The file-command check no longer rescans the same suffix for each separator, while keeping the same command detection. Thanks to [@Yivas](https://github.com/Yivas) for #3113.
 - Placing a child on a Herdr machine or a remote Rex session over SSH now works on hosts whose sshd drops sessions that run no command. The socket forwarder used `ssh -N`, so on those hosts it exited within seconds and every placed run failed with "bridge connection lost". It now runs a remote command that waits on the connection and exits when the forwarder closes, so nothing is left running on the remote machine. Thanks to [@tjcarskadon](https://github.com/tjcarskadon) for the report and patch. (#3120)
 - The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
