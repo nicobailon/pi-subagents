@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { readAsyncRecoveryDescriptor } from "../../src/runs/background/async-resume.ts";
+import { applySteeringRecoveryAgentConfig, readAsyncRecoveryDescriptor } from "../../src/runs/background/async-resume.ts";
 import { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { DIRS } from "../../src/shared/types.ts";
@@ -130,18 +130,23 @@ describe("async recovery descriptor", () => {
 		}
 	});
 
-	it("reads a recorded launcher name and rejects an invalid one", () => {
+	it("reads a recorded launcher name or null and rejects an invalid one", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-launcher-"));
 		const write = (launcher: unknown) => fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
 			version: 1, launcher, runFanoutBudget: runFanoutBudget("run-launcher"), sourceRunId: "run-launcher", agent: "worker", cwd: root,
 			systemPromptMode: "replace", inheritGlobalContext: false, inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
 		}), "utf-8");
 		try {
+			const agent = makeAgent("worker", { launcher: "agent-wrap" });
 			write("net.v2");
-			assert.equal(readAsyncRecoveryDescriptor(root)?.launcher, "net.v2");
+			assert.equal(applySteeringRecoveryAgentConfig(agent, readAsyncRecoveryDescriptor(root)!).launcher, "net.v2");
+			write(null);
+			assert.equal(applySteeringRecoveryAgentConfig(agent, readAsyncRecoveryDescriptor(root)!).launcher, undefined, "a run recorded as unwrapped stays unwrapped");
+			write(undefined);
+			assert.equal(applySteeringRecoveryAgentConfig(agent, readAsyncRecoveryDescriptor(root)!).launcher, "agent-wrap", "a descriptor that omits the launcher keeps the agent file's launcher");
 			for (const launcher of ["'net'", "a b", "", 7]) {
 				write(launcher);
-				assert.throws(() => readAsyncRecoveryDescriptor(root), /launcher must be a launcher name/);
+				assert.throws(() => readAsyncRecoveryDescriptor(root), /launcher must be a launcher name or null/);
 			}
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

@@ -2226,8 +2226,8 @@ async function resumeAsyncRun(input: {
 	if (target.source === "nested" && !target.recoveryDescriptor) {
 		return { content: [{ type: "text", text: `Nested child '${target.runId}' is missing its required recovery identity. Start a new run instead.` }], isError: true, details: { mode: "management", results: [] } };
 	}
-	// Runs without a recovery descriptor were never wrapped; a launcher added to the agent file later does not apply.
-	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : { ...baseAgentConfig, launcher: undefined };
+	// Without a recovery descriptor nothing records how the run was wrapped, so the agent file's launcher applies.
+	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : baseAgentConfig;
 	const agentConfig = intercomBridge.active ? applyIntercomBridgeToAgent(recoveryAgentConfig, intercomBridge) : recoveryAgentConfig;
 	const foregroundContract = target.source === "foreground" ? target.resumeContract : undefined;
 	const outputSchema = Object.hasOwn(input.params, "outputSchema")
@@ -2246,7 +2246,7 @@ async function resumeAsyncRun(input: {
 	}
 	// Refuse before capacity moves so the retained run stays resumable once the config is fixed.
 	if (agentConfig.launcher !== undefined && !lookupRunnerLauncher(input.deps.config.runnerLaunchers, agentConfig.launcher)) {
-		return { content: [{ type: "text", text: `Cannot resume: run '${target.runId}' was launched with launcher '${agentConfig.launcher}', which is no longer defined in runnerLaunchers in the user subagent config.` }], isError: true, details: { mode: "management", results: [] } };
+		return { content: [{ type: "text", text: `Cannot resume: run '${target.runId}' uses launcher '${agentConfig.launcher}', which is no longer defined in runnerLaunchers in the user subagent config.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;

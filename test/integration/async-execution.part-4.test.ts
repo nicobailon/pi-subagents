@@ -2109,7 +2109,7 @@ runner.on("exit", (code, signal) => process.exit(signal ? 128 + require("node:os
 		const runsBefore = fs.readdirSync(ASYNC_DIR).length;
 		const refused = await resume(makeAsyncExecutor(unwrappedAgent, {}), ctx, sourceId);
 		assert.equal(refused.isError, true);
-		assert.match(refused.content[0]?.text ?? "", /launched with launcher 'wrap', which is no longer defined in runnerLaunchers/);
+		assert.match(refused.content[0]?.text ?? "", /uses launcher 'wrap', which is no longer defined in runnerLaunchers/);
 		assert.equal(mockPi.callCount(), 1);
 		assert.equal(getActiveAsyncCapacitySnapshot("launcher-resume-session", 4).used, capacityBefore);
 		assert.equal(fs.readdirSync(ASYNC_DIR).length, runsBefore, "the refused resume created no run");
@@ -2135,6 +2135,34 @@ runner.on("exit", (code, signal) => process.exit(signal ? 128 + require("node:os
 		assert.equal((await readAsyncPayload(resumed.details.asyncId!)).success, true);
 		assert.equal(fs.existsSync(argvLog), false);
 		assert.equal((readJson(path.join(ASYNC_DIR, resumed.details.asyncId!, "status.json")) as { launcher?: unknown }).launcher, undefined);
+	});
+
+	it("revives a launcher workflow child through its workflow run under the agent's launcher", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+		const { argvLog, runnerLaunchers } = launcherExecutor();
+		const authority = { version: 1 as const, allowedAgents: ["sandboxed"], denyExtensions: false, sources: ["workflow-parent"] };
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined, sendMessage() {} },
+			state: { baseCwd: tempDir, currentSessionId: "session-123", asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: { runnerLaunchers },
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents: [makeAgent("sandboxed", { launcher: "wrap" })] }),
+			childRuntime: { capabilityCeiling: authority },
+		});
+		const ctx = makeMinimalCtx(tempDir);
+		mockPi.onCall({ output: "first run" });
+		const launch = await executor.execute("launcher-workflow", { workflowScript: `return await runs.run("child", { agent: "sandboxed", task: "Work", acceptance: false })`, async: true, mission: false, capabilityCeiling: authority }, new AbortController().signal, undefined, ctx) as { isError?: boolean; content: Array<{ text?: string }>; details: { asyncId?: string } };
+		assert.equal(launch.isError, undefined, launch.content[0]?.text);
+		await readAsyncPayload(launch.details.asyncId!);
+		assert.equal(fs.existsSync(argvLog), true, "the workflow child ran wrapped");
+		fs.rmSync(argvLog);
+		mockPi.onCall({ output: "resumed run" });
+		const resumed = await executor.execute("launcher-workflow-resume", { action: "resume", id: launch.details.asyncId, message: "Continue", acceptance: false }, new AbortController().signal, undefined, ctx) as { isError?: boolean; content: Array<{ text?: string }>; details: { asyncId?: string } };
+		assert.equal(resumed.isError, undefined, resumed.content[0]?.text);
+		assert.equal((await readAsyncPayload(resumed.details.asyncId!)).success, true);
+		assert.equal(fs.existsSync(argvLog), true, "the revived child runs under the agent's launcher");
 	});
 
 	const runChain = (id: string, chain: unknown[], agents: ReturnType<typeof makeAgent>[], runnerLaunchers: Record<string, string[]>) => executeAsyncChain(id, {
