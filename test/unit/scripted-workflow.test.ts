@@ -391,8 +391,11 @@ describe("scripted workflow runtime", () => {
 		assert.doesNotMatch(syntax.errors[0]?.message ?? "", /\(3:\d+\)$/);
 
 		for (const path of ["/tmp/x.json", "./wf.js", "~/flows/review.mjs"]) {
-			assert.deepEqual(validateWorkflowScript(` ${path}\n`).errors, [{ message: `The workflow script does not parse and looks like a file path ('${path}'). options.script takes the script's source text; pass a script file as workflow: "${path}".` }], path);
+			const [error] = validateWorkflowScript(` ${path}\n`).errors;
+			assert.ok(error?.message.endsWith(`. The script looks like a file path ('${path}'): options.script takes the script's source text; pass a script file as workflow: "${path}".`), path);
+			assert.equal(error?.line, 1, path);
 		}
+		assert.match(validateWorkflowScript("/[/.test(args.text);").errors[0]!.message, /^Unterminated regular expression/);
 		assert.match(validateWorkflowScript("return (;").errors[0]!.message, /^Unexpected token/);
 
 		const structural = validateWorkflowScript([
@@ -442,6 +445,7 @@ describe("scripted workflow runtime", () => {
 			`return runs.all([{ ...base, agent: "worker", task: "x" }]);`,
 			`return runs.all([{ [field]: "a", agent: "worker", task: "x" }]);`,
 			`return runs.all([{ __proto__: base, agent: "worker", task: "x" }]);`,
+			`return runs.all([{ then: child.then }]);`,
 			`return runs.all(files.map(makeItem));`,
 			`return runs.all(files.map((file) => ({ key: file, agent: "reviewer", task: file })));`,
 			`return runs.all(files.map((file) => { if (file.skip) return { agent: "worker", task: "x" }; return { key: file.name, agent: "worker", task: "y" }; }));`,

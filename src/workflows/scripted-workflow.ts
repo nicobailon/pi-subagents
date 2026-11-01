@@ -875,7 +875,7 @@ function keylessRunsAllItems(call: AstNode): Array<{ node: AstNode; index?: numb
 	const items = args[0];
 	if (!astNode(items)) return [];
 	if (items.type === "ArrayExpression" && Array.isArray(items.elements)) {
-		return items.elements.flatMap((item, index) => plainObjectLiteral(item) && !directObjectPropertyValue(item, "key") ? [{ node: item, index }] : []);
+		return items.elements.flatMap((item, index) => keylessItemLiteral(item) ? [{ node: item, index }] : []);
 	}
 	const callee = items.type === "CallExpression" && astNode(items.callee) && items.callee.type === "MemberExpression" && items.callee.computed !== true ? items.callee : undefined;
 	if (!callee || !astNode(callee.property) || callee.property.type !== "Identifier" || callee.property.name !== "map") return [];
@@ -888,7 +888,12 @@ function keylessRunsAllItems(call: AstNode): Array<{ node: AstNode; index?: numb
 		walkAst(callback.body, (node) => { if (node.type === "ReturnStatement") returns.push(node); }, false);
 		result = returns.length === 1 && returns[0] === callback.body.body.at(-1) ? returns[0]!.argument : undefined;
 	}
-	return plainObjectLiteral(result) && !directObjectPropertyValue(result, "key") ? [{ node: result }] : [];
+	return keylessItemLiteral(result) ? [{ node: result }] : [];
+}
+
+/** A thenable item (`{ then: child.then }`) is awaited as a launched child, so only the runtime can check it. */
+function keylessItemLiteral(node: unknown): node is AstNode {
+	return plainObjectLiteral(node) && !directObjectPropertyValue(node, "key") && !directObjectPropertyValue(node, "then");
 }
 
 function containsWorkflowLaunch(node: unknown): boolean {
@@ -1013,15 +1018,16 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 		const parser = requireFromPackage(resolveWorkflowParserEntry()) as { parse(source: string, options: Record<string, unknown>): unknown };
 		root = parser.parse(`(async () => {\n${script}\n})()`, { ecmaVersion: "latest", sourceType: "script", locations: true }) as AstNode;
 	} catch (error) {
-		const source = script.trim();
-		// A path passed where source is expected parses as a regex or a stray token; say what was meant instead.
-		if (/^\S+$/.test(source) && (/^(?:~|\.{1,2})?\//.test(source) || /\.(?:[cm]?[jt]s|json)$/.test(source))) {
-			return { ok: false, errors: [{ message: `The workflow script does not parse and looks like a file path ('${source}'). options.script takes the script's source text; pass a script file as workflow: "${source}".` }] };
-		}
 		const location = error && typeof error === "object" && "loc" in error && error.loc && typeof error.loc === "object"
 			? error.loc as { line?: unknown; column?: unknown }
 			: undefined;
-		const message = (error instanceof Error ? error.message : String(error)).replace(/\s+\(\d+:\d+\)$/, "");
+		const parserMessage = (error instanceof Error ? error.message : String(error)).replace(/\s+\(\d+:\d+\)$/, "");
+		const source = script.trim();
+		// A path passed where source is expected parses as a regex or a stray token. Keep the parser's
+		// message too: a one-token script can also be a real syntax error.
+		const message = /^\S+$/.test(source) && (/^(?:~|\.{1,2})?\//.test(source) || /\.(?:[cm]?[jt]s|json)$/.test(source))
+			? `${parserMessage}. The script looks like a file path ('${source}'): options.script takes the script's source text; pass a script file as workflow: "${source}".`
+			: parserMessage;
 		return { ok: false, errors: [{ message, ...(typeof location?.line === "number" ? { line: Math.max(1, location.line - 1) } : {}), ...(typeof location?.column === "number" ? { column: location.column + 1 } : {}) }] };
 	}
 
