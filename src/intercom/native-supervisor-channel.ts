@@ -67,8 +67,12 @@ interface SupervisorRequestCorrelation {
 
 interface EndedSupervisorRequest {
 	request: PendingSupervisorRequest;
-	lifecycle: Exclude<SupervisorRequestLifecycle, "pending" | "wrong-session">;
+	// "deadline": the request file went missing after the ask deadline, so the ask expired or the run stopped then.
+	lifecycle: Exclude<SupervisorRequestLifecycle, "pending" | "wrong-session"> | "deadline";
+	/** When the parent noticed the ending; also the pruning clock. */
 	endedAt: number;
+	/** When the ending happened, when the parent knows it. */
+	eventAt?: number;
 }
 
 interface SupervisorReply {
@@ -503,7 +507,7 @@ function removeRequestFile(file: string): void {
 }
 
 type SupervisorRequestLifecycle = "pending" | "resolved" | "expired" | "inactive" | "missing" | "wrong-session";
-type SupervisorRequestLifecycleObserver = (request: PendingSupervisorRequest, lifecycle: SupervisorRequestLifecycle) => void;
+type SupervisorRequestLifecycleObserver = (request: PendingSupervisorRequest, lifecycle: SupervisorRequestLifecycle, eventAt?: number) => void;
 
 function requestExpiresAt(request: SupervisorRequest, now: number): number {
 	const expiresAt = (request as { expiresAt?: unknown }).expiresAt;
@@ -616,15 +620,17 @@ function appendSupervisorReplyEntry(pi: ExtensionAPI, request: PendingSupervisor
 
 function endedRequestText(ended: EndedSupervisorRequest, runState: SubagentState): string {
 	const { request } = ended;
-	const at = new Date(ended.endedAt).toISOString();
+	const iso = (time: number) => new Date(time).toISOString();
+	const when = ended.eventAt !== undefined ? ` at ${iso(ended.eventAt)}` : ` (noticed at ${iso(ended.endedAt)})`;
 	const subject = `Supervisor request '${request.id}' from ${request.agent} [${request.runId}#${request.childIndex}]`;
 	const runStatus = runState.asyncJobs.get(request.runId)?.status;
 	const runNow = runStatus && runStatus !== "queued" && runStatus !== "running" ? ` Run ${request.runId} is now ${runStatus}.` : "";
 	switch (ended.lifecycle) {
-		case "resolved": return `${subject} was already answered at ${at}.`;
-		case "expired": return `${subject} expired at ${at}: no reply arrived before the child's ask timeout.`;
-		case "inactive": return `${subject} was closed at ${at} because its child run ended.${runNow}`;
-		case "missing": return `${subject} was withdrawn by the child at ${at}. A child withdraws its request when its run is stopped, interrupted or times out, for example when a workflow aborts its other children after one fails.${runNow}`;
+		case "resolved": return `${subject} was already answered${when}.`;
+		case "expired": return `${subject} expired${when}: no reply arrived before the child's ask timeout.`;
+		case "deadline": return `${subject} ended around its ask deadline${when}: either no reply arrived before the child's ask timeout, or its run was stopped just before then.${runNow}`;
+		case "inactive": return `${subject} was closed because its child run ended${when}.${runNow}`;
+		case "missing": return `${subject} was withdrawn by the child before its ask deadline${when}. A child withdraws its request when its run is stopped, interrupted or times out, for example when a workflow aborts its other children after one fails.${runNow}`;
 	}
 }
 
@@ -693,7 +699,7 @@ function buildParentSupervisorTool(pi: ExtensionAPI, pending: Map<string, Pendin
 				const reply = writeReply(request, input.message ?? "");
 				appendSupervisorReplyEntry(pi, request, reply);
 				pending.delete(request.id);
-				onLifecycle(request, "resolved");
+				onLifecycle(request, "resolved", reply.createdAt);
 				clearForegroundSupervisorAttention(request, pending, state);
 				return { content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }], details: { replyTo: request.id, runId: request.runId, agent: request.agent } };
 			}
@@ -757,25 +763,28 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	};
 	// How each request ended, so a late reply can say why it is gone instead of a generic miss.
 	const endedRequests = new Map<string, EndedSupervisorRequest>();
-	const rememberEndedRequest = (request: PendingSupervisorRequest, lifecycle: EndedSupervisorRequest["lifecycle"]): void => {
+	const rememberEndedRequest = (request: PendingSupervisorRequest, lifecycle: EndedSupervisorRequest["lifecycle"], eventAt: number | undefined): void => {
 		if (!request.expectsReply) return;
 		const now = Date.now();
 		endedRequests.delete(request.id);
-		endedRequests.set(request.id, { request, lifecycle, endedAt: now });
+		endedRequests.set(request.id, { request, lifecycle, endedAt: now, ...(eventAt !== undefined ? { eventAt } : {}) });
 		for (const [id, ended] of endedRequests) {
 			if (now - ended.endedAt <= SUPERVISOR_REQUEST_CORRELATION_RETENTION_MS && endedRequests.size <= MAX_SUPERVISOR_REQUEST_CORRELATIONS) break;
 			endedRequests.delete(id);
 		}
 	};
-	const observeRequestLifecycle: SupervisorRequestLifecycleObserver = (request, lifecycle) => {
+	const observeRequestLifecycle: SupervisorRequestLifecycleObserver = (request, lifecycle, eventAt) => {
 		settleNotices.delete(request.id);
 		if (queuedNotices.delete(request.id)) updateDeliverySubscription();
 		if (lifecycle !== "wrong-session") rememberResolvedRequest(request);
-		// A child that hits its ask deadline deletes its own request file, so the parent usually sees that
-		// timeout as "missing". The parent extends a queued ask's expiresAt in memory too, so a live ask never reads as past it.
+		// A child that hits its ask deadline deletes its own request file, so a missing file past the deadline can be
+		// that timeout or a stop just before it. The parent extends a queued ask's expiresAt in memory too, so a live
+		// ask never reads as past it.
 		if (lifecycle !== "wrong-session" && lifecycle !== "pending") {
 			const now = Date.now();
-			rememberEndedRequest(request, lifecycle === "missing" && now > requestExpiresAt(request, now) ? "expired" : lifecycle);
+			const expiresAt = requestExpiresAt(request, now);
+			if (lifecycle === "missing" && now > expiresAt) rememberEndedRequest(request, "deadline", expiresAt);
+			else rememberEndedRequest(request, lifecycle, lifecycle === "expired" ? expiresAt : eventAt);
 		}
 		updateSettleSubscription();
 	};
@@ -877,7 +886,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 					continue;
 				}
 				seenFiles.add(file);
-				observeRequestLifecycle(request, "resolved");
+				observeRequestLifecycle(request, "resolved", now);
 				cleanupRequestLifecycle(request, "resolved");
 				continue;
 			}
