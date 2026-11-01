@@ -99,6 +99,16 @@ describe("injectSingleOutputInstruction", () => {
 			assert.doesNotMatch(output, /Write your findings to exactly this path/);
 		}
 	});
+
+	it("tells a child on another machine to return the artifact, and a Rex 'local' child to write it", () => {
+		for (const machine of [{ provider: "herdr", id: "m1", target: "host", cwd: "/remote" }, { provider: "rex", id: "workmac", target: "host", cwd: "/remote" }] as const) {
+			const output = injectSingleOutputInstruction("Analyze this", "/tmp/report.md", { tools: ["read", "write"] }, machine);
+			assert.match(output, /Return the complete artifact in your final response\./);
+			assert.doesNotMatch(output, /Write your findings to/);
+		}
+		const local = injectSingleOutputInstruction("Analyze this", "/tmp/report.md", { tools: ["read", "write"] }, { provider: "rex", id: "local", session: "session:s", cwd: "/repo" });
+		assert.match(local, /Write your findings to exactly this path: \/tmp\/report.md/);
+	});
 });
 
 describe("requestedOutputPathFromTask", () => {
