@@ -54,13 +54,15 @@ describe("async resume lookup", () => {
 			const sessionFile = path.join(root, "session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
 			writeJson(path.join(asyncRoot, "run-abcde", "status.json"), {
-				runId: "run-other", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root, sessionFile,
-				steps: [{ agent: "worker", status: "complete" }],
+				runId: "run-other", mode: "single", state: "running", pid: 2147483646, sessionId: sessionFile, startedAt: 100, lastUpdate: 200, cwd: root, sessionFile,
+				steps: [{ agent: "worker", status: "running" }],
 			});
 			assert.throws(
 				() => resolveAsyncResumeTarget({ id: "run-abcd" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
 				/Async run 'run-abcde' has a status file for a different run 'run-other'/,
 			);
+			// Refused before stale-run repair, which would publish a failed result under the other run's id.
+			assert.equal(fs.existsSync(path.join(root, "results")) && fs.readdirSync(path.join(root, "results")).length > 0, false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

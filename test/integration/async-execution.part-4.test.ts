@@ -2109,7 +2109,7 @@ runner.on("exit", (code, signal) => process.exit(signal ? 128 + require("node:os
 		const runsBefore = fs.readdirSync(ASYNC_DIR).length;
 		const refused = await resume(makeAsyncExecutor(unwrappedAgent, {}), ctx, sourceId);
 		assert.equal(refused.isError, true);
-		assert.match(refused.content[0]?.text ?? "", /launched with launcher 'wrap', which is no longer defined in runnerLaunchers/);
+		assert.match(refused.content[0]?.text ?? "", /uses launcher 'wrap', which is no longer defined in runnerLaunchers/);
 		assert.equal(mockPi.callCount(), 1);
 		assert.equal(getActiveAsyncCapacitySnapshot("launcher-resume-session", 4).used, capacityBefore);
 		assert.equal(fs.readdirSync(ASYNC_DIR).length, runsBefore, "the refused resume created no run");
