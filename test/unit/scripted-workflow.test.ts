@@ -390,6 +390,14 @@ describe("scripted workflow runtime", () => {
 		assert.ok((syntax.errors[0]?.column ?? 0) > 0);
 		assert.doesNotMatch(syntax.errors[0]?.message ?? "", /\(3:\d+\)$/);
 
+		for (const path of ["/tmp/x.json", "./wf.js", "~/flows/review.mjs"]) {
+			const [error] = validateWorkflowScript(` ${path}\n`).errors;
+			assert.ok(error?.message.endsWith(`. The script looks like a file path ('${path}'): options.script takes the script's source text; pass a script file as workflow: "${path}".`), path);
+			assert.equal(error?.line, 1, path);
+		}
+		assert.match(validateWorkflowScript("/[/.test(args.text);").errors[0]!.message, /^Unterminated regular expression/);
+		assert.match(validateWorkflowScript("return (;").errors[0]!.message, /^Unexpected token/);
+
 		const structural = validateWorkflowScript([
 			`const results = await runs.all([{ key: "bad key", agent: "worker" }, { key: "someChild", agent: "reviewer" }]);`,
 			`async function helper() { return "no"; }`,
@@ -421,6 +429,38 @@ describe("scripted workflow runtime", () => {
 
 		assert.deepEqual(validateWorkflowScript(`return runs.all([{ ...{ key: "bad key" }, agent: "worker" }]);`), { ok: true, errors: [] });
 		assert.deepEqual(validateWorkflowScript(`return runs.run("same", { agent: selectedAgent });`), { ok: true, errors: [] });
+	});
+
+	it("rejects runs.all items that are certain to have no key, and leaves the rest to the runtime", async () => {
+		for (const [script, message, line, column] of [
+			[`const results = await runs.all([\n  { key: "a", agent: "worker", task: "x" },\n  { agent: "worker", task: "y" },\n]);`, "runs.all item 1 has no key", 3, 3],
+			[`return runs.all(files.map((file) => ({ agent: "reviewer", task: file })));`, "runs.all items built by this map(...) callback have no key", 1, 38],
+			[`return runs.all(files.map(function (file) { const task = "Review " + file;\n  return { agent: "reviewer", task }; }));`, "runs.all items built by this map(...) callback have no key", 2, 10],
+		] as const) {
+			const result = validateWorkflowScript(script);
+			assert.equal(result.ok, false, script);
+			assert.deepEqual(result.errors, [{ message: `${message}; every runs.all item needs a stable key, for example runs.all([{ key: "review", agent, task }]).`, line, column }], script);
+		}
+		for (const script of [
+			`return runs.all([{ ...base, agent: "worker", task: "x" }]);`,
+			`return runs.all([{ [field]: "a", agent: "worker", task: "x" }]);`,
+			`return runs.all([{ __proto__: base, agent: "worker", task: "x" }]);`,
+			`return runs.all([{ then: child.then }]);`,
+			`return runs.all(files.map(makeItem));`,
+			`return runs.all(files.map((file) => ({ key: file, agent: "reviewer", task: file })));`,
+			`return runs.all(files.map((file) => { if (file.skip) return { agent: "worker", task: "x" }; return { key: file.name, agent: "worker", task: "y" }; }));`,
+			`const runs = { all: (items) => items };\nreturn runs.all([{ agent: "worker", task: "x" }]);`,
+		]) assert.equal(validateWorkflowScript(script).ok, true, script);
+
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return await runs.all([{ agent: "worker", task: "x" }]);`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /runs\.all item 0 has no key; keys must be 1-128 characters/.test(error.message),
+		);
 	});
 
 	it("reports literal child baseRef policy errors with source locations offline", () => {

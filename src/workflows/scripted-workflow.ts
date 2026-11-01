@@ -936,6 +936,42 @@ function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }>
 	});
 }
 
+const MISSING_RUNS_ALL_KEY_RULE = "every runs.all item needs a stable key, for example runs.all([{ key: \"review\", agent, task }]).";
+
+/** True for an object literal whose own keys are all visible: no spread, getter, setter, or computed key. */
+function plainObjectLiteral(node: unknown): node is AstNode {
+	return astNode(node) && node.type === "ObjectExpression" && Array.isArray(node.properties)
+		// `__proto__: base` sets the prototype, and the runtime's destructuring reads a `key` found there.
+		&& node.properties.every((property) => astNode(property) && property.type === "Property" && property.kind === "init" && property.computed !== true && staticPropertyKey(property) !== "__proto__");
+}
+
+/** runs.all items certain to reach the runtime without a key: plain literals in the array, or the one result of a map callback. */
+function keylessRunsAllItems(call: AstNode): Array<{ node: AstNode; index?: number }> {
+	const args = Array.isArray(call.arguments) ? call.arguments : [];
+	const items = args[0];
+	if (!astNode(items)) return [];
+	if (items.type === "ArrayExpression" && Array.isArray(items.elements)) {
+		return items.elements.flatMap((item, index) => keylessItemLiteral(item) ? [{ node: item, index }] : []);
+	}
+	const callee = items.type === "CallExpression" && astNode(items.callee) && items.callee.type === "MemberExpression" && items.callee.computed !== true ? items.callee : undefined;
+	if (!callee || !astNode(callee.property) || callee.property.type !== "Identifier" || callee.property.name !== "map") return [];
+	const callback = Array.isArray(items.arguments) ? items.arguments[0] : undefined;
+	if (!astNode(callback) || (callback.type !== "ArrowFunctionExpression" && callback.type !== "FunctionExpression") || !astNode(callback.body)) return [];
+	let result: unknown = callback.body;
+	if (callback.body.type === "BlockStatement" && Array.isArray(callback.body.body)) {
+		// Only a callback whose single return is its last statement always returns that literal.
+		const returns: AstNode[] = [];
+		walkAst(callback.body, (node) => { if (node.type === "ReturnStatement") returns.push(node); }, false);
+		result = returns.length === 1 && returns[0] === callback.body.body.at(-1) ? returns[0]!.argument : undefined;
+	}
+	return keylessItemLiteral(result) ? [{ node: result }] : [];
+}
+
+/** A thenable item (`{ then: child.then }`) is awaited as a launched child, so only the runtime can check it. */
+function keylessItemLiteral(node: unknown): node is AstNode {
+	return plainObjectLiteral(node) && !directObjectPropertyValue(node, "key") && !directObjectPropertyValue(node, "then");
+}
+
 function containsWorkflowLaunch(node: unknown): boolean {
 	let found = false;
 	walkAst(node, (candidate) => {
@@ -1061,7 +1097,13 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 		const location = error && typeof error === "object" && "loc" in error && error.loc && typeof error.loc === "object"
 			? error.loc as { line?: unknown; column?: unknown }
 			: undefined;
-		const message = (error instanceof Error ? error.message : String(error)).replace(/\s+\(\d+:\d+\)$/, "");
+		const parserMessage = (error instanceof Error ? error.message : String(error)).replace(/\s+\(\d+:\d+\)$/, "");
+		const source = script.trim();
+		// A path passed where source is expected parses as a regex or a stray token. Keep the parser's
+		// message too: a one-token script can also be a real syntax error.
+		const message = /^\S+$/.test(source) && (/^(?:~|\.{1,2})?\//.test(source) || /\.(?:[cm]?[jt]s|json)$/.test(source))
+			? `${parserMessage}. The script looks like a file path ('${source}'): options.script takes the script's source text; pass a script file as workflow: "${source}".`
+			: parserMessage;
 		return { ok: false, errors: [{ message, ...(typeof location?.line === "number" ? { line: Math.max(1, location.line - 1) } : {}), ...(typeof location?.column === "number" ? { column: location.column + 1 } : {}) }] };
 	}
 
@@ -1091,6 +1133,10 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 		}
 		if (directRunsCall(node, "all")) {
 			for (const entry of directRunsAllKeys(node)) if (!KEY_PATTERN.test(entry.key)) errors.push({ message: "runs.all item key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", ...nodeLocation(entry.node) });
+			if (!runsRebound) for (const item of keylessRunsAllItems(node)) {
+				const subject = item.index === undefined ? "runs.all items built by this map(...) callback have no key" : `runs.all item ${item.index} has no key`;
+				errors.push({ message: `${subject}; ${MISSING_RUNS_ALL_KEY_RULE}`, ...nodeLocation(item.node) });
+			}
 			const args = Array.isArray(node.arguments) ? node.arguments : [];
 			if (astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements)) {
 				for (const item of args[0].elements) if (astNode(item)) {
