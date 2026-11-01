@@ -1379,6 +1379,23 @@ describe("subagent async widget rendering", () => {
 			assert.match(text, /s14 · worker/);
 			assert.match(text, /earlier done/);
 			assert.doesNotMatch(text, /lines hidden/);
+
+			resetWidgetLayout();
+			const other = { asyncId: "solo", asyncDir: "/tmp/solo", mode: "single", agents: ["reviewer"], status: "running", currentTool: "grep" };
+			renderWidget(ui.ctx as never, [parent, child, other]);
+			const twoJobs = renderWidgetLines(ui.widgets.at(-1), 120).join("\n");
+			assert.match(twoJobs, /⎿ {2}read/, "the materialized child keeps its activity line");
+			assert.match(twoJobs, /reviewer[\s\S]*⎿ {2}grep/, "the next running job stays visible");
+			assert.doesNotMatch(twoJobs, /lines hidden/);
+		});
+		resetWidgetLayout();
+		withStdoutSize(30, 120, () => {
+			const singles = Array.from({ length: 7 }, (_, index) => ({ asyncId: `solo-${index}`, asyncDir: `/tmp/solo-${index}`, mode: "single", agents: [`reviewer${index}`], status: "running", currentTool: "grep" }));
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [workflow, ...singles]);
+			const text = renderWidgetLines(ui.widgets.at(-1), 120).join("\n");
+			assert.match(text, /s15 · worker · active/, "one spare row goes to the active lane, not the fold line");
+			assert.doesNotMatch(text, /earlier done/);
 		});
 		resetWidgetLayout();
 	});

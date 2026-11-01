@@ -797,13 +797,15 @@ function visibleWorkflowRows(rows: WorkflowChatProgressRow[]): { rows: WorkflowC
 /**
  * Lines for at most `cap` rows: every unfinished row plus the newest finished ones, in order, with the
  * older finished rows folded into one line. Live widgets list rows oldest first, so a plain head cut hides
- * the active and newest rows (#3118). Unfinished rows are never folded; a later budget cut still applies.
+ * the active and newest rows (#3118). Unfinished rows are never folded; when they alone fill `cap`, only
+ * they are returned, since the fold line would push one of them out. A later budget cut still applies.
  */
 function foldEarlierDoneLines<T>(rows: readonly T[], cap: number, isDone: (row: T) => boolean, line: (row: T) => string, foldLine: (hidden: number) => string): string[] {
 	if (rows.length <= cap) return rows.map(line);
 	const unfinished = rows.filter((row) => !isDone(row)).length;
-	const hidden = rows.length - unfinished - Math.max(0, cap - 1 - unfinished);
-	if (hidden <= 0) return rows.map(line);
+	if (unfinished >= cap) return rows.filter((row) => !isDone(row)).map(line);
+	// rows.length > cap, so at least two rows fold into the one line.
+	const hidden = rows.length - cap + 1;
 	const lines: string[] = [];
 	let skipped = 0;
 	for (const row of rows) {
@@ -3083,28 +3085,28 @@ function buildWidgetLinesWithProjection(jobs: AsyncJobState[], theme: Theme, wid
 	let hiddenFinished = 0;
 	let queuedSummaryShown = false;
 	let slots = MAX_WIDGET_JOBS;
+	const compactCards: Array<{ item: string[]; job: AsyncJobState; projection: WorkflowWidgetProjection; bodyLength: number }> = [];
 	const appendJob = (job: AsyncJobState): void => {
 		const projection = projectionFor(job);
 		const compactWorkflow = (!expanded || projection.inlineFleetCovered) && job.mode === "workflow";
 		const stats = compactWorkflow ? "" : widgetStats(job, theme, projection, !expanded);
-		const childLines = materializedWidgetChildLines(job, theme, width, expanded, frame, projectionFor);
-		// Lines already used: the "Async agents" header, earlier cards, and this card's header and children.
-		const usedLines = 1 + items.reduce((sum, item) => sum + item.length, 0) + 1 + childLines.length;
 		const details = compactWorkflow
-			? compactWorkflowWidgetBodyLines(job, theme, frame, projection, widgetLineBudget(expanded) - usedLines)
+			? compactWorkflowWidgetBodyLines(job, theme, frame, projection)
 			: [
 				`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
 				...widgetLaneDetailLines(job, theme, projection),
 				...workflowChecklistWidgetLines(widgetChecklistWithoutMaterializedChildren(projection), theme, "  ", expanded, frame, { includeItemErrors: !expanded || !job.steps?.length, liveWidget: true }),
 				...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 			];
-		items.push([
+		const item = [
 			compactWorkflow
 				? compactWorkflowHeaderLine(job, theme, width)
 				: `${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
 			...details,
-			...childLines,
-		]);
+			...materializedWidgetChildLines(job, theme, width, expanded, frame, projectionFor),
+		];
+		items.push(item);
+		if (compactWorkflow) compactCards.push({ item, job, projection, bodyLength: details.length });
 	};
 
 	for (const job of running) {
@@ -3133,6 +3135,16 @@ function buildWidgetLinesWithProjection(jobs: AsyncJobState[], theme: Theme, wid
 		if (hiddenQueued > 0) parts.push(`${hiddenQueued} queued`);
 		if (hiddenFinished > 0) parts.push(`${hiddenFinished} finished`);
 		items.push([theme.fg("dim", `+${hiddenTotal} more (${parts.join(", ")})`)]);
+	}
+
+	// Fold the oldest done lanes of compact workflow cards by the overflow, so later cards and
+	// materialized children stay inside the line budget (#3118).
+	let overflow = 1 + items.reduce((sum, item) => sum + item.length, 0) - widgetLineBudget(expanded);
+	for (const card of compactCards) {
+		if (overflow <= 0) break;
+		const body = compactWorkflowWidgetBodyLines(card.job, theme, frame, card.projection, card.bodyLength - overflow);
+		card.item.splice(1, card.bodyLength, ...body);
+		overflow -= card.bodyLength - body.length;
 	}
 
 	for (let i = 0; i < items.length; i++) {
