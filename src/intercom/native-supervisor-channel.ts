@@ -771,7 +771,12 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		settleNotices.delete(request.id);
 		if (queuedNotices.delete(request.id)) updateDeliverySubscription();
 		if (lifecycle !== "wrong-session") rememberResolvedRequest(request);
-		if (lifecycle !== "wrong-session" && lifecycle !== "pending") rememberEndedRequest(request, lifecycle);
+		// A child that hits its ask deadline deletes its own request file, so the parent usually sees that
+		// timeout as "missing". The parent extends a queued ask's expiresAt in memory too, so a live ask never reads as past it.
+		if (lifecycle !== "wrong-session" && lifecycle !== "pending") {
+			const now = Date.now();
+			rememberEndedRequest(request, lifecycle === "missing" && now > requestExpiresAt(request, now) ? "expired" : lifecycle);
+		}
 		updateSettleSubscription();
 	};
 	const getSupervisorRequestState = (event: ControlEvent): SupervisorRequestState => {

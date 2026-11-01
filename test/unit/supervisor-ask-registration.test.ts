@@ -864,6 +864,13 @@ describe("supervisor ask registration", () => {
 			assert.equal(channel.pending.size, 0);
 			assert.deepEqual(fs.readdirSync(path.join(dir, "replies")), [`${resolved}.json`]);
 			assert.equal(JSON.parse(fs.readFileSync(replyFile, "utf8")).message, "Already answered");
+			// A child whose ask times out deletes its own request file; that reads as expired, not withdrawn.
+			const timedOut = writeRequest({ sessionId, runId, expiresAt: Date.now() + 100 });
+			await tool.execute("pending", { action: "pending" });
+			assert.equal(channel.pending.has(timedOut), true);
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			fs.rmSync(path.join(dir, "requests", `${timedOut}.json`));
+			await assert.rejects(tool.execute("late", { action: "reply", replyTo: timedOut, message: "Too late" }), new RegExp(`Supervisor request '${timedOut}' .* expired at `));
 		} finally { channel.dispose(); }
 	});
 
