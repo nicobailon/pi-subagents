@@ -390,6 +390,14 @@ describe("scripted workflow runtime", () => {
 		assert.ok((syntax.errors[0]?.column ?? 0) > 0);
 		assert.doesNotMatch(syntax.errors[0]?.message ?? "", /\(3:\d+\)$/);
 
+		for (const path of ["/tmp/x.json", "./wf.js", "~/flows/review.mjs"]) {
+			const [error] = validateWorkflowScript(` ${path}\n`).errors;
+			assert.ok(error?.message.endsWith(`. The script looks like a file path ('${path}'): options.script takes the script's source text; pass a script file as workflow: "${path}".`), path);
+			assert.equal(error?.line, 1, path);
+		}
+		assert.match(validateWorkflowScript("/[/.test(args.text);").errors[0]!.message, /^Unterminated regular expression/);
+		assert.match(validateWorkflowScript("return (;").errors[0]!.message, /^Unexpected token/);
+
 		const structural = validateWorkflowScript([
 			`const results = await runs.all([{ key: "bad key", agent: "worker" }, { key: "someChild", agent: "reviewer" }]);`,
 			`async function helper() { return "no"; }`,
@@ -421,6 +429,38 @@ describe("scripted workflow runtime", () => {
 
 		assert.deepEqual(validateWorkflowScript(`return runs.all([{ ...{ key: "bad key" }, agent: "worker" }]);`), { ok: true, errors: [] });
 		assert.deepEqual(validateWorkflowScript(`return runs.run("same", { agent: selectedAgent });`), { ok: true, errors: [] });
+	});
+
+	it("rejects runs.all items that are certain to have no key, and leaves the rest to the runtime", async () => {
+		for (const [script, message, line, column] of [
+			[`const results = await runs.all([\n  { key: "a", agent: "worker", task: "x" },\n  { agent: "worker", task: "y" },\n]);`, "runs.all item 1 has no key", 3, 3],
+			[`return runs.all(files.map((file) => ({ agent: "reviewer", task: file })));`, "runs.all items built by this map(...) callback have no key", 1, 38],
+			[`return runs.all(files.map(function (file) { const task = "Review " + file;\n  return { agent: "reviewer", task }; }));`, "runs.all items built by this map(...) callback have no key", 2, 10],
+		] as const) {
+			const result = validateWorkflowScript(script);
+			assert.equal(result.ok, false, script);
+			assert.deepEqual(result.errors, [{ message: `${message}; every runs.all item needs a stable key, for example runs.all([{ key: "review", agent, task }]).`, line, column }], script);
+		}
+		for (const script of [
+			`return runs.all([{ ...base, agent: "worker", task: "x" }]);`,
+			`return runs.all([{ [field]: "a", agent: "worker", task: "x" }]);`,
+			`return runs.all([{ __proto__: base, agent: "worker", task: "x" }]);`,
+			`return runs.all([{ then: child.then }]);`,
+			`return runs.all(files.map(makeItem));`,
+			`return runs.all(files.map((file) => ({ key: file, agent: "reviewer", task: file })));`,
+			`return runs.all(files.map((file) => { if (file.skip) return { agent: "worker", task: "x" }; return { key: file.name, agent: "worker", task: "y" }; }));`,
+			`const runs = { all: (items) => items };\nreturn runs.all([{ agent: "worker", task: "x" }]);`,
+		]) assert.equal(validateWorkflowScript(script).ok, true, script);
+
+		await assert.rejects(
+			runWorkflowScript({
+				script: `return await runs.all([{ agent: "worker", task: "x" }]);`,
+				timeoutMs: 2_000,
+				async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [], results: [] }; },
+				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+			}),
+			(error: unknown) => error instanceof WorkflowScriptError && /runs\.all item 0 has no key; keys must be 1-128 characters/.test(error.message),
+		);
 	});
 
 	it("reports literal child baseRef policy errors with source locations offline", () => {
@@ -1948,6 +1988,93 @@ describe("scripted workflow runtime", () => {
 			assert.ok(
 				elapsedMs < 10_000,
 				`the read-only review scan took ${Math.round(elapsedMs)} ms on a ${optionStream.length}-character prompt`,
+			);
+		}
+	});
+
+	const dashLiveRecovery = {
+		status: "available-for-review" as const,
+		reason: "acceptance-metadata-rejected" as const,
+		reportPath: "/tmp/writer-report.md",
+		reportHash: "a".repeat(64),
+	};
+	const runDashLiveReview = (task: string) => {
+		const launches: string[] = [];
+		const run = runWorkflowScript({
+			script: `
+				const writer = await runs.run("writer", { agent: "worker", task: "write" });
+				const review = await runs.run("review", { agent: "reviewer", task: ${JSON.stringify(task)}, acceptance: false });
+				return review.ok;
+			`,
+			launch(key) {
+				launches.push(key);
+				if (key === "writer") {
+					return Promise.resolve({
+						key,
+						ok: false,
+						output: "saved writer report",
+						error: "Acceptance rejected: malformed acceptance-report",
+						runId: "writer-run",
+						outputReference: dashLiveRecovery.reportPath,
+						recovery: dashLiveRecovery,
+						artifactPaths: [dashLiveRecovery.reportPath],
+						results: [{ acceptance: { status: "rejected", recovery: dashLiveRecovery } }],
+					});
+				}
+				return Promise.resolve({ key, ok: true, output: "review complete", runId: "review-run", artifactPaths: [] });
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		return { launches, run };
+	};
+
+	it("blocks dash-live actions and allows inert separator text after a durable acceptance metadata rejection", async () => {
+		// Every separator reaches a live action even when another separator sits inside the line it
+		// has to scan.
+		for (const task of [
+			"Read-only review. Do not edit files. Delta — git log:x8 checkout main. Return findings only.",
+			"Read-only review. Do not edit files. Delta – git status:restore. Return findings only.",
+			"Read-only review. Do not edit files. Delta -- git log:x8 switch main. Return findings only.",
+		]) {
+			const { launches, run } = runDashLiveReview(task);
+			await assert.rejects(
+				run,
+				(error: unknown) => error instanceof WorkflowScriptError && /only explicit read-only review children with acceptance:false may follow/.test(error.message),
+			);
+			assert.deepEqual(launches, ["writer"]);
+		}
+		// Separator text whose branch never reaches its word stays allowed.
+		for (const task of [
+			"Read-only review. Do not edit files. Delta — workers. Return findings only.",
+			"Read-only review. Do not edit files. Delta — git log. Return findings only.",
+			"Read-only review. Do not edit files. Delta — /my-dir/notes.md. Return findings only.",
+			"Read-only review. Do not edit files. Delta — run. Return findings only.",
+			"Read-only review. Do not edit files. Delta — then review the patch. Return findings only.",
+			"Read-only review. Do not edit files. Delta — rmaware. Return findings only.",
+			"Read-only review. Do not edit files. Delta — git logging:x8. Return findings only.",
+			"Read-only review. Do not edit files. Delta - review the patch. Return findings only.",
+		]) {
+			const { launches, run } = runDashLiveReview(task);
+			assert.equal((await run).value, true);
+			assert.deepEqual(launches, ["writer", "review"]);
+		}
+	});
+
+	it("scans adversarial dash-live prompts in bounded time", async () => {
+		// Each prompt repeats one separator family that the former pattern rescanned from every
+		// separator: 150,000 to 280,000 characters took 12 to 21 seconds before and are linear now.
+		// The elapsed-time assertion includes the workflow process.
+		for (const separatorStream of ["--/".repeat(90_000), "—/".repeat(75_000), ":/".repeat(90_000), "-- git ".repeat(40_000)]) {
+			const startedAt = performance.now();
+			const { launches, run } = runDashLiveReview(`Read-only review. Do not edit files. ${separatorStream}`);
+			const result = await run;
+			const elapsedMs = performance.now() - startedAt;
+
+			assert.deepEqual(launches, ["writer", "review"]);
+			assert.equal(result.value, true);
+			assert.ok(
+				elapsedMs < 10_000,
+				`the read-only review scan took ${Math.round(elapsedMs)} ms on a ${separatorStream.length}-character prompt`,
 			);
 		}
 	});

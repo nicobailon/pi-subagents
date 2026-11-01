@@ -27,7 +27,7 @@ import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-event
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
-import { recordSessionReplacement } from "../shared/session-succession.ts";
+import { recordSessionReplacement, recordSessionStart } from "../shared/session-succession.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { isStaleExtensionContextError, MODEL_ONLY_TOOL, withCachedUiContext } from "../shared/extension-context.ts";
 import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
@@ -409,6 +409,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	let advertisedAgents: AgentConfig[] = [];
 	let advertisedContext: Pick<ExtensionContext, "cwd" | "model"> & { projectTrusted?: boolean } | undefined;
 	let advertisementGeneration = 0;
+	let advertisementLookup: AbortController | undefined;
 	let globalRoot: string | null = null;
 	let advertisementReady: Promise<void | { error: unknown }> = Promise.resolve();
 	let notifySessionChange = () => {};
@@ -430,12 +431,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const beginAdvertisement = (ctx: ExtensionContext) => {
 		const generation = ++advertisementGeneration;
+		advertisementLookup?.abort();
+		advertisementLookup = new AbortController();
 		notifySessionChange();
 		sessionChanged = new Promise<void>((resolve) => { notifySessionChange = resolve; });
 		advertisedAgents = [];
 		advertisedContext = { cwd: ctx.cwd, model: ctx.model, projectTrusted: typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined };
 		globalRoot = null;
-		advertisementReady = resolveGlobalNpmRoot().then((root) => {
+		advertisementReady = resolveGlobalNpmRoot({ signal: advertisementLookup.signal }).then((root) => {
 			if (generation !== advertisementGeneration) return;
 			globalRoot = root;
 			refreshAdvertisedAgents();
@@ -960,11 +963,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		);
 	};
 
-	const resetSessionState = (ctx: ExtensionContext, recovering: boolean, previousSessionFile?: string) => {
+	const resetSessionState = (ctx: ExtensionContext, recovering: boolean, startup: boolean, previousSessionFile?: string) => {
 		state.widgetsSuspended = false;
 		state.baseCwd = ctx.cwd;
 		goalTurnId = 0;
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		recordSessionStart(state.currentSessionId, startup);
 		// Pi passes previousSessionFile only for new/resume/fork, after tearing that session down in this process.
 		if (previousSessionFile) recordSessionReplacement(state.currentSessionId, previousSessionFile);
 		state.supervisorOwnerSessionId = ctx.sessionManager.getSessionId() || null;
@@ -1054,6 +1058,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		cleanup(shutdownReason) {
 			if (runtimeCleaned) return;
 			runtimeCleaned = true;
+			++advertisementGeneration;
+			advertisementLookup?.abort();
+			advertisedAgents = [];
+			advertisedContext = undefined;
+			notifySessionChange();
 			// Synchronously, so a reload's new runtime finds these runs unclaimed when it scans.
 			cancelPendingWorkflowAutoResumes((entry) => entry.owner === autoResumeOwner);
 			programStatus.dispose(shutdownReason);
@@ -1222,7 +1231,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		startSessionMaintenance();
 		scheduleModulePreload();
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
-		resetSessionState(ctx, recovering, event.previousSessionFile);
+		resetSessionState(ctx, recovering, event.reason === "startup", event.previousSessionFile);
 		releaseHostSessionLiveness();
 		const sessionId = ctx.sessionManager.getSessionId();
 		const sessionFile = ctx.sessionManager.getSessionFile();

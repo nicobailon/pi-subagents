@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
+import type { OutputMode, PlacementMachineReference, SavedOutputReference } from "../../shared/types.ts";
+import { isRexLocalMachine } from "./rex-machine.ts";
 
 const READ_ONLY_OUTPUT_TOOLS = new Set([
 	"read", "grep", "find", "ls", "web_search", "fetch_content", "get_search_content",
@@ -118,9 +119,11 @@ export function outputPathMappingFromTask(task: string, savedPath: string | unde
 	return { requestedPath, savedPath };
 }
 
-export function injectSingleOutputInstruction(task: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities): string {
+/** A child on another machine cannot write the parent-side path; its final reply is saved there instead. */
+export function injectSingleOutputInstruction(task: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities, machine?: PlacementMachineReference): string {
 	if (!outputPath) return task;
-	const delivery = !capabilities || hasOutputWriteCapability(capabilities.tools, capabilities.mcpDirectTools)
+	const remote = machine !== undefined && !isRexLocalMachine(machine);
+	const delivery = !remote && (!capabilities || hasOutputWriteCapability(capabilities.tools, capabilities.mcpDirectTools))
 		? `Write your findings to exactly this path: ${outputPath}`
 		: [
 			"Return the complete artifact in your final response.",
