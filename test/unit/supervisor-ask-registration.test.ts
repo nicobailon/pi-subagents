@@ -850,7 +850,7 @@ describe("supervisor ask registration", () => {
 			channel.start();
 			const tool = tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
 			const expired = writeRequest({ sessionId, runId, expiresAt: Date.now() - 1 });
-			await assert.rejects(tool.execute("expired", { action: "reply", replyTo: expired, message: "Too late" }), /No pending supervisor request found.*No pending supervisor requests\./);
+			await assert.rejects(tool.execute("expired", { action: "reply", replyTo: expired, message: "Too late" }), new RegExp(`Supervisor request '${expired}' .* expired at .*No pending supervisor requests\\.`));
 			const missing = writeRequest({ sessionId, runId });
 			const resolved = writeRequest({ sessionId, runId });
 			await tool.execute("pending", { action: "pending" });
@@ -859,9 +859,8 @@ describe("supervisor ask registration", () => {
 			fs.rmSync(path.join(dir, "requests", `${missing}.json`));
 			const replyFile = path.join(dir, "replies", `${resolved}.json`);
 			fs.writeFileSync(replyFile, JSON.stringify({ message: "Already answered" }));
-			for (const replyTo of [missing, resolved]) {
-				await assert.rejects(tool.execute("stale", { action: "reply", replyTo, message: "Must not overwrite" }), /No pending supervisor request found/);
-			}
+			await assert.rejects(tool.execute("stale", { action: "reply", replyTo: missing, message: "Must not overwrite" }), new RegExp(`Supervisor request '${missing}' .* was withdrawn by the child at `));
+			await assert.rejects(tool.execute("stale", { action: "reply", replyTo: resolved, message: "Must not overwrite" }), new RegExp(`Supervisor request '${resolved}' .* was already answered at `));
 			assert.equal(channel.pending.size, 0);
 			assert.deepEqual(fs.readdirSync(path.join(dir, "replies")), [`${resolved}.json`]);
 			assert.equal(JSON.parse(fs.readFileSync(replyFile, "utf8")).message, "Already answered");

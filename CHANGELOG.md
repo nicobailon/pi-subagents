@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Replying to a supervisor request that has already ended now says how it ended and when: withdrawn by the child (its run was stopped, interrupted or timed out, for example when a workflow aborts its other children after one fails), expired, closed because the child run ended, or already answered. Before, every such reply got the same "answered, expired or withdrawn" error, which did not say whether the child was still waiting. Thanks to [@saman-mb](https://github.com/saman-mb) for the report. (#3126)
 - Checking a read-only review after rejected acceptance metadata no longer stalls on long runs of quotes or other file-command separators. The file-command check no longer rescans the same suffix for each separator, while keeping the same command detection. Thanks to [@Yivas](https://github.com/Yivas) for #3113.
 - The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
 - A direct MCP tool selector with a long run of slashes no longer takes quadratic time to normalize. Trailing slashes are trimmed with one backward pass over that run; before, a regex rescanned the selector from every index whenever it ended in anything else. Selector results are unchanged. Thanks to [@Yivas](https://github.com/Yivas) for #3112.
