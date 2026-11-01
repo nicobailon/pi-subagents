@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Validating a workflow script now reports a `runs.all` item with no `key`, whether it is written in the array or returned by a `map(...)` callback. Before, validation passed and the run failed later with "has an invalid key". At run time that error now says whether the key is missing or invalid and gives the key rule. Items built by a named helper function are still checked only at run time. Thanks to [@saman-mb](https://github.com/saman-mb) for the report. (#3127)
 - Checking a read-only review after rejected acceptance metadata no longer stalls on long runs of quotes or other file-command separators. The file-command check no longer rescans the same suffix for each separator, while keeping the same command detection. Thanks to [@Yivas](https://github.com/Yivas) for #3113.
 - The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
 - A direct MCP tool selector with a long run of slashes no longer takes quadratic time to normalize. Trailing slashes are trimmed with one backward pass over that run; before, a regex rescanned the selector from every index whenever it ended in anything else. Selector results are unchanged. Thanks to [@Yivas](https://github.com/Yivas) for #3112.

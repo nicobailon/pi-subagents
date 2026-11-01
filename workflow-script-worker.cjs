@@ -703,7 +703,10 @@ function describeGateAcceptanceConflict(gate, acceptance) {
 }
 
 function validateRunCall(key, params, label, fingerprints) {
-  if (typeof key !== "string" || !runKeyPattern.test(key)) throw new Error(label + " has an invalid key.");
+  if (typeof key !== "string" || !runKeyPattern.test(key)) {
+    const problem = key === undefined ? " has no key" : typeof key === "string" ? " has an invalid key '" + (key.length > 80 ? key.slice(0, 80) + "..." : key) + "'" : " has a key of type " + typeof key;
+    throw new Error(label + problem + "; keys must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.");
+  }
   if (hostKeys.has(key)) throw new Error("Workflow key '" + key + "' is already used by runs.host.");
   if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error(label + " requires a params object.");
   if (Object.prototype.hasOwnProperty.call(params, "action") || Object.prototype.hasOwnProperty.call(params, "workflowScript") || Object.prototype.hasOwnProperty.call(params, "globalConcurrencyLimit") || Object.prototype.hasOwnProperty.call(params, "maxSubagentSpawnsPerRun") || Object.prototype.hasOwnProperty.call(params, "tasks") || Object.prototype.hasOwnProperty.call(params, "chain") || Object.prototype.hasOwnProperty.call(params, "parallel") || Object.prototype.hasOwnProperty.call(params, "concurrency") || Object.prototype.hasOwnProperty.call(params, "chainDir")) {
