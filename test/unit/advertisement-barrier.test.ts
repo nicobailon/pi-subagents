@@ -189,6 +189,21 @@ if (phase === "old") {
 			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true);
 			await new Promise(resolve => setTimeout(resolve, 50));
 			assert.equal(await advertise(), undefined, "shutdown must not republish a late catalog");
+			// A prompt still waiting when a runtime with a finished catalog shuts down must not get that catalog.
+			const firstRuntimeShutdownHandlers = hooks.get("session_shutdown").length;
+			register(pi);
+			const restartedBefore = hooks.get("before_agent_start").at(-2);
+			const advertiseRestarted = async () => {
+				const event = { systemPrompt: "base", systemPromptOptions: { selectedTools: ["subagent"], sections: {} } };
+				await restartedBefore(event, ctx);
+				return event.systemPromptOptions.sections.advertised_subagents;
+			};
+			process.env.TEST_NPM_PHASE = "latest";
+			hooks.get("session_start").at(-2)({ reason: "startup" }, ctx);
+			assert.match(await advertiseRestarted(), /<name>new-specialist<\/name>/);
+			const promptDuringShutdown = advertiseRestarted();
+			await Promise.all(hooks.get("session_shutdown").slice(firstRuntimeShutdownHandlers).map(handler => handler({reason: "exit"}, ctx)));
+			assert.equal(await promptDuringShutdown, undefined, "shutdown must not hand out the retired catalog");
 			console.log("responsive session_start; complete first prompt and loader");
 		`], { cwd: repo, env, encoding: "utf8", timeout: 30_000 });
 		assert.match(output, /responsive session_start; complete first prompt and loader/);

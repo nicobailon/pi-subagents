@@ -1059,6 +1059,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			runtimeCleaned = true;
 			++advertisementGeneration;
 			advertisementLookup?.abort();
+			advertisedAgents = [];
+			advertisedContext = undefined;
 			notifySessionChange();
 			// Synchronously, so a reload's new runtime finds these runs unclaimed when it scans.
 			cancelPendingWorkflowAutoResumes((entry) => entry.owner === autoResumeOwner);
