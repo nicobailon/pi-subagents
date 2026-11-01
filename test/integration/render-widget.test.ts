@@ -1333,8 +1333,52 @@ describe("subagent async widget rendering", () => {
 			assert.match(text, /issue-1695\.fresh-review · worker · queued/);
 			assert.doesNotMatch(text, /bottleneck ·/);
 			assert.match(text, /Press the expand key for details/);
-			assert.match(text, /label-helpers/);
+			// The 10-line card at 30 rows folds the oldest done lanes, not the active one (#3118).
+			assert.ok(lines.length <= 10, text);
+			assert.match(text, /… 3 earlier done/);
+			assert.doesNotMatch(text, /scope-scout/);
+			assert.match(text, /issue-1695\.validation · worker/);
 			assert.doesNotMatch(text, /Step \d+\/9|task:|workspace:|out(?:put)?:|next:/i);
+		});
+		resetWidgetLayout();
+	});
+
+	it("folds the oldest done lanes so the active and newest lanes stay visible (#3118)", () => {
+		const keys = Array.from({ length: 15 }, (_, index) => `s${String(index + 1).padStart(2, "0")}`);
+		const workflow = { asyncId: "wf", asyncDir: "/tmp/wf", mode: "workflow", status: "running",
+			steps: keys.map((key, index) => ({ index, workflowKey: key, agent: "worker", label: `Implement ${key}`, status: index < 14 ? "complete" : "running" })) };
+
+		const expanded = buildWidgetLines([workflow], theme, 160, true);
+		const checklist = expanded.findIndex((line) => line.includes("Checklist 14/15 done"));
+		assert.match(expanded[checklist + 1] ?? "", /bottleneck · Implement s15/, expanded.join("\n"));
+		assert.match(expanded.join("\n"), /… 10 earlier done\n.*✓ Implement s11 · worker/);
+		assert.match(expanded.join("\n"), /✓ Implement s14 · worker/);
+		assert.doesNotMatch(expanded.join("\n"), /✓ Implement s01 · worker/);
+
+		resetWidgetLayout();
+		withStdoutSize(26, 120, () => {
+			const single = { asyncId: "solo", asyncDir: "/tmp/solo", mode: "single", agents: ["reviewer"], status: "running", currentTool: "read" };
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [workflow, single]);
+			const text = renderWidgetLines(ui.widgets.at(-1), 120).join("\n");
+			assert.match(text, /Async agents/, "progressive card");
+			assert.match(text, /… 12 earlier done/, text);
+			assert.match(text, /s14 · worker/);
+			assert.match(text, /s15 · worker · active/);
+			assert.doesNotMatch(text, /s01 · worker/);
+		});
+		resetWidgetLayout();
+		withStdoutSize(40, 120, () => {
+			const child = { asyncId: "child-s15", asyncDir: "/tmp/s15", parentWorkflowRunId: "wf", workflowKey: "s15", mode: "single", agents: ["worker"], status: "running", currentTool: "read" };
+			const parent = { ...workflow, steps: workflow.steps.map((step) => step.workflowKey === "s15" ? { ...step, runId: child.asyncId } : step) };
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [parent, child]);
+			const lines = renderWidgetLines(ui.widgets.at(-1), 120);
+			const text = lines.join("\n");
+			assert.match(text, /└─ s15 .*worker/, "the materialized active child stays inside the card");
+			assert.match(text, /s14 · worker/);
+			assert.match(text, /earlier done/);
+			assert.doesNotMatch(text, /lines hidden/);
 		});
 		resetWidgetLayout();
 	});
