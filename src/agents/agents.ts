@@ -134,6 +134,7 @@ interface BuiltinAgentOverrideInfo {
 	base: BuiltinAgentOverrideBase;
 	fields?: string[];
 	fieldScopes?: Record<string, Array<"user" | "project">>;
+	paths?: Partial<Record<"user" | "project", string>>;
 }
 
 export interface AgentModelSourceInfo {
@@ -1530,6 +1531,7 @@ function applyBuiltinOverride(
 		base: agent.override?.base ?? cloneOverrideBase(agent),
 		fields: [...new Set([...(agent.override?.fields ?? []), ...Object.keys(override)])].sort(),
 		fieldScopes: Object.fromEntries(Object.entries({ ...(agent.override?.fieldScopes ?? {}) }).map(([field, scopes]) => [field, [...scopes]])),
+		paths: { ...agent.override?.paths, [meta.scope]: meta.path },
 	};
 	for (const field of Object.keys(override)) {
 		const scopes = overrideInfo.fieldScopes![field] ?? [];

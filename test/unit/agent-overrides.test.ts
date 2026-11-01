@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { handleManagementAction } from "../../src/agents/agent-management.ts";
 import { buildBuiltinOverrideConfig, discoverAgents, discoverAgentsAll, removeBuiltinAgentOverride, saveBuiltinAgentOverride } from "../../src/agents/agents.ts";
 
 let tempHome = "";
@@ -27,6 +28,13 @@ function writeUserAgent(home: string, name: string, body: string): void {
 	const filePath = path.join(home, ".pi", "agent", "agents", `${name}.md`);
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(filePath, body, "utf-8");
+}
+
+function modelsText(cwd: string, agent: string): string {
+	const result = handleManagementAction("models", { agent }, { cwd, modelRegistry: { getAvailable: () => [] } });
+	const first = result.content[0];
+	assert.ok(first?.type === "text");
+	return first.text.replaceAll("\\", "/");
 }
 
 describe("builtin agent overrides", () => {
@@ -608,6 +616,9 @@ describe("builtin agent overrides", () => {
 		assert.equal(scout.thinking, "high");
 		assert.equal(scout.description, "Project description");
 		assert.equal(scout.override?.scope, "project");
+		const models = modelsText(tempProject, "scout");
+		assert.match(models, /Source: user override/);
+		assert.match(models, /Override file:\n  .*\/\.pi\/agent\/settings\.json\n/);
 	});
 
 	it("layers active-provider overrides over default agentOverrides", () => {
@@ -716,6 +727,7 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.thinking, "high");
 		assert.deepEqual(reviewer.subagentOnlyExtensions, ["./tools/child-only.ts"]);
 		assert.equal(reviewer.override?.scope, "project");
+		assert.match(modelsText(tempProject, "persona-reviewer"), /Source: user override/);
 	});
 
 	it("lets a project override flip `disabled` on a custom agent even after a user override already set it", () => {
