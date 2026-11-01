@@ -1426,6 +1426,13 @@ describe("subagent extension child mode", () => {
 				expect(await subagent({ action: "status", id: otherDone }), notOwned, "other session status");
 				expect(await subagent({ action: "stop", id: otherLive }), /was not found in the active session/, "other session stop");
 				expect(await subagent({ action: "stop", id: live }), /Stop requested for async run/, "stop");
+				// pi-web reopens a forked-from session in the same process while its fork stays live.
+				const reopened = makePi();
+				const ctxA = ctxFor(a);
+				await emit(reopened, "session_start", { reason: "startup" }, ctxA);
+				expect(await call(reopened.tools.get("subagent"), { action: "status", id: done }, ctxA), new RegExp('Revive: subagent\\(\\{ action: "resume", id: "' + done), "reopened session owns its run");
+				expect(await subagent({ action: "status", id: done }), notOwned, "successor gives up the reopened session's run");
+				await emit(reopened, "session_shutdown", { reason: "quit" });
 				await emit(second, "session_shutdown", { reason: "quit" });
 				const third = makePi();
 				const ctxFresh = ctxFor(fresh);
