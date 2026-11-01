@@ -1012,6 +1012,11 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 		const parser = requireFromPackage(resolveWorkflowParserEntry()) as { parse(source: string, options: Record<string, unknown>): unknown };
 		root = parser.parse(`(async () => {\n${script}\n})()`, { ecmaVersion: "latest", sourceType: "script", locations: true }) as AstNode;
 	} catch (error) {
+		const source = script.trim();
+		// A path passed where source is expected parses as a regex or a stray token; say what was meant instead.
+		if (/^\S+$/.test(source) && (/^(?:~|\.{1,2})?\//.test(source) || /\.(?:[cm]?[jt]s|json)$/.test(source))) {
+			return { ok: false, errors: [{ message: `The workflow script does not parse and looks like a file path ('${source}'). options.script takes the script's source text; pass a script file as workflow: "${source}".` }] };
+		}
 		const location = error && typeof error === "object" && "loc" in error && error.loc && typeof error.loc === "object"
 			? error.loc as { line?: unknown; column?: unknown }
 			: undefined;

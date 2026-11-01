@@ -390,6 +390,11 @@ describe("scripted workflow runtime", () => {
 		assert.ok((syntax.errors[0]?.column ?? 0) > 0);
 		assert.doesNotMatch(syntax.errors[0]?.message ?? "", /\(3:\d+\)$/);
 
+		for (const path of ["/tmp/x.json", "./wf.js", "~/flows/review.mjs"]) {
+			assert.deepEqual(validateWorkflowScript(` ${path}\n`).errors, [{ message: `The workflow script does not parse and looks like a file path ('${path}'). options.script takes the script's source text; pass a script file as workflow: "${path}".` }], path);
+		}
+		assert.match(validateWorkflowScript("return (;").errors[0]!.message, /^Unexpected token/);
+
 		const structural = validateWorkflowScript([
 			`const results = await runs.all([{ key: "bad key", agent: "worker" }, { key: "someChild", agent: "reviewer" }]);`,
 			`async function helper() { return "no"; }`,
