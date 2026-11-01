@@ -4,7 +4,7 @@ import { connectHerdrMachine, sshMachineAccess, type HerdrForwardedConnection, t
 import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { HERDR_PI_MODE_ENV, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV } from "./herdr-pi-protocol.ts";
 import { createPlacedRuntimeDir, discoverPlacedBridgeManifest, PlacedRunOwner, removePlacedRuntimeDir, type PlacedBridgeManifest } from "./placed-run-owner.ts";
-import { herdrPaneAllocationKey, withHerdrPaneAllocationLock, type PlacementAgentKind, type PlacementBridgeIdentity, type PlacementEvidenceProof, type PlacementOwnedPane, type PlacementPaneHost, type PlacementReconnectCheck, type PlacementRunState, type PlacementStartOptions } from "./placement-host.ts";
+import { herdrPaneAllocationKey, withHerdrPaneAllocationLock, type PlacementAgentKind, type PlacementBridgeIdentity, type PlacementEvidenceProof, type PlacementOwnedPane, type PlacementPaneHost, type PlacementPromptOptions, type PlacementReconnectCheck, type PlacementRunState, type PlacementStartOptions } from "./placement-host.ts";
 
 export interface HerdrPaneCandidate { endpoint: { session: string | null; protocol: number; version: string }; agents: Array<{ terminal_id?: string; pane_id?: string; agent_status?: string }> }
 export interface HerdrReconnectCandidate extends HerdrPaneCandidate { bridge: PlacementBridgeIdentity }
@@ -70,7 +70,14 @@ export const herdrPaneHost = {
 	connect(machine) { return connectHerdrMachine(asHerdrMachine(machine)); },
 	sessionOf(connection) { return connection.endpoint.session; },
 	async launch(connection, machine, runId, runtimeDir, request, onPane, options) { const owned = await provisionHerdrOwnedPane(connection, asHerdrMachine(machine), runId, runtimeDir, request.environment); await onPane(owned); const { terminalId } = await startHerdrAgent(connection, owned, request.kind, request.name, request.args, options); return { owned, terminalId }; },
-	async prompt(connection, identity, text) { await connection.client.call("agent.prompt", { target: identity.agentName, text }); },
+	async prompt(connection, identity, text, options: PlacementPromptOptions = {}) {
+		// Herdr registers a started agent's name asynchronously, so a prompt right after start can be refused; a refused prompt was not delivered.
+		const clock = options.clock ?? { now: () => Date.now(), wait: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)) }, deadline = clock.now() + (options.timeoutMs ?? 5_000), pollMs = options.pollMs ?? 100;
+		for (;;) {
+			try { await connection.client.call("agent.prompt", { target: identity.agentName, text }); return; }
+			catch (error) { if (!(error instanceof Error) || !error.message.includes("is not an active named agent") || clock.now() >= deadline) throw error; await clock.wait(Math.min(pollMs, deadline - clock.now())); if (options.stopped?.()) throw new Error("Remote Pi prompt was not sent because the run was stopped.", { cause: error }); }
+		}
+	},
 	subscribe(connection, paneId, listener, onDisconnect) { return connection.client.subscribe(herdrStatusSubscriptions(paneId), listener, onDisconnect); },
 	paneEvent(event, fallback) { const data = event && typeof event === "object" ? (event as { data?: Record<string, unknown> }).data : undefined; return data ? { terminalId: data.terminal_id, paneId: data.pane_id, state: herdrRunState(data.agent_status, fallback) } : undefined; },
 	async panes(connection) { return { endpoint: connection.endpoint, agents: snapshotAgents(parseHerdrSessionSnapshot(await connection.client.call<Record<string, unknown>>("session.snapshot"))) }; },

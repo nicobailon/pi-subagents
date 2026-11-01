@@ -1010,9 +1010,16 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	}));
 }
 
+// User then project overrides are layered, so the override's top-level scope can name a file that did not set `model`.
+function modelOverrideFile(override: NonNullable<AgentConfig["override"]>): { scope: "user" | "project"; path: string } {
+	const scopes = override.fieldScopes?.model;
+	const scope = scopes?.includes("project") ? "project" : scopes?.includes("user") ? "user" : override.scope;
+	return { scope, path: override.paths?.[scope] ?? override.path };
+}
+
 function formatModelSource(agent: AgentConfig, currentModel: ParentModel | undefined): string {
 	if (agent.override && agent.model !== agent.override.base.model) {
-		return `${agent.override.scope} override`;
+		return `${modelOverrideFile(agent.override).scope} override`;
 	}
 	if (agent.modelSource?.type === "subagents.defaultModel" && agent.model === agent.modelSource.model) {
 		return `${agent.modelSource.scope} defaultModel`;
@@ -1077,7 +1084,7 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 			lines.push(`Thinking: ${effectiveThinking ?? "default"}`);
 			if (agent.override) {
 				lines.push("Override file:");
-				lines.push(`  ${agent.override.path}`);
+				lines.push(`  ${modelOverrideFile(agent.override).path}`);
 			}
 			if (agent.model && resolvedModel && agent.model !== resolvedModel) {
 				lines.push("Requested model setting:");
@@ -1096,7 +1103,7 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 		lines.push(`  thinking: ${effectiveThinking ?? "default"}`);
 		if (agent.override) {
 			lines.push("  override file:");
-			lines.push(`    ${agent.override.path}`);
+			lines.push(`    ${modelOverrideFile(agent.override).path}`);
 		}
 		if (agent.model && resolvedModel && agent.model !== resolvedModel) {
 			lines.push("  requested model setting:");

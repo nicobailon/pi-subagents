@@ -12,7 +12,7 @@ import {
 } from "../../src/runs/shared/herdr-machine.ts";
 import type { HerdrMachineReference } from "../../src/shared/types.ts";
 import { herdrPaneAllocationKey } from "../../src/runs/shared/placement-host.ts";
-import { connectHerdrMachine, decodeHerdrJsonLine, discoverHerdrEndpoint, hardenedSshEnv, herdrSshArgs, HERDR_REMOTE_PATH, HERDR_SSH_BASE, runHerdrRemoteCommandAsync } from "../../src/runs/shared/herdr-connection.ts";
+import { connectHerdrMachine, decodeHerdrJsonLine, discoverHerdrEndpoint, hardenedSshEnv, herdrSshArgs, HERDR_REMOTE_PATH, HERDR_SSH_BASE, runHerdrRemoteCommandAsync, sshMachineAccess } from "../../src/runs/shared/herdr-connection.ts";
 import { createRemoteRuntimeDir, discoverBridgeManifest, removeRemoteRuntimeDir } from "../../src/runs/shared/herdr-pane-host.ts";
 
 const catalog = JSON.stringify([
@@ -39,6 +39,24 @@ describe("Herdr machine placement", () => {
 	it("hardens native SSH against configured SendEnv and SetEnv without removing forwarding or agent auth", { skip: process.platform === "win32" }, () => { const source = { HOME: "/home/me", PATH: "/private/bin", SSH_AUTH_SOCK: "/tmp/auth", LOCAL_SECRET: "nope" }; const env = hardenedSshEnv(source); assert.equal(env.LOCAL_SECRET, undefined); assert.equal(env.SSH_AUTH_SOCK, undefined); assert.equal(env.HOME, undefined); assert.equal(env.PATH, "/usr/bin:/bin:/usr/sbin:/sbin"); assert.deepEqual(herdrSshArgs(source).slice(-2), ["-o", "IdentityAgent=/tmp/auth"]); assert.ok(HERDR_SSH_BASE.includes("SendEnv=-*")); assert.ok(HERDR_SSH_BASE.includes("SetEnv=PI_SUBAGENTS_SSH_GUARD=")); assert.equal(HERDR_SSH_BASE.includes("-L" as never), false); });
 	it("rejects invalid UTF-8 in a complete Herdr JSON frame", () => assert.throws(() => decodeHerdrJsonLine(Buffer.concat([Buffer.from('{"x":"'), Buffer.from([0xc3, 0x28]), Buffer.from('"}')])) , /UTF-8/u));
 	it("terminates a forwarding child that never creates its socket", { skip: process.platform === "win32" }, async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-fake-ssh-")); const bin = path.join(dir, "ssh"); const pidFile = path.join(dir, "pid"); fs.writeFileSync(bin, `#!/bin/sh\ncase "$*" in *"command -v herdr"*) echo '{"socket":"/tmp/herdr.sock","session":"default","version":"0.9.0","protocol":1,"compatible":true,"running":true}'; exit 0;; esac\necho $$ > ${JSON.stringify(pidFile)}\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n`); fs.chmodSync(bin, 0o700); try { await assert.rejects(connectHerdrMachine(machine, { sshBin: bin }), /did not create/u); const pid = Number(fs.readFileSync(pidFile, "utf8")); assert.throws(() => process.kill(pid, 0)); } finally { fs.rmSync(dir, { recursive: true, force: true }); } });
+	it("keeps a forwarding session command alive while forwarding and ends it when the forwarder closes", { skip: process.platform === "win32" }, async () => {
+		// The fake ssh models sshd: the session command reads the client's stdin, which closes when the client exits.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-forward-ssh-")), bin = path.join(dir, "ssh"), pidFile = path.join(dir, "remote-pid");
+		fs.writeFileSync(bin, `#!${process.execPath}\nconst { spawn } = require("node:child_process"), fs = require("node:fs"), net = require("node:net");\nconst args = process.argv.slice(2), forward = args[args.indexOf("-L") + 1], command = args.slice(args.indexOf(forward) + 2);\nif (command.length) { const remote = spawn("/bin/sh", ["-c", command.join(" ")], { stdio: ["pipe", "ignore", "ignore"] }); fs.writeFileSync(${JSON.stringify(pidFile)}, String(remote.pid)); process.stdin.pipe(remote.stdin); }\nnet.createServer().listen(forward.slice(0, forward.indexOf(":")));\n`);
+		fs.chmodSync(bin, 0o700);
+		const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+		const sockets = sshMachineAccess(machine, { sshBin: bin }).openSockets();
+		let remotePid = 0;
+		try {
+			await sockets.forwardRemoteSocket("/tmp/herdr.sock", "herdr");
+			remotePid = Number(fs.readFileSync(pidFile, "utf8"));
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			assert.equal(alive(remotePid), true);
+			await sockets.close();
+			for (let attempt = 0; attempt < 100 && alive(remotePid); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+			assert.equal(alive(remotePid), false);
+		} finally { await sockets.close(); if (remotePid && alive(remotePid)) process.kill(remotePid, "SIGKILL"); fs.rmSync(dir, { recursive: true, force: true }); }
+	});
 	it("settles asynchronous remote commands after timeout and spawn failure", { skip: process.platform === "win32" }, async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-async-ssh-")), ssh = path.join(dir, "ssh"), grandchildPid = path.join(dir, "grandchild-pid"); fs.writeFileSync(ssh, `#!/bin/sh\ntrap '' TERM\nsh -c 'trap "" TERM HUP; echo $$ > "$1"; while :; do sleep 1; done' sh ${shellQuote(grandchildPid)} &\nwait\n`); fs.chmodSync(ssh, 0o700); try { const timedOut = await runHerdrRemoteCommandAsync(machine, "ignored", { sshBin: ssh, timeout: 10 }); assert.equal(timedOut.status, null); const spawnFailed = await runHerdrRemoteCommandAsync(machine, "ignored", { sshBin: path.join(dir, "missing") }); assert.equal(spawnFailed.status, null); assert.ok(spawnFailed.error); } finally { try { process.kill(Number(fs.readFileSync(grandchildPid, "utf8")), "SIGKILL"); } catch {} fs.rmSync(dir, { recursive: true, force: true }); } });
 	it("surfaces ssh spawn failures immediately during bridge manifest discovery", { skip: process.platform === "win32" }, async () => { const started = Date.now(); await assert.rejects(discoverBridgeManifest(machine, "run_12345678", "/tmp/runtime", { sshBin: path.join(os.tmpdir(), `missing-ssh-${Date.now()}`) }), /Remote bridge manifest discovery failed:.*ENOENT/u); assert.ok(Date.now() - started < 1_000); });
 	it("surfaces ssh spawn failures while provisioning a remote runtime directory", { skip: process.platform === "win32" }, async () => { await assert.rejects(createRemoteRuntimeDir(machine, "run_12345678", { sshBin: path.join(os.tmpdir(), `missing-ssh-${Date.now()}`) }), /Could not provision a run-private remote bridge runtime directory:.*ENOENT/u); });
