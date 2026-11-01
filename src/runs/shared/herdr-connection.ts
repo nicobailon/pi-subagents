@@ -129,7 +129,8 @@ function openSshSockets(machine: SshTarget, options: { sshBin?: string; env?: No
 	const forward = async (remotePath: string, name: string) => {
 		if (!path.posix.isAbsolute(remotePath)) throw new Error("Remote socket path must be absolute.");
 		const local = path.join(dir, `${name}.sock`);
-		const child = spawn(options.sshBin ?? "ssh", [...herdrSshArgs(options.env), "-N", "-o", "StreamLocalBindUnlink=yes", "-L", `${local}:${remotePath}`, machine.target], { env: hardenedSshEnv(options.env), stdio: "ignore", windowsHide: true }); children.add(child);
+		// Some sshd policies drop sessions that run no command (`ssh -N`). The remote command reads the open stdin pipe, so it ends on EOF when the connection closes; a non-tty `sleep` would outlive the forwarder.
+		const child = spawn(options.sshBin ?? "ssh", [...herdrSshArgs(options.env), "-o", "StreamLocalBindUnlink=yes", "-L", `${local}:${remotePath}`, machine.target, remoteShellCommand("exec cat >/dev/null")], { env: hardenedSshEnv(options.env), stdio: ["pipe", "ignore", "ignore"], windowsHide: true }); children.add(child);
 		const stop = async () => { await terminateChild(child); children.delete(child); try { fs.rmSync(local, { force: true }); } catch {} };
 		try { await waitForSocket(local, child); } catch (error) { await stop(); throw error; }
 		return { socketPath: local, close: stop };

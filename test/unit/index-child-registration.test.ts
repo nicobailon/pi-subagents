@@ -1367,6 +1367,7 @@ describe("subagent extension child mode", () => {
 			import { spawn } from "node:child_process";
 			import registerSubagentExtension from "./index.ts";
 			import { DIRS } from "./src/shared/types.ts";
+			import { updateActiveRunIndex } from "./src/runs/background/active-run-index.ts";
 			const fail = (message) => { throw new Error(message); };
 			const makePi = () => {
 				const handlers = new Map();
@@ -1384,9 +1385,13 @@ describe("subagent extension child mode", () => {
 			const sessions = path.join(process.env.PI_CODING_AGENT_DIR, "sessions");
 			fs.mkdirSync(sessions, { recursive: true });
 			const sessionFile = (name) => { const file = path.join(sessions, name + ".jsonl"); fs.writeFileSync(file, ""); return file; };
-			const [a, b, foreign, fresh, childSession] = ["a", "b", "foreign", "fresh", "child"].map(sessionFile);
+			const [a, b, foreign, fresh, childSession, x, y, z] = ["a", "b", "foreign", "fresh", "child", "x", "y", "z"].map(sessionFile);
 			const ctxFor = (file) => ({ cwd: process.cwd(), isIdle() { return false; }, hasUI: false, ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager: { getSessionId() { return path.basename(file); }, getSessionFile() { return file; }, getEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } });
 			const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+			const keeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+			// pi-web's liveness registry: a session counts as busy while its provider says so.
+			const liveness = new Map();
+			globalThis[Symbol.for("@agegr/pi-web/session-liveness/v1")] = { version: 1, register(provider) { liveness.set(provider.sessionId, provider); return () => liveness.delete(provider.sessionId); } };
 			const stamp = Date.now();
 			const runs = [];
 			const writeRun = (name, status) => {
@@ -1400,6 +1405,9 @@ describe("subagent extension child mode", () => {
 			const done = writeRun("done", { sessionId: a, state: "complete", steps: [{ agent: "worker", status: "complete", sessionFile: childSession }] });
 			const otherLive = writeRun("foreign-live", { sessionId: foreign, state: "running", pid: sleeper.pid, steps: [{ agent: "worker", status: "running" }] });
 			const otherDone = writeRun("foreign-done", { sessionId: foreign, state: "complete", steps: [{ agent: "worker", status: "complete", sessionFile: childSession }] });
+			const kept = writeRun("kept", { sessionId: a, state: "running", pid: keeper.pid, steps: [{ agent: "worker", status: "running" }] });
+			updateActiveRunIndex(path.join(DIRS.async, kept), "running");
+			const chainDone = writeRun("chain-done", { sessionId: x, state: "complete", steps: [{ agent: "worker", status: "complete", sessionFile: childSession }] });
 			// Registered tools throw on error results; both outcomes are compared as text.
 			const call = async (tool, params, ctx) => {
 				try {
@@ -1426,7 +1434,35 @@ describe("subagent extension child mode", () => {
 				expect(await subagent({ action: "status", id: otherDone }), notOwned, "other session status");
 				expect(await subagent({ action: "stop", id: otherLive }), /was not found in the active session/, "other session stop");
 				expect(await subagent({ action: "stop", id: live }), /Stop requested for async run/, "stop");
+				if (!liveness.get("b.jsonl")?.isActive()) fail("successor is not busy with the replaced session's running run");
+				// pi-web reopens a forked-from session in the same process while its fork stays live.
+				const reopened = makePi();
+				const ctxA = ctxFor(a);
+				await emit(reopened, "session_start", { reason: "startup" }, ctxA);
+				expect(await call(reopened.tools.get("subagent"), { action: "status", id: done }, ctxA), new RegExp('Revive: subagent\\(\\{ action: "resume", id: "' + done), "reopened session owns its run");
+				expect(await subagent({ action: "status", id: done }), notOwned, "successor gives up the reopened session's run");
+				// The successor stops tracking the reopened session's running run on its next liveness sweep.
+				for (let i = 0; i < 80 && liveness.get("b.jsonl")?.isActive(); i += 1) await new Promise((resolve) => setTimeout(resolve, 100));
+				if (liveness.get("b.jsonl")?.isActive()) fail("successor still tracks " + kept + " after its session reopened");
+				await emit(reopened, "session_shutdown", { reason: "quit" });
 				await emit(second, "session_shutdown", { reason: "quit" });
+				// x replaced by y, y by z; reopening y leaves x's runs with z alone.
+				const px = makePi();
+				await emit(px, "session_start", { reason: "startup" }, ctxFor(x));
+				await emit(px, "session_shutdown", { reason: "new" });
+				const py = makePi();
+				await emit(py, "session_start", { reason: "new", previousSessionFile: x }, ctxFor(y));
+				await emit(py, "session_shutdown", { reason: "new" });
+				const pz = makePi();
+				const ctxZ = ctxFor(z);
+				await emit(pz, "session_start", { reason: "new", previousSessionFile: y }, ctxZ);
+				const reopenedY = makePi();
+				const ctxY = ctxFor(y);
+				await emit(reopenedY, "session_start", { reason: "startup" }, ctxY);
+				expect(await call(pz.tools.get("subagent"), { action: "status", id: chainDone }, ctxZ), new RegExp('Revive: subagent\\(\\{ action: "resume", id: "' + chainDone), "latest successor keeps the earliest session's run");
+				expect(await call(reopenedY.tools.get("subagent"), { action: "status", id: chainDone }, ctxY), notOwned, "reopened middle session gives up what it had inherited");
+				await emit(reopenedY, "session_shutdown", { reason: "quit" });
+				await emit(pz, "session_shutdown", { reason: "quit" });
 				const third = makePi();
 				const ctxFresh = ctxFor(fresh);
 				await emit(third, "session_start", { reason: "startup" }, ctxFresh);
@@ -1434,6 +1470,7 @@ describe("subagent extension child mode", () => {
 				await emit(third, "session_shutdown", { reason: "quit" });
 			} finally {
 				sleeper.kill();
+				keeper.kill();
 				for (const runId of runs) fs.rmSync(path.join(DIRS.async, runId), { recursive: true, force: true });
 			}
 		`;
