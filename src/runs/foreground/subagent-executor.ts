@@ -2246,7 +2246,7 @@ async function resumeAsyncRun(input: {
 	}
 	// Refuse before capacity moves so the retained run stays resumable once the config is fixed.
 	if (agentConfig.launcher !== undefined && !lookupRunnerLauncher(input.deps.config.runnerLaunchers, agentConfig.launcher)) {
-		return { content: [{ type: "text", text: `Cannot resume: run '${target.runId}' was launched with launcher '${agentConfig.launcher}', which is no longer defined in runnerLaunchers in the user subagent config.` }], isError: true, details: { mode: "management", results: [] } };
+		return { content: [{ type: "text", text: `Cannot resume: run '${target.runId}' uses launcher '${agentConfig.launcher}', which is no longer defined in runnerLaunchers in the user subagent config.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;
