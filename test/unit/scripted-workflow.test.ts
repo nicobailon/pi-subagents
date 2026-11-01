@@ -441,6 +441,7 @@ describe("scripted workflow runtime", () => {
 		for (const script of [
 			`return runs.all([{ ...base, agent: "worker", task: "x" }]);`,
 			`return runs.all([{ [field]: "a", agent: "worker", task: "x" }]);`,
+			`return runs.all([{ __proto__: base, agent: "worker", task: "x" }]);`,
 			`return runs.all(files.map(makeItem));`,
 			`return runs.all(files.map((file) => ({ key: file, agent: "reviewer", task: file })));`,
 			`return runs.all(files.map((file) => { if (file.skip) return { agent: "worker", task: "x" }; return { key: file.name, agent: "worker", task: "y" }; }));`,

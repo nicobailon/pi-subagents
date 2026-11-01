@@ -704,7 +704,7 @@ function describeGateAcceptanceConflict(gate, acceptance) {
 
 function validateRunCall(key, params, label, fingerprints) {
   if (typeof key !== "string" || !runKeyPattern.test(key)) {
-    const problem = key === undefined ? " has no key" : typeof key === "string" ? " has an invalid key '" + (key.length > 80 ? key.slice(0, 80) + "..." : key) + "'" : " has a key of type " + typeof key;
+    const problem = key === undefined ? " has no key" : typeof key === "string" ? " has an invalid key '" + (key.length > 80 ? key.slice(0, 80) + "..." : key) + "'" : " has a key of type " + (key === null ? "null" : typeof key);
     throw new Error(label + problem + "; keys must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.");
   }
   if (hostKeys.has(key)) throw new Error("Workflow key '" + key + "' is already used by runs.host.");

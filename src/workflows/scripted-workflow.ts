@@ -865,7 +865,8 @@ const MISSING_RUNS_ALL_KEY_RULE = "every runs.all item needs a stable key, for e
 /** True for an object literal whose own keys are all visible: no spread, getter, setter, or computed key. */
 function plainObjectLiteral(node: unknown): node is AstNode {
 	return astNode(node) && node.type === "ObjectExpression" && Array.isArray(node.properties)
-		&& node.properties.every((property) => astNode(property) && property.type === "Property" && property.kind === "init" && property.computed !== true);
+		// `__proto__: base` sets the prototype, and the runtime's destructuring reads a `key` found there.
+		&& node.properties.every((property) => astNode(property) && property.type === "Property" && property.kind === "init" && property.computed !== true && staticPropertyKey(property) !== "__proto__");
 }
 
 /** runs.all items certain to reach the runtime without a key: plain literals in the array, or the one result of a map callback. */
