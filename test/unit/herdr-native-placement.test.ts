@@ -160,6 +160,17 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 	it("retries a prompt Herdr refuses because the started agent's name is not registered yet", async () => { const identity = { agentName: "pi-a" } as HerdrRunIdentity; let now = 0; const calls: unknown[] = []; const connection = { client: { async call(method: string, params: unknown) { calls.push([method, params]); if (calls.length === 1) throw new Error("pi-a is not an active named agent"); return {}; } } } as never; await herdrPaneHost.prompt(connection, identity, "/pi-subagents-bridge r1", { clock: { now: () => now, async wait(ms) { now += ms; } } }); assert.deepEqual(calls, [["agent.prompt", { target: "pi-a", text: "/pi-subagents-bridge r1" }], ["agent.prompt", { target: "pi-a", text: "/pi-subagents-bridge r1" }]]); });
 	it("does not retry any other prompt error", async () => { let calls = 0; const connection = { client: { async call() { calls++; throw new Error("permission denied"); } } } as never; await assert.rejects(herdrPaneHost.prompt(connection, { agentName: "pi-a" } as HerdrRunIdentity, "x"), /permission denied/u); assert.equal(calls, 1); });
 	it("gives up on an unregistered agent name at the prompt deadline", async () => { let now = 0, calls = 0; const connection = { client: { async call() { calls++; throw new Error("pi-a is not an active named agent"); } } } as never; await assert.rejects(herdrPaneHost.prompt(connection, { agentName: "pi-a" } as HerdrRunIdentity, "x", { timeoutMs: 300, pollMs: 100, clock: { now: () => now, async wait(ms) { now += ms; } } }), /not an active named agent/u); assert.equal(calls, 4); });
+	it("does not resend a refused task prompt after the run is aborted during the retry wait", async () => {
+		const identity = { agentName: "pi-a", nativeSessionId: "native" } as HerdrRunIdentity; const sent: string[] = []; let now = 0, session!: HerdrPiSession;
+		const connection = { client: { async call(_method: string, params: { text: string }) { sent.push(params.text); if (sent.length === 1) throw new Error("pi-a is not an active named agent"); if (sent.length > 2) throw new Error("task prompt resent after abort"); return {}; } } };
+		const clock = { now: () => now, async wait(ms: number) { now += ms; await session.abort(); } };
+		const host = { ...herdrPaneHost, prompt: (c: never, i: HerdrRunIdentity, text: string, options?: object) => herdrPaneHost.prompt(c, i, text, { ...options, clock }) };
+		const bridge = { failure: new Promise<never>(() => {}), failed: false, adopt: () => [], prepare: async () => ({}), close() {} } as unknown as BridgeChannel;
+		session = new HerdrPiSession({ identity, connection, host, async cleanup() {} } as unknown as HerdrPlacedRunOwner, { async close() {} }, bridge, undefined, undefined, runtime);
+		await assert.rejects(session.prompt("task"), /not sent because the run was stopped/u);
+		assert.equal(sent.length, 2);
+		assert.notEqual(sent[1], sent[0]);
+	});
 
 	it("resolves agent instructions, skills, memory, and refinements from a distinct remote fixture", () => {
 		const remote = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-remote-resources-")); fs.mkdirSync(path.join(remote, ".git"));
