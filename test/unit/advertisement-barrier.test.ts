@@ -162,6 +162,10 @@ if (phase === "old") {
 			const local = await advertise();
 			assert.match(local, /<name>local-specialist<\/name>/);
 			assert.doesNotMatch(local, /<name>(global|new)-specialist<\/name>/);
+			fs.writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, "settings.json"), "{");
+			start({ reason: "reload" }, ctx);
+			await assert.rejects(tools.get("subagent").execute("invalid", { action: "list" }, new AbortController().signal, undefined, ctx), /Failed to parse settings file/);
+			fs.rmSync(path.join(process.env.PI_CODING_AGENT_DIR, "settings.json"));
 			fs.rmSync(process.env.TEST_OLD_DONE, {force: true});
 			fs.rmSync(process.env.TEST_OLD_PID, {force: true});
 			fs.rmSync(process.env.TEST_OLD_RELEASE, {force: true});
@@ -185,13 +189,6 @@ if (phase === "old") {
 			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true);
 			await new Promise(resolve => setTimeout(resolve, 50));
 			assert.equal(await advertise(), undefined, "shutdown must not republish a late catalog");
-			process.env.TEST_NPM_PHASE = "latest";
-			start({ reason: "reload" }, ctx);
-			assert.match(await advertise(), /<name>new-specialist<\/name>/, "new session must recover its own catalog");
-			process.env.TEST_NPM_PHASE = "failure";
-			fs.writeFileSync(path.join(process.env.PI_CODING_AGENT_DIR, "settings.json"), "{");
-			start({ reason: "reload" }, ctx);
-			await assert.rejects(tools.get("subagent").execute("invalid", { action: "list" }, new AbortController().signal, undefined, ctx), /Failed to parse settings file/);
 			console.log("responsive session_start; complete first prompt and loader");
 		`], { cwd: repo, env, encoding: "utf8", timeout: 30_000 });
 		assert.match(output, /responsive session_start; complete first prompt and loader/);

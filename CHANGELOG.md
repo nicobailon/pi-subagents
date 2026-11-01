@@ -11,8 +11,7 @@
 - The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
 - A direct MCP tool selector with a long run of slashes no longer takes quadratic time to normalize. Trailing slashes are trimmed with one backward pass over that run; before, a regex rescanned the selector from every index whenever it ended in anything else. Selector results are unchanged. Thanks to [@Yivas](https://github.com/Yivas) for #3112.
 - The read-only review check scans a `git` command line in one pass. A task prompt holding a long run of `git` options made the old pattern backtrack exponentially and freeze the workflow, and a 198,000-character prompt that never finished now takes milliseconds. Thanks to @Yivas for #3110.
-
-- Pending global npm discovery is cancelled when a session or extension runtime is replaced or shut down, and retired runtimes cannot publish a late agent catalog. Thanks to [@ArietidsZ](https://github.com/ArietidsZ) for #3117.
+- Reloading or switching sessions now stops the `npm root -g` lookup that finds globally installed agent packages. Before, it kept running for up to 5 seconds after the session it served was gone, and then rescanned agents for nothing. Thanks to [@ArietidsZ](https://github.com/ArietidsZ) for #3117.
 
 ## [0.84.0] - 2026-10-28
 

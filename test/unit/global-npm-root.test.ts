@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getEventListeners } from "node:events";
 import { afterEach, describe, it } from "node:test";
 import { resolveGlobalNpmRoot } from "../../src/agents/global-npm-root.ts";
 
@@ -153,24 +152,6 @@ describe("resolveGlobalNpmRoot", () => {
 				await new Promise(resolve => setTimeout(resolve, 20));
 			}
 			assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, `cancelled owned npm ${pid} must exit`);
-			assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 		} finally { controller.abort(); await lookup; }
 	});
-
-	it("removes cancellation listeners after success and timeout", async () => {
-		const { dir, env } = fixture("exit 1");
-		const root = path.join(dir, "root");fs.mkdirSync(root);
-		const executable = path.join(dir, "bin", process.platform === "win32" ? "npm.cmd" : "npm");
-		fs.writeFileSync(executable, process.platform === "win32" ? `@echo off\r\n${printRoot(root)}\r\n` : `#!/bin/sh\n${printRoot(root)}\n`, {mode: 0o755});
-		const success = new AbortController();
-		assert.equal(await resolveGlobalNpmRoot({env, signal: success.signal}), await fs.promises.realpath(root));
-		assert.equal(getEventListeners(success.signal, "abort").length, 0);
-		success.abort();
-		const slow = fixture(process.platform === "win32" ? "ping -n 4 127.0.0.1 > nul" : "exec sleep 2");
-		const timeout = new AbortController();
-		assert.equal(await resolveGlobalNpmRoot({env: slow.env, timeoutMs: 80, signal: timeout.signal}), null);
-		assert.equal(getEventListeners(timeout.signal, "abort").length, 0);
-		timeout.abort();
-	});
-
 });

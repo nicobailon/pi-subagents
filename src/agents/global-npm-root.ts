@@ -59,7 +59,6 @@ export async function resolveGlobalNpmRoot(options: {
 		// Resolve at the deadline even if inherited pipes hold the callback open.
 		timer = setTimeout(cancel, timeoutMs);
 		signal?.addEventListener("abort", cancel, { once: true });
-		if (signal?.aborted) cancel();
 	});
 	if (!output || signal?.aborted) return null;
 	try {
