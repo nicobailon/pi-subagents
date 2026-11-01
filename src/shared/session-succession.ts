@@ -25,8 +25,11 @@ export function recordSessionReplacement(sessionId: string, previousSessionId: s
 /**
  * A session starting in this process is live again, so no other session inherits its runs any more.
  * pi-web keeps a forked-from session listed and can reopen it while its fork is still live.
+ * A startup replaces no session, so the session also drops what it inherited before: whoever
+ * replaced it took those runs over and keeps them.
  */
-export function recordSessionStart(sessionId: string): void {
+export function recordSessionStart(sessionId: string, startup: boolean): void {
+	if (startup) successions().delete(sessionId);
 	for (const [id, chain] of successions()) {
 		if (chain.includes(sessionId)) successions().set(id, chain.filter((inherited) => inherited !== sessionId));
 	}
