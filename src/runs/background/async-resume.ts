@@ -483,12 +483,14 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
 	const recoveryDescriptor = readAsyncRecoveryDescriptor(location.asyncDir ?? undefined);
 	const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
-	const runId = status?.runId ?? result?.runId ?? result?.id ?? location.resolvedId ?? (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
+	// A run directory is always named for its run, so files inside it that name another run are refused.
+	const runId = location.asyncDir ? path.basename(location.asyncDir) : result?.runId ?? result?.id ?? location.resolvedId ?? "unknown";
 	const mode = resumeTargetMode(status, result);
 	if (options.sessionId && ((status && !ownsRun(options.sessionId, status.sessionId)) || (result && !ownsRun(options.sessionId, result.sessionId)))) {
 		throw new Error(`Async run '${runId}' was not found in the active session.`);
 	}
-	if (recoveryDescriptor && recoveryDescriptor.sourceRunId !== runId) throw new Error(`Async run '${runId}' has a recovery descriptor for a different source run.`);
+	if (status?.runId && status.runId !== runId) throw new Error(`Async run '${runId}' has a status file for a different run '${status.runId}'.`);
+	if (recoveryDescriptor && recoveryDescriptor.sourceRunId !== runId) throw new Error(`Async run '${runId}' has a recovery descriptor for a different source run '${recoveryDescriptor.sourceRunId}'.`);
 	const state = status?.state ?? (result ? resultState(result) : undefined);
 	if (!state) throw new Error(`Status file not found for async run '${runId}'.`);
 	if (state === "stopped") throw new Error(`Async run '${runId}' was stopped and cannot be resumed. Start a new run instead.`);

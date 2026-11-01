@@ -47,6 +47,25 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("refuses a run directory whose status names another run", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-mismatch-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncRoot, "run-abcde", "status.json"), {
+				runId: "run-other", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root, sessionFile,
+				steps: [{ agent: "worker", status: "complete" }],
+			});
+			assert.throws(
+				() => resolveAsyncResumeTarget({ id: "run-abcd" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				/Async run 'run-abcde' has a status file for a different run 'run-other'/,
+			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("requires a recovery descriptor for a legacy workflow child session", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-workflow-"));
 		try {

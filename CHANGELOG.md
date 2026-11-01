@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Resuming a background run now refuses when the run's status file names a different run than its directory, and the error names both. Before, the resume took the run id, and with it the session to continue, from whatever the status file said. Thanks to [@ViperJuice](https://github.com/ViperJuice) for the report. (#3116)
 - Resuming a background run whose saved recovery record does not say which launcher it used, such as a workflow child resumed through its workflow run, now uses the agent file's current `launcher`. Before, the resumed child ran without its launcher. New runs record "no launcher" explicitly, so a run started unwrapped still resumes unwrapped. Thanks to [@ViperJuice](https://github.com/ViperJuice) for the report. (#3116)
 - Checking a read-only review after rejected acceptance metadata no longer stalls on long runs of quotes or other file-command separators. The file-command check no longer rescans the same suffix for each separator, while keeping the same command detection. Thanks to [@Yivas](https://github.com/Yivas) for #3113.
 - The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
