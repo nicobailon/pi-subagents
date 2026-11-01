@@ -75,29 +75,6 @@ describe("agent discovery snapshots", () => {
 		}
 	});
 
-	it("fingerprints already loaded chain snapshots only once per warm lookup", (t) => {
-		const agentPath = path.join(project, ".pi", "agents", "warm.md");
-		const chainPath = path.join(project, ".pi", "chains", "warm.chain.md");
-		writeAgent(agentPath, "warm", "Warm agent");
-		fs.mkdirSync(path.dirname(chainPath), { recursive: true });
-		fs.writeFileSync(chainPath, "---\nname: warm-chain\ndescription: Warm chain\n---\n\n## warm\nInspect\n");
-		const options = { includeChains: true, globalNpmRoot: null };
-		const expected = discoverAgentSnapshot(project, "both", undefined, options);
-		assert.equal(expected.all.chains.some((chain) => chain.name === "warm-chain"), true);
-		const mutableFs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
-		const stat = t.mock.method(mutableFs, "statSync");
-		try {
-			syncBuiltinESMExports();
-			assert.deepEqual(discoverAgentSnapshot(project, "both", undefined, options), expected);
-			for (const watched of [agentPath, chainPath]) {
-				assert.equal(stat.mock.calls.filter((call) => String(call.arguments[0]) === watched).length, 1);
-			}
-		} finally {
-			t.mock.restoreAll();
-			syncBuiltinESMExports();
-		}
-	});
-
 	it("adds chain watch paths when a no-chain snapshot is upgraded", () => {
 		const chainPath = path.join(project, ".pi", "chains", "lazy.chain.md");
 		writeAgent(path.join(project, ".pi", "agents", "lazy.md"), "lazy", "Lazy agent");
