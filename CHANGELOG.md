@@ -17,6 +17,7 @@
 - The `cost` RPC and `/subagent-cost` now include background runs that were started without a `subagent` tool call, such as RPC `spawn` launches and their workflow children. Before, these runs were left out of the child rows and totals. Thanks to [@BenedictP](https://github.com/BenedictP) for #3106.
 - A direct MCP tool selector with a long run of slashes no longer takes quadratic time to normalize. Trailing slashes are trimmed with one backward pass over that run; before, a regex rescanned the selector from every index whenever it ended in anything else. Selector results are unchanged. Thanks to [@Yivas](https://github.com/Yivas) for #3112.
 - The read-only review check scans a `git` command line in one pass. A task prompt holding a long run of `git` options made the old pattern backtrack exponentially and freeze the workflow, and a 198,000-character prompt that never finished now takes milliseconds. Thanks to @Yivas for #3110.
+- A native Pi child placed on a Herdr machine no longer fails on its first prompt with "is not an active named agent". Herdr registers a newly started agent's name a moment after it starts, so the first prompt could arrive too early and end the run before the child saw its task. That refusal is now retried for up to 5 seconds; any other prompt error still fails at once. Thanks to [@tjcarskadon](https://github.com/tjcarskadon) for the report and patch. (#3121)
 
 ## [0.84.0] - 2026-10-28
 
