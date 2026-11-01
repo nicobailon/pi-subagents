@@ -1605,10 +1605,15 @@ function applyBuiltinOverrides(
 
 	return builtinAgents.map((agent) => {
 		const projectOverride = projectSettings.overrides[agent.name];
+		const userOverride = userSettings.overrides[agent.name];
 		if (projectOverride && projectSettingsPath) {
+			// Apply user then project so project fields win without dropping user-only fields.
+			const withUserOverride = userOverride
+				? applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath })
+				: agent;
 			return applyGlobalThinking(
-				applyBuiltinOverride(agent, projectOverride, { scope: "project", path: projectSettingsPath }),
-				projectOverride.thinking !== undefined,
+				applyBuiltinOverride(withUserOverride, projectOverride, { scope: "project", path: projectSettingsPath }),
+				projectOverride.thinking !== undefined || (!projectThinkingConfigured && userOverride?.thinking !== undefined),
 			);
 		}
 
@@ -1619,7 +1624,6 @@ function applyBuiltinOverrides(
 			);
 		}
 
-		const userOverride = userSettings.overrides[agent.name];
 		if (userOverride) {
 			return applyGlobalThinking(
 				applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath }),

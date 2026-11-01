@@ -593,6 +593,23 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.override?.path, path.join(tempProject, ".pi", "settings.json"));
 	});
 
+	it("layers a project override on top of a user override for a builtin agent instead of discarding it", () => {
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { scout: { model: "openrouter/user-model", description: "User description" } } },
+		});
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: { agentOverrides: { scout: { thinking: "high", description: "Project description" } } },
+		});
+
+		const scout = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "scout");
+		assert.ok(scout);
+		assert.equal(scout.model, "openrouter/user-model");
+		assert.equal(scout.thinking, "high");
+		assert.equal(scout.description, "Project description");
+		assert.equal(scout.override?.scope, "project");
+	});
+
 	it("layers active-provider overrides over default agentOverrides", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: {
