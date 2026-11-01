@@ -21,6 +21,8 @@ import { runChildSession } from "../../src/runs/background/run-child-session.ts"
 import { getAgentDir } from "../../src/shared/utils.ts";
 import registerHerdrPiBridge, { resolveRemoteHerdrResources } from "../../src/extension/herdr-pi-bridge.ts";
 import { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
+import { runSingleStepInner } from "../../src/runs/background/subagent-runner.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
 import { DIRS } from "../../src/shared/types.ts";
 import { makeAgent } from "../support/helpers.ts";
 
@@ -98,6 +100,23 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 			assert.throws(() => serializeHerdrPiLaunch(build()), /fork, resume, or revival/u);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("launches a placed child whose machine cwd does not exist on this host, foreground and background", async () => {
+		const remoteCwd = path.join(os.tmpdir(), `placed-remote-only-${Date.now().toString(36)}`);
+		const placed = { ...machine, cwd: remoteCwd };
+		const launchedCwds: string[] = [];
+		const factory: ChildSessionFactory = { async create(launch) { launchedCwds.push(launch.cwd); const listeners = new Set<(event: any) => void>(); return { ...child, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); }, async prompt() { const message = { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } }; for (const listener of listeners) listener({ type: "message_end", message }); for (const listener of listeners) listener({ type: "agent_settled" }); } }; }, async dispose() {} };
+		const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "placed-runner-"));
+		try {
+			const foreground = await runSync(process.cwd(), [makeAgent("worker")], "worker", "inspect", { machine: placed, cwd: remoteCwd, acceptance: false, childSessionFactory: factory });
+			assert.equal(foreground.exitCode, 0, foreground.error);
+			const background = await runSingleStepInner({ agent: "worker", task: "inspect", machine: placed, cwd: remoteCwd, context: "fresh", inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, waitToolEnabled: false }, { cwd: process.cwd(), id: "placed-remote-cwd", flatIndex: 0, flatStepCount: 1, previousOutput: "", placeholder: "{previous}", outputFile: path.join(outputDir, "output.log"), sessionEnabled: false, childSessions: factory });
+			assert.equal(background.exitCode, 0, background.error);
+			assert.deepEqual(launchedCwds, [remoteCwd, remoteCwd]);
+		} finally {
+			fs.rmSync(outputDir, { recursive: true, force: true });
 		}
 	});
 
