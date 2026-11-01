@@ -1714,7 +1714,8 @@ async function runSyncCompletionInner(
 	options: RunSyncOptions,
 ): Promise<SingleResult> {
 	const effectiveCwd = options.cwd ?? runtimeCwd;
-	const cwdError = preflightLaunchCwd(options.requestedCwd ?? effectiveCwd, effectiveCwd);
+	// A placed child's cwd is a directory on its machine; only machine 'local' shares this disk.
+	const cwdError = options.machine && !isRexLocalMachine(options.machine) ? undefined : preflightLaunchCwd(options.requestedCwd ?? effectiveCwd, effectiveCwd);
 	if (cwdError) {
 		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
