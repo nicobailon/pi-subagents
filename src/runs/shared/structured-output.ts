@@ -244,6 +244,32 @@ function unionSchemaBranches(node: Record<string, unknown>): unknown[] {
 		.filter((branch) => branch !== null && (typeof branch === "object" || typeof branch === "boolean"));
 }
 
+function rawValueJsonTypes(value: unknown): string[] {
+	if (value === null) return ["null"];
+	if (Array.isArray(value)) return ["array"];
+	switch (typeof value) {
+		case "string": return ["string"];
+		case "boolean": return ["boolean"];
+		case "number": return ["number", "integer"];
+		default: return ["object"];
+	}
+}
+
+function schemaRequiredFields(node: Record<string, unknown>): string[] {
+	return Array.isArray(node.required) ? node.required.filter((key): key is string => typeof key === "string") : [];
+}
+
+function schemaBranchAppliesToValue(root: unknown, branch: unknown, value: unknown): boolean {
+	if (branch === true) return true;
+	if (branch === false) return false;
+	const resolved = resolveLocalRefs(root, branch);
+	if (!resolved) return true;
+	const types = rawSchemaTypes(resolved);
+	if (types.length === 0) return true;
+	const valueTypes = rawValueJsonTypes(value);
+	return types.some((type) => valueTypes.includes(type));
+}
+
 function schemaAllowsNull(root: unknown, node: unknown, seen?: Set<Record<string, unknown>>): boolean {
 	const resolved = resolveLocalRefs(root, node);
 	if (!resolved) return true;
@@ -267,27 +293,83 @@ function schemaRequiresArray(root: unknown, node: unknown, seen?: Set<Record<str
 	if (seen?.has(resolved)) return false;
 	const nextSeen = new Set(seen);
 	nextSeen.add(resolved);
+	const types = rawSchemaTypes(resolved);
+	if (types.length > 0) return types.every((type) => type === "array");
 	const branches = unionSchemaBranches(resolved);
 	if (branches.length > 0) {
 		const effectiveBranches = branches.filter((branch) => branch !== false);
 		return effectiveBranches.length > 0 && effectiveBranches.every((branch) => schemaRequiresArray(root, branch, nextSeen));
 	}
 	if (Array.isArray(resolved.allOf) && resolved.allOf.some((branch) => schemaRequiresArray(root, branch, nextSeen))) return true;
-	const types = rawSchemaTypes(resolved);
-	return types.length > 0 && types.every((type) => type === "array");
+	return false;
 }
 
-function assertRawStructuredValue(root: unknown, node: unknown, value: unknown, required: boolean, path: string, seen?: Set<Record<string, unknown>>): void {
+function schemaBranchAcceptsRawScalar(root: unknown, branch: unknown, value: unknown): boolean {
+	if (schemaBranchAppliesToValue(root, branch, value)) return true;
+	if (typeof value !== "string") return false;
+	const resolvedBranch = resolveLocalRefs(root, branch);
+	if (!resolvedBranch) return false;
+	const types = rawSchemaTypes(resolvedBranch);
+	if (!types.some((type) => type === "number" || type === "integer")) return false;
+	const trimmed = value.trim();
+	if (trimmed.length === 0 || !Number.isFinite(Number(trimmed))) return false;
+	return !(types.includes("integer") && !types.includes("number")) || Number.isInteger(Number(trimmed));
+}
+
+function schemaUnionWrapsScalar(root: unknown, node: Record<string, unknown>, value: unknown, seen?: Set<Record<string, unknown>>): boolean {
+	const branches = unionSchemaBranches(node);
+	let wrapsScalar = false;
+	for (const branch of branches) {
+		const resolvedBranch = resolveLocalRefs(root, branch);
+		if (!resolvedBranch) continue;
+		if (rawSchemaTypes(resolvedBranch).includes("array") || schemaRequiresArray(root, resolvedBranch, seen)) {
+			wrapsScalar = true;
+			break;
+		}
+	}
+	if (!wrapsScalar) return false;
+	return !branches.some((branch) => schemaBranchAcceptsRawScalar(root, branch, value));
+}
+
+function assertRawUnionBranches(root: unknown, node: Record<string, unknown>, value: unknown, required: boolean, path: string, seen?: Set<Record<string, unknown>>, inheritedRequired?: ReadonlySet<string>): void {
+	const applicableBranches = unionSchemaBranches(node).filter((branch) => schemaBranchAppliesToValue(root, branch, value));
+	if (applicableBranches.length === 0) return;
+	const nextSeen = new Set(seen);
+	nextSeen.add(node);
+	let firstError: Error | undefined;
+	for (const branch of applicableBranches) {
+		const branchResolved = resolveLocalRefs(root, branch);
+		if (branchResolved && nextSeen.has(branchResolved)) continue;
+		try {
+			assertRawStructuredValue(root, branch, value, required, path, nextSeen, inheritedRequired);
+			return;
+		} catch (error) {
+			firstError ??= error instanceof Error ? error : new Error(String(error));
+		}
+	}
+	if (firstError) throw firstError;
+}
+
+function assertRawStructuredValue(root: unknown, node: unknown, value: unknown, required: boolean, path: string, seen?: Set<Record<string, unknown>>, inheritedRequired?: ReadonlySet<string>): void {
 	if (value === undefined) return;
 	const resolved = resolveLocalRefs(root, node);
 	if (!resolved) return;
+	let effectiveInheritedRequired = inheritedRequired;
 	if (Array.isArray(resolved.allOf)) {
 		const nextSeen = new Set(seen);
 		nextSeen.add(resolved);
+		const mergedRequired = new Set<string>(inheritedRequired ?? []);
+		for (const key of schemaRequiredFields(resolved)) mergedRequired.add(key);
+		for (const branch of resolved.allOf) {
+			const branchResolved = resolveLocalRefs(root, branch);
+			if (!branchResolved) continue;
+			for (const key of schemaRequiredFields(branchResolved)) mergedRequired.add(key);
+		}
+		effectiveInheritedRequired = mergedRequired;
 		for (const branch of resolved.allOf) {
 			const branchResolved = resolveLocalRefs(root, branch);
 			if (branchResolved && nextSeen.has(branchResolved)) continue;
-			assertRawStructuredValue(root, branch, value, required, path, nextSeen);
+			assertRawStructuredValue(root, branch, value, required, path, nextSeen, mergedRequired);
 		}
 	}
 	if (value === null) {
@@ -297,7 +379,12 @@ function assertRawStructuredValue(root: unknown, node: unknown, value: unknown, 
 	if (!Array.isArray(value) && schemaRequiresArray(root, resolved)) {
 		throw new Error(`Structured output validation failed: ${path} must be an array, received raw ${typeof value}`);
 	}
-	if (typeof value !== "object") return;
+	if (typeof value !== "object") {
+		if (schemaUnionWrapsScalar(root, resolved, value, seen)) {
+			throw new Error(`Structured output validation failed: ${path} must be an array, received raw ${typeof value}`);
+		}
+		return;
+	}
 	if (Array.isArray(value)) {
 		const prefixItems = Array.isArray(resolved.prefixItems) ? resolved.prefixItems : undefined;
 		for (let index = 0; index < value.length; index++) {
@@ -308,8 +395,11 @@ function assertRawStructuredValue(root: unknown, node: unknown, value: unknown, 
 		return;
 	}
 	const properties = resolved.properties;
-	if (!properties || typeof properties !== "object" || Array.isArray(properties)) return;
-	const requiredFields = new Set(Array.isArray(resolved.required) ? resolved.required.filter((key): key is string => typeof key === "string") : []);
+	if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+		assertRawUnionBranches(root, resolved, value, required, path, seen, effectiveInheritedRequired);
+		return;
+	}
+	const requiredFields = new Set<string>([...schemaRequiredFields(resolved), ...(effectiveInheritedRequired ?? [])]);
 	for (const [key, propertySchema] of Object.entries(properties)) {
 		if (!(key in value)) continue;
 		assertRawStructuredValue(root, propertySchema, (value as Record<string, unknown>)[key], requiredFields.has(key), `${path}.${key}`);

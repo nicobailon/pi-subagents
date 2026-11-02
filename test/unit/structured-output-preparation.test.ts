@@ -119,6 +119,26 @@ describe("structured output raw argument preparation", () => {
 		assert.equal(prepare(schema, args), args);
 	});
 
+	it("allows a numeric string when a union has a non-array number branch", () => {
+		const schema: JsonSchemaObject = {
+			anyOf: [{ type: "array", items: { type: "string" } }, { type: "number" }],
+		};
+		const args = { value: "5" };
+
+		assert.equal(prepare(schema, args), args);
+		assert.throws(() => prepare(schema, { value: "abc" }), /value must be an array, received raw string/);
+	});
+
+	it("rejects non-integer numeric strings when the union's numeric branch is integer-only", () => {
+		const schema: JsonSchemaObject = {
+			anyOf: [{ type: "array", items: { type: "string" } }, { type: "integer" }],
+		};
+		const integerString = { value: "1" };
+
+		assert.equal(prepare(schema, integerString), integerString);
+		assert.throws(() => prepare(schema, { value: "1.5" }), /value must be an array, received raw string/);
+	});
+
 	it("allows object values for unions that include a non-array branch", () => {
 		const schema: JsonSchemaObject = {
 			anyOf: [
@@ -240,6 +260,156 @@ describe("structured output raw argument preparation", () => {
 		assert.throws(() => prepare(schema, nestedNull), /value\.root\.children\[0\]\.label must not be null/);
 		const valid = { value: { root: { label: "a", children: [{ label: "b", children: [] }] } } };
 		assert.equal(prepare(schema, valid), valid);
+	});
+
+	it("rejects raw values inside applicable anyOf object branches", () => {
+		const schema: JsonSchemaObject = {
+			anyOf: [
+				{ type: "object", required: ["tags"], properties: { tags: { type: "array", items: { type: "string" } } } },
+				{ type: "null" },
+			],
+		};
+
+		assert.throws(() => prepare(schema, { value: { tags: "x" } }), /value\.tags must be an array, received raw string/);
+		const validArray = { value: { tags: ["a"] } };
+		assert.equal(prepare(schema, validArray), validArray);
+		const validNull = { value: null };
+		assert.equal(prepare(schema, validNull), validNull);
+	});
+
+	it("rejects raw values inside applicable union branches of object properties", () => {
+		const schema: JsonSchemaObject = {
+			type: "object",
+			required: ["item"],
+			properties: {
+				item: {
+					oneOf: [
+						{ type: "object", required: ["tags"], properties: { tags: { type: "array", items: { type: "string" } } } },
+					{ type: "null" },
+					],
+				},
+			},
+		};
+
+		assert.throws(() => prepare(schema, { value: { item: { tags: "x" } } }), /value\.item\.tags must be an array, received raw string/);
+		const valid = { value: { item: { tags: ["a"] } } };
+		assert.equal(prepare(schema, valid), valid);
+		const validNull = { value: { item: null } };
+		assert.equal(prepare(schema, validNull), validNull);
+	});
+
+	it("accepts the raw value when another applicable union branch allows it", () => {
+		const schema: JsonSchemaObject = {
+			anyOf: [
+				{ type: "object", required: ["tags"], properties: { tags: { type: "array", items: { type: "string" } } } },
+				{ type: "object", properties: { tags: { type: "string" } } },
+			],
+		};
+		const rawString = { value: { tags: "x" } };
+		const rawArray = { value: { tags: ["a"] } };
+
+		assert.equal(prepare(schema, rawString), rawString);
+		assert.equal(prepare(schema, rawArray), rawArray);
+	});
+
+	it("rejects raw null when required and properties split across allOf branches", () => {
+		const schema: JsonSchemaObject = {
+			type: "object",
+			required: ["title"],
+			allOf: [{ properties: { title: { type: "string" } } }],
+		};
+
+		assert.throws(() => prepare(schema, { value: { title: null } }), /value\.title must not be null/);
+		const valid = { value: { title: "ok" } };
+		assert.equal(prepare(schema, valid), valid);
+	});
+
+	it("rejects raw null when allOf splits required and properties in reverse order", () => {
+		const schema: JsonSchemaObject = {
+			type: "object",
+			allOf: [{ required: ["title"] }, { properties: { title: { type: "string" } } }],
+		};
+
+		assert.throws(() => prepare(schema, { value: { title: null } }), /value\.title must not be null/);
+		const valid = { value: { title: "ok" } };
+		assert.equal(prepare(schema, valid), valid);
+	});
+
+	it("rejects raw null when required is inherited through allOf and properties sit inside anyOf", () => {
+		const schema: JsonSchemaObject = {
+			type: "object",
+			allOf: [
+				{ required: ["x"] },
+				{ anyOf: [{ properties: { x: { type: "string" } } }] },
+			],
+		};
+
+		assert.throws(() => prepare(schema, { value: { x: null } }), /value\.x must not be null/);
+		const valid = { value: { x: "ok" } };
+		assert.equal(prepare(schema, valid), valid);
+	});
+
+	it("allows raw null across allOf branches when the field schema allows null", () => {
+		const schema: JsonSchemaObject = {
+			type: "object",
+			required: ["title"],
+			allOf: [{ properties: { title: { type: ["string", "null"] } } }],
+		};
+		const args = { value: { title: null } };
+
+		assert.equal(prepare(schema, args), args);
+	});
+
+	it("rejects raw scalars when the node's own array type combines with anyOf", () => {
+		const schema: JsonSchemaObject = {
+			type: "array",
+			items: { type: "string" },
+			anyOf: [{ type: "array" }, { type: "null" }],
+		};
+
+		assert.throws(() => prepare(schema, { value: "x" }), /value must be an array, received raw string/);
+		assert.throws(() => prepare(schema, { value: null }), /value must not be null/);
+		const valid = { value: ["x"] };
+		assert.equal(prepare(schema, valid), valid);
+	});
+
+	it("rejects raw scalars for the Greptile maxItems/minItems array example", () => {
+		const schema: JsonSchemaObject = {
+			type: "array",
+			items: { type: "string" },
+			anyOf: [{ maxItems: 1 }, { minItems: 3 }],
+		};
+
+		assert.throws(() => prepare(schema, { value: "x" }), /value must be an array, received raw string/);
+		const valid = { value: ["a"] };
+		assert.equal(prepare(schema, valid), valid);
+	});
+
+	it("rejects raw scalars for properties whose own array type combines with anyOf", () => {
+		const schema: JsonSchemaObject = {
+			type: "object",
+			required: ["tags"],
+			properties: { tags: { type: "array", anyOf: [{ type: "array" }, { type: "null" }] } },
+		};
+
+		assert.throws(() => prepare(schema, { value: { tags: "x" } }), /value\.tags must be an array, received raw string/);
+		assert.throws(() => prepare(schema, { value: { tags: null } }), /value\.tags must not be null/);
+		const valid = { value: { tags: ["x"] } };
+		assert.equal(prepare(schema, valid), valid);
+	});
+
+	it("rejects raw scalars for properties with a nullable array union and no outer type", () => {
+		const schema: JsonSchemaObject = {
+			type: "object",
+			required: ["tags"],
+			properties: { tags: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] } },
+		};
+
+		assert.throws(() => prepare(schema, { value: { tags: "x" } }), /value\.tags must be an array, received raw string/);
+		const validArray = { value: { tags: ["a", "b"] } };
+		assert.equal(prepare(schema, validArray), validArray);
+		const validNull = { value: { tags: null } };
+		assert.equal(prepare(schema, validNull), validNull);
 	});
 
 	it("passes non-object arguments through for normal validation to reject", () => {
