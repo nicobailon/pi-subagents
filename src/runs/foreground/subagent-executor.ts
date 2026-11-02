@@ -544,20 +544,24 @@ function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefine
 	return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
 }
 
-function workflowChildLaunchArgs(workflowRunId: string, key: string, request: SubagentParamsLike, scriptAgent: unknown, workflowCwd: string): SubagentLaunchArgs {
+function workflowChildLaunchArgs(workflowRunId: string, key: string, request: SubagentParamsLike, scriptAgent: unknown, ctxCwd: string, discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] }): SubagentLaunchArgs {
 	// prepareWorkflowLaunchParams turns a retained resume into { action: "resume", id, message }.
 	const resume = request.action === "resume" && typeof request.id === "string" ? request.id : undefined;
 	const agent = request.agent ?? scriptAgent;
 	const task = resume !== undefined ? request.message : request.task;
+	// cwd is where execute runs a fresh local child. A resumed child keeps its retained directory, and a
+	// placed child's cwd names a directory on its machine, so neither gets a local cwd here.
+	const placed = request.machine !== undefined
+		|| (typeof agent === "string" && resolveAgentName(agent, discoverAgents(ctxCwd, resolveExecutionAgentScope(request.agentScope)).agents).agent?.machine !== undefined);
 	return {
 		workflowRunId,
 		key,
 		...(typeof agent === "string" ? { agent } : {}),
 		...(typeof task === "string" ? { task } : {}),
-		cwd: resolveRequestedCwd(workflowCwd, request.cwd),
+		...(resume === undefined && !placed ? { cwd: resolveRequestedCwd(ctxCwd, request.cwd) } : {}),
 		...(typeof request.model === "string" ? { model: request.model } : {}),
 		...(typeof request.async === "boolean" ? { async: request.async } : {}),
-		...(request.worktree === true ? { worktree: true } : {}),
+		...(typeof request.worktree === "boolean" ? { worktree: request.worktree } : {}),
 		...(resume !== undefined ? { resume } : {}),
 	};
 }
@@ -6455,7 +6459,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										inheritedNestedRoute(deps)?.rootRunId,
 									);
 									preparedChildParams = childRequest;
-									const launchRefusal = await approveWorkflowChildLaunch(ctx, workflowChildLaunchArgs(workflowRunId, key, childRequest, childParams.agent, workflowCwd), workflowSignal);
+									const launchRefusal = await approveWorkflowChildLaunch(ctx, workflowChildLaunchArgs(workflowRunId, key, childRequest, childParams.agent, ctx.cwd, discoverWorkflowAgents), workflowSignal);
 									if (launchRefusal) return buildRequestedModeError(childRequest, launchRefusal);
 									if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 									if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
@@ -6746,7 +6750,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								inheritedNestedRoute(deps)?.rootRunId,
 							);
 							preparedChildParams = childRequest;
-							const launchRefusal = await approveWorkflowChildLaunch(ctx, workflowChildLaunchArgs(foregroundWorkflowRunId, key, childRequest, childParams.agent, workflowCwd), workflowSignal);
+							const launchRefusal = await approveWorkflowChildLaunch(ctx, workflowChildLaunchArgs(foregroundWorkflowRunId, key, childRequest, childParams.agent, ctx.cwd, discoverWorkflowAgents), workflowSignal);
 							if (launchRefusal) return buildRequestedModeError(childRequest, launchRefusal);
 							if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 							if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);

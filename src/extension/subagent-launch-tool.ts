@@ -8,7 +8,7 @@ const parameters = Type.Object({
 	key: Type.String(),
 	agent: Type.Optional(Type.String()),
 	task: Type.Optional(Type.String()),
-	cwd: Type.String(),
+	cwd: Type.Optional(Type.String()),
 	model: Type.Optional(Type.String()),
 	async: Type.Optional(Type.Boolean()),
 	worktree: Type.Optional(Type.Boolean()),
