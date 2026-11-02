@@ -535,6 +535,34 @@ describe("subagent prompt runtime", () => {
 		}
 	});
 
+	it("registers structured_output prepareArguments that rejects raw scalars and nulls before coercion", () => {
+		let prepareArguments: ((args: unknown) => unknown) | undefined;
+		registerSubagentPromptRuntime({
+			registerTool(tool: { name: string; prepareArguments?: (args: unknown) => unknown }) {
+				if (tool.name === "structured_output") prepareArguments = tool.prepareArguments;
+			},
+			on() {},
+		} as { registerTool(tool: { name: string; prepareArguments?: (args: unknown) => unknown }): void; on(): void }, childConfig({
+			structuredOutput: {
+				schema: {
+					type: "object",
+					required: ["tags", "title"],
+					properties: {
+						tags: { type: "array", items: { type: "string" } },
+						title: { type: "string" },
+					},
+				},
+				capture: () => {},
+			},
+		}));
+
+		assert.ok(prepareArguments, "structured_output should register a prepareArguments hook");
+		const valid = { value: { tags: ["a"], title: "t" } };
+		assert.equal(prepareArguments!(valid), valid, "valid arguments pass through unchanged");
+		assert.throws(() => prepareArguments!({ value: { tags: "a", title: "t" } }), /value\.tags must be an array/);
+		assert.throws(() => prepareArguments!({ value: { tags: [], title: null } }), /value\.title must not be null/);
+	});
+
 	it("requires and validates acceptanceReport when structured capture is required", async () => {
 		{
 			const captured: Array<{ value: unknown; acceptanceReport: unknown }> = [];
