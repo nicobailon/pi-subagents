@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { cleanupSessionResources, registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { CHILD_COMMAND_TOOL, createChildCommandRuntime } from "./child-commands.ts";
 import { supervisorChannelDir } from "./child-tool-plan.ts";
@@ -257,6 +258,33 @@ function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: str
 	const [commands] = extensions.splice(index, 1);
 	extensions.unshift(commands!);
 	return { ...result, extensions };
+}
+
+/** Session ids whose resources the host's pi-ai registry has released. */
+const releasedByHost = new Set<string>();
+registerSessionResourceCleanup((sessionId) => { if (sessionId) releasedByHost.add(sessionId); });
+
+/**
+ * Disposes a child and releases its session resources in the host's registry.
+ * `dispose()` runs the cleanups registered in the SDK copy the child came from.
+ * When the host is Pi's bundled CLI, that is a different copy of pi-ai from the
+ * one the host's extensions registered their cleanups in, so without this a
+ * provider's per-session resources for the child, such as a cached WebSocket,
+ * are never released.
+ */
+function disposeChildSession(session: { readonly sessionId: string; dispose(): void }, onError: ((error: ChildSessionExtensionError) => void) | undefined): void {
+	const { sessionId } = session;
+	try {
+		session.dispose();
+	} finally {
+		try {
+			if (!releasedByHost.has(sessionId)) cleanupSessionResources(sessionId);
+		} catch (error) {
+			onError?.({ extensionPath: "<session>", event: "session_resource_cleanup", error });
+		} finally {
+			releasedByHost.delete(sessionId);
+		}
+	}
 }
 
 /** One launch at a time from env application through `session_start`, so parallel launches never observe each other's `processEnv` while their extensions load and start. */
@@ -573,7 +601,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				} catch (error) {
 					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
 				} finally {
-					session.dispose();
+					disposeChildSession(session, launch.onExtensionError);
 				}
 			};
 			let inheritedProviders = new Set<string>();
@@ -642,7 +670,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 						},
 					});
 				} catch (error) {
-					session.dispose();
+					disposeChildSession(session, launch.onExtensionError);
 					throw error;
 				} finally {
 					binding = false;
