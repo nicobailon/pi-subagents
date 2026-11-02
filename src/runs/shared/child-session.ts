@@ -260,31 +260,14 @@ function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: str
 	return { ...result, extensions };
 }
 
-/** Session ids whose resources the host's pi-ai registry has released. */
-const releasedByHost = new Set<string>();
-registerSessionResourceCleanup((sessionId) => { if (sessionId) releasedByHost.add(sessionId); });
+let lastReleasedSessionId: string | undefined;
+registerSessionResourceCleanup((sessionId) => { lastReleasedSessionId = sessionId; });
 
-/**
- * Disposes a child and releases its session resources in the host's registry.
- * `dispose()` runs the cleanups registered in the SDK copy the child came from.
- * When the host is Pi's bundled CLI, that is a different copy of pi-ai from the
- * one the host's extensions registered their cleanups in, so without this a
- * provider's per-session resources for the child, such as a cached WebSocket,
- * are never released.
- */
-function disposeChildSession(session: { readonly sessionId: string; dispose(): void }, onError: ((error: ChildSessionExtensionError) => void) | undefined): void {
-	const { sessionId } = session;
-	try {
-		session.dispose();
-	} finally {
-		try {
-			if (!releasedByHost.has(sessionId)) cleanupSessionResources(sessionId);
-		} catch (error) {
-			onError?.({ extensionPath: "<session>", event: "session_resource_cleanup", error });
-		} finally {
-			releasedByHost.delete(sessionId);
-		}
-	}
+/** `dispose()` releases session resources only in the SDK's copy of pi-ai. Under Pi's bundled CLI, the host's extensions register theirs in a different copy: the one this module imports. */
+function disposeChildSession(session: { readonly sessionId: string; dispose(): void }): void {
+	lastReleasedSessionId = undefined;
+	session.dispose();
+	if (lastReleasedSessionId !== session.sessionId) cleanupSessionResources(session.sessionId);
 }
 
 /** One launch at a time from env application through `session_start`, so parallel launches never observe each other's `processEnv` while their extensions load and start. */
@@ -601,7 +584,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				} catch (error) {
 					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
 				} finally {
-					disposeChildSession(session, launch.onExtensionError);
+					disposeChildSession(session);
 				}
 			};
 			let inheritedProviders = new Set<string>();
@@ -670,7 +653,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 						},
 					});
 				} catch (error) {
-					disposeChildSession(session, launch.onExtensionError);
+					disposeChildSession(session);
 					throw error;
 				} finally {
 					binding = false;

@@ -11,12 +11,16 @@ const launch: ChildSessionLaunch = {
 	hooks: [],
 	noSkills: true,
 	noContextFiles: true,
+	// SAFETY: the fake SDK below never reads the runtime fields left out here.
 	runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
 };
 
-/** A fake SDK whose sessions run `onDispose` as their own copy of pi-ai's session cleanup. */
-function sdk(sessionId: string, onDispose: (sessionId: string) => void): PiCodingAgentModule {
-	return {
+/** Disposes a child whose SDK's `dispose()` calls `releaseInSdkRegistry`, and returns the session ids the host's registry released. */
+async function releasedByHost(releaseInSdkRegistry: (sessionId: string) => void): Promise<Array<string | undefined>> {
+	const released: Array<string | undefined> = [];
+	const unregister = registerSessionResourceCleanup((sessionId) => { released.push(sessionId); });
+	// SAFETY: launching and disposing a child without extensions uses only these SDK members.
+	const sdk = {
 		ModelRuntime: { create: async () => ({}) },
 		SettingsManager: { create: () => ({}) },
 		DefaultResourceLoader: class { async reload() {} },
@@ -24,41 +28,30 @@ function sdk(sessionId: string, onDispose: (sessionId: string) => void): PiCodin
 		resolveCliModel: () => ({}),
 		createAgentSession: async () => ({
 			session: {
+				sessionId: "child",
+				messages: [],
 				bindExtensions: async () => {},
-				dispose() { onDispose(sessionId); },
+				dispose: () => releaseInSdkRegistry("child"),
 				extensionRunner: { hasHandlers: () => false },
 				subscribe: () => () => {},
-				messages: [],
-				sessionId,
 			},
 		}),
-	} as unknown as PiCodingAgentModule;
+	} as PiCodingAgentModule;
+	try {
+		const child = await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => sdk }).create(launch);
+		await child.dispose();
+	} finally {
+		unregister();
+	}
+	return released;
 }
 
 describe("child session resource cleanup", () => {
-	it("releases the child's resources in the host's registry when the child's SDK uses another one", async () => {
-		const released: string[] = [];
-		const unregister = registerSessionResourceCleanup((sessionId) => { if (sessionId) released.push(sessionId); });
-		try {
-			const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => sdk("separate-registry-child", () => {}) });
-			const child = await factory.create(launch);
-			await child.dispose();
-			assert.deepEqual(released, ["separate-registry-child"]);
-		} finally {
-			unregister();
-		}
+	it("releases the child's resources in the host's registry when its SDK has a separate one", async () => {
+		assert.deepEqual(await releasedByHost(() => {}), ["child"]);
 	});
 
-	it("does not release the child's resources twice when the child's SDK shares the host's registry", async () => {
-		const released: string[] = [];
-		const unregister = registerSessionResourceCleanup((sessionId) => { if (sessionId) released.push(sessionId); });
-		try {
-			const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => sdk("shared-registry-child", cleanupSessionResources) });
-			const child = await factory.create(launch);
-			await child.dispose();
-			assert.deepEqual(released, ["shared-registry-child"]);
-		} finally {
-			unregister();
-		}
+	it("releases the child's resources once when its SDK shares the host's registry", async () => {
+		assert.deepEqual(await releasedByHost(cleanupSessionResources), ["child"]);
 	});
 });
