@@ -32,12 +32,13 @@ export function registerSubagentLaunchTool(pi: ExtensionAPI): void {
 }
 
 /** Offers a workflow child start to the session's `tool_call` handlers; returns the refusal, if any. */
-export async function approveWorkflowChildLaunch(ctx: ExtensionContext, args: SubagentLaunchArgs, signal: AbortSignal): Promise<string | undefined> {
+export async function approveWorkflowChildLaunch(ctx: ExtensionContext, describe: () => SubagentLaunchArgs, signal: AbortSignal): Promise<string | undefined> {
 	// Starts with no tool call behind them (schedule ticks, auto-resume, RPC) have no executeTool, and a tool
 	// allowlist that leaves the tool out unregisters it: no handler could see the call in either case.
 	if (!("executeTool" in ctx)) return undefined;
 	const toolCtx = ctx as ExtensionToolContext;
 	if (!toolCtx.tools.some((tool) => tool.name === SUBAGENT_LAUNCH_TOOL)) return undefined;
+	const args = describe();
 	const outcome = await toolCtx.executeTool(SUBAGENT_LAUNCH_TOOL, args, { signal });
 	if (!outcome.isError) return undefined;
 	const reason = outcome.result.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n").trim();
