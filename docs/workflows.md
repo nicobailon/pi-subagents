@@ -145,8 +145,8 @@ Extensions that ask about tools they have no rule for ask once per workflow chil
 
 Limits:
 - Children reused from an interrupted run's journal are not offered again; nothing new starts.
-- Starts with no tool call behind them are not offered: schedule ticks, auto-resume on session reopen, and RPC or SDK launches. Block `schedule.create`, set `authorityPolicy.scheduleCreate` to `"forbid"`, or set [`autoResume`](configuration.md#autoresume) to `false` to control those.
-- A session whose tool allowlist leaves out `subagent_launch`, including a child agent with a `tools:` list, does not register the tool, so its workflows are not checked.
+- Starts with no tool call behind them are not offered: schedule ticks, auto-resume on session reopen, `/prompt-workflow` and prompt-template delegation, and RPC or SDK launches. Block `schedule.create`, set `authorityPolicy.scheduleCreate` to `"forbid"`, or set [`autoResume`](configuration.md#autoresume) to `false` to control those.
+- Workflows started inside child agents are not offered: children do not register `subagent_launch`. Neither are workflows in a session whose tool allowlist (`pi --tools …`) leaves it out.
 - Host commands (`gate`, `acceptance.verify`, `runs.host`) and output-file writes are not offered.
 
 ### Opt-in bounded workflows

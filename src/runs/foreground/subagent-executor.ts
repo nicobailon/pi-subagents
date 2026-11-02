@@ -544,17 +544,21 @@ function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefine
 	return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
 }
 
-function workflowChildLaunchArgs(workflowRunId: string, key: string, request: SubagentParamsLike, workflowCwd: string): SubagentLaunchArgs {
+function workflowChildLaunchArgs(workflowRunId: string, key: string, request: SubagentParamsLike, scriptAgent: unknown, workflowCwd: string): SubagentLaunchArgs {
+	// prepareWorkflowLaunchParams turns a retained resume into { action: "resume", id, message }.
+	const resume = request.action === "resume" && typeof request.id === "string" ? request.id : undefined;
+	const agent = request.agent ?? scriptAgent;
+	const task = resume !== undefined ? request.message : request.task;
 	return {
 		workflowRunId,
 		key,
-		...(typeof request.agent === "string" ? { agent: request.agent } : {}),
-		...(typeof request.task === "string" ? { task: request.task } : {}),
+		...(typeof agent === "string" ? { agent } : {}),
+		...(typeof task === "string" ? { task } : {}),
 		cwd: resolveRequestedCwd(workflowCwd, request.cwd),
 		...(typeof request.model === "string" ? { model: request.model } : {}),
 		...(typeof request.async === "boolean" ? { async: request.async } : {}),
 		...(request.worktree === true ? { worktree: true } : {}),
-		...(typeof request.resume === "string" ? { resume: request.resume } : {}),
+		...(resume !== undefined ? { resume } : {}),
 	};
 }
 
@@ -6451,7 +6455,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										inheritedNestedRoute(deps)?.rootRunId,
 									);
 									preparedChildParams = childRequest;
-									const launchRefusal = await approveWorkflowChildLaunch(ctx, workflowChildLaunchArgs(workflowRunId, key, childRequest, workflowCwd), workflowSignal);
+									const launchRefusal = await approveWorkflowChildLaunch(ctx, workflowChildLaunchArgs(workflowRunId, key, childRequest, childParams.agent, workflowCwd), workflowSignal);
 									if (launchRefusal) return buildRequestedModeError(childRequest, launchRefusal);
 									if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 									if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
@@ -6742,7 +6746,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								inheritedNestedRoute(deps)?.rootRunId,
 							);
 							preparedChildParams = childRequest;
-							const launchRefusal = await approveWorkflowChildLaunch(ctx, workflowChildLaunchArgs(foregroundWorkflowRunId, key, childRequest, workflowCwd), workflowSignal);
+							const launchRefusal = await approveWorkflowChildLaunch(ctx, workflowChildLaunchArgs(foregroundWorkflowRunId, key, childRequest, childParams.agent, workflowCwd), workflowSignal);
 							if (launchRefusal) return buildRequestedModeError(childRequest, launchRefusal);
 							if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 							if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
