@@ -137,6 +137,18 @@ The host resolves the name and validates bounded plain-JSON `args` before starti
 
 `parallel` runs independent children together without writing a script: `args.tasks` is a list of `{ agent, task, cwd?, model? }` items, the children run in one `runs.all` batch, and the result lists each child's output in order. `cwd` and `model` are optional per child and apply to that child only, as they do on a `runs.all` item, so one call can fan out across several repositories or mix models. A failed child fails the workflow. Use a workflow script when steps depend on each other.
 
+### Approving workflow children in permission extensions
+
+Before a workflow starts a child, pi-subagents makes a nested `subagent_launch` tool call, so permission extensions see it in their `tool_call` handler like any other tool call. This covers reply-block, file and named workflows, and `chain` and `tasks`. The call's input is `{ workflowRunId, key, agent?, task?, cwd?, model?, async?, worktree?, resume? }`. `cwd` is the absolute directory the child starts in. It is left out for a resumed child, which keeps its earlier directory, and for a child placed on another machine. The other optional fields appear when the child request sets them. A blocked or failed call stops that child; it fails with `Workflow child '<key>' was not started: …` and the block reason. Allowed calls do nothing else. The tool is not declared to the model.
+
+Extensions that ask about tools they have no rule for ask once per workflow child until you allow `subagent_launch`. Ones that deny unknown tools without a UI, as in `pi -p`, refuse every workflow child until you allow it.
+
+Limits:
+- Children reused from an interrupted run's journal are not offered again; nothing new starts.
+- Starts with no tool call behind them are not offered: schedule ticks, auto-resume on session reopen, `/prompt-workflow` and prompt-template delegation, and RPC or SDK launches. Block `schedule.create`, set `authorityPolicy.scheduleCreate` to `"forbid"`, or set [`autoResume`](configuration.md#autoresume) to `false` to control those.
+- Workflows started inside child agents are not offered: children do not register `subagent_launch`. Neither are workflows in a session whose tool allowlist (`pi --tools …`) leaves it out.
+- Host commands (`gate`, `acceptance.verify`, `runs.host`) and output-file writes are not offered.
+
 ### Opt-in bounded workflows
 
 Composite workflows have no default parent deadline. Add bounds only when the workflow contract calls for them:

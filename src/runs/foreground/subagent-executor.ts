@@ -23,6 +23,7 @@ import { handleManagementAction } from "../../agents/agent-management.ts";
 import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
+import { approveWorkflowChildLaunch, type SubagentLaunchArgs } from "../../extension/subagent-launch-tool.ts";
 import { isWorkflowScriptPath, normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
 import { readReplyWorkflowScript } from "../../extension/reply-workflow-script.ts";
 import { disabledFeatureNotice, disabledFeatureSectionNotice, disabledFeatureUseError, resolveDisabledFeatureSurface, type DisabledFeatureSurface } from "../../shared/disabled-features.ts";
@@ -541,6 +542,28 @@ interface ExecutionContextData {
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
 	return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
+}
+
+function workflowChildLaunchArgs(workflowRunId: string, key: string, request: SubagentParamsLike, scriptAgent: unknown, ctxCwd: string, discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[] }): SubagentLaunchArgs {
+	// prepareWorkflowLaunchParams turns a retained resume into { action: "resume", id, message }.
+	const resume = request.action === "resume" && typeof request.id === "string" ? request.id : undefined;
+	const agent = request.agent ?? scriptAgent;
+	const task = resume !== undefined ? request.message : request.task;
+	// cwd is where execute runs a fresh local child. A resumed child keeps its retained directory, and a
+	// placed child's cwd names a directory on its machine, so neither gets a local cwd here.
+	const placed = request.machine !== undefined
+		|| (typeof agent === "string" && resolveAgentName(agent, discoverAgents(ctxCwd, resolveExecutionAgentScope(request.agentScope)).agents).agent?.machine !== undefined);
+	return {
+		workflowRunId,
+		key,
+		...(typeof agent === "string" ? { agent } : {}),
+		...(typeof task === "string" ? { task } : {}),
+		...(resume === undefined && !placed ? { cwd: resolveRequestedCwd(ctxCwd, request.cwd) } : {}),
+		...(typeof request.model === "string" ? { model: request.model } : {}),
+		...(typeof request.async === "boolean" ? { async: request.async } : {}),
+		...(typeof request.worktree === "boolean" ? { worktree: request.worktree } : {}),
+		...(resume !== undefined ? { resume } : {}),
+	};
 }
 
 function readWorkflowScriptFile(requestedPath: string, requestedCwd: string | undefined, runtimeCwd: string): { script: string } | { error: string } {
@@ -6427,7 +6450,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									heartbeat: { status: "running", ...(childPhase ? { phase: childPhase } : {}) },
 								});
 								let preparedChildParams: SubagentParamsLike | undefined;
-								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
+								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, async () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
 										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: parentCwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), outputClaimPath: childOutputClaimPaths.get(key), options: { missionDetached: detachWorkflowChildMissions, awaitDetachedChild: true, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
@@ -6436,6 +6459,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										inheritedNestedRoute(deps)?.rootRunId,
 									);
 									preparedChildParams = childRequest;
+									const launchRefusal = await approveWorkflowChildLaunch(ctx, () => workflowChildLaunchArgs(workflowRunId, key, childRequest, childParams.agent, parentCwd, discoverWorkflowAgents), workflowSignal);
+									if (launchRefusal) return buildRequestedModeError(childRequest, launchRefusal);
 									if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 									if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
 									workflowLaunchObservers.set(childRequest, (launch) => {
@@ -6716,7 +6741,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							heartbeat: { status: "running", ...(childPhase ? { phase: childPhase } : {}) },
 						});
 						let preparedChildParams: SubagentParamsLike | undefined;
-						const result = await runMissionWorkflowChild(missionBinding, foregroundWorkflowRunId, key, childPhase, () => {
+						const result = await runMissionWorkflowChild(missionBinding, foregroundWorkflowRunId, key, childPhase, async () => {
 							const childRequest = bindMissionWorkflowChildAsyncLaunch(
 								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams: delegatedWorkflowPermit ? { ...childParams, async: false } : childParams, parentWorkflowRunId: foregroundWorkflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), outputClaimPath: childOutputClaimPaths.get(key), options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
 								missionBinding,
@@ -6725,6 +6750,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								inheritedNestedRoute(deps)?.rootRunId,
 							);
 							preparedChildParams = childRequest;
+							const launchRefusal = await approveWorkflowChildLaunch(ctx, () => workflowChildLaunchArgs(foregroundWorkflowRunId, key, childRequest, childParams.agent, ctx.cwd, discoverWorkflowAgents), workflowSignal);
+							if (launchRefusal) return buildRequestedModeError(childRequest, launchRefusal);
 							if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 							if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
 							if (delegatedWorkflowPermit) {

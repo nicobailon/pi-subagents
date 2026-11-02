@@ -109,6 +109,7 @@ import {
 	type SubagentControlMessageDetails,
 } from "./control-notices.ts";
 import { showUpgradeNotice } from "./upgrade-notice.ts";
+import { registerSubagentLaunchTool } from "./subagent-launch-tool.ts";
 
 const SLOW_RELOAD_PHASE_MS = 250;
 // Long enough for Pi to finish starting; loading the executor blocks the event loop for tens of ms.
@@ -799,6 +800,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	registerPinnedTool(pi, tool);
 	// Declared with the same definition children use, so a fork's tool list equals this session's.
 	registerPinnedTool(pi, topLevelSupervisorTool());
+	registerSubagentLaunchTool(pi);
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		await waitForAdvertisement();
