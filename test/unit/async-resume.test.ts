@@ -250,9 +250,9 @@ describe("async resume lookup", () => {
 			handoffTo(victimRepo);
 			assert.throws(resume, /is not the worktree its launch created/);
 			handoffTo(worktrunkPath);
-			assert.equal(fs.realpathSync(resume().cwd!), fs.realpathSync(worktrunkPath));
+			assert.equal(fs.realpathSync.native(resume().cwd!), fs.realpathSync.native(worktrunkPath));
 			fs.rmSync(path.join(asyncDir, "handoff.json"));
-			assert.equal(fs.realpathSync(resume().cwd!), fs.realpathSync(worktrunkPath));
+			assert.equal(fs.realpathSync.native(resume().cwd!), fs.realpathSync.native(worktrunkPath));
 			git("worktree", "remove", "--force", worktrunkPath);
 			assert.throws(resume, /branch pi\/launched\) that no longer exists/);
 		} finally {
