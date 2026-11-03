@@ -278,7 +278,7 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 				if (reason === "ask_after_idle_channel_cleanup") fs.rmSync(supervisorDir, { recursive: true, force: true });
 				const outcome = tool.execute("ask", { reason: reason === "interview_request" ? reason : "need_decision", message: "Choose an approach" })
 					.then((value: any) => ({ value }), (error: Error) => ({ error }));
-				const { requestId } = await requested;
+				const { requestId } = await Promise.race([requested, bridge.failure]);
 				assert.ok(fs.existsSync(path.join(supervisorDir, "requests", `${requestId}.json`)), "the remote ask must reach the parent's file mailbox");
 				const error = "Supervisor unavailable: the parent is blocked in an async:false workflow. Report the blocker and partial results, then stop.";
 				fs.writeFileSync(path.join(supervisorDir, "replies", `${requestId}.json`), JSON.stringify({ type: "subagent.supervisor.reply", requestId, createdAt: Date.now(), message: reason === "successful_reply" ? "Proceed with approach A" : "", ...(reason === "successful_reply" ? {} : { error }) }));
