@@ -77,7 +77,7 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 	});
 
 	it("skips a non-mandatory required child extension for a placed child but still refuses a mandatory one", () => {
-		const extensionPath = fs.realpathSync(new URL(import.meta.url).pathname);
+		const extensionPath = fs.realpathSync(new URL(import.meta.url));
 		const placed = (requiredExtensions: Array<{ id: string; path: string; requireForAllRunners?: true }>) => buildRunnerChildLaunch({ agent: "worker", task: "inspect", machine, cwd: machine.cwd, tools: ["read"], inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, requiredExtensions }, { cwd: "/local/repo", id: "run-required", flatIndex: 0 }, { sessionEnabled: true, watchdogStatus() {} }).session;
 		assert.doesNotThrow(() => serializeHerdrPiLaunch(placed([{ id: "bili", path: extensionPath }])));
 		assert.throws(() => serializeHerdrPiLaunch(placed([{ id: "policy", path: extensionPath, requireForAllRunners: true }])), /cannot transfer local extension paths/u);
