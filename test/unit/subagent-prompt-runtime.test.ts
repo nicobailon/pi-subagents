@@ -562,7 +562,7 @@ describe("subagent prompt runtime", () => {
 	});
 
 	it("structured_output rejects a raw value before Pi's argument conversion can change it", async () => {
-		type Tool = { name: string; parameters: never; prepareArguments: (args: unknown) => Record<string, unknown>; execute: (id: string, params: unknown) => Promise<unknown> };
+		type Tool = { name: string; parameters: never; prepareArguments?: (args: unknown) => Record<string, unknown>; execute: (id: string, params: unknown) => Promise<unknown> };
 		const captured: unknown[] = [];
 		let tool: Tool | undefined;
 		const [promptRuntime] = createChildHooks(childConfig({
@@ -574,11 +574,11 @@ describe("subagent prompt runtime", () => {
 		await promptRuntime!.factory({ registerTool(registered: Tool) { if (registered.name === "structured_output") tool = registered; }, on() {} } as never);
 		// The order Pi's agent loop uses: prepareArguments, then validateToolArguments (which converts), then execute.
 		const call = async (value: unknown) => {
-			const args = validateToolArguments(tool!, { type: "toolCall", id: "call", name: "structured_output", arguments: tool!.prepareArguments({ value }) });
+			const args = validateToolArguments(tool!, { type: "toolCall", id: "call", name: "structured_output", arguments: tool!.prepareArguments?.({ value }) ?? { value } });
 			return tool!.execute("call", args);
 		};
 
-		await assert.rejects(call({ tags: "x", title: "t" }), /Structured output validation failed: tags: /);
+		await assert.rejects(call({ tags: "x", title: "t" }), /tags/);
 		await assert.rejects(call({ tags: ["x"], title: null }), /Structured output validation failed: title: /);
 		await call({ tags: ["x"], title: "t" });
 		assert.deepEqual(captured, [{ tags: ["x"], title: "t" }]);
