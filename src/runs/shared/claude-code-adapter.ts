@@ -6,14 +6,6 @@ import { checkModelScope, type ResolvedModelScope } from "./model-scope.ts";
 
 const MAX_EVENT_TYPE_LENGTH = 128;
 const MAX_ERROR_LENGTH = 4_096;
-/**
- * Largest oversized line this parser will absorb rather than fail the run on.
- *
- * A Claude Code tool result can legitimately be huge: reading a PNG returns the
- * image as base64 inside a user-role message, and one 1440-wide screenshot is
- * several hundred KB of it. The runner keeps its own hard ceiling above this.
- */
-const MAX_OVERSIZED_TOOL_RESULT_BYTES = 1024 * 1024;
 
 export const CLAUDE_CODE_ADAPTER_ID = "claude-code" as const;
 export const CLAUDE_CODE_WRITER_ADAPTER_ID = "claude-code-writer" as const;
@@ -228,15 +220,12 @@ export function createClaudeCodeJsonlParser(): ExternalCliParser {
 			return { phase: terminal ? terminal.state : "streaming", eventCount };
 		},
 		/**
-		 * Absorb an oversized line instead of failing the run.
-		 *
-		 * Without this, a child that reads back an image of its own output dies with
-		 * "parser line exceeded its byte limit" at the least useful possible moment.
-		 * Only user-role tool results are skippable: a terminal `result` event is
-		 * never skipped, because dropping it would silently discard the answer.
+		 * Reading an image returns it as base64 in a user-role tool result, so that line can be far
+		 * larger than the parser line limit. Only user lines are absorbed: a terminal `result` is
+		 * never skipped, because dropping it would discard the answer. The runner bounds the size.
 		 */
-		skipOversizedLine(prefix: string, byteLength: number): ExternalCliParserProgress | undefined {
-			if (terminal || byteLength > MAX_OVERSIZED_TOOL_RESULT_BYTES) return undefined;
+		skipOversizedLine(prefix: string): ExternalCliParserProgress | undefined {
+			if (terminal) return undefined;
 			if (!/^\s*\{\s*"type"\s*:\s*"user"\s*,/.test(prefix)) return undefined;
 			eventCount += 1;
 			return { phase: "streaming", eventCount };

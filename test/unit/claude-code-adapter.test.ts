@@ -35,7 +35,7 @@ function fakeClaudeScript(dir: string): string {
 +process.stdin.on("end", () => {
 +  if (prompt.includes("malformed")) return process.stdout.write("{bad json}\n");
 +  if (prompt.includes("oversized")) return process.stdout.write(JSON.stringify({type:"assistant", value:"x".repeat(300000)}) + "\n");
-  if (prompt.includes("big-tool-result")) process.stdout.write(JSON.stringify({type:"user", message:{role:"user", content:[{type:"tool_result", tool_use_id:"t1", content:[{type:"image", source:{type:"base64", data:"y".repeat(400000)}}]}]}}) + "\n");
++  if (prompt.includes("big-tool-result")) { const image = "y".repeat(660000); process.stdout.write(JSON.stringify({type:"user", message:{role:"user", content:[{type:"tool_result", tool_use_id:"t1", content:[{type:"image", source:{type:"base64", media_type:"image/png", data:image}}]}]}, tool_use_result:{type:"image", file:{base64:image, type:"image/png"}}}) + "\n"); }
 +  process.stdout.write(JSON.stringify({type:"system", subtype:"init"}) + "\n");
 +  if (prompt.includes("missing-terminal")) return;
 +  if (prompt.includes("auth-error")) return process.stdout.write(JSON.stringify({type:"result", subtype:"error_during_execution", is_error:true, errors:["authentication required"]}) + "\n");
@@ -111,8 +111,8 @@ describe("Claude Code adapter", () => {
 	});
 
 	it("survives an oversized user tool result and still reports the answer", async () => {
-		// A child that reads back an image of its own output used to die with
-		// "line exceeded" here, losing work that had already succeeded.
+		// Claude Code repeats a read image's base64 in message.content and tool_use_result,
+		// so a full-page screenshot gives a ~1.3 MB user line.
 		const dir = tempDir();
 		const { result } = await runFake(dir, 0, "please do the big-tool-result thing");
 		assert.equal(result.exitCode, 0, result.error ?? "");
@@ -377,11 +377,6 @@ describe("claude-code parser oversized lines", () => {
 		const parser = createClaudeCodeJsonlParser();
 		assert.equal(parser.skipOversizedLine?.(resultPrefix, 640 * 1024), undefined);
 		assert.equal(parser.skipOversizedLine?.('{"type":"assistant","message":{', 640 * 1024), undefined);
-	});
-
-	it("refuses to absorb anything past its own ceiling, leaving the runner to fail honestly", () => {
-		const parser = createClaudeCodeJsonlParser();
-		assert.equal(parser.skipOversizedLine?.(userPrefix, 2 * 1024 * 1024), undefined);
 	});
 
 	it("stops absorbing once a terminal result has landed", () => {
