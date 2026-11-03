@@ -12,8 +12,8 @@ import { claimedWorkflowRunRefusal } from "../../src/workflows/workflow-reuse.ts
 describe("workflow resume claim", () => {
 	const withRun = (body: (asyncDir: string, files: () => string[]) => void) => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-resume-claim-"));
-		const asyncDir = path.join(root, "source");
-		fs.mkdirSync(asyncDir);
+		const asyncDir = path.join(root, "async-subagent-runs", "source");
+		fs.mkdirSync(asyncDir, { recursive: true });
 		try {
 			body(asyncDir, () => fs.readdirSync(asyncDir).sort());
 		} finally {
@@ -160,11 +160,13 @@ describe("workflow resume claim", () => {
 		assert.equal(describe((dir) => writeClaim(dir, 1, { ...foreignClaim, trigger: "manual" })), "Resumed as first-run.");
 		assert.equal(describe((dir) => writeClaim(dir, 1, { ...foreignClaim, trigger: "reuse" })), "Relaunched as first-run.");
 		// No claim (a released top is none): by hand, by id only when the saved launch can be resumed.
-		const script = { version: 1, source: "script", params: { workflowScript: "return 1;" }, scriptDigest: "digest" } as const;
-		assert.equal(describe((dir) => writeWorkflowLaunchRecord(dir, script)), byHand);
-		assert.equal(describe((dir) => { writeWorkflowLaunchRecord(dir, script); claimWorkflowResume(dir, { newRunId: "given-back", trigger: "auto" }); releaseWorkflowResumeClaim(dir, "given-back"); }), byHand);
+		const script = { version: 2, sessionId: "session", source: "script", params: { workflowScript: "return 1;" }, scriptDigest: "digest" } as const;
+		const saveLaunch = (dir: string, record: Parameters<typeof writeWorkflowLaunchRecord>[2]) => writeWorkflowLaunchRecord(path.dirname(dir), "source", record);
+		assert.equal(describe((dir) => saveLaunch(dir, script)), byHand);
+		assert.equal(describe((dir) => { saveLaunch(dir, script); claimWorkflowResume(dir, { newRunId: "given-back", trigger: "auto" }); releaseWorkflowResumeClaim(dir, "given-back"); }), byHand);
 		assert.equal(describe(() => {}), relaunch);
-		assert.equal(describe((dir) => writeWorkflowLaunchRecord(dir, { version: 1, source: "structured", scriptDigest: "digest" })), relaunch);
-		assert.equal(describe((dir) => fs.writeFileSync(path.join(dir, "launch.json"), "{")), relaunch);
+		assert.equal(describe((dir) => saveLaunch(dir, { version: 2, sessionId: "session", source: "structured", scriptDigest: "digest" })), relaunch);
+		// A launch.json the run wrote into its own directory is not the parent's record.
+		assert.equal(describe((dir) => fs.writeFileSync(path.join(dir, "launch.json"), JSON.stringify(script))), relaunch);
 	});
 });

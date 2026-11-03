@@ -10,7 +10,7 @@ import registerSubagentExtension from "../../src/extension/index.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
 import { DIRS, type AsyncStatus } from "../../src/shared/types.ts";
-import { writeWorkflowLaunchRecord, type WorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
+import { workflowLaunchRecordDir, writeWorkflowLaunchRecord, type WorkflowLaunch } from "../../src/workflows/workflow-launch-record.ts";
 import { readWorkflowResumeClaim } from "../../src/workflows/workflow-resume-claim.ts";
 import { resolveWorkflowResource } from "../../src/workflows/workflow-resources.ts";
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
@@ -126,8 +126,12 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		return { tool, ctx, sent, notifications, staleSends: () => staleSends, autoResumeMessages, shutDown: async (shutdownReason: string) => { stale = true; for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: shutdownReason }, ctx); } };
 	};
 
-	/** What a killed Pi leaves behind: a running status under a dead pid, its saved launch, and the active-run marker. */
-	const writeCrashedRun = (sessionId: string, launch: WorkflowLaunchRecord, lastUpdate: number, options: { pid?: number; cwd?: string } = {}) => {
+	type SavedLaunch = WorkflowLaunch & { scriptDigest: string };
+	/**
+	 * What a killed Pi leaves behind: a running status under a dead pid, its saved launch, and the
+	 * active-run marker. `launchIn: "run-dir"` is what a sandboxed run can forge in its own directory.
+	 */
+	const writeCrashedRun = (sessionId: string, launch: SavedLaunch, lastUpdate: number, options: { pid?: number; cwd?: string; launchIn?: "run-dir" } = {}) => {
 		const runId = `crashed-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
 		const asyncDir = path.join(DIRS.async, runId);
 		fs.mkdirSync(asyncDir, { recursive: true });
@@ -135,11 +139,14 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			runId, sessionId: sessionFileFor(sessionId), mode: "workflow", state: "running", pid: options.pid ?? deadPid(), completionOwnerId: DEAD_PI_COMPLETION_OWNER, startedAt: lastUpdate - 1000, lastUpdate, cwd: options.cwd ?? tempDir, steps: [],
 			workflow: { trace: [], emits: [], console: [], scriptDigest: launch.scriptDigest },
 		}));
-		writeWorkflowLaunchRecord(asyncDir, launch);
+		const record = { ...launch, version: 2 as const, sessionId: sessionFileFor(sessionId) };
+		// The format earlier versions read from the run folder, so the forgery would have worked there.
+		if (options.launchIn === "run-dir") fs.writeFileSync(path.join(asyncDir, "launch.json"), JSON.stringify({ ...launch, version: 1 }));
+		else writeWorkflowLaunchRecord(DIRS.async, runId, record);
 		updateActiveRunIndex(asyncDir, "running");
 		return runId;
 	};
-	const scriptLaunch = (script: string): WorkflowLaunchRecord => ({ version: 1, source: "script", params: { workflowScript: script, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256(script) });
+	const scriptLaunch = (script: string): SavedLaunch => ({ source: "script", params: { workflowScript: script, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256(script) });
 
 	it("relaunches a workflow replaced by /reload once, reusing its finished child and re-attaching its running one", { timeout: 30_000 }, async () => {
 		const nonce = `auto-reload-${Date.now()}`;
@@ -219,6 +226,22 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		assert.equal(runtime.sent.some((entry) => entry.options?.triggerTurn === true), false, "nothing starts a turn");
 		assert.equal(noticesFor(runtime.sent, recentId).length, 1, "still one notice");
 		await runtime.shutDown("quit");
+	});
+
+	it("does not relaunch a run whose workflow status and launch.json were written inside its own run directory", { timeout: 30_000 }, async () => {
+		const nonce = `auto-forged-${Date.now()}`;
+		const sessionId = `session-${nonce}`;
+		const script = `const only = await runs.run("only", { agent: "echo", task: "Forged ${nonce}" }); return only.output;`;
+		mockPi.onCall({ matchArgIncludes: `Forged ${nonce}`, output: "forged child ran" });
+		const forgedId = writeCrashedRun(sessionId, scriptLaunch(script), Date.now() - 60_000, { launchIn: "run-dir" });
+		const runtime = await startRuntime("startup", sessionId);
+		assert.equal(readStatusFile(forgedId)?.workflow?.stopCause, "owner-exited");
+		assert.match(JSON.parse(fs.readFileSync(path.join(DIRS.async, forgedId, "resume-refused.json"), "utf-8")).reason, /^launch\.json is missing/);
+		await assert.rejects(runtime.tool.execute(`resume-${nonce}`, { action: "resume", id: forgedId }, new AbortController().signal, undefined, runtime.ctx), new RegExp(`^Error: Cannot resume workflow '${forgedId}': launch\\.json is missing`));
+		await runtime.shutDown("quit");
+		await (await startRuntime("startup", sessionId)).shutDown("quit");
+		assert.deepEqual(resumedRuns(forgedId), []);
+		assert.equal(mockPi.callCount(), 0, "no child of the forged script started");
 	});
 
 	it("does not resume another session's runs after /new, or when autoResume is off", { timeout: 30_000 }, async () => {
@@ -348,7 +371,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const script = `const only = await runs.run("only", { agent: "echo", task: "Only ${nonce}" }); return only.output;`;
 		// Long enough to outlast the test's checks, short enough that a run nothing aborts still ends.
 		mockPi.onCall({ matchArgIncludes: `Only ${nonce}`, delay: 10_000, output: "late" });
-		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256(script) }, Date.now() - 60_000);
+		const sourceId = writeCrashedRun(sessionId, { source: "resource", params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256(script) }, Date.now() - 60_000);
 		// The launch resolves the resource after its last check; cleaning the runtime there is "cleaned while launching".
 		let cleanUpDuringLaunch: (() => void) | undefined;
 		const registration = registerWorkflowResource({ sessionId, definition: { name: resourceName, version: 1, resolve: () => { cleanUpDuringLaunch?.(); return { script }; } } });
@@ -381,7 +404,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			const sessionId = `session-${nonce}-reload`;
 			const before = await startRuntime("startup", sessionId);
 			const refusedId = await launchHeld(before);
-			fs.rmSync(path.join(DIRS.async, refusedId, "launch.json"));
+			fs.rmSync(workflowLaunchRecordDir(DIRS.async, refusedId), { recursive: true });
 			await before.shutDown("reload");
 			const reloaded = await startRuntime("reload", sessionId);
 			const refusal = JSON.parse(fs.readFileSync(path.join(DIRS.async, refusedId, "resume-refused.json"), "utf-8")) as { reason: string; byHand: string };
@@ -398,7 +421,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const nonce = `auto-stale-fail-${Date.now()}`;
 		const sessionId = `session-${nonce}`;
 		const resourceName = "test.gone-during-launch";
-		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256("return 1;") }, Date.now() - 60_000);
+		const sourceId = writeCrashedRun(sessionId, { source: "resource", params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256("return 1;") }, Date.now() - 60_000);
 		// The launch resolves the resource after its last check: a reload there, then the resource is gone.
 		let reloadDuringLaunch: (() => void) | undefined;
 		const registration = registerWorkflowResource({ sessionId, definition: { name: resourceName, version: 1, resolve: () => { reloadDuringLaunch?.(); throw new Error("the resource is gone"); } } });
@@ -491,7 +514,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const nonce = `auto-fail-${Date.now()}`;
 		const sessionId = `session-${nonce}`;
 		const resourceName = "test.gone";
-		const sourceId = writeCrashedRun(sessionId, { version: 1, source: "resource", params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256("return 1;") }, Date.now() - 60_000);
+		const sourceId = writeCrashedRun(sessionId, { source: "resource", params: { workflow: resourceName, cwd: tempDir, async: true, mission: false }, scriptDigest: sha256("return 1;") }, Date.now() - 60_000);
 
 		const runtime = await startRuntime("startup", sessionId);
 		const [message] = await waitUntil("the failure message", () => runtime.autoResumeMessages().length > 0 && runtime.autoResumeMessages());

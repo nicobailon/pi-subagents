@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import registerFanoutChildSubagentExtension from "../../src/extension/fanout-child.ts";
 import { createSubagentExecutor, readNestedRecoveryDescriptor } from "../../src/runs/foreground/subagent-executor.ts";
-import { createNestedRoute, findNestedControlResult, nestedResultsPath, nestedRunNotActiveMessage, projectNestedEvents, readNestedControlRequests, readNestedControlResults, snapshotNestedEventFiles, writeNestedControlRequest, writeNestedControlResult, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
+import { createNestedRoute, findNestedControlResult, nestedResultsPath, nestedRunNotActiveMessage, nestedRunScope, projectNestedEvents, readNestedControlRequests, readNestedControlResults, snapshotNestedEventFiles, writeNestedControlRequest, writeNestedControlResult, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
@@ -20,6 +20,8 @@ import { readProcessTerminal } from "../../src/runs/background/process-terminal.
 import { readStatus } from "../../src/shared/utils.ts";
 import { interruptRequestPath } from "../../src/runs/background/control-channel.ts";
 import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
+import { writeFileCreatingDir } from "../support/helpers.ts";
 
 const routeRoots: string[] = [];
 const fanoutListenerCleanupKey = "__piSubagentFanoutChildNestedControlInboxCleanups";
@@ -469,10 +471,14 @@ describe("nested control routing", () => {
 				share: false,
 				extensionBindings: { "shepherd.dispatch/1": { role: "coder" } },
 			};
-			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify(descriptor));
-			assert.deepEqual(readNestedRecoveryDescriptor(root, "nested-bound", "worker")?.extensionBindings, descriptor.extensionBindings);
-			assert.throws(() => readNestedRecoveryDescriptor(root, "other-run", "worker"), /different source run/);
-			assert.throws(() => readNestedRecoveryDescriptor(root, "nested-bound", "reviewer"), /different agent/);
+			const rootRunId = `binding-root-${path.basename(root)}`;
+			const nestedRoot = nestedRunScope(rootRunId).asyncDirRoot;
+			writeFileCreatingDir(recoveryDescriptorPath(nestedRoot, "nested-bound"), JSON.stringify(descriptor));
+			writeFileCreatingDir(recoveryDescriptorPath(nestedRoot, "other-run"), JSON.stringify(descriptor));
+			assert.deepEqual(readNestedRecoveryDescriptor(rootRunId, "nested-bound", "worker")?.extensionBindings, descriptor.extensionBindings);
+			assert.throws(() => readNestedRecoveryDescriptor(rootRunId, "other-run", "worker"), /different source run/);
+			assert.throws(() => readNestedRecoveryDescriptor(rootRunId, "nested-bound", "reviewer"), /different agent/);
+			fs.rmSync(nestedRoot, { recursive: true, force: true });
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

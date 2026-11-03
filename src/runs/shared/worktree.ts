@@ -296,6 +296,28 @@ function runGitChecked(cwd: string, args: string[]): string {
 	return result.stdout;
 }
 
+/** The comparable path of the worktree git lists on `branch` in the repository at `repoCwd`, if any. */
+export function findListedWorktreeOnBranch(repoCwd: string, branch: string): string | undefined {
+	let current: string | undefined;
+	for (const line of runGitChecked(repoCwd, ["worktree", "list", "--porcelain"]).split("\n")) {
+		if (line.startsWith("worktree ")) current = line.slice("worktree ".length);
+		else if (line === `branch refs/heads/${branch}` && current) return normalizeComparableCwd(current);
+	}
+	return undefined;
+}
+
+/** The agent cwd inside the worktree git lists on `branch` for the repository at `repoCwd`, if any. */
+export function findListedWorktreeAgentCwd(repoCwd: string, branch: string): string | undefined {
+	const worktree = findListedWorktreeOnBranch(repoCwd, branch);
+	if (!worktree) return undefined;
+	const cwdRelative = resolveRepoCwdRelative(repoCwd);
+	return cwdRelative ? path.join(worktree, cwdRelative) : worktree;
+}
+
+export function isComparablePathInside(parent: string, child: string): boolean {
+	return isPathInside(normalizeComparableCwd(parent), normalizeComparableCwd(child));
+}
+
 /** Validate a captured patch against the worktree index without changing either. */
 export function validateWorktreePatch(worktreePath: string, patchPath: string): string | undefined {
 	const result = runGit(worktreePath, [...PATCH_VALIDATION_OPTIONS, patchPath]);

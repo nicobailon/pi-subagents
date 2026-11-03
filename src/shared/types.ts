@@ -837,9 +837,16 @@ export interface SteeringRecoveryDescriptor {
 	requiredExtensions?: RequiredChildExtensionSnapshot;
 	runFanoutBudget: RunFanoutBudgetDescriptor;
 	sourceRunId: string;
+	/** The session that launched the run; only it, or a session that replaced it, may resume the run. */
+	sessionId?: string;
 	agentContract?: AgentContract;
 	agent: string;
 	sessionFile?: string;
+	/**
+	 * The managed worktree the launch chose, so a resume never takes its cwd from the run's own
+	 * handoff.json alone: the native cwd the parent computed, or the Worktrunk branch it requested.
+	 */
+	managedWorktree?: { provider: "native"; cwd: string } | { provider: "worktrunk"; branch: string };
 	/** Git ref used to allocate managed worktrees for this run. */
 	baseRef?: string;
 	/** Launcher name the run was wrapped with, or null when it ran unwrapped; resume re-reads its argv from current user config.

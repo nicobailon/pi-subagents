@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { readAsyncRecoveryDescriptor } from "./async-resume.ts";
 import type { TokenUsage } from "../../shared/types.ts";
@@ -56,7 +57,7 @@ function childResumability(run: AsyncRunSummary, step: AsyncRunSummary["steps"][
 	if (session.state === "not-resumable") return session;
 	let recoveryDescriptor: ReturnType<typeof readAsyncRecoveryDescriptor>;
 	try {
-		recoveryDescriptor = readAsyncRecoveryDescriptor(run.asyncDir);
+		recoveryDescriptor = readAsyncRecoveryDescriptor(path.dirname(run.asyncDir), path.basename(run.asyncDir));
 		if (!recoveryDescriptor) return { state: "not-resumable", reason: "missing recovery descriptor" };
 		if (recoveryDescriptor.sourceRunId !== run.id) return { state: "not-resumable", reason: `recovery descriptor belongs to run ${recoveryDescriptor.sourceRunId}` };
 		if (recoveryDescriptor.agent !== step.agent) return { state: "not-resumable", reason: `recovery descriptor belongs to agent ${recoveryDescriptor.agent}` };
