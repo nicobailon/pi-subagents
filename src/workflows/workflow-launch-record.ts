@@ -10,11 +10,12 @@ const WORKFLOW_LAUNCHES_DIR = "async-subagent-launches";
 /**
  * The public launch of an async top-level workflow, saved so the run can be relaunched later. A
  * named resource is saved by name (its `runs.host` permit cannot be saved); structured tasks/chain
- * launches save no params, so they cannot be relaunched from this record.
+ * launches and internal ones (schedule ticks, prompt-template delegation) save no params, so they
+ * cannot be relaunched from this record; their record still gives a child revive its ceiling.
  * The record is the only source of a relaunch's owner and capability ceiling. It lives outside the
  * run directory because a run behind a runner launcher can write its own directory.
  */
-export type WorkflowLaunch = { source: "script" | "resource"; params: Record<string, unknown> } | { source: "structured" };
+export type WorkflowLaunch = { source: "script" | "resource"; params: Record<string, unknown> } | { source: "structured" } | { source: "internal" };
 export type WorkflowLaunchRecord = WorkflowLaunch & {
 	version: 2;
 	scriptDigest: string;
@@ -78,8 +79,8 @@ export function readWorkflowLaunchRecord(asyncDirRoot: string, runId: string): W
 		sessionId: value.sessionId,
 		...(admissionCapabilityCeiling ? { admissionCapabilityCeiling } : {}),
 	};
-	if (value.source === "structured") return { ok: true, record: { ...owner, source: "structured" } };
-	if (value.source !== "script" && value.source !== "resource") return invalid("source must be \"script\", \"resource\", or \"structured\"");
+	if (value.source === "structured" || value.source === "internal") return { ok: true, record: { ...owner, source: value.source } };
+	if (value.source !== "script" && value.source !== "resource") return invalid("source must be \"script\", \"resource\", \"structured\", or \"internal\"");
 	if (!isPlainObject(value.params)) return invalid("params must be an object");
 	return { ok: true, record: { ...owner, source: value.source, params: value.params } };
 }

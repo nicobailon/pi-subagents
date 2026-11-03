@@ -19,6 +19,7 @@ import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } fro
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 import { validateIntercomBridgeConfig } from "../../intercom/intercom-bridge.ts";
 import { validateModelResponseAliases } from "../../shared/model-response-aliases.ts";
+import { readWorkflowLaunchRecord } from "../../workflows/workflow-launch-record.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -301,6 +302,7 @@ function normalizeRecoveryAcceptance(value: unknown, descriptorPath: string): Ac
 	return value as AcceptanceInput;
 }
 
+/** A workflow-mode target has a ceiling only when its parent-owned launch record exists (resolveAsyncResumeTarget). */
 export function asyncReviveRequiresRecoveryDescriptor(target: Pick<AsyncResumeTarget, "recoveryDescriptor" | "mode" | "sessionFile" | "capabilityCeiling">): boolean {
 	if (target.recoveryDescriptor) return false;
 	return !(target.mode === "workflow" && target.sessionFile && target.capabilityCeiling);
@@ -589,8 +591,15 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const stepModel = statusSteps[index]?.launchModel ?? statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
 	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
 	const thinkingCeiling = statusSteps[index]?.thinkingCeiling ?? (stepCount === 1 ? recoveryDescriptor?.thinkingCeiling : undefined);
+	// A workflow's admission ceiling comes only from the parent-owned launch record of its run directory:
+	// a run behind a launcher can write its own status.json (including a directory nested in it) and the
+	// shared results directory. Without a record there is no ceiling, so a revive without a recovery
+	// descriptor is refused.
+	const workflowLaunch = mode === "workflow" && location.asyncDir && path.dirname(location.asyncDir) === path.resolve(asyncDirRoot)
+		? readWorkflowLaunchRecord(asyncDirRoot, runId)
+		: undefined;
 	const capabilityCeiling = mode === "workflow"
-		? intersectSubagentCapabilityCeilings(status?.admissionCapabilityCeiling, result?.admissionCapabilityCeiling)
+		? (workflowLaunch?.ok ? workflowLaunch.record.admissionCapabilityCeiling : undefined)
 		: intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
 	const managedWorktreeCwd = location.asyncDir
 		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index, statusSteps[index]?.worktreePath)

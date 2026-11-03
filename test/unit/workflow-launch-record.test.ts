@@ -20,7 +20,7 @@ describe("workflow launch record", () => {
 				[JSON.stringify({ version: 2, sessionId: "s", source: "script", params: {} }), /^scriptDigest must be a non-empty string$/],
 				[JSON.stringify({ version: 2, source: "script", params: {}, scriptDigest: "d" }), /^sessionId must be a non-empty string$/],
 				[JSON.stringify({ version: 2, sessionId: "s", source: "script", params: {}, scriptDigest: "d", admissionCapabilityCeiling: { version: 9 } }), /admissionCapabilityCeiling/],
-				[JSON.stringify({ version: 2, sessionId: "s", source: "other", scriptDigest: "d" }), /^source must be "script", "resource", or "structured"$/],
+				[JSON.stringify({ version: 2, sessionId: "s", source: "other", scriptDigest: "d" }), /^source must be "script", "resource", "structured", or "internal"$/],
 				[JSON.stringify({ version: 2, sessionId: "s", source: "script", params: [], scriptDigest: "d" }), /^params must be an object$/],
 			];
 			for (const [text, error] of cases) {

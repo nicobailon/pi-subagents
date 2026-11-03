@@ -253,5 +253,5 @@ export function describeWorkflowResume(asyncDir: string, runId: string): string 
 	}
 	if (claim) return `${RESUMED_AS[claim.trigger]} ${claim.newRunId}.`;
 	const launch = readWorkflowLaunchRecord(path.dirname(asyncDir), runId);
-	return launch.ok && launch.record.source !== "structured" ? resumeByHandText(runId) : relaunchByHandText(runId);
+	return launch.ok && (launch.record.source === "script" || launch.record.source === "resource") ? resumeByHandText(runId) : relaunchByHandText(runId);
 }

@@ -81,6 +81,7 @@ describe("prepareWorkflowResume", () => {
 				["missing", { launch: null }, "launch-missing", "launch.json is missing (the run started before launches were saved outside its run directory)"],
 				["invalid", { launch: "{bad" }, "launch-invalid", "launch.json is invalid: not valid JSON: "],
 				["structured", { launch: { version: 2, sessionId: "session", source: "structured", scriptDigest: "d" } }, "structured", "launched from tasks/chain"],
+				["internal", { launch: { version: 2, sessionId: "session", source: "internal", scriptDigest: "d" } }, "internal", "launched by a schedule or prompt-template delegation"],
 				["edited", { launch: { ...scriptLaunch, params: { ...scriptLaunch.params, workflowScript: "return 2;" } } }, "launch-invalid", "launch.json is invalid: its script does not match its scriptDigest"],
 			];
 			for (const [runId, options, code, reason] of cases) {

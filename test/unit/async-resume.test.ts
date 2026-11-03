@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { writeWorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
 import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
@@ -107,10 +108,12 @@ describe("async resume lookup", () => {
 			const resultsDir = path.join(root, "results");
 			const sessionFile = path.join(root, "child-session.jsonl");
 			const parentAuthority = { version: 1 as const, allowedAgents: ["researcher", "worker"], denyExtensions: false, sources: ["workflow-parent"] };
+			const statusAuthority = { version: 1 as const, allowedAgents: ["anything"], denyExtensions: false, sources: ["status"] };
 			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeWorkflowLaunchRecord(asyncRoot, "workflow-2", { version: 2, sessionId: "session", source: "structured", scriptDigest: "d", admissionCapabilityCeiling: parentAuthority });
 			writeJson(path.join(asyncRoot, "workflow-2", "status.json"), {
 				runId: "workflow-2", mode: "workflow", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
-				admissionCapabilityCeiling: parentAuthority,
+				admissionCapabilityCeiling: statusAuthority,
 				steps: [{ agent: "worker", status: "complete", sessionFile, capabilityCeiling: { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["agent:worker"] } }],
 			});
 
@@ -125,9 +128,29 @@ describe("async resume lookup", () => {
 				admissionCapabilityCeiling: parentAuthority,
 				results: [{ agent: "worker", success: true, sessionFile }],
 			});
+			// The shared results directory is writable by runs, so a result file alone does not give a ceiling.
 			const resultOnly = resolveAsyncResumeTarget({ id: "workflow-2" }, { asyncDirRoot: asyncRoot, resultsDir });
-			assert.deepEqual(resultOnly.capabilityCeiling, parentAuthority);
-			assert.equal(asyncReviveRequiresRecoveryDescriptor(resultOnly), false);
+			assert.equal(resultOnly.capabilityCeiling, undefined);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor(resultOnly), true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("requires a recovery descriptor for a run that wrote a workflow status into its own directory", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-forged-workflow-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "other-session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncRoot, "single-1", "status.json"), {
+				runId: "single-1", mode: "workflow", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
+				admissionCapabilityCeiling: { version: 1, allowedAgents: ["worker"], denyExtensions: false, sources: ["forged"] },
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
+			});
+			const target = resolveAsyncResumeTarget({ id: "single-1" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			assert.equal(target.capabilityCeiling, undefined);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor(target), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

@@ -18,7 +18,7 @@ type WorkflowResumeTrigger = "auto" | "manual";
 
 export type WorkflowResumeRefusalCode =
 	| "not-owned" | "not-interrupted" | "claim-busy" | "claim-resumed"
-	| "launch-missing" | "launch-invalid" | "structured" | "digest" | "authority"
+	| "launch-missing" | "launch-invalid" | "structured" | "internal" | "digest" | "authority"
 	| "capacity" | "attempts" | "launch-failed";
 
 export interface WorkflowResumeRefusalReason {
@@ -42,7 +42,7 @@ export interface PreparedWorkflowResume {
 type WorkflowResumePreparation = { ok: true; prepared: PreparedWorkflowResume } | ({ ok: false } & WorkflowResumeRefusalReason);
 
 export function workflowResumeRefusal(code: WorkflowResumeRefusalCode, reason: string, runId: string): WorkflowResumeRefusalReason {
-	const byHand = code === "launch-missing" || code === "launch-invalid" || code === "structured" || code === "digest" || code === "authority"
+	const byHand = code === "launch-missing" || code === "launch-invalid" || code === "structured" || code === "internal" || code === "digest" || code === "authority"
 		? relaunchByHandText(runId)
 		: code === "capacity" || code === "attempts" || code === "launch-failed" ? resumeByHandText(runId) : "";
 	return { code, reason, byHand };
@@ -96,6 +96,7 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 	const attempt = (status.workflow?.resumeOrigin?.attempt ?? 0) + (status.workflow?.stopCause === WORKFLOW_STOP_CAUSE_OWNER_EXITED ? 1 : 0);
 	if (trigger === "auto" && attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) return refuse("attempts", `${MAX_WORKFLOW_RESUME_ATTEMPTS} resumes already followed Pi exits`);
 	if (record.source === "structured") return refuse("structured", "launched from tasks/chain");
+	if (record.source === "internal") return refuse("internal", "launched by a schedule or prompt-template delegation");
 	if (record.source === "script" && (typeof record.params.workflowScript !== "string" || workflowScriptDigest(record.params.workflowScript) !== record.scriptDigest)) {
 		return refuse("launch-invalid", "launch.json is invalid: its script does not match its scriptDigest");
 	}
