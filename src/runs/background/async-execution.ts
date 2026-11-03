@@ -1266,7 +1266,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const launchRuleError = applyWatchdogLaunchRules({ cwd: machine ? runnerCwd : stepCwd, agent: a.name, model: selectedModel, warn: (violation) => sendRuleViolationWarning(ctx.pi, violation) });
 		if (launchRuleError) throw new AsyncStartValidationError(launchRuleError);
 		const fast = s.fast ?? params.fast ?? a.fast;
-		const requiredExtensions = externalRunner ? [] : params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? registeredExtensions;
+		// Admission already refused mandatory entries for a placed child, which skips the rest.
+		const requiredExtensions = externalRunner || machine ? [] : params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? registeredExtensions;
 		const toolPlan = resolvePiLaunchToolPlan({
 			tools: a.tools,
 			excludeTools: a.excludeTools,
@@ -2122,7 +2123,8 @@ export function executeAsyncSingle(
 			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 		}
 	}
-	const requiredExtensions = externalRunner ? [] : params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? registeredExtensions;
+	// Admission already refused mandatory entries for a placed child, which skips the rest.
+	const requiredExtensions = externalRunner || machine ? [] : params.requiredExtensions ?? ctx.childRuntime?.requiredExtensions ?? registeredExtensions;
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agentConfig.tools,
 		excludeTools: agentConfig.excludeTools,
