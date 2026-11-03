@@ -219,6 +219,17 @@ export function createClaudeCodeJsonlParser(): ExternalCliParser {
 			}
 			return { phase: terminal ? terminal.state : "streaming", eventCount };
 		},
+		/**
+		 * Reading an image returns it as base64 in a user-role tool result, so that line can be far
+		 * larger than the parser line limit. Only user lines are absorbed: a terminal `result` is
+		 * never skipped, because dropping it would discard the answer. The runner bounds the size.
+		 */
+		skipOversizedLine(prefix: string): ExternalCliParserProgress | undefined {
+			if (terminal) return undefined;
+			if (!/^\s*\{\s*"type"\s*:\s*"user"\s*,/.test(prefix)) return undefined;
+			eventCount += 1;
+			return { phase: "streaming", eventCount };
+		},
 		finish(): ExternalCliParserTerminal | undefined {
 			return terminal;
 		},
