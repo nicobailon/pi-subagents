@@ -561,7 +561,7 @@ function workflowChildLaunchArgs(workflowRunId: string, key: string, request: Su
 	// acceptance (gate is already acceptance here). A resume's retained commands were in the call that first launched it.
 	const acceptanceInput = request.acceptance !== undefined || resume !== undefined
 		? request.acceptance
-		: (runCwd === ctxCwd && request.machine === undefined ? ctxAgent : findAgent(runCwd))?.defaultAcceptance;
+		: (placed || runCwd === ctxCwd ? ctxAgent ?? findAgent(ctxCwd) : findAgent(runCwd))?.defaultAcceptance;
 	// An invalid acceptance fails the launch before anything runs. Verify commands run only at level
 	// "verified", which no inferred level reaches.
 	const acceptance = acceptanceInput !== undefined && validateAcceptanceInput(acceptanceInput).length === 0 ? normalizeAcceptanceInput(acceptanceInput) : undefined;
