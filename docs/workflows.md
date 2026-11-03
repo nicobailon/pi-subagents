@@ -139,7 +139,7 @@ The host resolves the name and validates bounded plain-JSON `args` before starti
 
 ### Approving workflow children in permission extensions
 
-Before a workflow starts a child, pi-subagents makes a nested `subagent_launch` tool call, so permission extensions see it in their `tool_call` handler like any other tool call. This covers reply-block, file and named workflows, and `chain` and `tasks`. The call's input is `{ workflowRunId, key, agent?, task?, cwd?, model?, async?, worktree?, resume? }`. `cwd` is the absolute directory the child starts in. It is left out for a resumed child, which keeps its earlier directory, and for a child placed on another machine. The other optional fields appear when the child request sets them. A blocked or failed call stops that child; it fails with `Workflow child '<key>' was not started: …` and the block reason. Allowed calls do nothing else. The tool is not declared to the model.
+Before a workflow starts a child, pi-subagents makes a nested `subagent_launch` tool call, so permission extensions see it in their `tool_call` handler like any other tool call. This covers reply-block, file and named workflows, and `chain` and `tasks`. The call's input is `{ workflowRunId, key, agent?, task?, cwd?, model?, async?, worktree?, resume?, commands?, output? }`. `cwd` is the absolute directory the child starts in. It is left out for a resumed child, which keeps its earlier directory, and for a child placed on another machine. `commands` lists, in run order, the shell commands the child's `gate`, `acceptance.verify` or agent `acceptance` will run on this machine after the child finishes, each `{ command, cwd?, env? }`; a command's `cwd` is absolute and is left out when the child's is. `output` is the absolute path of the file the child's `output` writes. The other optional fields appear when the child request sets them. A blocked or failed call stops that child, so its commands never run and its output file is never written; it fails with `Workflow child '<key>' was not started: …` and the block reason. Allowed calls do nothing else. The tool is not declared to the model.
 
 Extensions that ask about tools they have no rule for ask once per workflow child until you allow `subagent_launch`. Ones that deny unknown tools without a UI, as in `pi -p`, refuse every workflow child until you allow it.
 
@@ -147,7 +147,9 @@ Limits:
 - Children reused from an interrupted run's journal are not offered again; nothing new starts.
 - Starts with no tool call behind them are not offered: schedule ticks, auto-resume on session reopen, `/prompt-workflow` and prompt-template delegation, and RPC or SDK launches. Block `schedule.create`, set `authorityPolicy.scheduleCreate` to `"forbid"`, or set [`autoResume`](configuration.md#autoresume) to `false` to control those.
 - Workflows started inside child agents are not offered: children do not register `subagent_launch`. Neither are workflows in a session whose tool allowlist (`pi --tools …`) leaves it out.
-- Host commands (`gate`, `acceptance.verify`, `runs.host`) and output-file writes are not offered.
+- Commands are offered at launch, not when they run. An extension's `bash` rules don't apply to them on their own; it has to check `commands`.
+- A resumed child's retained `acceptance.verify` commands are not listed again; only commands the resume request adds are.
+- `runs.host` is only available to built-in workflows (`run-ci` runs only `npm test` or `npm run typecheck`) and is not offered.
 
 ### Opt-in bounded workflows
 

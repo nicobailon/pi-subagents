@@ -57,7 +57,7 @@ import { isScheduledRunAction } from "../background/scheduled-runs.ts";
 import { encodeIndexSegment } from "../background/index-segment.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { acceptanceHasTypedVerify, normalizeGateAcceptance, resolveAcceptanceReportMode, TYPED_VERIFY_OUTPUT_SCHEMA_CONFLICT, validateAcceptanceInput, validateExecutionAcceptance, validateExecutionAcceptancePolicy } from "../shared/acceptance.ts";
+import { acceptanceHasTypedVerify, normalizeAcceptanceInput, normalizeGateAcceptance, resolveAcceptanceReportMode, TYPED_VERIFY_OUTPUT_SCHEMA_CONFLICT, validateAcceptanceInput, validateExecutionAcceptance, validateExecutionAcceptancePolicy } from "../shared/acceptance.ts";
 import { canPreferFork, createForkContextResolver, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
@@ -551,18 +551,38 @@ function workflowChildLaunchArgs(workflowRunId: string, key: string, request: Su
 	const task = resume !== undefined ? request.message : request.task;
 	// cwd is where execute runs a fresh local child. A resumed child keeps its retained directory, and a
 	// placed child's cwd names a directory on its machine, so neither gets a local cwd here.
-	const placed = request.machine !== undefined
-		|| (typeof agent === "string" && resolveAgentName(agent, discoverAgents(ctxCwd, resolveExecutionAgentScope(request.agentScope)).agents).agent?.machine !== undefined);
+	const scope = resolveExecutionAgentScope(request.agentScope);
+	const findAgent = (dir: string) => typeof agent === "string" ? resolveAgentName(agent, discoverAgents(dir, scope).agents).agent : undefined;
+	const ctxAgent = request.machine === undefined ? findAgent(ctxCwd) : undefined;
+	const placed = request.machine !== undefined || ctxAgent?.machine !== undefined;
+	const runCwd = resolveRequestedCwd(ctxCwd, request.cwd);
+	const cwd = resume === undefined && !placed ? runCwd : undefined;
+	// Mirrors applySingleAgentLaunchDefaults: the agent's defaultAcceptance applies only to a fresh launch with no
+	// acceptance (gate is already acceptance here). A resume's retained commands were in the call that first launched it.
+	const acceptanceInput = request.acceptance !== undefined || resume !== undefined
+		? request.acceptance
+		: (runCwd === ctxCwd && request.machine === undefined ? ctxAgent : findAgent(runCwd))?.defaultAcceptance;
+	// An invalid acceptance fails the launch before anything runs. Verify commands run only at level
+	// "verified", which no inferred level reaches.
+	const acceptance = acceptanceInput !== undefined && validateAcceptanceInput(acceptanceInput).length === 0 ? normalizeAcceptanceInput(acceptanceInput) : undefined;
+	const commands = acceptance?.level === "verified" ? (acceptance.verify ?? []).map((verify) => ({
+		command: verify.command,
+		...(cwd !== undefined ? { cwd: verify.cwd ? path.resolve(cwd, verify.cwd) : cwd } : {}),
+		...(verify.env !== undefined ? { env: verify.env } : {}),
+	})) : [];
+	const output = resolveSingleOutputPath(request.output, ctxCwd);
 	return {
 		workflowRunId,
 		key,
 		...(typeof agent === "string" ? { agent } : {}),
 		...(typeof task === "string" ? { task } : {}),
-		...(resume === undefined && !placed ? { cwd: resolveRequestedCwd(ctxCwd, request.cwd) } : {}),
+		...(cwd !== undefined ? { cwd } : {}),
 		...(typeof request.model === "string" ? { model: request.model } : {}),
 		...(typeof request.async === "boolean" ? { async: request.async } : {}),
 		...(typeof request.worktree === "boolean" ? { worktree: request.worktree } : {}),
 		...(resume !== undefined ? { resume } : {}),
+		...(commands.length > 0 ? { commands } : {}),
+		...(output !== undefined ? { output } : {}),
 	};
 }
 
