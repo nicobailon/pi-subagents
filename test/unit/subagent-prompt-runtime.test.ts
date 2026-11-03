@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import type { AssistantMessage, Message, Model, ToolResultMessage } from "@earendil-works/pi-ai";
+import { validateToolArguments, type AssistantMessage, type Message, type Model, type ToolResultMessage } from "@earendil-works/pi-ai";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import { convertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
@@ -559,6 +559,29 @@ describe("subagent prompt runtime", () => {
 			await execute!("valid", { value: {}, acceptanceReport: { manualNotes: "validated evidence" } });
 			assert.deepEqual(captured, [{ value: {}, acceptanceReport: { manualNotes: "validated evidence" } }]);
 		}
+	});
+
+	it("structured_output rejects a raw value before Pi's argument conversion can change it", async () => {
+		type Tool = { name: string; parameters: never; prepareArguments?: (args: unknown) => Record<string, unknown>; execute: (id: string, params: unknown) => Promise<unknown> };
+		const captured: unknown[] = [];
+		let tool: Tool | undefined;
+		const [promptRuntime] = createChildHooks(childConfig({
+			structuredOutput: {
+				schema: { type: "object", required: ["tags", "title"], properties: { tags: { type: "array", items: { type: "string" } }, title: { type: "string" } } },
+				capture: (value) => captured.push(value),
+			},
+		}));
+		await promptRuntime!.factory({ registerTool(registered: Tool) { if (registered.name === "structured_output") tool = registered; }, on() {} } as never);
+		// The order Pi's agent loop uses: prepareArguments, then validateToolArguments (which converts), then execute.
+		const call = async (value: unknown) => {
+			const args = validateToolArguments(tool!, { type: "toolCall", id: "call", name: "structured_output", arguments: tool!.prepareArguments?.({ value }) ?? { value } });
+			return tool!.execute("call", args);
+		};
+
+		await assert.rejects(call({ tags: "x", title: "t" }), /tags/);
+		await assert.rejects(call({ tags: ["x"], title: null }), /Structured output validation failed: title: /);
+		await call({ tags: ["x"], title: "t" });
+		assert.deepEqual(captured, [{ tags: ["x"], title: "t" }]);
 	});
 
 	it("captures an omitted optional acceptance report as undefined", async () => {

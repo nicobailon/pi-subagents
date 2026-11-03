@@ -45,7 +45,7 @@ export interface ChildSessionExtensionError {
 
 export interface ChildHookExtension {
 	name: string;
-	factory: (pi: ExtensionAPI) => void;
+	factory: (pi: ExtensionAPI) => void | Promise<void>;
 }
 
 export type ChildSessionStorage =
