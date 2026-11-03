@@ -2139,7 +2139,7 @@ setInterval(() => {}, 1000);
 		const ctx = forkCtx("launcher-resume");
 		mockPi.onCall({ output: "first run" });
 		const sourceId = await launchAndFinish(executor, ctx, "sandboxed");
-		assert.equal(readJson(recoveryDescriptorPath(path.join(ASYNC_DIR, sourceId))).launcher, "wrap");
+		assert.equal(readJson(recoveryDescriptorPath(ASYNC_DIR, sourceId)).launcher, "wrap");
 		fs.rmSync(argvLog);
 		// The agent file no longer names a launcher; the recorded one still applies.
 		const unwrappedAgent = [makeAgent("sandboxed")];

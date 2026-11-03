@@ -14,7 +14,7 @@ import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
 import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
 import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/parallel-handoff.ts";
-import { findListedWorktreeOnBranch, isComparablePathInside, normalizeWorktreeBaseRef } from "../shared/worktree.ts";
+import { findListedWorktreeAgentCwd, findListedWorktreeOnBranch, isComparablePathInside, normalizeWorktreeBaseRef } from "../shared/worktree.ts";
 import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 import { validateIntercomBridgeConfig } from "../../intercom/intercom-bridge.ts";
@@ -315,9 +315,8 @@ function resumeTargetMode(status: AsyncStatus | null, result: AsyncResultFile | 
 	return undefined;
 }
 
-export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): SteeringRecoveryDescriptor | undefined {
-	if (!asyncDir) return undefined;
-	const descriptorPath = recoveryDescriptorPath(asyncDir);
+export function readAsyncRecoveryDescriptor(runsRoot: string, runId: string): SteeringRecoveryDescriptor | undefined {
+	const descriptorPath = recoveryDescriptorPath(runsRoot, runId);
 	if (!fs.existsSync(descriptorPath)) return undefined;
 	let value: unknown;
 	try {
@@ -473,6 +472,17 @@ function assertLaunchedWorktreeCwd(runId: string, launchCwd: string, launched: N
 	return handoffCwd;
 }
 
+/** A run launched in a worktree resumes in it, never in the source checkout, even when handoff.json is missing. */
+function launchedWorktreeCwdWithoutHandoff(runId: string, launchCwd: string, launched: NonNullable<SteeringRecoveryDescriptor["managedWorktree"]>): string {
+	const cwd = launched.provider === "native" ? launched.cwd : findListedWorktreeAgentCwd(launchCwd, launched.branch);
+	let isDirectory = false;
+	try { isDirectory = cwd !== undefined && fs.statSync(cwd).isDirectory(); } catch { /* reported below */ }
+	if (!isDirectory) {
+		throw new Error(`Async run '${runId}' ran in a managed worktree (${launched.provider === "native" ? launched.cwd : `branch ${launched.branch}`}) that no longer exists; it cannot resume in the source checkout.`);
+	}
+	return cwd!;
+}
+
 function validateResumeSessionFile(runId: string, sessionFile: string): string {
 	if (path.extname(sessionFile) !== ".jsonl") throw new Error(`Async run '${runId}' session file must be a .jsonl file: ${sessionFile}`);
 	const resolved = path.resolve(sessionFile);
@@ -513,7 +523,10 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		: undefined;
 	const status = reconciliation?.status ?? null;
 	validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
-	const recoveryDescriptor = readAsyncRecoveryDescriptor(location.asyncDir ?? undefined);
+	// Records are trusted only for a run folder directly under the runs root: `dir` may name a
+	// runs-shaped tree a run built inside its own folder.
+	const directRunFolder = location.asyncDir !== null && path.dirname(location.asyncDir) === path.resolve(asyncDirRoot);
+	const recoveryDescriptor = directRunFolder ? readAsyncRecoveryDescriptor(asyncDirRoot, path.basename(location.asyncDir!)) : undefined;
 	const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
 	const runId = location.asyncDir ? path.basename(location.asyncDir) : result?.runId ?? result?.id ?? location.resolvedId ?? "unknown";
 	// Only a single run writes a recovery descriptor. When one exists, the run's identity (agent,
@@ -625,7 +638,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	// a run behind a launcher can write its own status.json (including a directory nested in it) and the
 	// shared results directory. Without a record there is no ceiling, so a revive without a recovery
 	// descriptor is refused.
-	const workflowLaunch = mode === "workflow" && location.asyncDir && path.dirname(location.asyncDir) === path.resolve(asyncDirRoot)
+	const workflowLaunch = mode === "workflow" && directRunFolder
 		? readWorkflowLaunchRecord(asyncDirRoot, runId)
 		: undefined;
 	const capabilityCeiling = recoveryDescriptor
@@ -636,8 +649,10 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const handoffWorktreeCwd = location.asyncDir && (!recoveryDescriptor || recoveryDescriptor.managedWorktree)
 		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index, statusSteps[index]?.worktreePath)
 		: undefined;
-	const managedWorktreeCwd = handoffWorktreeCwd && recoveryDescriptor?.managedWorktree
-		? assertLaunchedWorktreeCwd(runId, recoveryDescriptor.cwd, recoveryDescriptor.managedWorktree, handoffWorktreeCwd)
+	const managedWorktreeCwd = recoveryDescriptor?.managedWorktree
+		? handoffWorktreeCwd
+			? assertLaunchedWorktreeCwd(runId, recoveryDescriptor.cwd, recoveryDescriptor.managedWorktree, handoffWorktreeCwd)
+			: launchedWorktreeCwdWithoutHandoff(runId, recoveryDescriptor.cwd, recoveryDescriptor.managedWorktree)
 		: handoffWorktreeCwd;
 	const resumeCwd = validateResumeCwd(runId, managedWorktreeCwd ?? (recoveryDescriptor ? recoveryDescriptor.cwd : status?.cwd ?? result?.cwd));
 

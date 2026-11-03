@@ -157,7 +157,7 @@ export default function registerSmoke(pi: ExtensionAPI) {
 				assert.equal(status.sessionId, ctx.sessionManager.getSessionId());
 				assert.equal(status.completionOwnerId, parentStatus.completionOwnerId);
 				assert.equal(status.steps[0].model, "standalone-smoke/local");
-				const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(runDir), "utf8"));
+				const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(path.dirname(runDir), path.basename(runDir)), "utf8"));
 				assert.deepEqual(descriptor.tools, expectedDeclaredTools);
 				const observed = fs.readFileSync("/stage/bootstrap-observer.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((event) => event.pid === status.pid);
 				assert.deepEqual(observed.map((event) => event.event), mode === "sdk-init-failure" ? ["observer-ready"] : ["observer-ready", "session-start"]);

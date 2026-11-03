@@ -1577,8 +1577,8 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 	return realSessionFile;
 }
 
-export function readNestedRecoveryDescriptor(asyncDir: string | undefined, runId: string, agent: string): SteeringRecoveryDescriptor | undefined {
-	const recoveryDescriptor = readAsyncRecoveryDescriptor(asyncDir);
+export function readNestedRecoveryDescriptor(rootRunId: string, runId: string, agent: string): SteeringRecoveryDescriptor | undefined {
+	const recoveryDescriptor = readAsyncRecoveryDescriptor(nestedRunScope(rootRunId).asyncDirRoot, runId);
 	if (!recoveryDescriptor) return undefined;
 	if (recoveryDescriptor.sourceRunId !== runId) throw new Error(`Nested run '${runId}' has a recovery descriptor for a different source run.`);
 	if (recoveryDescriptor.agent !== agent) throw new Error(`Nested run '${runId}' has a recovery descriptor for a different agent.`);
@@ -1593,7 +1593,7 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 	if (!agent) throw new Error(`Could not determine child agent for nested run '${run.id}'.`);
 	const state = run.state === "complete" || run.state === "failed" || run.state === "paused" ? run.state : "failed";
 	const asyncDir = resolveNestedAsyncDir(match.match.rootRunId, run);
-	const recoveryDescriptor = readNestedRecoveryDescriptor(asyncDir, run.id, agent);
+	const recoveryDescriptor = asyncDir ? readNestedRecoveryDescriptor(match.match.rootRunId, run.id, agent) : undefined;
 	return compactOptional<NestedResumeSourceTarget>({
 		kind: "revive",
 		source: "nested",
@@ -2086,7 +2086,8 @@ async function resumeAsyncRun(input: {
 	if (input.params.baseRef !== undefined && "managedWorktree" in target && target.managedWorktree === true) {
 		return { content: [{ type: "text", text: "Cannot resume with baseRef: retained managed-worktree children continue in their existing worktree. Start a new worktree run from that base ref instead." }], isError: true, details: { mode: "management", results: [] } };
 	}
-	if (target.source === "async" && target.managedWorktree && target.asyncDir) {
+	// Without a handoff the resume runs in the worktree the descriptor recorded; there is no cleanup record to mark preserved.
+	if (target.source === "async" && target.managedWorktree && target.asyncDir && fs.existsSync(parallelHandoffPath(target.asyncDir))) {
 		try {
 			const protectedCwd = await protectRetainedWorktreeForResume(parallelHandoffPath(target.asyncDir), target.runId, target.index, input.signal);
 			if (path.resolve(protectedCwd) !== path.resolve(effectiveCwd)) throw new Error("Retained worktree cwd changed during resume admission.");

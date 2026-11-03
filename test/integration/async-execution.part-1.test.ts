@@ -755,7 +755,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			intercomBridge: { mode: "off" },
 		});
 		assert.match(launch.details.launchContractDigest ?? "", /^[a-f0-9]{64}$/);
-		const recovery = JSON.parse(fs.readFileSync(recoveryDescriptorPath(path.join(ASYNC_DIR, id)), "utf-8")) as { runFanoutBudget?: { rootRunId?: string; limit?: number }; context?: string; intercomBridge?: { mode?: string }; tools?: string[]; systemPrompt?: string };
+		const recovery = JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, id), "utf-8")) as { runFanoutBudget?: { rootRunId?: string; limit?: number }; context?: string; intercomBridge?: { mode?: string }; tools?: string[]; systemPrompt?: string };
 		assert.deepEqual(recovery.runFanoutBudget && { rootRunId: recovery.runFanoutBudget.rootRunId, limit: recovery.runFanoutBudget.limit }, { rootRunId: id, limit: 64 });
 		assert.equal(recovery.context, "fork");
 		assert.deepEqual(recovery.intercomBridge, { mode: "off" });
@@ -1068,7 +1068,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const expectedDir = path.join(path.dirname(sessionFile), "subagent-artifacts");
 		assert.equal(launch.isError, undefined);
 		assert.ok(launch.details.asyncId);
-		const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(launch.details.asyncDir!), "utf-8"));
+		const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(path.dirname(launch.details.asyncDir!), path.basename(launch.details.asyncDir!)), "utf-8"));
 		assert.equal(descriptor.artifactsDir, expectedDir);
 		assert.equal(descriptor.artifactConfig.dir, "session");
 

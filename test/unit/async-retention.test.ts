@@ -130,7 +130,7 @@ describe("async retention cleanup", () => {
 			const runDir = writeOldRun(roots.asyncDirRoot, "old-run");
 			const topLevelRoute = writeOldRun(roots.asyncDirRoot, "top-level-route", { isNested: false });
 			const nonResumableDir = writeOldRun(roots.asyncDirRoot, "missing-session");
-			const descriptorPath = recoveryDescriptorPath(nonResumableDir);
+			const descriptorPath = recoveryDescriptorPath(path.dirname(nonResumableDir), path.basename(nonResumableDir));
 			writeFileCreatingDir(descriptorPath, JSON.stringify({ sourceRunId: "missing-session", sessionFile: path.join(roots.root, "missing.jsonl") }));
 			fs.utimesSync(descriptorPath, OLD / 1000, OLD / 1000);
 			fs.utimesSync(nonResumableDir, OLD / 1000, OLD / 1000);
@@ -179,7 +179,7 @@ describe("async retention cleanup", () => {
 			const resumable = writeOldRun(roots.asyncDirRoot, "resumable");
 			const sessionFile = path.join(roots.root, "resumable.jsonl");
 			fs.writeFileSync(sessionFile, "{}\n");
-			writeFileCreatingDir(recoveryDescriptorPath(resumable), JSON.stringify({ sourceRunId: "resumable", sessionFile }));
+			writeFileCreatingDir(recoveryDescriptorPath(path.dirname(resumable), path.basename(resumable)), JSON.stringify({ sourceRunId: "resumable", sessionFile }));
 			const statusSessionFile = path.join(roots.root, "status-session.jsonl");
 			fs.writeFileSync(statusSessionFile, "{}\n");
 			writeOldRun(roots.asyncDirRoot, "status-session", { sessionFile: statusSessionFile });
@@ -237,7 +237,7 @@ describe("async retention cleanup", () => {
 			const expired = NOW - (RESUMABLE_RETENTION_DAYS + 1) * DAY_MS;
 			const writeResumableRun = (runId: string, endedAt: number): string => {
 				const runDir = writeOldRun(roots.asyncDirRoot, runId, { endedAt });
-				writeFileCreatingDir(recoveryDescriptorPath(runDir), JSON.stringify({ sourceRunId: runId, sessionFile }));
+				writeFileCreatingDir(recoveryDescriptorPath(path.dirname(runDir), path.basename(runDir)), JSON.stringify({ sourceRunId: runId, sessionFile }));
 				fs.utimesSync(path.join(runDir, "status.json"), endedAt / 1000, endedAt / 1000);
 				fs.utimesSync(runDir, endedAt / 1000, endedAt / 1000);
 				return runDir;

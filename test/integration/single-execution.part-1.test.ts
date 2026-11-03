@@ -87,7 +87,7 @@ function writeRetainedEchoRun(runId: string, options: { outputPath: string; stat
 		sessionFile,
 		steps: Array.from({ length: options.steps }, () => ({ agent: "echo", status: options.state, sessionFile })),
 	}), "utf-8");
-	writeFileCreatingDir(recoveryDescriptorPath(asyncDir), JSON.stringify({
+	writeFileCreatingDir(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), JSON.stringify({
 		version: 1,
 		runFanoutBudget,
 		sourceRunId: runId,

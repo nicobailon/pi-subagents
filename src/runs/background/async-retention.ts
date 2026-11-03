@@ -202,7 +202,7 @@ function hasResumableContract(runDir: string, status: AsyncStatus): boolean {
 	const statusSessionFiles = [status.sessionFile, ...(status.steps ?? []).map((step) => step.sessionFile)];
 	if (statusSessionFiles.some(existingRegularFile)) return true;
 	// runDir may be a tombstone; the launch folder is keyed by the run id.
-	const descriptorPath = recoveryDescriptorPath(path.join(path.dirname(runDir), status.runId));
+	const descriptorPath = recoveryDescriptorPath(path.dirname(runDir), status.runId);
 	if (!fs.existsSync(descriptorPath)) return false;
 	const descriptor = readJson(descriptorPath);
 	if (!descriptor) return true;
@@ -839,7 +839,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 					}
 					mutationStateChanged = true;
 					fs.rmSync(runDir, { recursive: true });
-					fs.rmSync(runLaunchDir(path.join(options.asyncDirRoot, status!.runId)), { recursive: true, force: true });
+					fs.rmSync(runLaunchDir(options.asyncDirRoot, status!.runId), { recursive: true, force: true });
 					removeRunTombstoneMarker(maintenanceRoot, status!.runId);
 					result.reapedTombstones += 1;
 					deletedIds.push(`run-tombstone:${status!.runId}`);
@@ -870,7 +870,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 				}
 				fs.rmSync(tombstone, { recursive: true });
 				// Retention never deletes a workflow run, so this removes only a single run's recovery descriptor.
-				fs.rmSync(runLaunchDir(path.join(options.asyncDirRoot, status!.runId)), { recursive: true, force: true });
+				fs.rmSync(runLaunchDir(options.asyncDirRoot, status!.runId), { recursive: true, force: true });
 				removeRunTombstoneMarker(maintenanceRoot, status!.runId);
 				result.deletedRuns += 1;
 				deletedIds.push(`run:${status!.runId}`);

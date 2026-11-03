@@ -56,7 +56,7 @@ function writeRetainedRun(root: string, index: number, options: WriteRunOptions 
 	}), "utf-8");
 	updateActiveRunIndex(asyncDir, state);
 	if (options.recoveryDescriptor === "invalid") {
-		writeFileCreatingDir(recoveryDescriptorPath(asyncDir), JSON.stringify({
+		writeFileCreatingDir(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), JSON.stringify({
 			version: 2,
 			sourceRunId: runId,
 			agent: "worker",
@@ -65,7 +65,7 @@ function writeRetainedRun(root: string, index: number, options: WriteRunOptions 
 			outputMode: "inline",
 		}), "utf-8");
 	} else if (options.recoveryDescriptor !== "missing") {
-		writeFileCreatingDir(recoveryDescriptorPath(asyncDir), JSON.stringify({
+		writeFileCreatingDir(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), JSON.stringify({
 			version: 1,
 			runFanoutBudget: createRunFanoutBudget(runId, 64),
 			sourceRunId: options.recoverySourceRunId ?? runId,
@@ -171,7 +171,7 @@ describe("retained child roster", () => {
 				["child-9", { state: "not-resumable", reason: "external runner" }],
 				["child-8", { state: "not-resumable", reason: "recovery descriptor belongs to agent reviewer" }],
 				["child-7", { state: "not-resumable", reason: "recovery descriptor belongs to run other-run" }],
-				["child-6", { state: "not-resumable", reason: `invalid recovery descriptor: Invalid async recovery descriptor '${recoveryDescriptorPath(path.join(root, "runs", "child-6"))}': version must be 1.` }],
+				["child-6", { state: "not-resumable", reason: `invalid recovery descriptor: Invalid async recovery descriptor '${recoveryDescriptorPath(path.join(root, "runs"), "child-6")}': version must be 1.` }],
 				["child-5", { state: "not-resumable", reason: "missing recovery descriptor" }],
 				["child-4", { state: "not-resumable", reason: "external runner" }],
 				["child-3", { state: "not-resumable", reason: "stopped run" }],

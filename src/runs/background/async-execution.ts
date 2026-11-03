@@ -2233,7 +2233,7 @@ export function executeAsyncSingle(
 	};
 	if (!externalRunner) {
 		try {
-			writePrivateAtomicJson(recoveryDescriptorPath(asyncDir), recoveryDescriptor);
+			writePrivateAtomicJson(recoveryDescriptorPath(path.dirname(asyncDir), id), recoveryDescriptor);
 		} catch (error) {
 			return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
 		}

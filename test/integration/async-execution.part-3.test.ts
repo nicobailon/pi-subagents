@@ -1482,7 +1482,7 @@ export default function() {
 				denyExtensions: false,
 				sources: ["agent:planner", "current-caller", "original-parent"],
 			});
-			const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(path.join(ASYNC_DIR, retainedId)), "utf-8"));
+			const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, retainedId), "utf-8"));
 			assert.deepEqual(descriptor.allowedAgents, ["researcher"]);
 			assert.deepEqual(descriptor.capabilityCeiling, {
 				version: 1,
@@ -1792,7 +1792,7 @@ syncBuiltinESMExports();
 			maxSubagentDepth: 2,
 		});
 		await readAsyncPayload(sourceId);
-		assert.equal(JSON.parse(fs.readFileSync(recoveryDescriptorPath(path.join(ASYNC_DIR, sourceId)), "utf-8")).fast, true);
+		assert.equal(JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, sourceId), "utf-8")).fast, true);
 
 		mockPi.onCall({ output: "Revived async work" });
 		const result = await makeAsyncExecutor([makeAgent("worker")]).execute(
@@ -1888,7 +1888,7 @@ syncBuiltinESMExports();
 			maxSubagentDepth: 2,
 		});
 		await readAsyncPayload(sourceId);
-		const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(path.join(ASYNC_DIR, sourceId)), "utf-8"));
+		const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, sourceId), "utf-8"));
 		assert.equal(descriptor.modelOverrideFromParent, true);
 		assert.equal(descriptor.modelOrigin, "inherited");
 

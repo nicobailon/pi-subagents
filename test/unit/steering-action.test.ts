@@ -542,7 +542,7 @@ describe("acknowledged steering action", () => {
 		const sessionFile = path.join(asyncDir, "child.jsonl");
 		writeStatus(asyncDir, runningStatus(runId));
 		fs.writeFileSync(sessionFile, "", "utf-8");
-		writePrivateAtomicJson(recoveryDescriptorPath(asyncDir), recoveryDescriptor(runId, sessionFile));
+		writePrivateAtomicJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), recoveryDescriptor(runId, sessionFile));
 		const routeOnly = (requestPath: string): AsyncStatus => {
 			const request = JSON.parse(fs.readFileSync(requestPath, "utf-8")) as SteerRequest;
 			const routed = runningStatus(runId);
@@ -584,7 +584,7 @@ describe("acknowledged steering action", () => {
 		const sessionFile = path.join(asyncDir, "child.jsonl");
 		writeStatus(asyncDir, runningStatus(runId));
 		fs.writeFileSync(sessionFile, "", "utf-8");
-		const descriptorPath = recoveryDescriptorPath(asyncDir);
+		const descriptorPath = recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir));
 		writePrivateAtomicJson(descriptorPath, recoveryDescriptor(runId, sessionFile));
 		if (process.platform !== "win32") assert.equal(fs.statSync(descriptorPath).mode & 0o777, 0o600);
 		let receivedLimits: unknown;
@@ -651,7 +651,7 @@ describe("acknowledged steering action", () => {
 		const runId = `steer-no-session-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		writeStatus(asyncDir, runningStatus(runId));
-		writePrivateAtomicJson(recoveryDescriptorPath(asyncDir), recoveryDescriptor(runId));
+		writePrivateAtomicJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), recoveryDescriptor(runId));
 		let recovered = false;
 		let recoveryCommitted = false;
 		let routed: AsyncStatus | undefined;

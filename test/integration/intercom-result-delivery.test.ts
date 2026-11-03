@@ -190,7 +190,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	function writeRecoveryDescriptor(asyncDir: string, runId: string, agent = "worker", overrides: Record<string, unknown> = {}): void {
 		const runFanoutBudget = createRunFanoutBudget(runId, 64);
 		budgetDirectories.push(runFanoutBudget.directory);
-		writeFileCreatingDir(recoveryDescriptorPath(asyncDir), JSON.stringify({
+		writeFileCreatingDir(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), JSON.stringify({
 			version: 1,
 			runFanoutBudget,
 			sourceRunId: runId,

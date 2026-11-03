@@ -28,7 +28,7 @@ type WorkflowLaunchRecordRead =
 	| { ok: false; missing: boolean; error: string };
 
 export function workflowLaunchRecordDir(asyncDirRoot: string, runId: string): string {
-	return runLaunchDir(path.join(asyncDirRoot, runId));
+	return runLaunchDir(asyncDirRoot, runId);
 }
 
 function launchRecordPath(asyncDirRoot: string, runId: string): string {

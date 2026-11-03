@@ -29,7 +29,7 @@ function writeStatus(asyncRoot: string, runId: string, state: string, extra: obj
 }
 
 function writeRecoveryDescriptor(asyncRoot: string, runId: string, agent: string, sessionFile: string, cwd: string): void {
-	writeFileCreatingDir(recoveryDescriptorPath(path.join(asyncRoot, runId)), JSON.stringify({
+	writeFileCreatingDir(recoveryDescriptorPath(asyncRoot, runId), JSON.stringify({
 		version: 1,
 		sourceRunId: runId,
 		agent,
