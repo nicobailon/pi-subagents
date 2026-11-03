@@ -244,7 +244,7 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		finally { for (const socket of sockets) socket.destroy(); handlers.get("session_shutdown")?.(); old.mode === undefined ? delete process.env[HERDR_PI_MODE_ENV] : process.env[HERDR_PI_MODE_ENV] = old.mode; old.run === undefined ? delete process.env[HERDR_PI_RUN_ENV] : process.env[HERDR_PI_RUN_ENV] = old.run; old.dir === undefined ? delete process.env[HERDR_PI_RUNTIME_DIR_ENV] : process.env[HERDR_PI_RUNTIME_DIR_ENV] = old.dir; fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 
-	for (const reason of ["need_decision", "interview_request", "successful_reply"] as const) {
+	for (const reason of ["need_decision", "interview_request", "successful_reply", "ask_after_idle_channel_cleanup"] as const) {
 		it(`preserves ${reason} through the shared Herdr/Rex supervisor file relay and bridge`, { timeout: 10_000 }, async () => {
 			// Short prefix: the bridge socket lives under this dir, and macOS caps Unix socket paths at 104 bytes.
 			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "psr-"));
@@ -274,6 +274,8 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 					bridge!.listeners.add((frame) => { if (frame.type === "supervisor-request") resolve(frame as { requestId: string }); });
 				});
 				// Attach both handlers before sending a response, including the expected tool rejection.
+				// The parent's stale-channel cleanup removes an idle channel's empty directories.
+				if (reason === "ask_after_idle_channel_cleanup") fs.rmSync(supervisorDir, { recursive: true, force: true });
 				const outcome = tool.execute("ask", { reason: reason === "interview_request" ? reason : "need_decision", message: "Choose an approach" })
 					.then((value: any) => ({ value }), (error: Error) => ({ error }));
 				const { requestId } = await requested;
