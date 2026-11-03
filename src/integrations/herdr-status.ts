@@ -10,7 +10,6 @@ const DEFAULT_SOURCE = "pi-subagents:herdr";
 const DEFAULT_TTL_MS = 120_000;
 const DEFAULT_REFRESH_MS = 45_000;
 const MAX_TASK_LABEL_CHARS = 80;
-const MAX_TITLE_TASK_CHARS = 42;
 const MAX_WORKFLOW_LABEL_NODES = 128;
 const MAX_WORKFLOW_LABEL_DEPTH = 8;
 
@@ -176,11 +175,7 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 
 	const titleSuffix = (): string | undefined => {
 		if (runs.size === 0) return undefined;
-		const agentNames = activeAgentNames();
-		const activeCount = activeSubagentCount();
-		const task = boundedTaskLabel(activeTaskLabel(), MAX_TITLE_TASK_CHARS);
-		const target = task ?? (activeCount === 1 && agentNames.length === 1 ? agentNames[0]! : String(activeCount));
-		return `⏳${target}${attentionRuns.size > 0 ? "⚠" : ""}`;
+		return `⏳${activeSubagentCount()}${attentionRuns.size > 0 ? "⚠" : ""}`;
 	};
 
 	const enqueue = (args: readonly string[]): void => {
