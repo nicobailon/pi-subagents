@@ -290,6 +290,17 @@ function closestModelCandidates(model: string, availableModels: AvailableModelIn
 		.map((entry) => `${entry.fullId}${thinkingSuffix}`);
 }
 
+/** A configured pin that launch refuses because the registry cannot resolve it. An empty registry checks nothing. */
+export function isUnavailableSubagentModel(
+	model: string | undefined,
+	availableModels: AvailableModelInfo[] | undefined,
+	preferredProvider?: string,
+): boolean {
+	const trimmed = model?.trim();
+	if (!trimmed || trimmed === INHERIT_MODEL || !availableModels?.length) return false;
+	return resolveSubagentModelCandidate(trimmed, availableModels, preferredProvider) === undefined;
+}
+
 function resolveRequiredSubagentModelCandidate(
 	model: string,
 	availableModels: AvailableModelInfo[] | undefined,
