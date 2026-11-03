@@ -348,12 +348,16 @@ A launcher command must:
 
 Steering, stop, and supervisor requests and replies travel through files in those directories, not through signals, so they work as long as the paths are shared.
 
+A launcher that isolates a run narrows these grants as described in the next section. With `~/.pi/agent` read-only, a child cannot refresh an OAuth login, because Pi locks and rewrites `auth.json` there, so it fails once its token needs a refresh; API keys are unaffected. Child sessions sit under `~/.pi/agent/sessions/` by default, so the child session directory still needs its own read-write binding.
+
 ### Isolating a run from the parent
 
 A launcher can also keep a run from reaching the parent session and other runs. Resume and auto-resume take what to relaunch and under which identity only from records the parent keeps in `async-subagent-launches/<id>/` under the temp root: a workflow's saved launch (its script, owning session and capability ceiling), and a single run's recovery descriptor (its agent, session file, cwd, model, tools, ceilings and launcher). A run that rewrites files in its own run directory, such as `status.json`, cannot make a later resume start something else or continue another run's transcript. For the isolation to hold, the launcher must not give the run write access to:
 
 - `async-subagent-launches/`, or other runs' directories under `async-subagent-runs/`;
 - `~/.pi/agent`: extensions, settings and agent files there load into the parent session, so write access to them is a way into the parent. Bind it read-only.
+
+Runs that a child starts itself (nested runs) keep these records in their root run's folder under `nested-subagent-runs/`. The child's runner writes them, so they add no isolation.
 
 ### Broker wrappers
 
