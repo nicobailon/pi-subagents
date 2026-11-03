@@ -13,6 +13,7 @@ import { REVIVAL_ORIGIN_FILE } from "../../workflows/workflow-revival.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "./active-run-index.ts";
 import { encodeIndexSegment } from "./index-segment.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
+import { recoveryDescriptorPath, runLaunchDir } from "../shared/run-launch-folder.ts";
 
 export const ASYNC_RETENTION_DAYS = 30;
 export const ASYNC_RETENTION_BATCH_SIZE = 100;
@@ -200,7 +201,8 @@ function hasNestedReferences(status: AsyncStatus): boolean {
 function hasResumableContract(runDir: string, status: AsyncStatus): boolean {
 	const statusSessionFiles = [status.sessionFile, ...(status.steps ?? []).map((step) => step.sessionFile)];
 	if (statusSessionFiles.some(existingRegularFile)) return true;
-	const descriptorPath = path.join(runDir, "recovery-descriptor.json");
+	// runDir may be a tombstone; the launch folder is keyed by the run id.
+	const descriptorPath = recoveryDescriptorPath(path.dirname(runDir), status.runId);
 	if (!fs.existsSync(descriptorPath)) return false;
 	const descriptor = readJson(descriptorPath);
 	if (!descriptor) return true;
@@ -837,6 +839,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 					}
 					mutationStateChanged = true;
 					fs.rmSync(runDir, { recursive: true });
+					fs.rmSync(runLaunchDir(options.asyncDirRoot, status!.runId), { recursive: true, force: true });
 					removeRunTombstoneMarker(maintenanceRoot, status!.runId);
 					result.reapedTombstones += 1;
 					deletedIds.push(`run-tombstone:${status!.runId}`);
@@ -866,6 +869,8 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 					continue;
 				}
 				fs.rmSync(tombstone, { recursive: true });
+				// Retention never deletes a workflow run, so this removes only a single run's recovery descriptor.
+				fs.rmSync(runLaunchDir(options.asyncDirRoot, status!.runId), { recursive: true, force: true });
 				removeRunTombstoneMarker(maintenanceRoot, status!.runId);
 				result.deletedRuns += 1;
 				deletedIds.push(`run:${status!.runId}`);

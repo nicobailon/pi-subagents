@@ -2,7 +2,7 @@
  * Async execution logic for subagent tool
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -37,7 +37,7 @@ import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, intersectThinkingCeilings, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
-import { resolveExpectedWorktreeAgentCwd, resolveWorktreeProvider, shouldDeferWorktreeCwd, WORKTREE_AGENT_CWD_PLACEHOLDER } from "../shared/worktree.ts";
+import { buildWorktreeNaming, resolveExpectedWorktreeAgentCwd, resolveWorktreeProvider, shouldDeferWorktreeCwd, WORKTREE_AGENT_CWD_PLACEHOLDER } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
@@ -95,6 +95,7 @@ import { resolvePermissionRules, type PermissionConfig } from "../shared/permiss
 import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { omitGitRoutingEnv } from "../shared/git-environment.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
+import { recoveryDescriptorPath } from "../shared/run-launch-folder.ts";
 import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, writeRetainedRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
@@ -563,6 +564,29 @@ function terminateRunnerBeforeProceed(pid: number): boolean {
 	return !runnerIsAlive(pid);
 }
 
+function parentPid(pid: number): number | undefined {
+	let ppid: number;
+	if (process.platform === "linux") {
+		try {
+			const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf-8");
+			ppid = Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[1]);
+		} catch { return undefined; }
+	} else {
+		const result = spawnSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf-8" });
+		if (result.error || result.status !== 0) return undefined;
+		ppid = Number(result.stdout.trim());
+	}
+	return Number.isSafeInteger(ppid) && ppid > 0 ? ppid : undefined;
+}
+
+/** The runner reports its own pid, so behind a launcher only a pid inside the spawned launcher's tree may be signalled. */
+function isInProcessTree(pid: number, rootPid: number): boolean {
+	for (let current: number | undefined = pid; current !== undefined && current > 1; current = parentPid(current)) {
+		if (current === rootPid) return true;
+	}
+	return false;
+}
+
 async function terminateRunnerBeforeProceedAsyncDefault(proc: ChildProcess, processClosed: Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>): Promise<boolean> {
 	for (const signal of ["SIGTERM", "SIGKILL"] as const) {
 		if (proc.pid === undefined || !runnerIsAlive(proc.pid)) return true;
@@ -746,10 +770,12 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	const identityPath = launcher && launchBarrierToken && launchAsyncDir ? path.join(launchAsyncDir, "runner-startup.json") : undefined;
 	if (identityPath) fs.rmSync(identityPath, { force: true });
 	let runnerIdentity: { pid: number; pidNamespaceScope?: string } | undefined;
-	// Wrapper exit is not runner exit, so only a reported runner in this namespace may be signalled.
+	// Wrapper exit is not runner exit, so only a reported runner in this namespace may be signalled, and only
+	// inside the spawned launcher's process tree. Otherwise the runner exits when proceed never arrives.
 	const terminateBeforeProceed = (pid: number): boolean => !launcher
 		? terminateRunnerBeforeProceed(pid)
-		: runnerIdentity !== undefined && runnerIdentity.pidNamespaceScope === currentPidNamespaceScope() && terminateRunnerBeforeProceed(runnerIdentity.pid);
+		: runnerIdentity !== undefined && runnerIdentity.pidNamespaceScope === currentPidNamespaceScope()
+			&& isInProcessTree(runnerIdentity.pid, pid) && terminateRunnerBeforeProceed(runnerIdentity.pid);
 	const adoptRunnerIdentity = (pid: unknown, pidNamespaceScope: unknown): string | undefined => {
 		if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid < 1) return `Async runner reported an invalid process identity in '${launchAsyncDir}'.`;
 		runnerIdentity = { pid, ...(typeof pidNamespaceScope === "string" ? { pidNamespaceScope } : {}) };
@@ -2153,6 +2179,10 @@ export function executeAsyncSingle(
 		...(requiredExtensions.length > 0 ? { requiredExtensions } : {}),
 		runFanoutBudget,
 		sourceRunId: id,
+		...(ctx.currentSessionId ? { sessionId: ctx.currentSessionId } : {}),
+		// The worktree the runner will create, fixed here from launch inputs (the runner's own naming call).
+		...(managedWorktreeProvider === "native" ? { managedWorktree: { provider: "native" as const, cwd: instructionCwd } } : {}),
+		...(managedWorktreeProvider === "worktrunk" ? { managedWorktree: { provider: "worktrunk" as const, branch: buildWorktreeNaming({ runId: `${id}-s0`, index: 0, agent, label: lane?.key ?? params.workflowKey, task: taskText, branchPrefix: worktreeBranchPrefix }).requestedBranch } } : {}),
 		...(params.agentContract ? { agentContract: params.agentContract } : {}),
 		agent,
 		launchResolvedExtensions,
@@ -2203,7 +2233,7 @@ export function executeAsyncSingle(
 	};
 	if (!externalRunner) {
 		try {
-			writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor);
+			writePrivateAtomicJson(recoveryDescriptorPath(path.dirname(asyncDir), id), recoveryDescriptor);
 		} catch (error) {
 			return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
 		}

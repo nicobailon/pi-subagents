@@ -7,6 +7,7 @@ import registerSubagents from "../../index.js";
 import { requestAsyncInterrupt, requestAsyncSteer, requestAsyncStop } from "../../src/runs/background/control-channel.js";
 import { verifyRevival } from "./standalone-revival.ts";
 import { verifySharedRun } from "./standalone-shared.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.js";
 
 function waitForFile(file: string, predicate: (text: string) => boolean): Promise<void> {
 	return new Promise((resolve) => {
@@ -156,7 +157,7 @@ export default function registerSmoke(pi: ExtensionAPI) {
 				assert.equal(status.sessionId, ctx.sessionManager.getSessionId());
 				assert.equal(status.completionOwnerId, parentStatus.completionOwnerId);
 				assert.equal(status.steps[0].model, "standalone-smoke/local");
-				const descriptor = JSON.parse(fs.readFileSync(`${runDir}/recovery-descriptor.json`, "utf8"));
+				const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(path.dirname(runDir), path.basename(runDir)), "utf8"));
 				assert.deepEqual(descriptor.tools, expectedDeclaredTools);
 				const observed = fs.readFileSync("/stage/bootstrap-observer.jsonl", "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((event) => event.pid === status.pid);
 				assert.deepEqual(observed.map((event) => event.event), mode === "sdk-init-failure" ? ["observer-ready"] : ["observer-ready", "session-start"]);

@@ -15,6 +15,7 @@ import { ChildProcess } from "node:child_process";
 import { channel } from "node:diagnostics_channel";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { childSessionFactoryModule, setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
 import { createEventBus, createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir } from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
@@ -1481,7 +1482,7 @@ export default function() {
 				denyExtensions: false,
 				sources: ["agent:planner", "current-caller", "original-parent"],
 			});
-			const descriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, retainedId, "recovery-descriptor.json"), "utf-8"));
+			const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, retainedId), "utf-8"));
 			assert.deepEqual(descriptor.allowedAgents, ["researcher"]);
 			assert.deepEqual(descriptor.capabilityCeiling, {
 				version: 1,
@@ -1791,7 +1792,7 @@ syncBuiltinESMExports();
 			maxSubagentDepth: 2,
 		});
 		await readAsyncPayload(sourceId);
-		assert.equal(JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, sourceId, "recovery-descriptor.json"), "utf-8")).fast, true);
+		assert.equal(JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, sourceId), "utf-8")).fast, true);
 
 		mockPi.onCall({ output: "Revived async work" });
 		const result = await makeAsyncExecutor([makeAgent("worker")]).execute(
@@ -1887,7 +1888,7 @@ syncBuiltinESMExports();
 			maxSubagentDepth: 2,
 		});
 		await readAsyncPayload(sourceId);
-		const descriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, sourceId, "recovery-descriptor.json"), "utf-8"));
+		const descriptor = JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, sourceId), "utf-8"));
 		assert.equal(descriptor.modelOverrideFromParent, true);
 		assert.equal(descriptor.modelOrigin, "inherited");
 

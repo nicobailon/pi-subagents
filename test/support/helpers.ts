@@ -245,3 +245,9 @@ export const events = {
 		};
 	},
 };
+
+/** Writes a file, creating its folder; recovery descriptors live in a launch folder outside the run folder. */
+export function writeFileCreatingDir(filePath: string, data: string, encoding: BufferEncoding = "utf-8"): void {
+	fs.mkdirSync(path.dirname(filePath), { recursive: true });
+	fs.writeFileSync(filePath, data, encoding);
+}

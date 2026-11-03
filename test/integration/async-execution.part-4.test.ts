@@ -8,8 +8,9 @@
  */
 
 import { describe, it } from "node:test";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer, type Socket } from "node:net";
 import * as fs from "node:fs";
@@ -2079,6 +2080,43 @@ runner.on("exit", (code, signal) => process.exit(signal ? 128 + require("node:os
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("signals a pre-proceed runner only when the pid it reports is inside the launcher's process tree", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and POSIX signals" : undefined }, async () => {
+		// The launcher reports `pid` (or its own child for "own"), then blocks the proceed write so startup fails after adoption.
+		const forger = path.join(tempDir, "forger.cjs");
+		fs.writeFileSync(forger, `const fs = require("node:fs"), path = require("node:path");
+const cfg = JSON.parse(fs.readFileSync(process.argv.at(-1), "utf-8"));
+const own = process.argv[2] === "own" ? require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" }) : undefined;
+let scope; try { scope = fs.readlinkSync("/proc/self/ns/pid"); } catch {}
+fs.mkdirSync(path.join(cfg.asyncDir, "runner-startup-proceed.json"));
+fs.writeFileSync(process.argv[3], JSON.stringify({ wrapperPid: process.pid, ownPid: own?.pid }));
+fs.writeFileSync(path.join(cfg.asyncDir, "runner-startup.json"), JSON.stringify({ state: "identified", token: cfg.launchBarrierToken, pid: own ? own.pid : Number(process.argv[2]), pidNamespaceScope: scope }));
+setInterval(() => {}, 1000);
+`);
+		const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+		const launch = async (target: string) => {
+			const pidsPath = path.join(tempDir, `forger-${target}.json`);
+			const executor = makeAsyncExecutor([makeAgent("sandboxed", { launcher: "forger" })], { runnerLaunchers: { forger: [process.execPath, forger, target, pidsPath] } });
+			const result = await executor.executePublic(`forger-${target}`, { agent: "sandboxed", task: "Work" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.match(result.content[0]?.text ?? "", /Failed to authorize async runner startup/);
+			return JSON.parse(fs.readFileSync(pidsPath, "utf-8")) as { wrapperPid: number; ownPid?: number };
+		};
+		const decoy = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+		const pids: number[] = [decoy.pid!];
+		try {
+			const forged = await launch(String(decoy.pid));
+			pids.push(forged.wrapperPid);
+			// The decoy is this process's child, so a signalled decoy is only reaped once the event loop runs.
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			assert.equal(decoy.signalCode, null, "a pid outside the launcher's tree is never signalled");
+			const own = await launch("own");
+			pids.push(own.wrapperPid, own.ownPid!);
+			assert.equal(alive(own.ownPid!), false, "the launcher's own descendant is terminated");
+		} finally {
+			for (const pid of pids) try { process.kill(pid, "SIGKILL"); } catch {}
+		}
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	// Resume revives a retained session, so the source run is a fork with a pre-created session file.
 	const forkCtx = (name: string) => {
 		const parentSessionFile = path.join(tempDir, `${name}-parent.jsonl`);
@@ -2101,7 +2139,7 @@ runner.on("exit", (code, signal) => process.exit(signal ? 128 + require("node:os
 		const ctx = forkCtx("launcher-resume");
 		mockPi.onCall({ output: "first run" });
 		const sourceId = await launchAndFinish(executor, ctx, "sandboxed");
-		assert.equal(readJson(path.join(ASYNC_DIR, sourceId, "recovery-descriptor.json")).launcher, "wrap");
+		assert.equal(readJson(recoveryDescriptorPath(ASYNC_DIR, sourceId)).launcher, "wrap");
 		fs.rmSync(argvLog);
 		// The agent file no longer names a launcher; the recorded one still applies.
 		const unwrappedAgent = [makeAgent("sandboxed")];

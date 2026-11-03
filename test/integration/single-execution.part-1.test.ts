@@ -67,8 +67,11 @@ import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
 import { appendWorkflowChildJournal, runtimeReplacedAbortReason, workflowChildFingerprint } from "../../src/workflows/workflow-reuse.ts";
+import { workflowLaunchRecordDir } from "../../src/workflows/workflow-launch-record.ts";
 import { updateTerminalRunIndex } from "../../src/runs/background/terminal-run-index.ts";
 import { getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
+import { writeFileCreatingDir } from "../support/helpers.ts";
 
 function writeRetainedEchoRun(runId: string, options: { outputPath: string; state: "complete" | "failed"; steps: number }) {
 	const asyncDir = path.join(DIRS.async, runId);
@@ -84,11 +87,13 @@ function writeRetainedEchoRun(runId: string, options: { outputPath: string; stat
 		sessionFile,
 		steps: Array.from({ length: options.steps }, () => ({ agent: "echo", status: options.state, sessionFile })),
 	}), "utf-8");
-	fs.writeFileSync(path.join(asyncDir, "recovery-descriptor.json"), JSON.stringify({
+	writeFileCreatingDir(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), JSON.stringify({
 		version: 1,
 		runFanoutBudget,
 		sourceRunId: runId,
+		sessionId: "session-123",
 		agent: "echo",
+		sessionFile,
 		cwd: tempDir,
 		systemPromptMode: "append",
 		inheritProjectContext: true,
@@ -2005,7 +2010,7 @@ Answer only from the supplied synthetic text.
 
 	describe("saving an async workflow's launch", () => {
 		const skip = !createSubagentExecutor ? "executor not importable" : undefined;
-		const readLaunch = (runId: string) => JSON.parse(fs.readFileSync(path.join(DIRS.async, runId, "launch.json"), "utf-8"));
+		const readLaunch = (runId: string) => JSON.parse(fs.readFileSync(path.join(workflowLaunchRecordDir(DIRS.async, runId), "launch.json"), "utf-8"));
 		const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 		const launchAndSettle = async (executor: ReturnType<typeof makeExecutor>, id: string, params: Record<string, unknown>, ctx = makeMinimalCtx(tempDir)) => {
 			const started = await executor.executePublic(id, { async: true, mission: false, ...params }, new AbortController().signal, undefined, ctx);
@@ -2031,7 +2036,8 @@ Answer only from the supplied synthetic text.
 				workflowScript: script, args: { n: 1 }, cwd: "sub", reuseFrom: sourceId, scheduleOrigin: { id: "schedule-1" }, resumeOrigin: { sourceRunId: sourceId, attempt: 1 },
 			});
 			assert.deepEqual(readLaunch(runId), {
-				version: 1,
+				version: 2,
+				sessionId: "session-123",
 				source: "script",
 				params: { async: true, mission: false, workflowScript: script, args: { n: 1 }, cwd },
 				scriptDigest: sha256(script),
@@ -2060,12 +2066,20 @@ Answer only from the supplied synthetic text.
 			try {
 				const runId = await launchAndSettle(makeExecutor([makeAgent("echo")]), "launch-resource", { workflow: "test.launch", args: { x: 2 } }, ctx);
 				assert.deepEqual(readLaunch(runId), {
-					version: 1,
+					version: 2,
+					sessionId: "session-123",
 					source: "resource",
 					params: { async: true, mission: false, workflow: "test.launch", args: { x: 2 }, cwd: tempDir },
 					scriptDigest: sha256(script),
 				});
 			} finally { registration.dispose(); }
+		});
+
+		it("saves a launch made outside the tool (schedule ticks, delegation) as internal, without params", { timeout: 30_000, skip }, async () => {
+			const started = await makeExecutor([makeAgent("echo")]).execute("launch-internal", { workflowScript: "return 1;", async: true, mission: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			const runId = started.details.asyncId!;
+			await waitForAsyncState(runId, (status) => status.state === "complete", 15_000);
+			assert.deepEqual(readLaunch(runId), { version: 2, sessionId: "session-123", source: "internal", scriptDigest: sha256("return 1;") });
 		});
 
 		it("fails the launch and frees its capacity slot when the launch cannot be saved", { timeout: 30_000, skip }, async (t) => {

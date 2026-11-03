@@ -252,6 +252,6 @@ export function describeWorkflowResume(asyncDir: string, runId: string): string 
 		return `Not auto-resumed: ${refusalSentence(refusal.reason, refusal.byHand)}`;
 	}
 	if (claim) return `${RESUMED_AS[claim.trigger]} ${claim.newRunId}.`;
-	const launch = readWorkflowLaunchRecord(asyncDir);
-	return launch.ok && launch.record.source !== "structured" ? resumeByHandText(runId) : relaunchByHandText(runId);
+	const launch = readWorkflowLaunchRecord(path.dirname(asyncDir), runId);
+	return launch.ok && (launch.record.source === "script" || launch.record.source === "resource") ? resumeByHandText(runId) : relaunchByHandText(runId);
 }
