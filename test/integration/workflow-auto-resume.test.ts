@@ -140,7 +140,8 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			workflow: { trace: [], emits: [], console: [], scriptDigest: launch.scriptDigest },
 		}));
 		const record = { ...launch, version: 2 as const, sessionId: sessionFileFor(sessionId) };
-		if (options.launchIn === "run-dir") fs.writeFileSync(path.join(asyncDir, "launch.json"), JSON.stringify(record));
+		// The format earlier versions read from the run folder, so the forgery would have worked there.
+		if (options.launchIn === "run-dir") fs.writeFileSync(path.join(asyncDir, "launch.json"), JSON.stringify({ ...launch, version: 1 }));
 		else writeWorkflowLaunchRecord(DIRS.async, runId, record);
 		updateActiveRunIndex(asyncDir, "running");
 		return runId;
@@ -231,6 +232,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const nonce = `auto-forged-${Date.now()}`;
 		const sessionId = `session-${nonce}`;
 		const script = `const only = await runs.run("only", { agent: "echo", task: "Forged ${nonce}" }); return only.output;`;
+		mockPi.onCall({ matchArgIncludes: `Forged ${nonce}`, output: "forged child ran" });
 		const forgedId = writeCrashedRun(sessionId, scriptLaunch(script), Date.now() - 60_000, { launchIn: "run-dir" });
 		const runtime = await startRuntime("startup", sessionId);
 		assert.equal(readStatusFile(forgedId)?.workflow?.stopCause, "owner-exited");

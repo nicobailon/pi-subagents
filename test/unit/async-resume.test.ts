@@ -194,6 +194,62 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("takes a managed worktree cwd from handoff.json only when it is the worktree the launch chose", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-forged-handoff-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-forged-handoff");
+			const sessionFile = path.join(root, "session.jsonl");
+			const launchedWorktree = path.join(root, "launched-worktree");
+			const victimRepo = path.join(root, "victim-repo");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.mkdirSync(launchedWorktree);
+			fs.mkdirSync(victimRepo);
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-forged-handoff", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
+			});
+			// The run wrote this into its own folder: cwd === repoRoot makes the cwd the cleanup path itself.
+			const handoffTo = (worktree: string) => writeJson(path.join(asyncDir, "handoff.json"), {
+				version: 1, runId: "run-forged-handoff", mode: "single", source: "async", cwd: root, createdAt: 100, updatedAt: 200,
+				groups: [{
+					stepIndex: 0, baseCommit: "deadbeef", repoRoot: root,
+					children: [{ index: 0, taskIndex: 0, agent: "worker", status: "completed", summary: "done", patch: { path: path.join(root, "patch"), branch: "branch", changed: false, diffStat: "", filesChanged: 0, insertions: 0, deletions: 0 } }],
+					cleanup: { state: "partial", pruned: true, tasks: [{ index: 0, path: worktree, branch: "branch", worktreeRemoved: false, branchRemoved: false, preserved: true }] },
+				}],
+			});
+			const descriptor = (managedWorktree?: unknown) => writeJson(recoveryDescriptorPath(asyncDir), {
+				version: 1, runFanoutBudget: createRunFanoutBudget("run-forged-handoff", 64), sourceRunId: "run-forged-handoff", agent: "worker", sessionFile, cwd: root,
+				systemPromptMode: "replace", inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+				...(managedWorktree ? { managedWorktree } : {}),
+			});
+			const resume = () => resolveAsyncResumeTarget({ id: "run-forged-handoff" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			handoffTo(victimRepo);
+
+			descriptor();
+			assert.deepEqual({ cwd: resume().cwd, managedWorktree: resume().managedWorktree }, { cwd: root, managedWorktree: undefined }, "a run launched without a worktree keeps the launch cwd");
+			descriptor({ provider: "native", cwd: launchedWorktree });
+			assert.throws(resume, /managed worktree .*victim-repo is not the worktree its launch created/);
+			handoffTo(launchedWorktree);
+			assert.equal(resume().cwd, launchedWorktree);
+
+			// Worktrunk picks the path itself, so git must list it on the branch the launch requested.
+			const repo = path.join(root, "repo");
+			const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf-8" });
+			fs.mkdirSync(repo);
+			git("init", "-q");
+			git("-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
+			const worktrunkPath = path.join(root, "wt-launched");
+			git("worktree", "add", "-q", "-b", "pi/launched", worktrunkPath);
+			writeJson(recoveryDescriptorPath(asyncDir), { ...JSON.parse(fs.readFileSync(recoveryDescriptorPath(asyncDir), "utf-8")), cwd: repo, managedWorktree: { provider: "worktrunk", branch: "pi/launched" } });
+			assert.throws(resume, /is not the worktree its launch created/);
+			handoffTo(worktrunkPath);
+			assert.equal(fs.realpathSync(resume().cwd!), fs.realpathSync(worktrunkPath));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("refuses to revive a worktree child in the source checkout while its runner is finalizing", async () => {
 		// Git reports the long Windows path; a short 8.3 temp path would fail the cwd containment check first.
 		const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-finalizing-")));
@@ -471,6 +527,11 @@ describe("async resume lookup", () => {
 				{ mode: fromDescriptor.mode, agent: fromDescriptor.agent, sessionFile: fromDescriptor.sessionFile, cwd: fromDescriptor.cwd, model: fromDescriptor.model, capabilityCeiling: fromDescriptor.capabilityCeiling },
 				{ mode: "single", agent: "worker", sessionFile, cwd: root, model: undefined, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["launch"] } },
 			);
+			// The owner is the descriptor's session too, whatever status.json claims.
+			writeJson(recoveryDescriptorPath(asyncDir), { ...descriptor, sessionId: "owner-session" });
+			writeJson(path.join(asyncDir, "status.json"), { runId: "run-descriptor", sessionId: "intruder-session", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root, steps: [{ agent: "worker", status: "paused", sessionFile }] });
+			assert.equal(resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "owner-session" }).agent, "worker");
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "intruder-session" }), /not found in the active session/);
 			// A descriptor left in the run folder by an earlier version is not read.
 			fs.rmSync(recoveryDescriptorPath(asyncDir));
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), descriptor);

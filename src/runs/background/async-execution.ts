@@ -37,7 +37,7 @@ import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, intersectThinkingCeilings, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
-import { resolveExpectedWorktreeAgentCwd, resolveWorktreeProvider, shouldDeferWorktreeCwd, WORKTREE_AGENT_CWD_PLACEHOLDER } from "../shared/worktree.ts";
+import { buildWorktreeNaming, resolveExpectedWorktreeAgentCwd, resolveWorktreeProvider, shouldDeferWorktreeCwd, WORKTREE_AGENT_CWD_PLACEHOLDER } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
@@ -2179,6 +2179,10 @@ export function executeAsyncSingle(
 		...(requiredExtensions.length > 0 ? { requiredExtensions } : {}),
 		runFanoutBudget,
 		sourceRunId: id,
+		...(ctx.currentSessionId ? { sessionId: ctx.currentSessionId } : {}),
+		// The worktree the runner will create, fixed here from launch inputs (the runner's own naming call).
+		...(managedWorktreeProvider === "native" ? { managedWorktree: { provider: "native" as const, cwd: instructionCwd } } : {}),
+		...(managedWorktreeProvider === "worktrunk" ? { managedWorktree: { provider: "worktrunk" as const, branch: buildWorktreeNaming({ runId: `${id}-s0`, index: 0, agent, label: lane?.key ?? params.workflowKey, task: taskText, branchPrefix: worktreeBranchPrefix }).requestedBranch } } : {}),
 		...(params.agentContract ? { agentContract: params.agentContract } : {}),
 		agent,
 		launchResolvedExtensions,

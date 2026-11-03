@@ -150,6 +150,7 @@ function recoveryDescriptor(runId: string, sessionFile?: string): SteeringRecove
 		version: 1,
 		runFanoutBudget,
 		sourceRunId: runId,
+		sessionId: "session",
 		agent: "worker-0",
 		...(sessionFile ? { sessionFile } : {}),
 		cwd: os.tmpdir(),

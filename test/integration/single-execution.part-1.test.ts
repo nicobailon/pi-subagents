@@ -91,6 +91,7 @@ function writeRetainedEchoRun(runId: string, options: { outputPath: string; stat
 		version: 1,
 		runFanoutBudget,
 		sourceRunId: runId,
+		sessionId: "session-123",
 		agent: "echo",
 		sessionFile,
 		cwd: tempDir,
@@ -2072,6 +2073,13 @@ Answer only from the supplied synthetic text.
 					scriptDigest: sha256(script),
 				});
 			} finally { registration.dispose(); }
+		});
+
+		it("saves a launch made outside the tool (schedule ticks, delegation) as internal, without params", { timeout: 30_000, skip }, async () => {
+			const started = await makeExecutor([makeAgent("echo")]).execute("launch-internal", { workflowScript: "return 1;", async: true, mission: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			const runId = started.details.asyncId!;
+			await waitForAsyncState(runId, (status) => status.state === "complete", 15_000);
+			assert.deepEqual(readLaunch(runId), { version: 2, sessionId: "session-123", source: "internal", scriptDigest: sha256("return 1;") });
 		});
 
 		it("fails the launch and frees its capacity slot when the launch cannot be saved", { timeout: 30_000, skip }, async (t) => {

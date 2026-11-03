@@ -194,6 +194,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			version: 1,
 			runFanoutBudget,
 			sourceRunId: runId,
+			sessionId: "session-123",
 			agent,
 			cwd: tempDir,
 			systemPromptMode: "replace",
@@ -1392,7 +1393,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				sessionFile,
 				steps: [{ agent: "worker", status: "complete", sessionFile }],
 			}, null, 2), "utf-8");
-			writeRecoveryDescriptor(sourceAsyncDir, sourceRunId, "worker", { sessionFile });
+			writeRecoveryDescriptor(sourceAsyncDir, sourceRunId, "worker", { sessionFile, sessionId: parentSessionId });
 			const competingLease = acquireSessionLease({ sessionFile, runId: "workflow-competing-revival", sourceRunId, parentSessionId });
 			const { executor } = makeExecutor({ maxActiveAsyncRunsPerSession: 1 });
 			const ctx = makeMinimalCtx(tempDir);
@@ -1490,7 +1491,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			sessionFile,
 			steps: [{ agent: "worker", status: "complete", sessionFile }],
 		}, null, 2), "utf-8");
-		writeRecoveryDescriptor(sourceAsyncDir, sourceRunId, "worker", { sessionFile });
+		writeRecoveryDescriptor(sourceAsyncDir, sourceRunId, "worker", { sessionFile, sessionId: parentSessionId });
 		const sourceCapacity = acquireActiveAsyncCapacity({ sessionId: parentSessionId, limit: 1, runId: sourceRunId, kind: "runner", asyncDir: sourceAsyncDir });
 		assert.ok(sourceCapacity);
 		sourceCapacity.markStarted("source-runner");

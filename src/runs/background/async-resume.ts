@@ -14,7 +14,7 @@ import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
 import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
 import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/parallel-handoff.ts";
-import { normalizeWorktreeBaseRef } from "../shared/worktree.ts";
+import { findListedWorktreeOnBranch, isComparablePathInside, normalizeWorktreeBaseRef } from "../shared/worktree.ts";
 import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 import { validateIntercomBridgeConfig } from "../../intercom/intercom-bridge.ts";
@@ -332,7 +332,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		"subagentOnlyExtensions", "mcpDirectTools", "excludeTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
-		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef", "launcher",
+		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef", "launcher", "sessionId", "managedWorktree",
 		"extensionBindings",
 		"requiredExtensions",
 	]);
@@ -387,7 +387,14 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (item !== undefined && (!Array.isArray(item) || item.some((entry) => typeof entry !== "string" || !entry.trim()))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must contain non-empty strings.`);
 	}
 	if (parsed.systemPrompt !== undefined && typeof parsed.systemPrompt !== "string") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': systemPrompt must be a string.`);
-	for (const field of ["launchContractDigest", "sessionFile", "model", "modelProvider", "thinking", "agentFilePath", "outputPath", "sessionDir", "artifactsDir"] as const) {
+	if (parsed.managedWorktree !== undefined) {
+		const worktree = parsed.managedWorktree as Record<string, unknown> | null;
+		const valid = !!worktree && typeof worktree === "object" && !Array.isArray(worktree) && (
+			(worktree.provider === "native" && typeof worktree.cwd === "string" && path.isAbsolute(worktree.cwd) && Object.keys(worktree).length === 2)
+			|| (worktree.provider === "worktrunk" && typeof worktree.branch === "string" && !!worktree.branch.trim() && Object.keys(worktree).length === 2));
+		if (!valid) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': managedWorktree is invalid.`);
+	}
+	for (const field of ["sessionId", "launchContractDigest", "sessionFile", "model", "modelProvider", "thinking", "agentFilePath", "outputPath", "sessionDir", "artifactsDir"] as const) {
 		if (parsed[field] !== undefined && (typeof parsed[field] !== "string" || !(parsed[field] as string).trim())) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a non-empty string.`);
 	}
 	if (parsed.baseRef !== undefined) {
@@ -451,6 +458,21 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	return parsed as unknown as SteeringRecoveryDescriptor;
 }
 
+/**
+ * handoff.json sits in the run directory, so its worktree cwd must be the one the launch chose: the
+ * native path the parent computed, or a worktree git itself lists on the requested Worktrunk branch.
+ */
+function assertLaunchedWorktreeCwd(runId: string, launchCwd: string, launched: NonNullable<SteeringRecoveryDescriptor["managedWorktree"]>, handoffCwd: string): string {
+	const matches = launched.provider === "native"
+		? isComparablePathInside(launched.cwd, handoffCwd) && isComparablePathInside(handoffCwd, launched.cwd)
+		: (() => {
+			const listed = findListedWorktreeOnBranch(launchCwd, launched.branch);
+			return listed !== undefined && isComparablePathInside(listed, handoffCwd);
+		})();
+	if (!matches) throw new Error(`Async run '${runId}' managed worktree ${handoffCwd} is not the worktree its launch created.`);
+	return handoffCwd;
+}
+
 function validateResumeSessionFile(runId: string, sessionFile: string): string {
 	if (path.extname(sessionFile) !== ".jsonl") throw new Error(`Async run '${runId}' session file must be a .jsonl file: ${sessionFile}`);
 	const resolved = path.resolve(sessionFile);
@@ -498,7 +520,10 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	// session, cwd, model, ceilings) comes from it alone: status.json and the shared results directory
 	// are writable by a run behind a runner launcher.
 	const mode = recoveryDescriptor ? "single" : resumeTargetMode(status, result);
-	if (options.sessionId && ((status && !ownsRun(options.sessionId, status.sessionId)) || (result && !ownsRun(options.sessionId, result.sessionId)))) {
+	const notOwned = recoveryDescriptor
+		? !ownsRun(options.sessionId, recoveryDescriptor.sessionId)
+		: (status && !ownsRun(options.sessionId, status.sessionId)) || (result && !ownsRun(options.sessionId, result.sessionId));
+	if (options.sessionId && notOwned) {
 		throw new Error(`Async run '${runId}' was not found in the active session.`);
 	}
 	if (recoveryDescriptor && recoveryDescriptor.sourceRunId !== runId) throw new Error(`Async run '${runId}' has a recovery descriptor for a different source run '${recoveryDescriptor.sourceRunId}'.`);
@@ -608,9 +633,12 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		: mode === "workflow"
 		? (workflowLaunch?.ok ? workflowLaunch.record.admissionCapabilityCeiling : undefined)
 		: intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
-	const managedWorktreeCwd = location.asyncDir
+	const handoffWorktreeCwd = location.asyncDir && (!recoveryDescriptor || recoveryDescriptor.managedWorktree)
 		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index, statusSteps[index]?.worktreePath)
 		: undefined;
+	const managedWorktreeCwd = handoffWorktreeCwd && recoveryDescriptor?.managedWorktree
+		? assertLaunchedWorktreeCwd(runId, recoveryDescriptor.cwd, recoveryDescriptor.managedWorktree, handoffWorktreeCwd)
+		: handoffWorktreeCwd;
 	const resumeCwd = validateResumeCwd(runId, managedWorktreeCwd ?? (recoveryDescriptor ? recoveryDescriptor.cwd : status?.cwd ?? result?.cwd));
 
 	return {
