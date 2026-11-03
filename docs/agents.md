@@ -357,6 +357,8 @@ A launcher can also keep a run from reaching the parent session and other runs. 
 - `async-subagent-launches/`, or other runs' directories under `async-subagent-runs/`;
 - `~/.pi/agent`: extensions, settings and agent files there load into the parent session, so write access to them is a way into the parent. Bind it read-only.
 
+The run's working directory stays writable, so a run can still reach the parent through it: the project's `.pi/` extensions and agents, or `.git/config` settings such as `core.fsmonitor` that the parent's git commands run. Give an isolated run a checkout the parent session does not use.
+
 Runs that a child starts itself (nested runs) keep these records in their root run's folder under `nested-subagent-runs/`. The child's runner writes them, so they add no isolation.
 
 ### Broker wrappers
