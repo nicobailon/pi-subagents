@@ -2,6 +2,7 @@ import { accessSync, constants, readFileSync, realpathSync, statSync } from "nod
 import { createRequire } from "node:module";
 import { dirname, resolve as resolvePath } from "node:path";
 import { createWorkflowScriptWorker } from "./workflow-script-worker.ts";
+import { createTraceStore } from "./trace-store.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
 import { describeGateAcceptanceConflict, parseGateInput } from "../runs/shared/acceptance.ts";
@@ -1322,7 +1323,12 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	}
 	const emits: unknown[] = [];
 	const consoleEntries: WorkflowScriptResult["console"] = [];
-	const trace: WorkflowScriptTraceEntry[] = [];
+	// A re-delivered `runs.run` for an existing key appends an identical `reused` entry, and
+	// every change re-serializes the whole trace. The store folds consecutive duplicates and
+	// caps the array so a re-delivering caller cannot grow the journal quadratically.
+	const traceStore = createTraceStore<WorkflowScriptTraceEntry>();
+	const trace = traceStore.trace;
+	const pushTrace = traceStore.push;
 	const children = new Map<string, WorkflowScriptChildResult>();
 	const childOrder: string[] = [];
 	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean; generatedLaneKey?: string }>();
@@ -1351,7 +1357,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	// script is awaiting, so a single failed status write could mark a completed child
 	// failed and abort its siblings through Promise.all. Telemetry must not decide
 	// workflow outcomes, so a failing callback is reported and the run continues.
+	let emittedTraceSignature = "";
 	const traceChanged = () => {
+		// Folded duplicates leave the content unchanged; forwarding them would re-serialize an
+		// identical array into status.json and events.jsonl on every re-delivery.
+		const signature = traceStore.signature();
+		if (signature === emittedTraceSignature) return;
+		emittedTraceSignature = signature;
 		try {
 			options.onTrace?.([...trace]);
 		} catch (error) {
@@ -1390,7 +1402,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		children.set(key, stoppedChildResult(key, message));
 		childStopControllers.get(key)?.abort(new Error(message));
 		const started = trace.findLast((entry) => entry.operation === "run" && entry.key === key && entry.state === "started");
-		trace.push({
+		pushTrace({
 			operation: "run",
 			key,
 			state: "stopped",
@@ -1494,7 +1506,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				if (children.has(key)) continue;
 				stoppedLaunches.add(key);
 				const started = trace.findLast((entry) => entry.operation === "run" && entry.key === key && entry.state === "started");
-				trace.push({
+				pushTrace({
 					operation: "run",
 					key,
 					state: "stopped",
@@ -1629,12 +1641,12 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				if (typeof keyOrRunId !== "string" || !keyOrRunId.trim()) return respond(Promise.reject(new Error("runs.status(keyOrRunId) requires a non-empty string.")));
 				const known = children.get(keyOrRunId);
 				const target = known?.runId ?? keyOrRunId;
-				trace.push({ operation: "status", key: keyOrRunId, state: "started", ...(known?.runId ? { runId: known.runId } : {}) });
+				pushTrace({ operation: "status", key: keyOrRunId, state: "started", ...(known?.runId ? { runId: known.runId } : {}) });
 				traceChanged();
 				if (settled || finishing) return;
 				respond(options.status(target, childController.signal).then((result) => {
 					if (settled || finishing) return result;
-					trace.push({ operation: "status", key: keyOrRunId, state: result.ok ? "completed" : "failed", ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });
+					pushTrace({ operation: "status", key: keyOrRunId, state: result.ok ? "completed" : "failed", ...(result.runId ? { runId: result.runId } : {}), ...(!result.ok ? { error: result.output } : {}) });
 					traceChanged();
 					if (!result.ok) throw new Error(`Status '${keyOrRunId}' failed: ${result.output}`);
 					return result;
@@ -1653,19 +1665,19 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				const steerOptions = isRecord(message.args.options) ? message.args.options as WorkflowSteerOptions : {};
 				if (acceptanceRecoveryBarrier) return respond(Promise.reject(new Error(recoveryBarrierMessage(acceptanceRecoveryBarrier.key, `runs.steer('${key}')`))));
 				const startedAt = Date.now();
-				trace.push({ operation: "steer", key, state: "started" });
+				pushTrace({ operation: "steer", key, state: "started" });
 				traceChanged();
 				const promise = Promise.resolve().then(() => {
 					if (!launches.has(key)) throw new Error(`runs.steer('${key}') requires a prior runs.run/runs.all launch with that key.`);
 					if (!options.steer) throw new Error("Workflow steering is unavailable in this host.");
 					return options.steer(key, steerMessage.trim(), steerOptions, childController.signal);
 				}).then((receipt) => {
-					trace.push({ operation: "steer", key, state: receipt.state, durationMs: Date.now() - startedAt, ...(receipt.error ? { error: receipt.error } : {}) });
+					pushTrace({ operation: "steer", key, state: receipt.state, durationMs: Date.now() - startedAt, ...(receipt.error ? { error: receipt.error } : {}) });
 					traceChanged();
 					return receipt;
 				}, (error: unknown) => {
 					const text = error instanceof Error ? error.message : String(error);
-					trace.push({ operation: "steer", key, state: "failed", durationMs: Date.now() - startedAt, error: text });
+					pushTrace({ operation: "steer", key, state: "failed", durationMs: Date.now() - startedAt, error: text });
 					traceChanged();
 					throw error;
 				});
@@ -1699,20 +1711,20 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					deadlineAt: startedAt + params.timeoutMs,
 				};
 				hostStepChanged(startedStep);
-				trace.push({ operation: "host", key, state: "started" });
+				pushTrace({ operation: "host", key, state: "started" });
 				traceChanged();
 				const promise = Promise.resolve().then(() => options.host!(key, params, childController.signal)).then((result) => {
 					const state = result.state === "stopped" ? "cancelled" : result.ok ? "done" : "error";
 					const detail = [result.error, result.stderr.trim() || result.stdout.trim()].filter(Boolean).join(" ").replace(/\s+/g, " ").trim().slice(0, 200);
 					hostStepChanged({ ...startedStep, state, ...(state === "done" ? { verdict: "pass" as const } : {}), ...(!result.ok ? { reasonCode: result.state === "timed-out" ? "timed_out" : result.state === "stopped" ? "aborted" : "command_failed" } : {}), ...(detail ? { detail } : {}), reportPath: params.output ?? result.outputPath.split(/[\\/]/).at(-1), exitCode: result.exitCode, updatedAt: Date.now() });
-					trace.push({ operation: "host", key, state: result.ok ? "completed" : result.state === "stopped" ? "stopped" : "failed", durationMs: result.durationMs, ...(!result.ok ? { error: result.error ?? "Host command failed." } : {}) });
+					pushTrace({ operation: "host", key, state: result.ok ? "completed" : result.state === "stopped" ? "stopped" : "failed", durationMs: result.durationMs, ...(!result.ok ? { error: result.error ?? "Host command failed." } : {}) });
 					traceChanged();
 					if (!result.ok) throw new Error(`Host command '${key}' failed: ${detail || result.error || `exit code ${result.exitCode ?? "unknown"}`}`);
 					return result;
 				}, (error: unknown) => {
 					const text = error instanceof Error ? error.message : String(error);
 					hostStepChanged({ ...startedStep, state: "error", reasonCode: "execution_failed", detail: text.replace(/\s+/g, " ").slice(0, 200), updatedAt: Date.now() });
-					trace.push({ operation: "host", key, state: "failed", durationMs: Date.now() - startedAt, error: text });
+					pushTrace({ operation: "host", key, state: "failed", durationMs: Date.now() - startedAt, error: text });
 					traceChanged();
 					throw error;
 				});
@@ -1750,7 +1762,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
 				if (callObserved) existing.observed = true;
-				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params), ...(existing.generatedLaneKey ? { generatedLaneKey: existing.generatedLaneKey } : {}) });
+				pushTrace({ operation: "run", key, state: "reused", ...workflowStringMetadata(params), ...(existing.generatedLaneKey ? { generatedLaneKey: existing.generatedLaneKey } : {}) });
 				traceChanged();
 				return respond(deliver(existing.promise), `runs.run('${key}') result`, (error) => children.set(key, responseBoundaryFailure(key, error)));
 			}
@@ -1858,7 +1870,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					const autoResumeParams = setupAbortResumeParams(params, result, childSignal);
 					if (!autoResumeParams) return result;
 					resolvedResumeLineage = [...new Set([...(resolvedResumeLineage ?? []), result.runId!])];
-					trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(autoResumeParams), ...(generatedLaneKey ? { generatedLaneKey } : {}), phase: "auto-resume", runId: result.runId });
+					pushTrace({ operation: "run", key, state: "started", ...workflowStringMetadata(autoResumeParams), ...(generatedLaneKey ? { generatedLaneKey } : {}), phase: "auto-resume", runId: result.runId });
 					traceChanged();
 					return options.launch(key, autoResumeParams, childSignal, { admitted: true, batch: batch !== undefined });
 				} finally {
@@ -1880,7 +1892,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				const state = normalized.state === "running" ? "started" : normalized.ok ? "completed" : normalized.stopped ? "stopped" : normalized.detached ? "detached" : "failed";
 				const settledEntry: WorkflowScriptTraceEntry = { operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok && normalized.state !== "running" ? { error: normalized.error ?? normalized.output } : {}) };
 				if (normalized.reused) settledEntry.reused = true;
-				trace.push(settledEntry);
+				pushTrace(settledEntry);
 				traceChanged();
 				notifyChildSettled(key, normalized);
 				return normalized;
@@ -1890,14 +1902,14 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				childStopControllers.delete(key);
 				if (stoppedLaunches.has(key)) return children.get(key) ?? { ...failure, stopped: true };
 				children.set(key, failure);
-				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), error: text });
+				pushTrace({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), error: text });
 				traceChanged();
 				notifyChildSettled(key, failure);
 				return failure;
 			});
 			launches.set(key, { fingerprint, promise, observed: callObserved, ...(generatedLaneKey ? { generatedLaneKey } : {}) });
 			childOrder.push(key);
-			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}) });
+			pushTrace({ operation: "run", key, state: "started", ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}) });
 			traceChanged();
 			respond(deliver(promise), `runs.run('${key}') result`, (error) => children.set(key, responseBoundaryFailure(key, error)));
 		});

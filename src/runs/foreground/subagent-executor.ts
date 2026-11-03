@@ -17,6 +17,8 @@ import {
 	updateForegroundChild,
 } from "./foreground-control.ts";
 import { getLivePromptAudit, rewritePromptWithGuidance, updateLiveEffectivePrompt } from "./prompt-audit.ts";
+import { createEventLogWriter } from "./event-log-writer.ts";
+import { traceContentSignature } from "../../workflows/trace-store.ts";
 import { discardRunningForegroundRun, persistForegroundRun, MAX_REMEMBERED_FOREGROUND_RUNS } from "./foreground-history.ts";
 import { projectScopeRequiresTrustMessage, resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
@@ -5769,9 +5771,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					workflowChildren: workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState: "running", inventoryComplete: false }),
 					runFanoutBudget: getRunFanoutBudgetSnapshot(workflowFanoutBudget),
 				};
+				const workflowEventLog = createEventLogWriter({ eventsPath, runId: workflowRunId });
 				const appendWorkflowEvent = (event: Record<string, unknown>) => {
 					try {
-						fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: Date.now(), runId: workflowRunId, ...event })}\n`, "utf-8");
+						workflowEventLog.append(event);
 					} catch (error) {
 						// The event log is a journal, not workflow truth. Callers append from
 						// inside run-result handling, so losing an entry to a full disk or to a
@@ -6183,6 +6186,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						: publicExecution ? undefined : runHostCommand;
 					let projectedTraceLength = 0;
 					let projectedTraceTail: NonNullable<Details["workflow"]>["trace"][number] | undefined;
+					let emittedTraceEventSignature = "";
 					const updateTrace = (trace: NonNullable<Details["workflow"]>["trace"]) => {
 						const projectedTrace = annotateWorkflowPreflightTrace(trace, workflowPreflight);
 						const preflightWarnings = workflowPreflightWarnings(workflowPreflight, trace);
@@ -6284,7 +6288,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						projectedTraceTail = trace.at(-1);
 						projectWorkflowActivity();
 						persist({ tolerateStatusWriteFailure: true });
-						appendWorkflowEvent({ type: "subagent.workflow.trace", trace });
+						// `subagent.workflow.trace` carries the whole trace array, so emitting it for an
+						// unchanged trace costs O(n) bytes per no-op update and makes an endlessly
+						// re-delivered launch grow the journal quadratically. Emit only when content moves.
+						const traceEventSignature = traceContentSignature(trace);
+						if (traceEventSignature !== emittedTraceEventSignature) {
+							emittedTraceEventSignature = traceEventSignature;
+							appendWorkflowEvent({ type: "subagent.workflow.trace", trace });
+						}
 					};
 					// A reused child launches nothing, so neither the launch observer nor the post-launch classification
 					// runs. Capacity release holds the workflow's slot while any step lacks `async`, so name the reused run

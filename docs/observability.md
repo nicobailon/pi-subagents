@@ -263,6 +263,8 @@ The reported `runtimeAcknowledgedExtensions` projection is `{ version: 1, source
 
 `events.jsonl` records lifecycle transitions such as `subagent.run.started`, `subagent.step.started`, `subagent.step.completed`/`failed`/`paused`/`stopped`, control attention events, nested interrupt failures, and `subagent.run.completed`/`stopped`. Run boundary events include the lifecycle artifact version.
 
+A workflow run's trace is bounded. Consecutive duplicate entries are folded, so re-delivering a `runs.run` for an existing key records one `reused` entry rather than one per delivery, and an unchanged trace is not re-serialized. The trace keeps at most 4,000 entries and drops the oldest, and the run's `events.jsonl` writes one `subagent.workflow.event_log_warn` line at 50 MiB and then stops at 256 MiB with a `subagent.workflow.event_log_capped` marker. The journal is audit evidence, not workflow truth: `status.json` and each child's own `status.json` stay authoritative.
+
 ### Process-terminal proof
 
 Lifecycle artifacts include `process-terminal-candidate.json` (private runner evidence) and `process-terminal.json` (the public proof projection).
