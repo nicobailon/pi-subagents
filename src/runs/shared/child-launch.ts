@@ -189,7 +189,10 @@ function childStorage(input: BuildInProcessChildLaunchInput): ChildSessionStorag
 }
 
 export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput): InProcessChildLaunch {
-	const requiredExtensions = input.requiredExtensions ?? input.inherited?.requiredExtensions ?? resolveRequiredChildExtensions(input.parentSessionId);
+	const resolvedRequiredExtensions = input.requiredExtensions ?? input.inherited?.requiredExtensions ?? resolveRequiredChildExtensions(input.parentSessionId);
+	// A placed child cannot load local extension paths, so it skips non-mandatory entries like an
+	// external runner does; a mandatory one stays and refuses the launch when it is serialized.
+	const requiredExtensions = input.machine ? resolvedRequiredExtensions.filter((entry) => entry.requireForAllRunners) : resolvedRequiredExtensions;
 	const agentCapabilityCeiling: ResolvedSubagentCapabilityCeiling | undefined = input.descendantAllowedAgents === undefined
 		? undefined
 		: { version: 1, allowedAgents: [...input.descendantAllowedAgents], denyExtensions: false, sources: [`agent:${input.childAgentName}`] };

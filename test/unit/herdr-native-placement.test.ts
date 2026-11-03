@@ -76,6 +76,13 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		assert.deepEqual(built.session.remoteResources?.toolCeiling, ["read"]);
 	});
 
+	it("skips a non-mandatory required child extension for a placed child but still refuses a mandatory one", () => {
+		const extensionPath = fs.realpathSync(new URL(import.meta.url));
+		const placed = (requiredExtensions: Array<{ id: string; path: string; requireForAllRunners?: true }>) => buildRunnerChildLaunch({ agent: "worker", task: "inspect", machine, cwd: machine.cwd, tools: ["read"], inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, requiredExtensions }, { cwd: "/local/repo", id: "run-required", flatIndex: 0 }, { sessionEnabled: true, watchdogStatus() {} }).session;
+		assert.doesNotThrow(() => serializeHerdrPiLaunch(placed([{ id: "bili", path: extensionPath }])));
+		assert.throws(() => serializeHerdrPiLaunch(placed([{ id: "policy", path: extensionPath, requireForAllRunners: true }])), /cannot transfer local extension paths/u);
+	});
+
 	it("projects native Git evidence through the detached child result", async () => { const built = buildRunnerChildLaunch({ agent: "worker", task: "inspect", machine, cwd: machine.cwd, tools: ["read"], inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false }, { cwd: "/local/repo", id: "run-native-result", flatIndex: 0 }, { sessionEnabled: true, watchdogStatus() {} }); const listeners = new Set<(event: any) => void>(); const placed: ChildSession = { ...child, machineEvidence: { provider: "herdr", machineId: "m1", initial: { head: "a", dirty: false }, final: { head: "b", dirty: true } }, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); }, async prompt() { const message = { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } }; for (const listener of listeners) listener({ type: "message_end", message }); for (const listener of listeners) listener({ type: "agent_settled" }); } }; const result = await runChildSession({ factory: { async create() { return placed; }, async dispose() {} }, launch: built, prompt: "Task: inspect", appendChildEvent() {}, writeOutputLine() {} }); assert.deepEqual(result.nativeMachine, { provider: "herdr", machineId: "m1", initialGit: { head: "a", dirty: false }, finalGit: { head: "b", dirty: true } }); });
 
 	it("keeps native launch data-only and rejects local resources, callbacks, fork files, and nested delegation", () => {
