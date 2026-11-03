@@ -4,7 +4,7 @@
 
 ### Changed
 
-- The Herdr `title-suffix` token is now always `⏳N`, where N is the number of active subagents (plus `⚠` when a child needs attention). Before, it showed the agent name when exactly one run was active and the newest workflow label when one was set, which changed width as runs started and finished and was truncated in narrow sidebar rows. The `summary` token and state labels still carry the agent names and workflow label. See [#3156](https://github.com/nicobailon/pi-subagents/issues/3156).
+- The Herdr `title-suffix` token is now always `⏳N`, where N is the number of active subagents (plus `⚠` when a child needs attention). Before, it showed the agent name when exactly one run was active and the newest workflow label when one was set, which changed width as runs started and finished and was truncated in narrow sidebar rows. The `summary` token and state labels still carry the agent names and workflow label. Thanks to [@longyuxi](https://github.com/longyuxi) for the report and #3157. (#3156)
 
 - Resume and auto-resume no longer trust files a background run can write. A workflow's saved launch and a single run's recovery record now live in `async-subagent-launches/<id>/` under the subagent temp root, outside the run directory, and they alone decide what a resume starts, who owns it, where it runs and with what authority. Before, a run sandboxed by a runner launcher could edit its own directory to make the parent start something else at the next session start. Runs started before this update can't be resumed or auto-resumed; relaunch workflows with `options: { reuseFrom: "<id>" }` and start single runs again. Thanks to [@ViperJuice](https://github.com/ViperJuice) for the report. (#3116)
 
