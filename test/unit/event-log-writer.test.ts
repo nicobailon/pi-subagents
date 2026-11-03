@@ -87,6 +87,54 @@ it("stops at the hard cap and records a single capped marker", () => {
 	assert.equal(lines.length, before);
 });
 
+it("reserves the warn line so an accepted event never lands past the hard cap", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "event-log-writer-reserve-"));
+	try {
+		const eventsPath = path.join(root, "events.jsonl");
+		// 105 + 105 still fits 300, but not next to the 126-byte warn line the second event triggers.
+		// Without the reservation the warn line and the event land together at 340 bytes while the
+		// event is still reported as accepted.
+		const writer = createEventLogWriter({ eventsPath, runId: "run-reserve", warnBytes: 120, limitBytes: 300, onWarn: () => undefined });
+		const overshoots: number[] = [];
+		for (let index = 0; index < 20; index += 1) {
+			const accepted = writer.append({ type: "subagent.workflow.trace", pad: "x".repeat(10), index });
+			const size = fs.statSync(eventsPath).size;
+			if (accepted && size > 300) overshoots.push(size);
+		}
+		assert.deepEqual(overshoots, [], "the event that crosses the warn line must fit under the cap next to it");
+		assert.equal(writer.capped, true);
+		assert.equal(writer.warned, false, "the warn line could not fit, so the cap wins");
+		assert.equal(writer.bytesUsed, fs.statSync(eventsPath).size);
+		const lines = fs.readFileSync(eventsPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+		assert.deepEqual(lines.map((line) => line.type), ["subagent.workflow.trace", "subagent.workflow.event_log_capped"]);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+it("writes the warn line when it fits with the event that crosses it, then caps", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "event-log-writer-fits-"));
+	try {
+		const eventsPath = path.join(root, "events.jsonl");
+		const writer = createEventLogWriter({ eventsPath, runId: "run-fits", warnBytes: 120, limitBytes: 400, onWarn: () => undefined });
+		const overshoots: number[] = [];
+		for (let index = 0; index < 20; index += 1) {
+			const accepted = writer.append({ type: "subagent.workflow.trace", pad: "x".repeat(10), index });
+			const size = fs.statSync(eventsPath).size;
+			if (accepted && size > 400) overshoots.push(size);
+		}
+		assert.deepEqual(overshoots, []);
+		assert.equal(writer.warned, true);
+		assert.equal(writer.capped, true);
+		assert.equal(writer.bytesUsed, fs.statSync(eventsPath).size);
+		const lines = fs.readFileSync(eventsPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+		assert.equal(lines.filter((line) => line.type === "subagent.workflow.event_log_warn").length, 1);
+		assert.equal(lines.filter((line) => line.type === "subagent.workflow.event_log_capped").length, 1);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
 it("starts at zero when the journal does not exist yet", () => {
 	const { writer } = harness();
 	assert.equal(writer.bytesUsed, 0);

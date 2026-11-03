@@ -69,6 +69,29 @@ export function traceContentSignature(trace: readonly unknown[]): string {
 	return `${trace.length}|${JSON.stringify(trace[trace.length - 1])}`;
 }
 
+/** What a consumer of a capped trace still has to project, and from which index. */
+export interface TraceProjectionWindow {
+	/** `rotate` means one entry was dropped and one appended: only the new tail is new. */
+	mode: "append" | "rotate" | "rebuild";
+	from: number;
+}
+
+/**
+ * How much of `trace` changed since the consumer projected it last.
+ *
+ * A trace below its cap only appends, so `length` and the last entry it saw identify the
+ * array. At the cap the store drops the oldest entry and appends one, so the length stops
+ * changing and the old tail moves one slot earlier: that rotation is a single new entry, not
+ * a reason to replay every retained one. Anything else — a shorter array, or a position that
+ * no longer holds the entry the consumer saw — is a rebuild.
+ */
+export function traceProjectionWindow<T>(trace: readonly T[], projectedLength: number, projectedTail: T | undefined): TraceProjectionWindow {
+	if (projectedLength <= 0) return { mode: "append", from: 0 };
+	if (projectedLength > 1 && trace.length === projectedLength && trace[projectedLength - 2] === projectedTail) return { mode: "rotate", from: projectedLength - 1 };
+	if (trace.length < projectedLength || trace[projectedLength - 1] !== projectedTail) return { mode: "rebuild", from: 0 };
+	return { mode: "append", from: projectedLength };
+}
+
 export function createTraceStore<T>(options: TraceStoreOptions<T> = {}): TraceStore<T> {
 	const maxEntries = resolveMaxEntries(options.maxEntries);
 	const onWarn = options.onWarn ?? ((message: string) => console.error(message));

@@ -18,7 +18,7 @@ import {
 } from "./foreground-control.ts";
 import { getLivePromptAudit, rewritePromptWithGuidance, updateLiveEffectivePrompt } from "./prompt-audit.ts";
 import { createEventLogWriter } from "./event-log-writer.ts";
-import { traceContentSignature } from "../../workflows/trace-store.ts";
+import { traceContentSignature, traceProjectionWindow } from "../../workflows/trace-store.ts";
 import { discardRunningForegroundRun, persistForegroundRun, MAX_REMEMBERED_FOREGROUND_RUNS } from "./foreground-history.ts";
 import { projectScopeRequiresTrustMessage, resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
@@ -6232,16 +6232,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(preflightWarnings.length ? { preflightWarnings } : {}),
 						};
 						if (status.workflowGraph) applyWorkflowLaneTrace(status.workflowGraph, trace);
-						const rebuild = trace.length < projectedTraceLength
-							|| (projectedTraceLength > 0 && trace[projectedTraceLength - 1] !== projectedTraceTail);
-						if (rebuild) {
+						// A capped trace rotates instead of growing, so a rotation projects one new entry rather
+						// than all 4,000: the dropped entry is absorbed by `workflowSteps`, which keeps the state
+						// it already projected, and the stopped-event rule below keeps a replay from re-announcing.
+						const projection = traceProjectionWindow(trace, projectedTraceLength, projectedTraceTail);
+						if (projection.mode === "rebuild") {
 							workflowSteps.clear();
 							for (const step of status.steps ?? []) {
 								if (step.workflowKey) workflowSteps.set(step.workflowKey, step);
 							}
-							projectedTraceLength = 0;
 						}
-						for (let index = projectedTraceLength; index < trace.length; index += 1) {
+						for (let index = projection.from; index < trace.length; index += 1) {
 							const entry = trace[index]!;
 							if (entry.operation !== "run") continue;
 							const entryLabel = entry.label?.trim() || undefined;

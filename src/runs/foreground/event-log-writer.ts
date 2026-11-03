@@ -16,6 +16,10 @@
  *   `subagent.workflow.event_log_capped` marker and suppresses everything after it.
  *
  * Both thresholds are env-overridable so the guards can be exercised end-to-end.
+ *
+ * A threshold crossing reserves the warn line's bytes before the event that triggers it is
+ * accepted, so an accepted event never lands past the hard cap; only the `capped` marker is
+ * allowed to.
  */
 
 import * as fs from "node:fs";
@@ -83,8 +87,13 @@ export function createEventLogWriter(options: EventLogWriterOptions): EventLogWr
 		return bytes;
 	};
 
-	const writeBestEffort = (event: Record<string, unknown>): void => {
+	/** One journal line for `event`, plus its size, so callers can budget it before writing. */
+	const lineFor = (event: Record<string, unknown>): { line: string; lineBytes: number } => {
 		const line = `${JSON.stringify({ ts: now(), ...(runId ? { runId } : {}), ...event })}\n`;
+		return { line, lineBytes: Buffer.byteLength(line, "utf-8") };
+	};
+
+	const writeBestEffort = (line: string): void => {
 		try {
 			appendLine(eventsPath, line);
 			bytes = currentBytes() + Buffer.byteLength(line, "utf-8");
@@ -95,25 +104,30 @@ export function createEventLogWriter(options: EventLogWriterOptions): EventLogWr
 
 	const append = (event: Record<string, unknown>): boolean => {
 		if (capped) return false;
-		const line = `${JSON.stringify({ ts: now(), ...(runId ? { runId } : {}), ...event })}\n`;
-		const lineBytes = Buffer.byteLength(line, "utf-8");
+		const { line, lineBytes } = lineFor(event);
 		const used = currentBytes();
-		if (used + lineBytes > limitBytes) {
+		// The warn line is journal bytes like any other, so budget it before accepting the event
+		// that crosses the threshold: writing both would otherwise land the journal past
+		// `limitBytes` while this event is still reported as accepted. When the reservation does
+		// not fit, the hard cap wins and the warn line is skipped — `onWarn` still reports it.
+		const warn = !warned && used + lineBytes > warnBytes
+			? lineFor({ type: "subagent.workflow.event_log_warn", warnBytes, limitBytes, bytes: used })
+			: undefined;
+		if (used + (warn?.lineBytes ?? 0) + lineBytes > limitBytes) {
 			capped = true;
-			writeBestEffort({ type: "subagent.workflow.event_log_capped", limitBytes, bytes: used });
+			writeBestEffort(lineFor({ type: "subagent.workflow.event_log_capped", limitBytes, bytes: used }).line);
 			onWarn(`Async workflow event log '${eventsPath}' reached its ${limitBytes}-byte cap; further events are suppressed.`);
 			return false;
 		}
-		if (!warned && used + lineBytes > warnBytes) {
+		if (warn) {
 			warned = true;
-			writeBestEffort({ type: "subagent.workflow.event_log_warn", warnBytes, limitBytes, bytes: used });
+			writeBestEffort(warn.line);
 			onWarn(`Async workflow event log '${eventsPath}' passed its ${warnBytes}-byte warn line (hard cap ${limitBytes}); if it keeps growing, the producer is likely looping.`);
 		}
 		appendLine(eventsPath, line);
 		// `writeBestEffort` above already counted the warn line. Re-read the running count instead
 		// of the pre-warn snapshot in `used`: adding `lineBytes` to `used` would drop that line from
-		// the accounting, so `bytesUsed` would disagree with the journal and later events could pass
-		// the hard cap by up to one warn line.
+		// the accounting and make `bytesUsed` disagree with the journal.
 		bytes = currentBytes() + lineBytes;
 		return true;
 	};
