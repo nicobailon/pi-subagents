@@ -247,6 +247,19 @@ export function runExternalCli(input: {
 		let processTree: OwnedProcessTreeController | undefined;
 		let processPid: number | undefined;
 		let termination: Promise<ProcessTreeTerminal> | undefined;
+		// A failed status callback (a non-capacity write error) fails the run, but the process it
+		// launched is still stopped and the temporary paths are still removed before rejecting.
+		let callbackFailed = false;
+		let callbackError: unknown;
+		const notifyProcess = (status: ExternalProcessStatus) => {
+			try { input.onProcess?.(status); }
+			catch (error) {
+				if (callbackFailed) return;
+				callbackFailed = true;
+				callbackError = error;
+				if (!settled && processTree && processPid !== undefined) termination ??= terminateExternalProcessTree(processPid, processTree);
+			}
+		};
 		const flushProgress = () => {
 			if (!latestProgress) return;
 			input.onParserProgress?.(latestProgress);
@@ -266,7 +279,7 @@ export function runExternalCli(input: {
 			progressTimer.unref?.();
 		};
 		const terminate = (reason: "timeout" | "stop") => {
-			if (settled || timedOut || stopped || parserError) return;
+			if (settled || timedOut || stopped || parserError || callbackFailed) return;
 			timedOut = reason === "timeout";
 			stopped = reason === "stop";
 			if (processTree && processPid !== undefined) termination = terminateExternalProcessTree(processPid, processTree);
@@ -353,7 +366,7 @@ export function runExternalCli(input: {
 			stderrPath,
 			...(input.finalOutputPath ? { finalOutputPath: input.finalOutputPath } : {}),
 		};
-		input.onProcess?.(initialProcess);
+		notifyProcess(initialProcess);
 		child.stdout.on("data", (chunk: Buffer) => {
 			parseChunk(chunk);
 			writeBoundedLog(child.stdout, stdoutStream, chunk, stdoutLog, limits.stdoutLogBytes);
@@ -401,7 +414,7 @@ export function runExternalCli(input: {
 					...(stdoutLog.total > stdoutLog.bytes ? { stdoutTruncated: true } : {}),
 					...(stderrLog.total > stderrLog.bytes ? { stderrTruncated: true } : {}),
 				};
-				input.onProcess?.(externalProcess);
+				notifyProcess(externalProcess);
 				const stderr = stderrTail.text().trim();
 				const parserFailure = parserError?.message ?? (parserTerminal?.state === "failed" ? parserTerminal.error ?? "External CLI parser reported terminal failure." : undefined);
 				const treeFailure = process.platform !== "win32" && treeProof?.state === "unknown"
@@ -430,9 +443,10 @@ export function runExternalCli(input: {
 				const streamFailure = streamResults.find((streamResult) => streamResult.status === "rejected");
 				try { cleanupTemporaryPaths(); }
 				catch (cleanupError) { reject(cleanupError); return; }
-				if (streamFailure?.status === "rejected") reject(streamFailure.reason);
+				if (callbackFailed) reject(callbackError);
+				else if (streamFailure?.status === "rejected") reject(streamFailure.reason);
 				else resolve(result);
-			})();
+			})().catch(reject);
 		});
 	});
 }
