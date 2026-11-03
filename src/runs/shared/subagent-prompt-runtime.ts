@@ -7,7 +7,7 @@ import { registerNativeSupervisorClient } from "../../intercom/native-supervisor
 import { permissionDecision } from "./permissions.ts";
 import type { SteerRequest } from "../background/control-channel.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, isRuntimeAcknowledgedExtensionId } from "./runtime-acknowledged-extensions.ts";
-import { createStructuredOutputToolParameters, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, validateStructuredOutputValue } from "./structured-output.ts";
+import { createStructuredOutputToolParameters, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, prepareStructuredOutputArguments, structuredOutputValidatorReady, validateStructuredOutputValue } from "./structured-output.ts";
 import { validateAcceptanceReport } from "./acceptance.ts";
 import { formatChildToolDiagnostic } from "./tool-availability.ts";
 import { shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
@@ -592,11 +592,13 @@ function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<
 	const terminalState = structured.terminalState ??= { captured: false };
 	const required = structured.acceptanceReport === "required";
 	const parameters = createStructuredOutputToolParameters(structured.schema, { acceptanceReport: structured.acceptanceReport });
+	void structuredOutputValidatorReady();
 	const registerTool = pi.registerTool as unknown as (tool: {
 		name: string;
 		label: string;
 		description: string;
 		parameters: unknown;
+		prepareArguments: (args: unknown) => unknown;
 		execute: (_id: string, params: { value: unknown; acceptanceReport?: unknown }) => Promise<unknown>;
 	}) => void;
 	registerTool({
@@ -605,6 +607,7 @@ function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<
 		label: "Structured Output",
 		description: "Submit the required final structured output for this subagent step. This terminates the step.",
 		parameters,
+		prepareArguments: (args: unknown) => prepareStructuredOutputArguments(structured.schema, args),
 		async execute(_id: string, params: { value: unknown; acceptanceReport?: unknown }) {
 			const validation = await validateStructuredOutputValue(structured.schema, params.value);
 			if (validation.status === "invalid") {
