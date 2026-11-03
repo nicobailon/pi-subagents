@@ -260,14 +260,20 @@ function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: str
 	return { ...result, extensions };
 }
 
-let lastReleasedSessionId: string | undefined;
-registerSessionResourceCleanup((sessionId) => { lastReleasedSessionId = sessionId; });
-
-/** `dispose()` releases session resources only in the SDK's copy of pi-ai. Under Pi's bundled CLI, the host's extensions register theirs in a different copy: the one this module imports. */
+/**
+ * `dispose()` releases session resources only in the SDK's copy of pi-ai. Under Pi's bundled CLI, the host's
+ * extensions register theirs in a different copy: the one this module imports. The observer is registered per
+ * dispose because Pi reloads extensions without a module cache, so a module-level one would pile up on each reload.
+ */
 function disposeChildSession(session: { readonly sessionId: string; dispose(): void }): void {
-	lastReleasedSessionId = undefined;
-	session.dispose();
-	if (lastReleasedSessionId !== session.sessionId) cleanupSessionResources(session.sessionId);
+	let released = false;
+	const unregister = registerSessionResourceCleanup((sessionId) => { if (sessionId === session.sessionId) released = true; });
+	try {
+		session.dispose();
+	} finally {
+		unregister();
+		if (!released) cleanupSessionResources(session.sessionId);
+	}
 }
 
 /** One launch at a time from env application through `session_start`, so parallel launches never observe each other's `processEnv` while their extensions load and start. */
