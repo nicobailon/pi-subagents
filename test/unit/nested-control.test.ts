@@ -20,6 +20,8 @@ import { readProcessTerminal } from "../../src/runs/background/process-terminal.
 import { readStatus } from "../../src/shared/utils.ts";
 import { interruptRequestPath } from "../../src/runs/background/control-channel.ts";
 import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
+import { writeFileCreatingDir } from "../support/helpers.ts";
 
 const routeRoots: string[] = [];
 const fanoutListenerCleanupKey = "__piSubagentFanoutChildNestedControlInboxCleanups";
@@ -469,10 +471,11 @@ describe("nested control routing", () => {
 				share: false,
 				extensionBindings: { "shepherd.dispatch/1": { role: "coder" } },
 			};
-			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify(descriptor));
-			assert.deepEqual(readNestedRecoveryDescriptor(root, "nested-bound", "worker")?.extensionBindings, descriptor.extensionBindings);
-			assert.throws(() => readNestedRecoveryDescriptor(root, "other-run", "worker"), /different source run/);
-			assert.throws(() => readNestedRecoveryDescriptor(root, "nested-bound", "reviewer"), /different agent/);
+			const nestedDir = path.join(root, "runs", "nested-bound");
+			writeFileCreatingDir(recoveryDescriptorPath(nestedDir), JSON.stringify(descriptor));
+			assert.deepEqual(readNestedRecoveryDescriptor(nestedDir, "nested-bound", "worker")?.extensionBindings, descriptor.extensionBindings);
+			assert.throws(() => readNestedRecoveryDescriptor(nestedDir, "other-run", "worker"), /different source run/);
+			assert.throws(() => readNestedRecoveryDescriptor(nestedDir, "nested-bound", "reviewer"), /different agent/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

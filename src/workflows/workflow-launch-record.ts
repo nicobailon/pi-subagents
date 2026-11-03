@@ -1,11 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
+import { runLaunchDir } from "../runs/shared/run-launch-folder.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
 
 const WORKFLOW_LAUNCH_RECORD_FILE = "launch.json";
-/** Beside `async-subagent-runs/`, under the same temp root. */
-const WORKFLOW_LAUNCHES_DIR = "async-subagent-launches";
 
 /**
  * The public launch of an async top-level workflow, saved so the run can be relaunched later. A
@@ -29,7 +28,7 @@ type WorkflowLaunchRecordRead =
 	| { ok: false; missing: boolean; error: string };
 
 export function workflowLaunchRecordDir(asyncDirRoot: string, runId: string): string {
-	return path.join(path.dirname(asyncDirRoot), WORKFLOW_LAUNCHES_DIR, runId);
+	return runLaunchDir(path.join(asyncDirRoot, runId));
 }
 
 function launchRecordPath(asyncDirRoot: string, runId: string): string {

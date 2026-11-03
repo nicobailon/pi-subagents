@@ -95,6 +95,7 @@ import { resolvePermissionRules, type PermissionConfig } from "../shared/permiss
 import { normalizeExtensionBindings, omitExtensionBindingsEnv, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { omitGitRoutingEnv } from "../shared/git-environment.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
+import { recoveryDescriptorPath } from "../shared/run-launch-folder.ts";
 import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, writeRetainedRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
@@ -2228,7 +2229,7 @@ export function executeAsyncSingle(
 	};
 	if (!externalRunner) {
 		try {
-			writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor);
+			writePrivateAtomicJson(recoveryDescriptorPath(asyncDir), recoveryDescriptor);
 		} catch (error) {
 			return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
 		}

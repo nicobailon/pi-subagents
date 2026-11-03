@@ -350,7 +350,7 @@ Steering, stop, and supervisor requests and replies travel through files in thos
 
 ### Isolating a run from the parent
 
-A launcher can also keep a run from reaching the parent session and other runs. Workflow resume and auto-resume read what to relaunch, which session owns it, and its capability ceiling only from records the parent keeps in `async-subagent-launches/` under the temp root, so a run that rewrites files in its own run directory cannot make a later resume start something else. For the isolation to hold, the launcher must not give the run write access to:
+A launcher can also keep a run from reaching the parent session and other runs. Resume and auto-resume take what to relaunch and under which identity only from records the parent keeps in `async-subagent-launches/<id>/` under the temp root: a workflow's saved launch (its script, owning session and capability ceiling), and a single run's recovery descriptor (its agent, session file, cwd, model, tools, ceilings and launcher). A run that rewrites files in its own run directory, such as `status.json`, cannot make a later resume start something else or continue another run's transcript. For the isolation to hold, the launcher must not give the run write access to:
 
 - `async-subagent-launches/`, or other runs' directories under `async-subagent-runs/`;
 - `~/.pi/agent`: extensions, settings and agent files there load into the parent session, so write access to them is a way into the parent. Bind it read-only.

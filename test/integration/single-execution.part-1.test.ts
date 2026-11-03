@@ -70,6 +70,8 @@ import { appendWorkflowChildJournal, runtimeReplacedAbortReason, workflowChildFi
 import { workflowLaunchRecordDir } from "../../src/workflows/workflow-launch-record.ts";
 import { updateTerminalRunIndex } from "../../src/runs/background/terminal-run-index.ts";
 import { getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
+import { writeFileCreatingDir } from "../support/helpers.ts";
 
 function writeRetainedEchoRun(runId: string, options: { outputPath: string; state: "complete" | "failed"; steps: number }) {
 	const asyncDir = path.join(DIRS.async, runId);
@@ -85,11 +87,12 @@ function writeRetainedEchoRun(runId: string, options: { outputPath: string; stat
 		sessionFile,
 		steps: Array.from({ length: options.steps }, () => ({ agent: "echo", status: options.state, sessionFile })),
 	}), "utf-8");
-	fs.writeFileSync(path.join(asyncDir, "recovery-descriptor.json"), JSON.stringify({
+	writeFileCreatingDir(recoveryDescriptorPath(asyncDir), JSON.stringify({
 		version: 1,
 		runFanoutBudget,
 		sourceRunId: runId,
 		agent: "echo",
+		sessionFile,
 		cwd: tempDir,
 		systemPromptMode: "append",
 		inheritProjectContext: true,

@@ -20,6 +20,7 @@ import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
 import { validateIntercomBridgeConfig } from "../../intercom/intercom-bridge.ts";
 import { validateModelResponseAliases } from "../../shared/model-response-aliases.ts";
 import { readWorkflowLaunchRecord } from "../../workflows/workflow-launch-record.ts";
+import { recoveryDescriptorPath } from "../shared/run-launch-folder.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -316,7 +317,7 @@ function resumeTargetMode(status: AsyncStatus | null, result: AsyncResultFile | 
 
 export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): SteeringRecoveryDescriptor | undefined {
 	if (!asyncDir) return undefined;
-	const descriptorPath = path.join(asyncDir, "recovery-descriptor.json");
+	const descriptorPath = recoveryDescriptorPath(asyncDir);
 	if (!fs.existsSync(descriptorPath)) return undefined;
 	let value: unknown;
 	try {
@@ -493,7 +494,10 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const recoveryDescriptor = readAsyncRecoveryDescriptor(location.asyncDir ?? undefined);
 	const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
 	const runId = location.asyncDir ? path.basename(location.asyncDir) : result?.runId ?? result?.id ?? location.resolvedId ?? "unknown";
-	const mode = resumeTargetMode(status, result);
+	// Only a single run writes a recovery descriptor. When one exists, the run's identity (agent,
+	// session, cwd, model, ceilings) comes from it alone: status.json and the shared results directory
+	// are writable by a run behind a runner launcher.
+	const mode = recoveryDescriptor ? "single" : resumeTargetMode(status, result);
 	if (options.sessionId && ((status && !ownsRun(options.sessionId, status.sessionId)) || (result && !ownsRun(options.sessionId, result.sessionId)))) {
 		throw new Error(`Async run '${runId}' was not found in the active session.`);
 	}
@@ -514,18 +518,18 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 			if (requestedIndex < 0 || requestedIndex >= stepCount) throw new Error(`Async run '${runId}' has ${stepCount} children. Index ${requestedIndex} is out of range.`);
 			const selectedStep = statusSteps[requestedIndex];
 			if (selectedStep?.status === "running") {
-				const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, selectedStep.capabilityCeiling);
+				const capabilityCeiling = recoveryDescriptor ? recoveryDescriptor.capabilityCeiling : intersectSubagentCapabilityCeilings(status?.capabilityCeiling, selectedStep.capabilityCeiling);
 				return {
 					kind: "live",
 					runId,
 					asyncDir: location.asyncDir ?? undefined,
 					state,
 					...(mode ? { mode } : {}),
-					agent: selectedStep.agent,
+					agent: recoveryDescriptor?.agent ?? selectedStep.agent,
 					...(selectedStep.sessionName ?? result?.results?.[requestedIndex]?.sessionName ? { sessionName: selectedStep.sessionName ?? result?.results?.[requestedIndex]?.sessionName } : {}),
 					index: requestedIndex,
 					cwd: status?.cwd ?? result?.cwd,
-					sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+					sessionFile: recoveryDescriptor ? recoveryDescriptor.sessionFile : selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
 					model: selectedStep.model,
 					thinking: selectedStep.thinking,
 					launchContractDigest: selectedStep.launchContractDigest ?? result?.results?.[requestedIndex]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
@@ -546,18 +550,18 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 			if (!selected) {
 				throw new Error(`Async run '${runId}' has ${running.length} running children. Provide index to choose one.`);
 			}
-			const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, selected.step.capabilityCeiling);
+			const capabilityCeiling = recoveryDescriptor ? recoveryDescriptor.capabilityCeiling : intersectSubagentCapabilityCeilings(status?.capabilityCeiling, selected.step.capabilityCeiling);
 			return {
 				kind: "live",
 				runId,
 				asyncDir: location.asyncDir ?? undefined,
 				state,
 				...(mode ? { mode } : {}),
-				agent: selected.step.agent,
+				agent: recoveryDescriptor?.agent ?? selected.step.agent,
 				...(selected.step.sessionName ?? result?.results?.[selected.index]?.sessionName ? { sessionName: selected.step.sessionName ?? result?.results?.[selected.index]?.sessionName } : {}),
 				index: selected.index,
 				cwd: status?.cwd ?? result?.cwd,
-				sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+				sessionFile: recoveryDescriptor ? recoveryDescriptor.sessionFile : selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
 				model: selected.step.model,
 				thinking: selected.step.thinking,
 				launchContractDigest: selected.step.launchContractDigest ?? result?.results?.[selected.index]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
@@ -580,17 +584,18 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	if (selectedStatusStep?.status === "stopped" || selectedStatusStep?.stopped === true) {
 		throw new Error(`Async run '${runId}' child ${index} was stopped and cannot be resumed. Start a new run instead.`);
 	}
-	const agent = selectedStatusStep?.agent ?? resultSteps[index]?.agent ?? result?.agent;
+	const agent = recoveryDescriptor ? recoveryDescriptor.agent : selectedStatusStep?.agent ?? resultSteps[index]?.agent ?? result?.agent;
 	if (!agent) throw new Error(`Could not determine child agent for async run '${runId}'.`);
-	if (recoveryDescriptor && recoveryDescriptor.agent !== agent) throw new Error(`Async run '${runId}' has a recovery descriptor for '${recoveryDescriptor.agent}', not '${agent}'.`);
-	const sessionFile = statusSteps[index]?.sessionFile
-		?? resultSteps[index]?.sessionFile
-		?? (stepCount === 1 ? status?.sessionFile ?? result?.sessionFile : undefined);
+	const sessionFile = recoveryDescriptor
+		? recoveryDescriptor.sessionFile
+		: statusSteps[index]?.sessionFile
+			?? resultSteps[index]?.sessionFile
+			?? (stepCount === 1 ? status?.sessionFile ?? result?.sessionFile : undefined);
 	if (!sessionFile && requireSessionFile) throw new Error(`Async run '${runId}' child ${index} does not have a persisted session file to resume from.`);
 	const resolvedSessionFile = sessionFile ? validateResumeSessionFile(runId, sessionFile) : undefined;
-	const stepModel = statusSteps[index]?.launchModel ?? statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
-	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
-	const thinkingCeiling = statusSteps[index]?.thinkingCeiling ?? (stepCount === 1 ? recoveryDescriptor?.thinkingCeiling : undefined);
+	const stepModel = recoveryDescriptor ? recoveryDescriptor.model : statusSteps[index]?.launchModel ?? statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
+	const stepThinking = recoveryDescriptor ? recoveryDescriptor.thinking : statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
+	const thinkingCeiling = recoveryDescriptor ? recoveryDescriptor.thinkingCeiling : statusSteps[index]?.thinkingCeiling;
 	// A workflow's admission ceiling comes only from the parent-owned launch record of its run directory:
 	// a run behind a launcher can write its own status.json (including a directory nested in it) and the
 	// shared results directory. Without a record there is no ceiling, so a revive without a recovery
@@ -598,13 +603,15 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const workflowLaunch = mode === "workflow" && location.asyncDir && path.dirname(location.asyncDir) === path.resolve(asyncDirRoot)
 		? readWorkflowLaunchRecord(asyncDirRoot, runId)
 		: undefined;
-	const capabilityCeiling = mode === "workflow"
+	const capabilityCeiling = recoveryDescriptor
+		? recoveryDescriptor.capabilityCeiling
+		: mode === "workflow"
 		? (workflowLaunch?.ok ? workflowLaunch.record.admissionCapabilityCeiling : undefined)
 		: intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
 	const managedWorktreeCwd = location.asyncDir
 		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index, statusSteps[index]?.worktreePath)
 		: undefined;
-	const resumeCwd = validateResumeCwd(runId, managedWorktreeCwd ?? status?.cwd ?? result?.cwd ?? recoveryDescriptor?.cwd);
+	const resumeCwd = validateResumeCwd(runId, managedWorktreeCwd ?? (recoveryDescriptor ? recoveryDescriptor.cwd : status?.cwd ?? result?.cwd));
 
 	return {
 		kind: "revive",
@@ -620,9 +627,10 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
 		...(stepModel ? { model: stepModel } : {}),
 		...(stepThinking ? { thinking: stepThinking } : {}),
-		launchContractDigest: statusSteps[index]?.launchContractDigest ?? resultSteps[index]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
-		...(statusSteps[index]?.runner ? { runner: statusSteps[index]!.runner } : {}),
-		...(statusSteps[index]?.externalJob ? { externalJob: statusSteps[index]!.externalJob } : {}),
+		launchContractDigest: recoveryDescriptor ? recoveryDescriptor.launchContractDigest : statusSteps[index]?.launchContractDigest ?? resultSteps[index]?.launchContractDigest ?? result?.launchContractDigest,
+		// External runners write no recovery descriptor.
+		...(!recoveryDescriptor && statusSteps[index]?.runner ? { runner: statusSteps[index]!.runner } : {}),
+		...(!recoveryDescriptor && statusSteps[index]?.externalJob ? { externalJob: statusSteps[index]!.externalJob } : {}),
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
