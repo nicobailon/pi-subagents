@@ -37,7 +37,7 @@ it("writes the event with the run id and keeps byte accounting honest", () => {
 });
 
 it("writes one warn line past the warn threshold and keeps writing", () => {
-	const { writer, lines, warnings } = harness({ warnBytes: 120, limitBytes: 10_000 });
+	const { writer, lines, warnings, bytes } = harness({ warnBytes: 120, limitBytes: 10_000 });
 	for (let index = 0; index < 8; index += 1) writer.append({ type: "subagent.workflow.trace", trace: [index] });
 	const warnLines = lines.filter((line) => line.includes("subagent.workflow.event_log_warn"));
 	assert.equal(warnLines.length, 1);
@@ -46,6 +46,29 @@ it("writes one warn line past the warn threshold and keeps writing", () => {
 	assert.equal(writer.capped, false);
 	// Every real event still landed: the warn line is a signal, not a stop.
 	assert.equal(lines.filter((line) => line.includes("subagent.workflow.trace")).length, 8);
+	// The warn line is journal bytes like any other, so the count must include it.
+	assert.equal(writer.bytesUsed, bytes());
+});
+
+it("counts the warn line so a threshold-crossing journal cannot overshoot the hard cap", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "event-log-writer-warn-"));
+	try {
+		const eventsPath = path.join(root, "events.jsonl");
+		// Small thresholds so the crossing, the warn line and the cap all happen in one test.
+		const writer = createEventLogWriter({ eventsPath, runId: "run-warn", warnBytes: 120, limitBytes: 600, onWarn: () => undefined });
+		for (let index = 0; index < 40; index += 1) writer.append({ type: "subagent.workflow.trace", trace: [index] });
+		assert.equal(writer.capped, true);
+		const onDisk = fs.statSync(eventsPath).size;
+		assert.equal(writer.bytesUsed, onDisk, "accounting must match the journal, warn and capped lines included");
+		const written = fs.readFileSync(eventsPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+		assert.equal(written.filter((line) => line.type === "subagent.workflow.event_log_warn").length, 1);
+		assert.equal(written.filter((line) => line.type === "subagent.workflow.event_log_capped").length, 1);
+		// Only the capped marker may sit past the limit; a missing warn line used to buy one more event.
+		const markerBytes = Buffer.byteLength(`${fs.readFileSync(eventsPath, "utf-8").trim().split("\n").at(-1)}\n`, "utf-8");
+		assert.ok(onDisk - markerBytes <= 600, `the cap admits its own marker only: ${onDisk} - ${markerBytes} > 600`);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
 });
 
 it("stops at the hard cap and records a single capped marker", () => {

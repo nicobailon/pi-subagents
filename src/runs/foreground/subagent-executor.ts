@@ -5401,6 +5401,42 @@ function workflowLaunchRecord(launch: WorkflowLaunch, cwd: string, scriptDigest:
 	return { version: 1, source: launch.source, params: { ...launch.params, cwd }, scriptDigest };
 }
 
+/**
+ * The `subagent.child-status` event for a step that a trace entry just stopped.
+ *
+ * Announcing the *transition* rather than the entry matters because the trace is capped
+ * (`workflows/trace-store.ts` drops its oldest entry): once a push shifts the array, the
+ * projected length no longer matches and every retained entry is re-projected. A replayed
+ * `stopped` entry then found a step that already said `stopped`, so each rebuild appended
+ * one more stop record per retained stop — thousands of duplicate `subagent.child-status`
+ * lines eating the journal budget the cap exists to protect.
+ *
+ * @returns the event to append, or `undefined` when the step was already stopped.
+ */
+export function workflowChildStoppedEvent(input: {
+	key: string;
+	step: NonNullable<AsyncStatus["steps"]>[number];
+	stepIndex: number | undefined;
+	previouslyStopped: boolean;
+}): Record<string, unknown> | undefined {
+	if (input.previouslyStopped) return undefined;
+	const { key, step } = input;
+	return {
+		type: "subagent.child-status",
+		version: 1,
+		childId: key,
+		status: "stopped",
+		reason: "subagent-action",
+		source: "async",
+		stepIndex: input.stepIndex,
+		agent: step.agent,
+		...(step.runId ? { childRunId: step.runId } : {}),
+		workflowKey: key,
+		...(step.phase ? { phase: step.phase } : {}),
+		...(step.label ? { label: step.label } : {}),
+	};
+}
+
 export function createSubagentExecutor(deps: ExecutorDeps): {
 	execute: (
 		id: string,
@@ -6212,6 +6248,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							const entryPhase = entry.phase?.trim() || undefined;
 							const shouldProjectPhase = entryPhase !== undefined && (entryPhase !== "auto-resume" || workflowSteps.get(entry.key)?.phase === undefined);
 							const existing = workflowSteps.get(entry.key);
+							// A rebuild after a cap rotation replays entries whose step already reached the
+							// step map, so capture the status before projecting this entry onto it.
+							const previouslyStopped = existing?.status === "stopped";
 							if (existing) {
 								if (entryLabel) existing.label = entryLabel;
 								if (shouldProjectPhase) existing.phase = entryPhase;
@@ -6268,20 +6307,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							const projectedStep = workflowSteps.get(entry.key);
 							if (entry.reused && projectedStep) projectedStep.reused = true;
 							if (entry.state === "stopped" && projectedStep) {
-								appendWorkflowEvent({
-									type: "subagent.child-status",
-									version: 1,
-									childId: entry.key,
-									status: "stopped",
-									reason: "subagent-action",
-									source: "async",
-									stepIndex: status.steps?.indexOf(projectedStep),
-									agent: projectedStep.agent,
-									...(projectedStep.runId ? { childRunId: projectedStep.runId } : {}),
-									workflowKey: entry.key,
-									...(projectedStep.phase ? { phase: projectedStep.phase } : {}),
-									...(projectedStep.label ? { label: projectedStep.label } : {}),
-								});
+								const stoppedEvent = workflowChildStoppedEvent({ key: entry.key, step: projectedStep, stepIndex: status.steps?.indexOf(projectedStep), previouslyStopped });
+								if (stoppedEvent) appendWorkflowEvent(stoppedEvent);
 							}
 						}
 						projectedTraceLength = trace.length;

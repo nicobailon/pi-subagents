@@ -20,6 +20,29 @@ it("projects independent bounded snapshots by stable key and clears terminal act
 	assert.ok(workflowChildSummary({ ...input, inventoryComplete: true, workflowState: "failed", progress: snapshots }).children.every((row) => row.activity === undefined));
 });
 
+it("keeps a running child visible after its launch entry leaves the capped trace", () => {
+	// The cap drops the oldest entry, and `launches`/`progress` only enrich existing rows, so an
+	// evicted launch used to delete the row of a child that is still working.
+	const trace = Array.from({ length: 3 }, (_, index) => ({ operation: "run" as const, key: `other_${index}`, state: "started" as const }));
+	const live = new Map([["long_running", workflowChildProgress(progress)]]);
+	const launches = new Map([["long_running", { agent: "worker", runId: "child-long" }]]);
+	const summary = workflowChildSummary({ ...input, trace, progress: live, launches });
+	const row = summary.children.find((entry) => entry.childId === "long_running");
+	assert.equal(row?.state, "running");
+	assert.equal(row?.runId, "child-long", "the launch receipt still names the run");
+	assert.equal(row?.activity?.currentTool, "read");
+
+	// A settled result still wins over a live snapshot for the same key.
+	const settled = workflowChildSummary({ ...input, trace, progress: live, launches,
+		children: [{ key: "long_running", state: "completed", ok: true, runId: "child-long", output: "", artifactPaths: [] }],
+	});
+	assert.equal(settled.children.find((entry) => entry.childId === "long_running")?.state, "completed");
+
+	// A closed inventory does not leave the seeded row running.
+	const closed = workflowChildSummary({ ...input, trace: [], progress: live, launches, inventoryComplete: true, workflowState: "failed" });
+	assert.equal(closed.children.find((entry) => entry.childId === "long_running")?.state, "failed");
+});
+
 it("keeps launch receipts running when the workflow inventory closes successfully or with an error", () => {
 	for (const workflowState of ["completed", "failed", "stopped"] as const) {
 		const summary = workflowChildSummary({ ...input, workflowState, inventoryComplete: true,

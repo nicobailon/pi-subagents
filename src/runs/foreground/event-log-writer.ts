@@ -110,7 +110,11 @@ export function createEventLogWriter(options: EventLogWriterOptions): EventLogWr
 			onWarn(`Async workflow event log '${eventsPath}' passed its ${warnBytes}-byte warn line (hard cap ${limitBytes}); if it keeps growing, the producer is likely looping.`);
 		}
 		appendLine(eventsPath, line);
-		bytes = used + lineBytes;
+		// `writeBestEffort` above already counted the warn line. Re-read the running count instead
+		// of the pre-warn snapshot in `used`: adding `lineBytes` to `used` would drop that line from
+		// the accounting, so `bytesUsed` would disagree with the journal and later events could pass
+		// the hard cap by up to one warn line.
+		bytes = currentBytes() + lineBytes;
 		return true;
 	};
 

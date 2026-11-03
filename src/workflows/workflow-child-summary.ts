@@ -89,6 +89,25 @@ export function workflowChildSummary(input: {
 			...(previous?.thinking ? { thinking: previous.thinking } : {}),
 		});
 	}
+	// A running child keeps its row after its launch entry leaves the capped trace
+	// (`trace-store.ts` drops the oldest entry): `launches` and `progress` below only enrich
+	// rows that already exist, so an evicted launch used to delete the row of a child that is
+	// still working, and its later updates could not bring the row back. `progress` holds
+	// in-flight children only — the caller deletes an entry when the child settles — so
+	// seeding from it cannot resurrect a settled child, and the step, settled-result and
+	// inventory passes below still win for anything they know.
+	for (const [key, live] of input.progress ?? []) {
+		if (!KEY_PATTERN.test(key) || rows.has(key)) continue;
+		rows.set(key, {
+			childId: key,
+			state: "running",
+			...(bounded(live.agent, 256) ? { agent: live.agent } : {}),
+			...(bounded(live.sessionName, 256) ? { sessionName: live.sessionName } : {}),
+			...(bounded(live.model, 256) ? { model: live.model } : {}),
+			...(bounded(live.thinking, 32) ? { thinking: live.thinking } : {}),
+			activity: workflowChildActivity(live),
+		});
+	}
 	for (const step of input.steps ?? []) {
 		const key = step.workflowKey;
 		if (!key || !KEY_PATTERN.test(key)) continue;
