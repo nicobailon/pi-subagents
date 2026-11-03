@@ -5,6 +5,7 @@ import type { PermissionRules } from "./permissions.ts";
 import type { ChildWatchdogConfig, ChildWatchdogStatusEvent } from "../../watchdog/child-status.ts";
 import type { ResolvedWaitToolConfig } from "../background/wait-config.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
+import type { ChildToolAccess } from "../../intercom/missing-tool-recovery.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "./capability-ceiling.ts";
 import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
 
@@ -59,6 +60,7 @@ export interface ChildSupervisorMetadata {
 	orchestratorTarget?: string;
 	orchestratorSessionId: string;
 	childTarget?: string;
+	toolAccess?: ChildToolAccess;
 }
 
 /**
@@ -77,6 +79,7 @@ export interface ChildRuntimeConfig {
 	orchestratorSessionId?: string;
 	parentSessionId?: string;
 	supervisorChannelDir?: string;
+	toolAccess?: ChildToolAccess;
 	/** Route the child reports nested runs on; set only for fanout-authorized children. */
 	nestedRoute?: ChildNestedRoute;
 	nestedParent?: ChildNestedParent;
@@ -122,6 +125,7 @@ export function childSupervisorMetadata(config: ChildRuntimeConfig): ChildSuperv
 		...(config.orchestratorTarget ? { orchestratorTarget: config.orchestratorTarget } : {}),
 		orchestratorSessionId: config.orchestratorSessionId,
 		...(config.intercomSessionName ? { childTarget: config.intercomSessionName } : {}),
+		...(config.toolAccess ? { toolAccess: config.toolAccess } : {}),
 	};
 }
 

@@ -157,6 +157,7 @@ export interface AgentConfig {
 	advertise?: boolean;
 	aliases?: string[];
 	tools?: string[];
+	toolsBeforeAdditions?: string[];
 	excludeTools?: string[];
 	allowNestedSubagents?: boolean;
 	allowedAgents?: string[];
@@ -224,6 +225,7 @@ interface SubagentSettings {
 	maxThinking?: ThinkingLevel;
 	defaultExtensions?: string[];
 	defaultSubagentOnlyExtensions?: string[];
+	additionalTools?: string[];
 	disableBuiltins?: boolean;
 	disableThinking?: boolean;
 	modelScope?: ModelScopeConfig;
@@ -1307,6 +1309,14 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		}
 		defaultSubagentOnlyExtensions = subagentsObject.defaultSubagentOnlyExtensions.map((item) => item.trim());
 	}
+	let additionalTools: string[] | undefined;
+	if ("additionalTools" in subagentsObject) {
+		if (!Array.isArray(subagentsObject.additionalTools)
+			|| subagentsObject.additionalTools.some((item) => typeof item !== "string" || !/^[A-Za-z0-9_][A-Za-z0-9_-]*$/.test(item))) {
+			throw new Error(`Subagent settings in '${filePath}' have invalid 'additionalTools'; expected an array of tool names, not paths, modifiers, or MCP selectors.`);
+		}
+		additionalTools = [...new Set(subagentsObject.additionalTools as string[])];
+	}
 	let agentScanDirs: string[] | undefined;
 	if ("agentScanDirs" in subagentsObject) {
 		if (!Array.isArray(subagentsObject.agentScanDirs)
@@ -1338,6 +1348,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(maxThinking !== undefined ? { maxThinking } : {}),
 		...(defaultExtensions !== undefined ? { defaultExtensions } : {}),
 		...(defaultSubagentOnlyExtensions !== undefined ? { defaultSubagentOnlyExtensions } : {}),
+		...(additionalTools !== undefined ? { additionalTools } : {}),
 		...(agentScanDirs !== undefined ? { agentScanDirs } : {}),
 		...(agentExcludeDirs !== undefined ? { agentExcludeDirs } : {}),
 		...(disableBuiltins !== undefined ? { disableBuiltins } : {}),
@@ -1653,6 +1664,15 @@ function applyCustomAgentOverride(
 	const frontmatterFields = agentFrontmatterFields.get(agent);
 	if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
 	return next;
+}
+
+function applyAdditionalTools(agents: AgentConfig[], userSettings: SubagentSettings, projectSettings: SubagentSettings): AgentConfig[] {
+	const additionalTools = [...new Set([...(userSettings.additionalTools ?? []), ...(projectSettings.additionalTools ?? [])])];
+	if (additionalTools.length === 0) return agents;
+	return agents.map((agent) => {
+		if ((agent.runner && agent.runner.type !== "pi") || agent.source === "runtime" || agent.tools === undefined) return agent;
+		return { ...agent, toolsBeforeAdditions: [...agent.tools], tools: [...new Set([...agent.tools, ...additionalTools])] };
+	});
 }
 
 function applyCustomAgentOverrides(
@@ -2930,10 +2950,10 @@ function configuredAgentsForScope(sources: AgentDiscoverySources, scope: AgentSc
 	}
 	const packageAgents = applyCustomAgentOverrides(applyDefaults(Array.from(packageMap.values())), userSettings, projectSettings, sources.userSettingsPath, sources.projectSettingsPath);
 	return {
-		builtin,
-		package: packageAgents,
-		user,
-		project,
+		builtin: applyAdditionalTools(builtin, userSettings, projectSettings),
+		package: applyAdditionalTools(packageAgents, userSettings, projectSettings),
+		user: applyAdditionalTools(user, userSettings, projectSettings),
+		project: applyAdditionalTools(project, userSettings, projectSettings),
 		userSettings,
 		projectSettings,
 		maxThinking,
@@ -3101,7 +3121,7 @@ function discoverAgentsUncached(cwd: string, scope: AgentScope, preferredModelPr
 	for (const loaded of packageLoaded) for (const agent of loaded.agents) if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);
 	const packageAgents = applyCustomAgentOverrides(applyDefaults(Array.from(packageMap.values())), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
 	const merged = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents);
-	const agents = applySubagentMaxThinking(merged.filter((agent) => agent.disabled !== true), maxThinking);
+	const agents = applySubagentMaxThinking(applyAdditionalTools(merged.filter((agent) => agent.disabled !== true), userSettings, projectSettings), maxThinking);
 	const disabledAgents = merged.filter((agent) => agent.disabled === true).map((agent) => agent.name);
 	const agentDiagnostics = [...builtinLoaded.diagnostics, ...userLoaded.flatMap((loaded) => loaded.diagnostics), ...projectLoaded.flatMap((loaded) => loaded.diagnostics), ...packageLoaded.flatMap((loaded) => loaded.diagnostics)];
 	return { agents, ...(disabledAgents.length ? { disabledAgents } : {}), agentDiagnostics, projectAgentsDir, cwd: effectiveCwd, scope, directories, ...(modelScope !== undefined ? { modelScope } : {}), ...(maxThinking !== undefined ? { maxThinking } : {}) };

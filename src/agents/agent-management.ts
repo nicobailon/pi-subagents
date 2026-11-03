@@ -252,7 +252,8 @@ function withDeclaredExtensionPaths(config: AgentConfig, filePath: string): Agen
 }
 
 export function editableAgentConfig(agent: AgentConfig): AgentConfig {
-	const { extensions: _extensions, ...withoutExtensions } = agent;
+	const { extensions: _extensions, toolsBeforeAdditions, ...withoutExtensions } = agent;
+	if (toolsBeforeAdditions !== undefined) withoutExtensions.tools = [...toolsBeforeAdditions];
 	const base = agent.override?.base;
 	const description = base?.description ?? agent.description;
 	const frontmatterFields = agent.source === "builtin" || agent.source === "runtime" ? undefined : readAgentFrontmatterFields(agent.filePath);

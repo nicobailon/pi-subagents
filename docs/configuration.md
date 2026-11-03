@@ -18,6 +18,22 @@ By default, project settings resolve from the nearest parent directory that cont
 
 `"git-root"` keeps package discovery, project agents, chains, and `agentOverrides` anchored to the git worktree root when that root also has Pi project config. A nested project can still opt back into nearest-root behavior by setting `"projectRootResolution": "nearest"` in its own `.pi/settings.json`.
 
+## Additional child tools (settings)
+
+In Pi settings, add shared tool names to the explicit allowlists of file-backed native agents:
+
+```json
+{
+  "subagents": {
+    "additionalTools": ["mcp"]
+  }
+}
+```
+
+User and trusted-project lists are combined without duplicates, after per-agent overrides. `excludeTools` and inherited capability ceilings still remove tools. Agents without a tool allowlist keep their default tool selection; external runners and runtime-registered agents keep their own contracts. Entries must be tool names, not extension paths, `mcp:` selectors, or Pi `+`/`-` modifiers.
+
+This setting selects tools; it does not load their providers or grant service access. With an ambient MCP adapter, use background children (`async: true`). A selected tool that fails to register still fails the existing startup check. Reload after changing settings; retained children keep their original contracts.
+
 ## Extra agent scan directories (settings)
 
 Add recursive user or project agent roots with `subagents.agentScanDirs` in Pi settings:
@@ -624,6 +640,8 @@ Fields:
 Bridge activation requires a targetable current parent session id, which `pi-subagents` passes to children automatically. Native supervisor messaging does not require an external `pi-intercom` installation or per-agent extension allowlists: children use `contact_supervisor`, and parents use `subagent_supervisor` to inspect or reply. Agents can still use an external `intercom` tool when they explicitly request a provider that supplies it.
 
 The default injected guidance tells children to use `contact_supervisor` with `reason: "need_decision"` when blocked or needing a decision, `reason: "progress_update"` only for meaningful blocked/progress updates, and avoid routine completion handoffs.
+
+When a task needs an absent tool, the child can call `contact_supervisor({ reason: "need_decision", missingTools: ["mcp"], message: "Independent research requires MCP." })`. The runtime appends the available tools, whether the requested name is outside the launch allowlist, explicitly excluded, blocked by a capability ceiling, or not registered, and recovery commands for the parent. A registered tool is reported as such rather than mislabeled a connection failure. The parent can inspect or select a compatible profile and launch a fresh child within its authority; this report neither changes permissions nor makes resuming the existing child apply a new configuration.
 
 ## `worktreeBaseDir`
 

@@ -13,6 +13,7 @@ import { ownsRun } from "../runs/shared/run-ownership.ts";
 import { writeAtomicJson, writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import { shouldUseNativeFsWatch } from "../shared/watch-strategy.ts";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
+import { missingToolRecovery } from "./missing-tool-recovery.ts";
 import {
 	SUPERVISOR_REQUEST_MESSAGE_TYPE,
 	SUPERVISOR_REPLY_ENTRY_TYPE,
@@ -88,6 +89,7 @@ interface ContactSupervisorParams {
 	reason: SupervisorReason;
 	message?: string;
 	interview?: unknown;
+	missingTools?: string[];
 }
 
 interface IntercomParams {
@@ -113,6 +115,7 @@ interface NativeSupervisorChannelDeps {
 const ContactSupervisorParamsSchema = Type.Object({
 	reason: Type.String({ enum: ["need_decision", "interview_request", "progress_update"] }),
 	message: Type.Optional(Type.String()),
+	missingTools: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 32, description: "For need_decision: unavailable tool names. Adds runtime diagnosis and relaunch guidance for the parent." })),
 	interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
 }, { additionalProperties: false });
 
@@ -319,6 +322,16 @@ export function registerNativeSupervisorClient(pi: ExtensionAPI, metadata: Child
 	const tool: ToolDefinition<typeof ContactSupervisorParamsSchema, Record<string, unknown>> = {
 		...CONTACT_SUPERVISOR_DECLARATION,
 		execute(id, params, signal) {
+			if (params.missingTools !== undefined) {
+				if (params.reason !== "need_decision") throw new Error("missingTools requires reason: need_decision.");
+				if (!params.message?.trim()) throw new Error("message is required to explain why the task needs the missing tools.");
+				if (!Array.isArray(params.missingTools) || params.missingTools.length === 0 || params.missingTools.length > 32
+					|| params.missingTools.some((name) => typeof name !== "string" || !/^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/.test(name))) {
+					throw new Error("missingTools must contain 1-32 tool names, each at most 128 characters.");
+				}
+				const diagnosis = missingToolRecovery(metadata.agent, [...new Set(params.missingTools)], pi.getAllTools().map((tool) => tool.name), metadata.toolAccess);
+				return sendSupervisorRequest({ ...params, reason: "need_decision", message: `${params.message.trim()}\n\n${diagnosis}` }, metadata, signal, id);
+			}
 			return sendSupervisorRequest(params as ContactSupervisorParams, metadata, signal, id);
 		},
 	};

@@ -267,7 +267,16 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(input.intercomSessionName ? { intercomSessionName: input.intercomSessionName } : {}),
 		...(input.orchestratorIntercomTarget ? { orchestratorTarget: input.orchestratorIntercomTarget } : {}),
 		...(input.parentSessionId ? { orchestratorSessionId: input.parentSessionId, parentSessionId: input.parentSessionId } : {}),
-		...(supervisorDir ? { supervisorChannelDir: supervisorDir } : {}),
+		...(supervisorDir ? {
+			supervisorChannelDir: supervisorDir,
+			toolAccess: {
+				...(toolPlan.explicitToolAllowlist ? { allowlist: toolPlan.effectiveToolAllowlist } : {}),
+				excluded: toolPlan.excludeTools,
+				...(toolPlan.capabilityCeiling?.allowedTools ? { ceiling: toolPlan.capabilityCeiling.allowedTools } : {}),
+				...(toolPlan.capabilityCeiling?.denyExtensions ? { denyExtensions: true } : {}),
+				host: input.host,
+			},
+		} : {}),
 		...(nestedRoute ? { nestedRoute } : {}),
 		...(fanout && parentRunId ? { nestedParent: { parentRunId, parentChildIndex, depth: parentDepth, path: parentPath } } : {}),
 		...(fanout && (input.runFanoutBudget ?? inherited?.runFanoutBudget) ? { runFanoutBudget: input.runFanoutBudget ?? inherited?.runFanoutBudget } : {}),
