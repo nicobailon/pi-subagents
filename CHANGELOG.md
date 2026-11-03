@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- `subagents.additionalTools` adds shared tools to file-backed native agents with explicit tool lists, while keeping exclusions and capability ceilings in force. Shared additions are not saved into agent files by unrelated edits. Foreground children still cannot load ambient MCP tools; use a compatible background profile when adding `mcp`.
+- A child can report `missingTools` with a `contact_supervisor` decision request. The parent receives the effective allowlist, exclusion, registration, or capability-policy diagnosis and guidance for choosing a compatible profile and launching a fresh child without bypassing policy.
+
 ### Changed
 
 - Before a workflow starts a child, pi-subagents now makes a nested `subagent_launch` tool call carrying the child's agent, task, working directory and workflow key. Permission extensions such as pi-guard and @gotgenes/pi-permission-system see it in their `tool_call` handler and can block that child, which then fails with the block reason. Extensions that ask about tools they have no rule for will ask once per workflow child until you allow `subagent_launch`, and ones that deny unknown tools in `pi -p` will refuse workflow children there. Schedule ticks, auto-resume, `/prompt-workflow` and prompt-template delegation, RPC launches and workflows inside child agents are not offered; see [Workflows](docs/workflows.md#approving-workflow-children-in-permission-extensions). Thanks to [@ducn1806](https://github.com/ducn1806) for the report and the first implementation in #3123. (#3109)
