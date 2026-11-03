@@ -24,7 +24,9 @@ const MAX_PARSER_LINE_BYTES = 256 * 1024;
 const MAX_PARSER_STREAM_BYTES = 32 * 1024 * 1024;
 const MAX_PARSER_OUTPUT_BYTES = 1024 * 1024;
 const MAX_OVERSIZED_LINE_PREFIX_BYTES = 512;
-const MAX_SKIPPABLE_LINE_BYTES = 1024 * 1024;
+// A skipped line keeps only its prefix in memory, and the stream limit still bounds the run.
+// Claude Code puts a read image's base64 in its tool-result line twice, so 1 MiB was too small.
+const MAX_SKIPPABLE_LINE_BYTES = 8 * 1024 * 1024;
 const PARSER_PROGRESS_INTERVAL_MS = 100;
 
 export function buildExternalCliPrompt(systemInstructions: string, task: string): string {

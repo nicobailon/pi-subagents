@@ -1325,7 +1325,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const trace: WorkflowScriptTraceEntry[] = [];
 	const children = new Map<string, WorkflowScriptChildResult>();
 	const childOrder: string[] = [];
-	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean; generatedLaneKey?: string }>();
+	const launches = new Map<string, { fingerprint: string; promise: Promise<WorkflowScriptChildResult>; observed: boolean; generatedLaneKey?: string; reuseTraced?: boolean }>();
 	const steers = new Map<number, { key: string; promise: Promise<WorkflowSteerResult>; observed: boolean }>();
 	const hostCalls = new Map<number, { key: string; promise: Promise<WorkflowHostCommandResult>; observed: boolean }>();
 	const stoppedLaunches = new Set<string>();
@@ -1750,8 +1750,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (existing) {
 				if (existing.fingerprint !== fingerprint) return respond(Promise.reject(new Error(`Duplicate workflow key '${key}' used with incompatible launch params.`)));
 				if (callObserved) existing.observed = true;
-				trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params), ...(existing.generatedLaneKey ? { generatedLaneKey: existing.generatedLaneKey } : {}) });
-				traceChanged();
+				// Matching params make every later reuse entry identical, and each trace change rewrites the
+				// whole trace to status.json and events.jsonl, so a re-delivery loop would grow without bound.
+				if (!existing.reuseTraced) {
+					existing.reuseTraced = true;
+					trace.push({ operation: "run", key, state: "reused", ...workflowStringMetadata(params), ...(existing.generatedLaneKey ? { generatedLaneKey: existing.generatedLaneKey } : {}) });
+					traceChanged();
+				}
 				return respond(deliver(existing.promise), `runs.run('${key}') result`, (error) => children.set(key, responseBoundaryFailure(key, error)));
 			}
 			const permitError = options.oneUsePermit?.claim(key);
