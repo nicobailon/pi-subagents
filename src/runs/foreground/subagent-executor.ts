@@ -5416,10 +5416,11 @@ function savedWorkflowLaunchParams(params: SubagentParamsLike): Record<string, u
 	return saved;
 }
 
-function workflowLaunchRecord(launch: WorkflowLaunch, cwd: string, scriptDigest: string): WorkflowLaunchRecord {
-	if (launch.source === "structured") return { version: 1, source: "structured", scriptDigest };
+function workflowLaunchRecord(launch: WorkflowLaunch, cwd: string, scriptDigest: string, sessionId: string, ceiling: ResolvedSubagentCapabilityCeiling | undefined): WorkflowLaunchRecord {
+	const owner = { version: 2 as const, scriptDigest, sessionId, ...(ceiling ? { admissionCapabilityCeiling: ceiling } : {}) };
+	if (launch.source === "structured") return { ...owner, source: "structured" };
 	// The resolved cwd is saved: a relative one would resolve against a later session's cwd.
-	return { version: 1, source: launch.source, params: { ...launch.params, cwd }, scriptDigest };
+	return { ...owner, source: launch.source, params: { ...launch.params, cwd } };
 }
 
 export function createSubagentExecutor(deps: ExecutorDeps): {
@@ -5760,7 +5761,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				try {
 					fs.mkdirSync(asyncDir, { recursive: true });
 					writeRunFanoutBudgetDescriptor(asyncDir, workflowFanoutBudget);
-					if (topLevelAsyncWorkflow && publicWorkflowLaunch) writeWorkflowLaunchRecord(asyncDir, workflowLaunchRecord(publicWorkflowLaunch, workflowCwd, workflowScriptSourceDigest));
+					if (topLevelAsyncWorkflow && publicWorkflowLaunch) writeWorkflowLaunchRecord(DIRS.async, workflowRunId, workflowLaunchRecord(publicWorkflowLaunch, workflowCwd, workflowScriptSourceDigest, currentSessionId, workflowCapabilityCeiling));
 					fs.mkdirSync(DIRS.results, { recursive: true });
 				} catch (error) {
 					return storageFailure(error);

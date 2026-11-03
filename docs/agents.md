@@ -348,6 +348,13 @@ A launcher command must:
 
 Steering, stop, and supervisor requests and replies travel through files in those directories, not through signals, so they work as long as the paths are shared.
 
+### Isolating a run from the parent
+
+A launcher can also keep a run from reaching the parent session and other runs. Workflow resume and auto-resume read what to relaunch, which session owns it, and its capability ceiling only from records the parent keeps in `async-subagent-launches/` under the temp root, so a run that rewrites files in its own run directory cannot make a later resume start something else. For the isolation to hold, the launcher must not give the run write access to:
+
+- `async-subagent-launches/`, or other runs' directories under `async-subagent-runs/`;
+- `~/.pi/agent`: extensions, settings and agent files there load into the parent session, so write access to them is a way into the parent. Bind it read-only.
+
 ### Broker wrappers
 
 Some sandboxes, such as nono's broker mode, start the runner in a separate process instead of as a child of the launcher command. pi-subagents does not rely on the launcher's process being the runner:
