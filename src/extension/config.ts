@@ -14,7 +14,7 @@ import { validateDisabledFeatures } from "../shared/disabled-features.ts";
 
 // Explicit route identity, worktree, checkpoint, and tool-surface policies must not be silently
 // discarded and replaced by the built-in defaults after validation fails.
-const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers"];
+const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers", "globalConcurrencyLimit"];
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -180,6 +180,12 @@ function validateConfig(config: Record<string, unknown>): void {
 			|| !Number.isInteger(config.maxActiveAsyncRunsPerSession)
 			|| config.maxActiveAsyncRunsPerSession < 0)) {
 		throw new Error("config.maxActiveAsyncRunsPerSession must be a non-negative integer");
+	}
+	if (config.globalConcurrencyLimit !== undefined
+		&& (typeof config.globalConcurrencyLimit !== "number"
+			|| !Number.isInteger(config.globalConcurrencyLimit)
+			|| config.globalConcurrencyLimit < 1)) {
+		throw new Error("config.globalConcurrencyLimit must be a positive integer");
 	}
 	if (config.resultScanLogging !== undefined && config.resultScanLogging !== "all" && config.resultScanLogging !== "activity" && config.resultScanLogging !== "off") {
 		throw new Error('config.resultScanLogging must be "all", "activity", or "off"');

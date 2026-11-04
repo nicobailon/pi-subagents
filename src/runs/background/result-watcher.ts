@@ -27,6 +27,7 @@ import { syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
 import { acknowledgeMissionObserverSnapshot, missionObserverIndexPath, missionObserverResultCandidateFiles, promotePendingResultFile, readResultPayload, resultCandidateFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, resultSnapshotReplaced, retireResultSnapshot, withResultRunLease, writeAsyncResultFile, writeResultIndexForData, type ResultSnapshot } from "./result-files.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
+import { reportSessionWarning } from "../../shared/session-warnings.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
@@ -684,7 +685,7 @@ export function createResultWatcher(
 		// "activity", skip it so empty scans do not burn context tokens in the
 		// session transcript.
 		if (resultScanLogging === "activity" && stats.files === 0 && stats.scheduled === 0) return;
-		console.error(`Subagent result scan inspected ${stats.files} indexed result file(s), scheduled ${stats.scheduled} in ${elapsed}ms (${resultsDir}).`);
+		reportSessionWarning(state, `Subagent result scan inspected ${stats.files} indexed result file(s), scheduled ${stats.scheduled} in ${elapsed}ms (${resultsDir}).`, "slow-result-scan");
 	};
 	const indexedResultCandidates = (observed: ReadonlySet<string>): string[] => {
 		const files = new Set<string>();

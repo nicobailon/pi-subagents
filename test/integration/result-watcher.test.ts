@@ -2822,14 +2822,16 @@ describe("result watcher", () => {
 			return new Set<string>();
 		};
 
+		// Headless sessions (no UI context) get the line on stderr.
 		const captureScanErrors = (): { errors: string[]; restore: () => void } => {
 			const errors: string[] = [];
 			const originalError = console.error;
-			console.error = (...args: unknown[]) => {
+			const originalWarn = console.warn;
+			console.error = console.warn = (...args: unknown[]) => {
 				const message = args.map(String).join(" ");
 				if (message.includes("Subagent result scan")) errors.push(message);
 			};
-			return { errors, restore: () => { console.error = originalError; } };
+			return { errors, restore: () => { console.error = originalError; console.warn = originalWarn; } };
 		};
 
 		const runScan = (deps: Record<string, unknown>) => {
@@ -2892,6 +2894,32 @@ describe("result watcher", () => {
 				watcher.primeExistingResults();
 				assert.ok(errors.length >= 1, "expected a scan log for a scan that found work");
 				assert.match(errors[0], /inspected [1-9]/);
+			} finally {
+				watcher.stopResultWatcher();
+				restore();
+				fs.rmSync(resultsDir, { recursive: true, force: true });
+			}
+		});
+
+		it("shows a slow scan as one TUI warning instead of writing over the editor", () => {
+			const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scanlog-ui-"));
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const notices: Array<{ text: string; level: string }> = [];
+			state.lastUiContext = { hasUI: true, ui: { notify: (text: string, level: string) => { notices.push({ text, level }); } } } as unknown as ExtensionContext;
+			writeIndexedResult(path.join(resultsDir, "ui-run.json"), { id: "ui-run", sessionId: "session-current", runId: "ui-run", success: true, summary: "done" });
+			const { errors, restore } = captureScanErrors();
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+				observedCompletionRunIds: slowScan,
+				resultScanLogging: "all",
+			});
+			try {
+				watcher.primeExistingResults();
+				watcher.primeExistingResults();
+				assert.deepEqual(errors, []);
+				const scanNotices = notices.filter((notice) => notice.text.includes("Subagent result scan"));
+				assert.equal(scanNotices.length, 1);
+				assert.equal(scanNotices[0]!.level, "warning");
 			} finally {
 				watcher.stopResultWatcher();
 				restore();
