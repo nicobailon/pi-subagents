@@ -100,6 +100,15 @@ describe("session switch decisions", () => {
 		assert.match(f.title, /^ {2}1 run queued or running$/m);
 	});
 
+	it("asks instead of refusing when a tracked run's status cannot be read", async () => {
+		const f = fixture();
+		const dir = f.writeRun("corrupt");
+		fs.writeFileSync(path.join(dir, "status.json"), "{\"runId\":");
+		f.choice = async (options) => options[1];
+		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
+		assert.equal(f.prompts, 1);
+	});
+
 	it("takes the work to the new session", async () => {
 		const f = fixture();
 		f.writeRun("live");

@@ -51,7 +51,7 @@ When a session with a UI has queued or running async work, live nested children,
 
 - **Stay here** (default, also Escape): cancel the switch. The work keeps running.
 - **Switch and take the work**: switch, and the new session takes the work over as described above.
-- **Switch and leave the work here**: switch, and the new session inherits nothing from this one. The work keeps running and belongs to this session; reopen it to get its results and answer its questions.
+- **Switch and leave the work here**: switch, and the new session inherits nothing from this one. Async single, parallel, and chain runs keep running and belong to this session; reopen it to get their results. Async workflows and detached foreground runs stop on any switch, as before; a stopped workflow resumes automatically only if you reopen this session within 24 hours. A child's question can be answered only until it times out (10 minutes by default).
 
 Without outstanding work, or without a UI (`pi -p`, SDK sessions), there is no prompt and the new session takes the work over. Over RPC the prompt is a select dialog that counts as **Stay here** if the host does not answer within one minute. The prompt never enters model history.
 

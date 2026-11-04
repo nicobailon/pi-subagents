@@ -99,6 +99,9 @@ describe("result watcher", () => {
 			vanished = true;
 			assert.equal(watcher.hasPendingResults(), false, "a result removed after the scan is no longer pending");
 			vanished = false;
+			fs.writeFileSync(file, saved.slice(0, -3));
+			assert.equal(watcher.hasPendingResults(), true, "a truncated owned result is still owed");
+			fs.writeFileSync(file, saved);
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			assert.equal(delivered, 0);
 			assert.equal(fs.readFileSync(file, "utf-8"), saved);

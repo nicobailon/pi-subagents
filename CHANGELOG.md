@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Switching sessions with `/new`, `/resume`, `/fork` or `/clone` while background subagent work is still running, has undelivered results, or has unanswered questions now asks first: stay here, switch and take the work, or switch and leave the work with the current session (reopen it later to get its results). Before, the new session always took the work over, even when it was an unrelated conversation. Sessions without a UI, such as `pi -p`, still hand the work over automatically. Thanks to [@IdrisGit](https://github.com/IdrisGit) for #3170.
+- Switching sessions with `/new`, `/resume`, `/fork` or `/clone` while background subagent work is still running, has undelivered results, or has unanswered questions now asks first: stay here, switch and take the work, or switch and leave the work with the current session (reopen it later to get the results of its background runs). Before, the new session always took the work over, even when it was an unrelated conversation. Sessions without a UI, such as `pi -p`, still hand the work over automatically. Thanks to [@IdrisGit](https://github.com/IdrisGit) for #3170.
 
 - The Herdr `title-suffix` token is now always `⏳N`, where N is the number of active subagents (plus `⚠` when a child needs attention). Before, it showed the agent name when exactly one run was active and the newest workflow label when one was set, which changed width as runs started and finished and was truncated in narrow sidebar rows. The `summary` token and state labels still carry the agent names and workflow label. Thanks to [@longyuxi](https://github.com/longyuxi) for the report and #3157. (#3156)
 

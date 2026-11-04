@@ -723,14 +723,17 @@ export function createResultWatcher(
 		try {
 			raw = fsApi.readFileSync(payloadPath, "utf-8");
 		} catch (error) {
-			// Delivered and removed since the scan.
-			if (isNotFound(error)) return false;
-			throw error;
+			// Removed since the scan means delivered; an unreadable file is still owed to someone, so the switch asks.
+			return !isNotFound(error);
 		}
 		const identity = resultFileIdentity(raw, file);
-		return Boolean(identity.sessionId
-			&& ownsResult(identity.sessionId, deliveryOwnerId(identity.sessionId, identity.completionOwnerId, identity.completionOwnerProcess, identity.parentWorkflowRunId))
-			&& !hasDeliveredNotification(parseResult(raw)));
+		if (!identity.sessionId || !ownsResult(identity.sessionId, deliveryOwnerId(identity.sessionId, identity.completionOwnerId, identity.completionOwnerProcess, identity.parentWorkflowRunId))) return false;
+		try {
+			return !hasDeliveredNotification(parseResult(raw));
+		} catch {
+			// A partial write is retried by the watcher; until then it counts as undelivered.
+			return true;
+		}
 	});
 	const primeExistingResults = (options: { triggerTurn?: boolean } = {}) => {
 		const triggerTurn = options.triggerTurn !== false;

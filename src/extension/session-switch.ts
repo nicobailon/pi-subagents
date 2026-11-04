@@ -42,8 +42,10 @@ export function createSessionSwitchGuard(deps: SessionSwitchDeps) {
 		// Include launch receipts whose active-index marker has not landed yet.
 		for (const job of deps.state.asyncJobs.values()) {
 			if (runs.has(job.asyncId) || !ownsRun(sessionId, job.sessionId) || !isActiveAsyncState(job.status)) continue;
-			const status = readStatus(job.asyncDir);
-			if (!status || isActiveAsyncState(status.state)) runs.add(job.asyncId);
+			let active = true;
+			// An unreadable status could be a live run, so it counts as outstanding instead of refusing every switch.
+			try { const status = readStatus(job.asyncDir); active = !status || isActiveAsyncState(status.state); } catch { /* active */ }
+			if (active) runs.add(job.asyncId);
 		}
 		for (const id of deps.state.workflowControllers?.keys() ?? []) runs.add(id);
 		return runs.size;
