@@ -15,6 +15,7 @@ import { rewriteSubagentPrompt } from "../runs/shared/subagent-prompt-runtime.ts
 import { assertNoToolModifierEntries } from "../runs/shared/child-tool-plan.ts";
 import { resolveExistingReadPaths } from "../shared/settings.ts";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
+import { captureWatchdogDiffBaseline, createWatchdogDiffTool, WATCHDOG_DIFF_TOOL_NAME } from "../watchdog/diff-tool.ts";
 
 interface PendingRequest { operation: "prompt" | "steer" | "follow-up" | "abort" | "supervisor-reply"; text?: string; supervisorId?: string; error?: string }
 interface BridgeContext {
@@ -22,6 +23,7 @@ interface BridgeContext {
 	hasPendingMessages(): boolean;
 	sessionManager?: { getSessionId?(): string; getSessionFile?(): string | undefined };
 	model?: { provider?: string; id?: string };
+	ui?: { notify(message: string, type?: "info" | "warning" | "error"): void };
 }
 
 function gitEvidence(cwd: string): Record<string, unknown> | undefined {
@@ -149,7 +151,10 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 						const invalidReads = resources.reads !== undefined && resources.reads !== false && (!Array.isArray(resources.reads) || resources.reads.some((name) => typeof name !== "string"));
 						if (typeof resources.agent !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(resources.agent) || invalidSkills || invalidReads) throw new Error("Remote logical resource names are invalid.");
 						const resolved = resolveRemoteHerdrResources(process.cwd(), { agent: resources.agent, ...(resources.skills ? { skills: resources.skills as string[] } : {}), ...(resources.toolCeiling ? { toolCeiling: resources.toolCeiling as string[] } : {}), ...(resources.reads !== undefined ? { reads: resources.reads as string[] | false } : {}) }, context ? pi.getActiveTools() : []); resolvedSystemPrompt = resolved.systemPrompt; resolvedContextPolicy = resolved;
-						pi.setActiveTools(resolved.tools); const acknowledged = context ? pi.getActiveTools() : []; if (acknowledged.some((tool) => !resolved.tools.includes(tool)) || resolved.tools.some((tool) => !acknowledged.includes(tool))) throw new Error("Remote Pi did not apply the resolved active-tool set exactly.");
+						// A local child gets watchdog_diff from the prompt runtime, which a placed child never loads.
+						if (resolved.tools.includes(WATCHDOG_DIFF_TOOL_NAME) && !pi.getAllTools().some((tool) => tool.name === WATCHDOG_DIFF_TOOL_NAME)) pi.registerTool(createWatchdogDiffTool(captureWatchdogDiffBaseline(process.cwd()), { workingTreeAtLaunch: true }));
+						pi.setActiveTools(resolved.tools); const acknowledged = context ? pi.getActiveTools() : []; const missing = resolved.tools.filter((tool) => !acknowledged.includes(tool)), extra = acknowledged.filter((tool) => !resolved.tools.includes(tool));
+						if (missing.length || extra.length) throw new Error(`Remote Pi did not apply the resolved active-tool set exactly (${[...(missing.length ? [`not available: ${missing.join(", ")}`] : []), ...(extra.length ? [`unexpected: ${extra.join(", ")}`] : [])].join("; ")}).`);
 						configured = true; send({ type: "configured", requestId: frame.requestId, nativeSessionId, agent: resolved.agent, skills: resolved.skills, model: context?.model?.provider && context.model.id ? `${context.model.provider}/${context.model.id}` : undefined, tools: acknowledged }); continue;
 					}
 					if (frame.type !== "prepare" || typeof frame.requestId !== "string" || pending.has(frame.requestId) || !configured) throw new Error("Invalid, duplicate, or unconfigured bridge request.");
@@ -160,8 +165,10 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 					pending.set(frame.requestId, { operation: operation as PendingRequest["operation"], ...(text !== undefined ? { text } : {}), ...(typeof frame.supervisorId === "string" ? { supervisorId: frame.supervisorId } : {}), ...(error !== undefined ? { error } : {}) });
 					send({ type: "prepared", requestId: frame.requestId, nativeSessionId });
 				}
-			} catch (error) { socket.destroy(error as Error); }
+			} catch (error) { context?.ui?.notify(`pi-subagents bridge: ${(error as Error).message}`, "error"); socket.destroy(error as Error); }
 		});
+		// Without a listener, a protocol error or peer reset is an uncaught exception that ends the child Pi.
+		socket.on("error", () => {});
 		socket.on("close", () => { if (client === socket) client = undefined; });
 		if (context && nativeSessionId) send({ type: "ready", packageVersion: packageJson.version, nativeSessionId, sessionFile: context.sessionManager?.getSessionFile?.(), cwd: process.cwd(), tools: pi.getActiveTools(), model: context.model?.provider && context.model.id ? `${context.model.provider}/${context.model.id}` : undefined, configured, activeRequestId, evidenceCursor, evidenceFloor: journal[0]?.cursor ?? evidenceCursor + 1, initialGit: gitEvidence(process.cwd()) });
 	});

@@ -233,7 +233,18 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		finally { socket?.destroy(); handlers.get("session_shutdown")?.(); old.mode === undefined ? delete process.env[HERDR_PI_MODE_ENV] : process.env[HERDR_PI_MODE_ENV] = old.mode; old.run === undefined ? delete process.env[HERDR_PI_RUN_ENV] : process.env[HERDR_PI_RUN_ENV] = old.run; old.dir === undefined ? delete process.env[HERDR_PI_RUNTIME_DIR_ENV] : process.env[HERDR_PI_RUNTIME_DIR_ENV] = old.dir; fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 
-	for (const reason of ["need_decision", "interview_request", "successful_reply"] as const) {
+	it("gives a placed reviewer its watchdog_diff tool and names tools Pi could not activate without crashing", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-tools-")); const old = { mode: process.env[HERDR_PI_MODE_ENV], run: process.env[HERDR_PI_RUN_ENV], dir: process.env[HERDR_PI_RUNTIME_DIR_ENV] }; process.env[HERDR_PI_MODE_ENV] = "1"; process.env[HERDR_PI_RUN_ENV] = "run_toolset01"; process.env[HERDR_PI_RUNTIME_DIR_ENV] = dir; const handlers = new Map<string, Function>(); const sockets: net.Socket[] = []; const notices: string[] = [];
+		// Like Pi, setActiveTools ignores names no extension registered.
+		const registered = new Set(["read", "bash", "contact_supervisor"]); let activeTools = ["read", "bash"]; const pi = { registerTool(value: { name: string }) { registered.add(value.name); }, registerCommand() {}, on(name: string, handler: Function) { handlers.set(name, handler); }, getAllTools: () => [...registered].map((name) => ({ name })), getActiveTools: () => [...activeTools], setActiveTools(value: string[]) { activeTools = value.filter((name) => registered.has(name)); } };
+		const configure = async (toolCeiling: string[]) => { const socket = net.createConnection(path.join(dir, "bridge.sock")); sockets.push(socket); const decoder = new HerdrPiFrameDecoder(); const frames: any[] = []; socket.on("data", (chunk) => frames.push(...decoder.push(chunk))); socket.on("error", () => {}); await new Promise<void>((resolve) => socket.once("connect", resolve)); socket.write(encodeHerdrPiFrame({ protocol: 1, runId: "run_toolset01", type: "configure", requestId: "cfg", resources: { agent: "reviewer", toolCeiling } })); await new Promise((resolve) => setTimeout(resolve, 50)); return frames.find((frame) => frame.type === "configured"); };
+		try { registerHerdrPiBridge(pi as never); handlers.get("session_start")?.({}, { sessionManager: { getSessionId: () => "native", getSessionFile: () => "/remote/session" }, isIdle: () => true, hasPendingMessages: () => false, ui: { notify: (message: string) => notices.push(message) } });
+			assert.equal(await configure(["read", "grep"]), undefined); assert.deepEqual(notices, ["pi-subagents bridge: Remote Pi did not apply the resolved active-tool set exactly (not available: grep)."]);
+			assert.deepEqual((await configure(["read", "watchdog_diff"]))?.tools, ["read", "watchdog_diff"]); }
+		finally { for (const socket of sockets) socket.destroy(); handlers.get("session_shutdown")?.(); old.mode === undefined ? delete process.env[HERDR_PI_MODE_ENV] : process.env[HERDR_PI_MODE_ENV] = old.mode; old.run === undefined ? delete process.env[HERDR_PI_RUN_ENV] : process.env[HERDR_PI_RUN_ENV] = old.run; old.dir === undefined ? delete process.env[HERDR_PI_RUNTIME_DIR_ENV] : process.env[HERDR_PI_RUNTIME_DIR_ENV] = old.dir; fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+
+	for (const reason of ["need_decision", "interview_request", "successful_reply", "ask_after_idle_channel_cleanup"] as const) {
 		it(`preserves ${reason} through the shared Herdr/Rex supervisor file relay and bridge`, { timeout: 10_000 }, async () => {
 			// Short prefix: the bridge socket lives under this dir, and macOS caps Unix socket paths at 104 bytes.
 			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "psr-"));
@@ -263,9 +274,11 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 					bridge!.listeners.add((frame) => { if (frame.type === "supervisor-request") resolve(frame as { requestId: string }); });
 				});
 				// Attach both handlers before sending a response, including the expected tool rejection.
+				// The parent's stale-channel cleanup removes an idle channel's empty directories.
+				if (reason === "ask_after_idle_channel_cleanup") fs.rmSync(supervisorDir, { recursive: true, force: true });
 				const outcome = tool.execute("ask", { reason: reason === "interview_request" ? reason : "need_decision", message: "Choose an approach" })
 					.then((value: any) => ({ value }), (error: Error) => ({ error }));
-				const { requestId } = await requested;
+				const { requestId } = await Promise.race([requested, bridge.failure]);
 				assert.ok(fs.existsSync(path.join(supervisorDir, "requests", `${requestId}.json`)), "the remote ask must reach the parent's file mailbox");
 				const error = "Supervisor unavailable: the parent is blocked in an async:false workflow. Report the blocker and partial results, then stop.";
 				fs.writeFileSync(path.join(supervisorDir, "replies", `${requestId}.json`), JSON.stringify({ type: "subagent.supervisor.reply", requestId, createdAt: Date.now(), message: reason === "successful_reply" ? "Proceed with approach A" : "", ...(reason === "successful_reply" ? {} : { error }) }));

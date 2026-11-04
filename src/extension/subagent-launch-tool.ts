@@ -13,6 +13,12 @@ const parameters = Type.Object({
 	async: Type.Optional(Type.Boolean()),
 	worktree: Type.Optional(Type.Boolean()),
 	resume: Type.Optional(Type.String()),
+	commands: Type.Optional(Type.Array(Type.Object({
+		command: Type.String(),
+		cwd: Type.Optional(Type.String()),
+		env: Type.Optional(Type.Record(Type.String(), Type.String())),
+	}))),
+	output: Type.Optional(Type.String()),
 });
 
 export type SubagentLaunchArgs = Static<typeof parameters>;
