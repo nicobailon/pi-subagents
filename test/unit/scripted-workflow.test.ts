@@ -2761,6 +2761,9 @@ describe("scripted workflow runtime", () => {
 
 	it("steers a still-running sibling after Promise.race and awaits both children", async () => {
 		let resolveSlow!: (result: { key: string; ok: true; output: string; artifactPaths: never[] }) => void;
+		// The host can take a runs.steer call before it has started the launch it follows, so steer waits for it.
+		let slowLaunched!: () => void;
+		const slowStarted = new Promise<void>((resolve) => { slowLaunched = resolve; });
 		const result = await runWorkflowScript({
 			script: `
 				const fast = runs.run("fast", { agent: "worker", task: "fast" });
@@ -2772,13 +2775,14 @@ describe("scripted workflow runtime", () => {
 			`,
 			launch(key) {
 				if (key === "fast") return Promise.resolve({ key, ok: true, output: "fast", artifactPaths: [] });
-				return new Promise((resolve) => { resolveSlow = resolve; });
+				return new Promise((resolve) => { resolveSlow = resolve; slowLaunched(); });
 			},
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			async steer(key, message, options) {
 				assert.equal(key, "slow");
 				assert.equal(message, "Focus on tests.");
 				assert.deepEqual(options, { mode: "auto", index: 0, ackTimeoutMs: 100 });
+				await slowStarted;
 				resolveSlow({ key, ok: true, output: "slow", artifactPaths: [] });
 				return { key, state: "delivered", requestId: "request-1", deliveryStatus: "delivered", targets: [{ index: 0, state: "delivered" }] };
 			},
@@ -2795,6 +2799,9 @@ describe("scripted workflow runtime", () => {
 	it("uses Promise.race to roll through child completions and steer the remaining work", async () => {
 		let resolveBeta!: (result: { key: string; ok: true; output: string; artifactPaths: never[] }) => void;
 		let resolveGamma!: (result: { key: string; ok: true; output: string; artifactPaths: never[] }) => void;
+		let launched!: () => void;
+		let pendingLaunches = 2;
+		const betaAndGammaStarted = new Promise<void>((resolve) => { launched = () => { if (--pendingLaunches === 0) resolve(); }; });
 		const result = await runWorkflowScript({
 			script: `
 				let pending = [
@@ -2813,14 +2820,15 @@ describe("scripted workflow runtime", () => {
 			`,
 			launch(key) {
 				if (key === "alpha") return Promise.resolve({ key, ok: true, output: "alpha done", artifactPaths: [] });
-				if (key === "beta") return new Promise((resolve) => { resolveBeta = resolve; });
-				return new Promise((resolve) => { resolveGamma = resolve; });
+				if (key === "beta") return new Promise((resolve) => { resolveBeta = resolve; launched(); });
+				return new Promise((resolve) => { resolveGamma = resolve; launched(); });
 			},
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			async steer(key, message, options) {
 				assert.equal(key, "gamma");
 				assert.equal(message, "Challenge the first result: alpha done");
 				assert.deepEqual(options, { mode: "auto", ackTimeoutMs: 100 });
+				await betaAndGammaStarted;
 				resolveGamma({ key, ok: true, output: "gamma done", artifactPaths: [] });
 				setTimeout(() => resolveBeta({ key: "beta", ok: true, output: "beta done", artifactPaths: [] }), 5);
 				return { key, state: "delivered", requestId: "request-rolling", deliveryStatus: "delivered", targets: [{ index: 0, state: "delivered" }] };
