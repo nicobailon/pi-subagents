@@ -74,6 +74,47 @@ async function waitForPredicate(predicate: () => boolean, timeoutMs = 2_500): Pr
 }
 
 describe("result watcher", () => {
+	it("probes pending owned results for a switch without delivering or consuming them", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-switch-pending-results-"));
+		const state = createState();
+		state.currentSessionId = "pending-owner";
+		let delivered = 0;
+		let observeForeign = false;
+		let vanished = false;
+		const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+			notifier: { async deliver() { delivered++; return true; } },
+			observedCompletionRunIds: () => observeForeign ? ["foreign"] : [],
+			fs: { ...fs, readFileSync: ((file: fs.PathOrFileDescriptor, options?: unknown) => {
+				if (vanished && String(file).endsWith("owned.json")) throw Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
+				return fs.readFileSync(file, options as never);
+			}) as typeof fs.readFileSync },
+		});
+		try {
+			writeIndexedResult(path.join(resultsDir, "foreign.json"), { id: "foreign", sessionId: "another-session", success: true });
+			assert.equal(watcher.hasPendingResults(), false);
+			const file = path.join(resultsDir, "owned.json");
+			writeIndexedResult(file, { id: "owned", sessionId: state.currentSessionId, success: true, summary: "Keep this result" });
+			const saved = fs.readFileSync(file, "utf-8");
+			assert.equal(watcher.hasPendingResults(), true);
+			vanished = true;
+			assert.equal(watcher.hasPendingResults(), false, "a result removed after the scan is no longer pending");
+			vanished = false;
+			fs.writeFileSync(file, saved.slice(0, -3));
+			assert.equal(watcher.hasPendingResults(), true, "a truncated owned result is still owed");
+			fs.writeFileSync(file, saved);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			assert.equal(delivered, 0);
+			assert.equal(fs.readFileSync(file, "utf-8"), saved);
+			writeIndexedResult(file, { id: "owned", sessionId: state.currentSessionId, success: true, notificationDeliveredAt: Date.now() });
+			assert.equal(watcher.hasPendingResults(), false, "delivered results awaiting cleanup are not pending work");
+			observeForeign = true;
+			assert.equal(watcher.hasPendingResults(), false, "observer-only results belong outside this session");
+		} finally {
+			watcher.stopResultWatcher();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps running workflow launch receipts nonterminal in notifications and completion events", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-dispatch-"));
 		const state = createState();

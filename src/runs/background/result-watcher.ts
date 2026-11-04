@@ -220,6 +220,7 @@ export function createResultWatcher(
 	transitionResultDelivery: () => void;
 	primeExistingResults: (options?: { triggerTurn?: boolean }) => void;
 	deliverPendingResults: () => Promise<void>;
+	hasPendingResults: () => boolean;
 	refreshResultDelivery: () => void;
 	stopResultWatcher: () => void;
 } {
@@ -716,6 +717,25 @@ export function createResultWatcher(
 		}
 		return files;
 	};
+	const hasPendingResults = () => eligibleResultFiles().some((file) => {
+		const payloadPath = resultPayloadPath(file);
+		if (!payloadPath) return false;
+		let raw: string;
+		try {
+			raw = fsApi.readFileSync(payloadPath, "utf-8");
+		} catch (error) {
+			// Removed since the scan means delivered; an unreadable file is still owed to someone, so the switch asks.
+			return !isNotFound(error);
+		}
+		const identity = resultFileIdentity(raw, file);
+		if (!identity.sessionId || !ownsResult(identity.sessionId, deliveryOwnerId(identity.sessionId, identity.completionOwnerId, identity.completionOwnerProcess, identity.parentWorkflowRunId))) return false;
+		try {
+			return !hasDeliveredNotification(parseResult(raw));
+		} catch {
+			// A partial write is retried by the watcher; until then it counts as undelivered.
+			return true;
+		}
+	});
 	const primeExistingResults = (options: { triggerTurn?: boolean } = {}) => {
 		const triggerTurn = options.triggerTurn !== false;
 		for (const file of eligibleResultFiles()) scheduleResult(file, triggerTurn);
@@ -864,5 +884,5 @@ export function createResultWatcher(
 		identityCache.clear();
 	};
 
-	return { startResultWatcher, transitionResultDelivery, primeExistingResults, deliverPendingResults, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
+	return { startResultWatcher, transitionResultDelivery, primeExistingResults, deliverPendingResults, hasPendingResults, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
 }

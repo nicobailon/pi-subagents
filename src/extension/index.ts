@@ -28,6 +28,7 @@ import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { recordSessionReplacement, recordSessionStart } from "../shared/session-succession.ts";
+import { createSessionSwitchGuard } from "./session-switch.ts";
 import { reportSessionWarning } from "../shared/session-warnings.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { isStaleExtensionContextError, MODEL_ONLY_TOOL, withCachedUiContext } from "../shared/extension-context.ts";
@@ -519,6 +520,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 	);
 	const { startResultWatcher, transitionResultDelivery, primeExistingResults, stopResultWatcher } = resultWatcher;
+	const sessionSwitchGuard = createSessionSwitchGuard({
+		state, asyncDirRoot: DIRS.async, resultsDir: DIRS.results,
+		hasPendingResults: () => owedResultRunIds.size > 0 || completionNotifier.hasPendingDelivery() || resultWatcher.hasPendingResults(),
+		hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests,
+	});
+	pi.on("session_before_switch", (event, ctx) => sessionSwitchGuard.beforeSwitch(event.reason, ctx));
+	pi.on("session_before_fork", (_event, ctx) => sessionSwitchGuard.beforeSwitch("fork", ctx));
 	refreshResultDelivery = resultWatcher.refreshResultDelivery;
 	const asyncRetentionAbort = new AbortController();
 	let asyncRetentionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1063,6 +1071,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		cleanup(shutdownReason) {
 			if (runtimeCleaned) return;
 			runtimeCleaned = true;
+			sessionSwitchGuard.dispose();
 			++advertisementGeneration;
 			advertisementLookup?.abort();
 			advertisedAgents = [];
@@ -1263,6 +1272,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (event) => {
+		sessionSwitchGuard.sessionShutdown(event);
 		cancelCompactionResume();
 		completionNotifier.sessionShutdown(event?.reason);
 		parentWake.sessionShutdown(event?.reason);
