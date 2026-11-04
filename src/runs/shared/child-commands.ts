@@ -169,7 +169,7 @@ export function createChildCommandRuntime(channelDir: string) {
 					job.settled = execution.then(() => {}, () => {});
 					const result = await Promise.race([execution.then((value) => ({ value })), yielded.then(() => undefined)]);
 					if (result) return result.value;
-					const saveWarning = yieldSaveError === undefined ? "" : `\nThe command's state could not be saved, so controls outside this child may not see it: ${yieldSaveError instanceof Error ? yieldSaveError.message : String(yieldSaveError)}`;
+					const saveWarning = yieldSaveError === undefined ? "" : `\nThe command's saved state is out of date because it could not be saved: ${yieldSaveError instanceof Error ? yieldSaveError.message : String(yieldSaveError)}`;
 					return { content: [{ type: "text", text: `Command is still running (toolCallId: ${toolCallId}). This is not a successful exit. Use subagent_command({ action: "status", toolCallId: ${JSON.stringify(toolCallId)} }) to inspect or wait, or action: "cancel" to stop it.${saveWarning}\n${job.snapshot.output}` }], details: { command: { ...job.snapshot } } };
 				},
 			};

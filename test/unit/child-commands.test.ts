@@ -258,7 +258,7 @@ describe("command identities and bounded observation", () => {
 			fs.writeFileSync(path.join(statePath, "occupied"), "");
 			const yielded = await pending;
 			assert.match(yielded.content[0].text, /still running/);
-			assert.match(yielded.content[0].text, /state could not be saved/);
+			assert.match(yielded.content[0].text, /saved state is out of date/);
 			assert.equal(commands.operate("status", "blocked").commands[0].state, "yielded");
 		} finally {
 			fs.rmSync(statePath, { recursive: true, force: true });
