@@ -219,6 +219,7 @@ export function createResultWatcher(
 	transitionResultDelivery: () => void;
 	primeExistingResults: (options?: { triggerTurn?: boolean }) => void;
 	deliverPendingResults: () => Promise<void>;
+	hasPendingResults: () => boolean;
 	refreshResultDelivery: () => void;
 	stopResultWatcher: () => void;
 } {
@@ -863,5 +864,5 @@ export function createResultWatcher(
 		identityCache.clear();
 	};
 
-	return { startResultWatcher, transitionResultDelivery, primeExistingResults, deliverPendingResults, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
+	return { startResultWatcher, transitionResultDelivery, primeExistingResults, deliverPendingResults, hasPendingResults: () => eligibleResultFiles().length > 0, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
 }

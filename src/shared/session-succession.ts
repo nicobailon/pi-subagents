@@ -4,12 +4,35 @@ const MAX_INHERITED_SESSIONS = 8;
 // A long-lived host (pi-web) can replace sessions for days; keep only the most recent ones.
 const MAX_RECORDED_SESSIONS = 64;
 
-type SuccessionGlobal = typeof globalThis & { [SUCCESSION_KEY]?: Map<string, readonly string[]> };
+const HANDOFF_KEY = Symbol.for("pi-subagents.approved-session-handoffs");
+type SuccessionGlobal = typeof globalThis & {
+	[SUCCESSION_KEY]?: Map<string, readonly string[]>;
+	[HANDOFF_KEY]?: Map<string, string>;
+};
+
+// SAFETY: this module owns both Symbol-keyed Maps across extension instances.
+const runtime = globalThis as SuccessionGlobal;
+
+function handoffs(): Map<string, string> {
+	return runtime[HANDOFF_KEY] ??= new Map();
+}
+
+/** Offer an approved handoff when the old runtime shuts down. */
+export function approveSessionHandoff(sessionId: string, previousSessionId: string): void {
+	handoffs().delete(sessionId);
+	handoffs().set(sessionId, previousSessionId);
+	while (handoffs().size > MAX_RECORDED_SESSIONS) handoffs().delete(handoffs().keys().next().value!);
+}
+
+/** Claim once, only for the approved predecessor and destination. */
+export function consumeSessionHandoff(sessionId: string, previousSessionId?: string): boolean {
+	const approved = handoffs().get(sessionId);
+	handoffs().delete(sessionId);
+	return previousSessionId !== undefined && approved === previousSessionId;
+}
 
 function successions(): Map<string, readonly string[]> {
-	const runtime = globalThis as SuccessionGlobal;
-	runtime[SUCCESSION_KEY] ??= new Map();
-	return runtime[SUCCESSION_KEY];
+	return runtime[SUCCESSION_KEY] ??= new Map();
 }
 
 /** Records that sessionId replaced previousSessionId in this process, inheriting its chain. */
@@ -22,14 +45,11 @@ export function recordSessionReplacement(sessionId: string, previousSessionId: s
 	while (successions().size > MAX_RECORDED_SESSIONS) successions().delete(successions().keys().next().value!);
 }
 
-/**
- * A session starting in this process is live again, so no other session inherits its runs any more.
- * pi-web keeps a forked-from session listed and can reopen it while its fork is still live.
- * A startup replaces no session, so the session also drops what it inherited before: whoever
- * replaced it took those runs over and keeps them.
- */
-export function recordSessionStart(sessionId: string, startup: boolean): void {
-	if (startup) successions().delete(sessionId);
+/** Reopening reclaims the session's own runs. Only a reload retains its inherited chain. */
+export function recordSessionStart(sessionId: string, clearInheritance: boolean): void {
+	if (clearInheritance) successions().delete(sessionId);
+	handoffs().delete(sessionId);
+	for (const [target, previous] of handoffs()) if (previous === sessionId) handoffs().delete(target);
 	for (const [id, chain] of successions()) {
 		if (chain.includes(sessionId)) successions().set(id, chain.filter((inherited) => inherited !== sessionId));
 	}

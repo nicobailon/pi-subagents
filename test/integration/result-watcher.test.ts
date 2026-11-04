@@ -74,6 +74,30 @@ async function waitForPredicate(predicate: () => boolean, timeoutMs = 2_500): Pr
 }
 
 describe("result watcher", () => {
+	it("probes pending owned results for a switch without delivering or consuming them", async () => {
+		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-switch-pending-results-"));
+		const state = createState();
+		state.currentSessionId = "pending-owner";
+		let delivered = 0;
+		const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
+			notifier: { async deliver() { delivered++; return true; } },
+		});
+		try {
+			writeIndexedResult(path.join(resultsDir, "foreign.json"), { id: "foreign", sessionId: "another-session", success: true });
+			assert.equal(watcher.hasPendingResults(), false);
+			const file = path.join(resultsDir, "owned.json");
+			writeIndexedResult(file, { id: "owned", sessionId: state.currentSessionId, success: true, summary: "Keep this result" });
+			const saved = fs.readFileSync(file, "utf-8");
+			assert.equal(watcher.hasPendingResults(), true);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			assert.equal(delivered, 0);
+			assert.equal(fs.readFileSync(file, "utf-8"), saved);
+		} finally {
+			watcher.stopResultWatcher();
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps running workflow launch receipts nonterminal in notifications and completion events", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-dispatch-"));
 		const state = createState();

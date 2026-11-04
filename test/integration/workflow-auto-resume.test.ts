@@ -250,9 +250,10 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const oldSession = `session-${nonce}-old`;
 		const inheritedId = writeCrashedRun(oldSession, scriptLaunch(script), Date.now() - 60_000);
 		const fresh = await startRuntime("new", `session-${nonce}-new`, { previousSessionFile: sessionFileFor(oldSession) });
-		assert.equal(readStatusFile(inheritedId)?.workflow?.stopCause, "owner-exited", "the new session reconciled the run it inherited");
+		assert.equal(readStatusFile(inheritedId)?.state, "running", "an unapproved successor does not even reconcile the old session's run");
+		assert.equal(readStatusFile(inheritedId)?.workflow?.stopCause, undefined);
 		assert.deepEqual(claimFiles(inheritedId), []);
-		assert.deepEqual(nextSteps(await oneNotice(fresh.sent, inheritedId)), [`Resume by hand: subagent({ action: "resume", id: "${inheritedId}" })`], "its notice says how to resume it by hand");
+		assert.deepEqual(noticesFor(fresh.sent, inheritedId), [], "a session switch alone cannot deliver the old session's notice");
 		await fresh.shutDown("quit");
 
 		writeConfig({ autoResume: false });
@@ -470,7 +471,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		const dollar = session("with $demo");
 		const foreignRuns = [foreignRun, writeCrashedRun(spaced, scriptLaunch(script), now - 60_000), writeCrashedRun(dollar, scriptLaunch(script), now - 60_000)];
 		// Not pointed to: a live owner, another folder, older than a day, a session that cannot be reopened (no file, or no
-		// header id), an inherited session.
+		// header id). A previously active session remains foreign without an approved handoff.
 		foreignRuns.push(
 			writeCrashedRun(session("alive"), scriptLaunch(script), now - 60_000, { pid: process.pid }),
 			writeCrashedRun(session("elsewhere"), scriptLaunch(script), now - 60_000, { cwd: path.join(tempDir, "other") }),
@@ -478,8 +479,8 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			writeCrashedRun(session("unsaved", "none"), scriptLaunch(script), now - 60_000),
 			writeCrashedRun(session("headerless", "no-header"), scriptLaunch(script), now - 60_000),
 		);
-		const inherited = session("inherited");
-		writeCrashedRun(inherited, scriptLaunch(script), now - 60_000);
+		const previous = session("previous");
+		foreignRuns.push(writeCrashedRun(previous, scriptLaunch(script), now - 60_000));
 		const current = session("current");
 		const headless = session("headless");
 
@@ -494,13 +495,14 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 		assert.equal(Object.keys(before).filter((file) => file.endsWith("status.json")).length, foreignRuns.length);
 		const elsewhere = (runtime: { notifications: Array<{ text: string; level: string }> }) => runtime.notifications.filter((notice) => notice.text.includes("in another session"));
 
-		const withUi = await startRuntime("new", current, { previousSessionFile: sessionFileFor(inherited) });
+		const withUi = await startRuntime("new", current, { previousSessionFile: sessionFileFor(previous) });
 		// Each line names the session by its header id, the same on every platform whatever its path.
 		const byText = (left: { text: string }, right: { text: string }) => left.text.localeCompare(right.text);
 		assert.deepEqual(elsewhere(withUi).sort(byText), [
 			{ text: `2 subagent runs were interrupted in another session. Reopen it to resume them: \`pi --session ${headerIds.get(foreign)}\``, level: "info" },
 			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session ${headerIds.get(spaced)}\``, level: "info" },
 			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session ${headerIds.get(dollar)}\``, level: "info" },
+			{ text: `1 subagent run was interrupted in another session. Reopen it to resume it: \`pi --session ${headerIds.get(previous)}\``, level: "info" },
 		].sort(byText));
 		assert.deepEqual(withUi.sent.filter((entry) => String(entry.message.content).includes("in another session")), [], "never sent to the model");
 		await withUi.shutDown("quit");

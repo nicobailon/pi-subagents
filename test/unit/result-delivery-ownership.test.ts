@@ -1,11 +1,31 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
-import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
+import { approveSessionHandoff, consumeSessionHandoff, inheritedSessionIds, recordSessionReplacement, recordSessionStart } from "../../src/shared/session-succession.ts";
 
 const OWNER = "owner-a";
 
 describe("result delivery ownership", () => {
+	it("requires an exact one-shot handoff offer; a startup cannot inherit a failed switch's offer", () => {
+		approveSessionHandoff("offer-target", "offer-source");
+		assert.equal(consumeSessionHandoff("offer-target", "wrong-source"), false);
+		assert.equal(consumeSessionHandoff("offer-target", "offer-source"), false);
+		approveSessionHandoff("offer-target", "offer-source");
+		assert.equal(consumeSessionHandoff("offer-target"), false);
+		assert.equal(consumeSessionHandoff("offer-target", "offer-source"), false);
+		approveSessionHandoff("offer-target", "offer-source");
+		recordSessionStart("offer-source", true);
+		assert.equal(consumeSessionHandoff("offer-target", "offer-source"), false, "reopening the source reclaims its runs");
+	});
+
+	it("keeps an approved chain on reload but drops it when that session is opened again", () => {
+		recordSessionReplacement("reload-owner", "reload-source");
+		recordSessionStart("reload-owner", false);
+		assert.deepEqual(inheritedSessionIds("reload-owner"), ["reload-source"]);
+		recordSessionStart("reload-owner", true);
+		assert.deepEqual(inheritedSessionIds("reload-owner"), []);
+	});
+
 	it("owns results of sessions this process replaced on the way to the current session", () => {
 		const state = { currentSessionId: "ownership-old" as string | null, completionOwnerId: OWNER };
 		const ownership = createResultDeliveryOwnership(state);

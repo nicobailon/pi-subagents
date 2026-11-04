@@ -45,11 +45,21 @@ Starting Pi in a folder where another session's subagent runs were cut off by it
 
 The completion notice of a workflow stopped by a Pi exit or a runtime replacement has one line right after `Workflow run: <id>` that says what happens next: `Auto-resumed as <new id>.`, `Resumed as <new id>.` (resumed by id), `Relaunched as <new id>.` (relaunched with the same script or `options.reuseFrom`), `Not auto-resumed: <reason>.` followed by the way to continue by hand, or, when nothing continues it, `Resume by hand: subagent({ action: "resume", id: "<id>" })` (or the `options.reuseFrom` form when its launch cannot be resumed by id).
 
-After `/new`, `/resume`, or a fork in the same Pi process, the new session owns the async runs of the session it replaced, and of the sessions that one replaced. It can list, `bg_wait` on, steer, stop, and resume them, receives their completion notices, and answers their children's pending supervisor requests. Over RPC, a host can steer, interrupt, stop, resume, and inspect them, and sees them in the fleet and `subagent-async` snapshots. Startup and other Pi processes inherit nothing; `/reload` adds nothing new but keeps what the session already inherited. A replaced session that starts again (pi-web reopening it) takes its runs back. To relaunch a stopped workflow instead of controlling its children one by one, use `options.reuseFrom`.
-
 Once the Pi process that started a background single, parallel, or chain run has exited, the run is reported once to a Pi window that has its session open, whether it finished while Pi was closed or finishes later. A workflow's children are reported through their workflow.
 
 Pi core may print a generic `pi -ne` extension-load hint; that out-of-repo hint is not protocol-approved fallback. A verified compaction abort may continue the retained child once on its already resolved model; it does not authorize an execution-mode or model switch.
+
+### Switching sessions with background work
+
+Before `/new`, `/resume`, `/fork`, or `/clone` replaces a session with queued/running async work, live nested children, undelivered results, or supervisor questions, pi-subagents asks **pi-subagents: switch sessions?**.
+
+- **Stay here** (default, also Escape): stay in this session and let background work continue.
+- **Switch and transfer**: move background work, results, and saved run history to the next session. That session receives async controls, future results, and supervisor replies when the exact destination starts. A completion wake already queued in the old conversation must start before you retry the handoff.
+- **Stop and switch**: stop background work before changing sessions. This aborts the parent turn and requests stops. If exit cannot be verified within five seconds, cancel the switch. Saved results stay with the original session. A later cancellation does not undo stops.
+
+Finished, delivered history alone neither prompts nor transfers. The prompt never enters model history; its TUI lifetime raises and clears `herdr:blocked`. RPC dialogs time out after one minute; no response or no usable UI cancels an outstanding-work switch. Hosts must invoke Pi's before-switch/before-fork hooks; viewing another conversation need not replace its runtime.
+
+Approved handoffs cover up to eight predecessor sessions in this process, including RPC controls and snapshots. `/reload` retains them; a full restart does not. Reopening an original session reclaims its own runs and drops its inherited chain. For a stopped workflow relaunch, use `options.reuseFrom`.
 
 ## Prompt shortcuts
 
