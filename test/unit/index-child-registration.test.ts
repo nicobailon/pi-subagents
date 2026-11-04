@@ -520,6 +520,42 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("registers the wait tool under waitTool.name and names it in the subagent description", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const tools = new Map();
+			const fakePi = new Proxy({
+				events: { on() { return () => {}; }, emit() {} },
+				registerTool(tool) { tools.set(tool.name, tool); },
+				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			registerSubagentExtension(fakePi);
+			const wait = tools.get("subagent_wait") ?? tools.get("bg_wait");
+			process.stdout.write(JSON.stringify({ names: [...tools.keys()], subagent: tools.get("subagent").description, wait: wait.description }));
+		`;
+		const register = (config: object) => {
+			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-name-"));
+			try {
+				const configDir = path.join(agentDir, "extensions", "subagent");
+				fs.mkdirSync(configDir, { recursive: true });
+				fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
+				const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" });
+				return JSON.parse(output) as { names: string[]; subagent: string; wait: string };
+			} finally {
+				fs.rmSync(agentDir, { recursive: true, force: true });
+			}
+		};
+		const defaults = register({});
+		const renamed = register({ waitTool: { name: "subagent_wait" } });
+		assert.ok(defaults.names.includes("bg_wait"));
+		assert.ok(renamed.names.includes("subagent_wait"));
+		assert.equal(renamed.names.includes("bg_wait"), false, "a renamed wait tool leaves bg_wait free for another extension");
+		assert.match(defaults.subagent, /bg_wait/);
+		assert.equal(renamed.subagent, defaults.subagent.replaceAll("bg_wait", "subagent_wait"));
+		assert.equal(renamed.wait, defaults.wait.replaceAll("bg_wait", "subagent_wait"));
+		assert.doesNotMatch(renamed.wait, /bg_wait/);
+	});
+
 	it("registers no slash commands or shortcut when enableSlashCommands is false, and keeps the subagent tool", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";

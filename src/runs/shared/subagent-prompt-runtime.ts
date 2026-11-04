@@ -24,6 +24,7 @@ import { inheritedNestedRouteOf } from "./nested-events.ts";
 import { registerWaitTool } from "../background/wait-tool.ts";
 import { drainOutstandingWork } from "../background/auto-drain.ts";
 import { MODEL_ONLY_TOOL } from "../../shared/extension-context.ts";
+import { DEFAULT_WAIT_TOOL_NAME, setWaitToolName } from "../../shared/wait-tool-name.ts";
 import {
 	childSupervisorMetadata,
 	evaluateChildToolDiagnostic,
@@ -669,6 +670,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	} as unknown as SubagentState;
 	const nestedRootRunId = inheritedNestedRouteOf(config)?.rootRunId;
 	// fanout-child assigns config.hasPendingSupervisorRequest after this hook registers, so read it per wait.
+	setWaitToolName(config.waitTool.name ?? DEFAULT_WAIT_TOOL_NAME);
 	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, config.waitTool.enabled, undefined, config.waitTool.defaultTimeoutMs, { nestedRootRunId }, () => config.hasPendingSupervisorRequest?.() === true);
 	const supervisorMetadata = childSupervisorMetadata(config);
 	let nativeSupervisorClientRegistered = false;

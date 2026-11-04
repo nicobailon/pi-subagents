@@ -8,6 +8,7 @@ import { safeTerminalText } from "../shared/display-text.ts";
 import { formatWatchdogWarningRenderText, stateLabels } from "../watchdog/render.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE, WATCHDOG_WARNING_IMPORTANCES, WATCHDOG_WARNING_SEVERITIES, type WatchdogWarning } from "../watchdog/types.ts";
 import { normalizeWatchdogWarningDetails } from "../watchdog/warning-format.ts";
+import { waitToolName } from "../shared/wait-tool-name.ts";
 
 interface SubagentMessage {
 	customType: string;
@@ -148,8 +149,8 @@ function supervisorReminderHeadline(details: unknown, status: "unanswered" | "bl
 }
 
 function waitSubscriptionHeadline(details: unknown): Headline {
-	if (!isRecord(details) || typeof details.runId !== "string" || typeof details.outcome !== "string") return ["bg_wait fired"];
-	return [`bg_wait: run ${details.runId} `, { status: details.outcome }];
+	if (!isRecord(details) || typeof details.runId !== "string" || typeof details.outcome !== "string") return [`${waitToolName()} fired`];
+	return [`${waitToolName()}: run ${details.runId} `, { status: details.outcome }];
 }
 
 /** Workflow child notices saved before render details existed are read from their first line. */
