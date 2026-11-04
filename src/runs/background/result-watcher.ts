@@ -719,7 +719,14 @@ export function createResultWatcher(
 	const hasPendingResults = () => eligibleResultFiles().some((file) => {
 		const payloadPath = resultPayloadPath(file);
 		if (!payloadPath) return false;
-		const raw = fsApi.readFileSync(payloadPath, "utf-8");
+		let raw: string;
+		try {
+			raw = fsApi.readFileSync(payloadPath, "utf-8");
+		} catch (error) {
+			// Delivered and removed since the scan.
+			if (isNotFound(error)) return false;
+			throw error;
+		}
 		const identity = resultFileIdentity(raw, file);
 		return Boolean(identity.sessionId
 			&& ownsResult(identity.sessionId, deliveryOwnerId(identity.sessionId, identity.completionOwnerId, identity.completionOwnerProcess, identity.parentWorkflowRunId))

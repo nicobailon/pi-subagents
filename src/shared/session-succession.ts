@@ -4,39 +4,36 @@ const MAX_INHERITED_SESSIONS = 8;
 // A long-lived host (pi-web) can replace sessions for days; keep only the most recent ones.
 const MAX_RECORDED_SESSIONS = 64;
 
-const HANDOFF_KEY = Symbol.for("pi-subagents.approved-session-handoffs");
-type SuccessionGlobal = typeof globalThis & {
-	[SUCCESSION_KEY]?: Map<string, readonly string[]>;
-	[HANDOFF_KEY]?: Map<string, string>;
-};
+const KEPT_WORK_KEY = Symbol.for("pi-subagents.sessions-keeping-work");
 
-// SAFETY: this module owns both Symbol-keyed Maps across extension instances.
-const runtime = globalThis as SuccessionGlobal;
-
-function handoffs(): Map<string, string> {
-	return runtime[HANDOFF_KEY] ??= new Map();
-}
-
-/** Offer an approved handoff when the old runtime shuts down. */
-export function approveSessionHandoff(sessionId: string, previousSessionId: string): void {
-	handoffs().delete(sessionId);
-	handoffs().set(sessionId, previousSessionId);
-	while (handoffs().size > MAX_RECORDED_SESSIONS) handoffs().delete(handoffs().keys().next().value!);
-}
-
-/** Claim once, only for the approved predecessor and destination. */
-export function consumeSessionHandoff(sessionId: string, previousSessionId?: string): boolean {
-	const approved = handoffs().get(sessionId);
-	handoffs().delete(sessionId);
-	return previousSessionId !== undefined && approved === previousSessionId;
-}
+type SuccessionGlobal = typeof globalThis & { [SUCCESSION_KEY]?: Map<string, readonly string[]>; [KEPT_WORK_KEY]?: Set<string> };
 
 function successions(): Map<string, readonly string[]> {
-	return runtime[SUCCESSION_KEY] ??= new Map();
+	const runtime = globalThis as SuccessionGlobal;
+	runtime[SUCCESSION_KEY] ??= new Map();
+	return runtime[SUCCESSION_KEY];
 }
 
-/** Records that sessionId replaced previousSessionId in this process, inheriting its chain. */
+function keptWork(): Set<string> {
+	const runtime = globalThis as SuccessionGlobal;
+	runtime[KEPT_WORK_KEY] ??= new Set();
+	return runtime[KEPT_WORK_KEY];
+}
+
+/** The operator switched away from sessionId and chose to leave its work there, so its successor inherits nothing. */
+export function keepSessionWork(sessionId: string): void {
+	keptWork().delete(sessionId);
+	keptWork().add(sessionId);
+	while (keptWork().size > MAX_RECORDED_SESSIONS) keptWork().delete(keptWork().values().next().value!);
+}
+
+/** Records that sessionId replaced previousSessionId in this process, inheriting its chain unless its work was kept there. */
 export function recordSessionReplacement(sessionId: string, previousSessionId: string): void {
+	// Not consumed here: an RPC host can start the same replacement twice.
+	if (keptWork().has(previousSessionId)) {
+		successions().delete(sessionId);
+		return;
+	}
 	// Resuming back and forth can revisit a session: keep the chain distinct and free of sessionId
 	// itself, so the bound holds real predecessors and discovery never scans one session twice.
 	const chain = [...new Set([previousSessionId, ...(successions().get(previousSessionId) ?? [])])].filter((id) => id !== sessionId);
@@ -45,11 +42,15 @@ export function recordSessionReplacement(sessionId: string, previousSessionId: s
 	while (successions().size > MAX_RECORDED_SESSIONS) successions().delete(successions().keys().next().value!);
 }
 
-/** Reopening reclaims the session's own runs. Only a reload retains its inherited chain. */
-export function recordSessionStart(sessionId: string, clearInheritance: boolean): void {
-	if (clearInheritance) successions().delete(sessionId);
-	handoffs().delete(sessionId);
-	for (const [target, previous] of handoffs()) if (previous === sessionId) handoffs().delete(target);
+/**
+ * A session starting in this process is live again, so no other session inherits its runs any more.
+ * pi-web keeps a forked-from session listed and can reopen it while its fork is still live.
+ * A startup replaces no session, so the session also drops what it inherited before: whoever
+ * replaced it took those runs over and keeps them.
+ */
+export function recordSessionStart(sessionId: string, startup: boolean): void {
+	if (startup) successions().delete(sessionId);
+	keptWork().delete(sessionId);
 	for (const [id, chain] of successions()) {
 		if (chain.includes(sessionId)) successions().set(id, chain.filter((inherited) => inherited !== sessionId));
 	}

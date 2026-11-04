@@ -27,7 +27,7 @@ import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-event
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
-import { consumeSessionHandoff, recordSessionReplacement, recordSessionStart } from "../shared/session-succession.ts";
+import { recordSessionReplacement, recordSessionStart } from "../shared/session-succession.ts";
 import { createSessionSwitchGuard } from "./session-switch.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { isStaleExtensionContextError, MODEL_ONLY_TOOL, withCachedUiContext } from "../shared/extension-context.ts";
@@ -517,13 +517,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 	);
 	const { startResultWatcher, transitionResultDelivery, primeExistingResults, stopResultWatcher } = resultWatcher;
-	const sessionSwitchGuard = createSessionSwitchGuard(pi, {
+	const sessionSwitchGuard = createSessionSwitchGuard({
 		state, asyncDirRoot: DIRS.async, resultsDir: DIRS.results,
 		hasPendingResults: () => owedResultRunIds.size > 0 || completionNotifier.hasPendingDelivery() || resultWatcher.hasPendingResults(),
-		hasPendingCompletionWake: completionNotifier.hasPendingCompletionWake,
 		hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests,
 	});
-	pi.on("session_before_switch", (event, ctx) => sessionSwitchGuard.beforeSwitch(event.reason, ctx, event.targetSessionFile));
+	pi.on("session_before_switch", (event, ctx) => sessionSwitchGuard.beforeSwitch(event.reason, ctx));
 	pi.on("session_before_fork", (_event, ctx) => sessionSwitchGuard.beforeSwitch("fork", ctx));
 	refreshResultDelivery = resultWatcher.refreshResultDelivery;
 	const asyncRetentionAbort = new AbortController();
@@ -974,18 +973,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		);
 	};
 
-	const resetSessionState = (ctx: ExtensionContext, recovering: boolean, clearInheritance: boolean, previousSessionFile?: string) => {
+	const resetSessionState = (ctx: ExtensionContext, recovering: boolean, startup: boolean, previousSessionFile?: string) => {
 		state.widgetsSuspended = false;
 		state.baseCwd = ctx.cwd;
 		goalTurnId = 0;
-		const sessionId = resolveCurrentSessionId(ctx.sessionManager);
-		const alreadyStarted = state.currentSessionId === sessionId;
-		state.currentSessionId = sessionId;
-		const handoff = consumeSessionHandoff(sessionId, previousSessionFile);
-		// RPC can bind the same session twice; do not clear an accepted handoff on rebind.
-		recordSessionStart(sessionId, clearInheritance && !alreadyStarted);
-		// Only an approved handoff transfers runs and result delivery.
-		if (handoff && previousSessionFile) recordSessionReplacement(state.currentSessionId, previousSessionFile);
+		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+		recordSessionStart(state.currentSessionId, startup);
+		// Pi passes previousSessionFile only for new/resume/fork, after tearing that session down in this process.
+		if (previousSessionFile) recordSessionReplacement(state.currentSessionId, previousSessionFile);
 		state.supervisorOwnerSessionId = ctx.sessionManager.getSessionId() || null;
 		transitionResultDelivery();
 		owedResultRunIds.clear();
@@ -1247,7 +1242,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		startSessionMaintenance();
 		scheduleModulePreload();
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
-		resetSessionState(ctx, recovering, event.reason !== "reload", event.previousSessionFile);
+		resetSessionState(ctx, recovering, event.reason === "startup", event.previousSessionFile);
 		releaseHostSessionLiveness();
 		const sessionId = ctx.sessionManager.getSessionId();
 		const sessionFile = ctx.sessionManager.getSessionFile();

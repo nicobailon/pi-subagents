@@ -1284,9 +1284,9 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	for (const approved of [false, true]) it(approved
-		? "delivers a replaced session's results only after an explicit handoff"
-		: "keeps a replaced session's late results out of an unrelated fresh session", () => {
+	for (const leave of [false, true]) it(leave
+		? "keeps a session's async results with it when the operator leaves the work there"
+		: "delivers a replaced session's async results to the session that took the work", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-session-transition-"));
 		const configDir = path.join(agentDir, "extensions", "subagent");
 		fs.mkdirSync(configDir, { recursive: true });
@@ -1299,8 +1299,7 @@ describe("subagent extension child mode", () => {
 			import { writeAsyncResultFile } from "./src/runs/background/result-files.ts";
 			import { updateActiveRunIndex } from "./src/runs/background/active-run-index.ts";
 			import { DIRS } from "./src/shared/types.ts";
-			import { recordSessionReplacement } from "./src/shared/session-succession.ts";
-			const approved = ${approved};
+			const leave = ${leave};
 			// Pi tears the old session's extension instance down and starts a new one on every session switch.
 			const makePi = () => {
 				const handlers = new Map();
@@ -1340,44 +1339,44 @@ describe("subagent extension child mode", () => {
 			const first = makePi();
 			await emit(first, "session_start", { reason: "startup" }, ctxFor(oldSession));
 			const liveDir = path.join(DIRS.async, "transition-live-" + stamp);
-			if (approved) {
-				fs.mkdirSync(liveDir, { recursive: true });
-				fs.writeFileSync(path.join(liveDir, "status.json"), JSON.stringify({ runId: path.basename(liveDir), mode: "single", state: "running", sessionId: oldSession, pid: process.pid, startedAt: stamp, lastUpdate: stamp, steps: [{ agent: "worker", status: "running" }] }));
-				updateActiveRunIndex(liveDir, "running");
-			}
+			fs.mkdirSync(liveDir, { recursive: true });
+			fs.writeFileSync(path.join(liveDir, "status.json"), JSON.stringify({ runId: path.basename(liveDir), mode: "single", state: "running", sessionId: oldSession, pid: process.pid, startedAt: stamp, lastUpdate: stamp, steps: [{ agent: "worker", status: "running" }] }));
+			updateActiveRunIndex(liveDir, "running");
 			const switchCtx = ctxFor(oldSession);
+			let prompts = 0;
 			switchCtx.hasUI = true;
-			switchCtx.ui.select = async (_title, options) => { if (!approved) throw new Error("finished work must not prompt"); return options[1]; };
-			switchCtx.ui.notify = () => {};
-			await emit(first, "session_before_switch", { reason: "new" }, switchCtx);
+			switchCtx.ui.select = async (_title, options) => { prompts += 1; return options[leave ? 2 : 1]; };
+			switchCtx.ui.notify = (message) => { throw new Error(message); };
+			for (const handler of first.handlers.get("session_before_switch") ?? []) {
+				if ((await handler({ reason: "new" }, switchCtx))?.cancel) throw new Error("switch was cancelled");
+			}
+			if (prompts !== 1) throw new Error("running work must prompt once");
 			await emit(first, "session_shutdown", { reason: "new", targetSessionFile: newSession });
 			// Finished while the old session was shutting down and nobody owned delivery.
 			const before = writeResult("before", oldSession);
 			const foreign = writeResult("foreign", foreignSession);
-			// Opening a session must not resurrect a handoff from a previous visit to it.
-			recordSessionReplacement(newSession, foreignSession);
 			const second = makePi();
 			const newCtx = ctxFor(newSession);
 			await emit(second, "session_start", { reason: "new", previousSessionFile: oldSession }, newCtx);
 			// Pi RPC rebinds after replacement and emits session_start again for the same runtime.
 			await emit(second, "session_start", { reason: "new", previousSessionFile: oldSession }, newCtx);
-			if (approved) await waitFor(() => delivered(second, before) > 0);
+			if (!leave) await waitFor(() => delivered(second, before) > 0);
 			second.events.emit("subagent:async-complete", { id: "transition-after-" + stamp, agent: "worker", success: true, summary: "after", timestamp: stamp + 1, sessionId: oldSession, completionOwnerId: owner });
 			second.events.emit("subagent:async-complete", { id: "transition-live-foreign-" + stamp, agent: "worker", success: true, summary: "foreign", timestamp: stamp + 2, sessionId: foreignSession, completionOwnerId: owner });
 			await new Promise((resolve) => setTimeout(resolve, 200));
 			const counts = { before: delivered(second, before), after: delivered(second, "transition-after-" + stamp), foreign: delivered(second, foreign), liveForeign: delivered(second, "transition-live-foreign-" + stamp), old: first.sent.length };
 			await emit(second, "session_shutdown", { reason: "quit" });
-			if (!approved) {
-				if (!fs.existsSync(path.join(DIRS.results, before + ".json"))) throw new Error("fresh session consumed the old result");
+			if (leave) {
 				const reopened = makePi();
 				await emit(reopened, "session_start", { reason: "startup" }, ctxFor(oldSession));
 				await waitFor(() => delivered(reopened, before) > 0);
-				if (delivered(reopened, before) !== 1) throw new Error("the original session did not recover its saved result");
+				if (delivered(reopened, before) !== 1) throw new Error("the original session did not get its saved result");
 				await emit(reopened, "session_shutdown", { reason: "quit" });
 			}
 			fs.rmSync(liveDir, { recursive: true, force: true });
 			fs.rmSync(path.join(DIRS.results, foreign + ".json"), { force: true });
-			if (JSON.stringify(counts) !== JSON.stringify({ before: approved ? 1 : 0, after: approved ? 1 : 0, foreign: 0, liveForeign: 0, old: 0 })) throw new Error("unexpected deliveries " + JSON.stringify(counts));
+			const expected = leave ? 0 : 1;
+			if (JSON.stringify(counts) !== JSON.stringify({ before: expected, after: expected, foreign: 0, liveForeign: 0, old: 0 })) throw new Error("unexpected deliveries " + JSON.stringify(counts));
 		`;
 
 		try {
@@ -1389,7 +1388,7 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("hands over async controls with consent and gives a reopened session its own runs back", () => {
+	it("gives a session started in place of another control of that session's async runs", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-inherit-"));
 		const script = String.raw`
 			import fs from "node:fs";
@@ -1438,18 +1437,6 @@ describe("subagent extension child mode", () => {
 			const kept = writeRun("kept", { sessionId: a, state: "running", pid: keeper.pid, steps: [{ agent: "worker", status: "running" }] });
 			updateActiveRunIndex(path.join(DIRS.async, kept), "running");
 			const chainDone = writeRun("chain-done", { sessionId: x, state: "complete", steps: [{ agent: "worker", status: "complete", sessionFile: childSession }] });
-			const chainLive = writeRun("chain-live", { sessionId: x, state: "running", pid: keeper.pid, steps: [{ agent: "worker", status: "running" }] });
-			updateActiveRunIndex(path.join(DIRS.async, chainLive), "running");
-			const handoff = async (instance, source, target) => {
-				const ctx = ctxFor(source);
-				ctx.hasUI = true;
-				ctx.ui.select = async (_title, options) => options[1];
-				ctx.ui.notify = (message) => fail(message);
-				for (const handler of instance.handlers.get("session_before_switch") ?? []) {
-					if ((await handler({ reason: "new" }, ctx))?.cancel) fail("handoff was cancelled");
-				}
-				await emit(instance, "session_shutdown", { reason: "new", targetSessionFile: target });
-			};
 			// Registered tools throw on error results; both outcomes are compared as text.
 			const call = async (tool, params, ctx) => {
 				try {
@@ -1463,7 +1450,7 @@ describe("subagent extension child mode", () => {
 			try {
 				const first = makePi();
 				await emit(first, "session_start", { reason: "startup" }, ctxFor(a));
-				await handoff(first, a, b);
+				await emit(first, "session_shutdown", { reason: "new" });
 				const second = makePi();
 				const ctxB = ctxFor(b);
 				await emit(second, "session_start", { reason: "new", previousSessionFile: a }, ctxB);
@@ -1491,10 +1478,10 @@ describe("subagent extension child mode", () => {
 				// x replaced by y, y by z; reopening y leaves x's runs with z alone.
 				const px = makePi();
 				await emit(px, "session_start", { reason: "startup" }, ctxFor(x));
-				await handoff(px, x, y);
+				await emit(px, "session_shutdown", { reason: "new" });
 				const py = makePi();
 				await emit(py, "session_start", { reason: "new", previousSessionFile: x }, ctxFor(y));
-				await handoff(py, y, z);
+				await emit(py, "session_shutdown", { reason: "new" });
 				const pz = makePi();
 				const ctxZ = ctxFor(z);
 				await emit(pz, "session_start", { reason: "new", previousSessionFile: y }, ctxZ);
