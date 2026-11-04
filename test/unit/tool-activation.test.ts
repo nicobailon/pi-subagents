@@ -10,6 +10,7 @@ import registerSubagentExtension from "../../src/extension/index.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 import { registerBackgroundWorkProvider } from "../../src/api/background-work.ts";
+import { DEFAULT_WAIT_TOOL_NAME, setWaitToolName } from "../../src/shared/wait-tool-name.ts";
 
 type Handler = (event: any, context: any) => any;
 type Tool = { name: string; description?: string; promptSnippet?: string; parameters?: unknown; execute?: (...args: any[]) => any; sourceInfo?: { path: string } };
@@ -353,6 +354,24 @@ describe("toolActivation modes", () => {
 			await runtime.emit("session_start", { type: "session_start", reason: "reload" });
 			const selectedTools = await startAgent(runtime);
 			for (const name of ["subagents_enable", "subagent"]) assert.equal(selectedTools.includes(name), expected.includes(name), `${label}: ${name}`);
+		}
+	});
+
+	it("keeps a wait tool recorded as bg_wait selected after waitTool.name renames it", async () => {
+		const renamed = { config: { waitTool: { name: "subagent_wait" } }, model: COMPATIBLE };
+		const reopen = async (messages: any[]) => {
+			const runtime = createRuntime(messages, [], [], renamed);
+			runtime.select(["read", "subagent", "contact_supervisor"]);
+			await runtime.emit("session_start", RESUME);
+			return runtime.active();
+		};
+		try {
+			const before = [declared(["read", "subagent", "contact_supervisor", "bg_wait"])];
+			assert.ok((await reopen(before)).includes("subagent_wait"), "recorded before the rename");
+			assert.equal((await reopen([...before, declared([], ["bg_wait"])])).includes("subagent_wait"), false, "removed before the rename");
+			assert.equal((await reopen([...before, declared([], ["subagent_wait"])])).includes("subagent_wait"), false, "removed after the rename");
+		} finally {
+			setWaitToolName(DEFAULT_WAIT_TOOL_NAME);
 		}
 	});
 

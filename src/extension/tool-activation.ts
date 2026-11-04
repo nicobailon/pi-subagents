@@ -4,7 +4,7 @@ import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 import type { ToolActivationMode } from "../shared/types.ts";
 import { registerPinnedTool } from "./declaration-pinning.ts";
 import { listBackgroundWorkProviders } from "../api/background-work.ts";
-import { waitToolName } from "../shared/wait-tool-name.ts";
+import { DEFAULT_WAIT_TOOL_NAME, waitToolName } from "../shared/wait-tool-name.ts";
 import { CONTACT_SUPERVISOR_TOOL_NAME as SUPERVISOR_NAME, NATIVE_SUPERVISOR_TOOL_NAME as PARENT_SUPERVISOR_NAME } from "../intercom/native-supervisor-channel.ts";
 
 interface ActivationDetails {
@@ -116,11 +116,14 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 		// A new process restores the transcript's tools, where the unload left this extension's tools inactive; only
 		// /reload re-adds them. Restoring them keeps a sentinel declared, so a later unload is recognised too. Tools of
 		// other extensions, and tools excluded for this process (not registered, so not in getAllTools), stay as they are.
+		// A transcript from before a waitTool.name rename records the wait tool as bg_wait; it stands for the renamed
+		// tool until the transcript says something about the new name.
+		const waitRecord = waitToolName() !== DEFAULT_WAIT_TOOL_NAME && !evidenced.has(waitToolName()) && evidenced.has(DEFAULT_WAIT_TOOL_NAME) ? DEFAULT_WAIT_TOOL_NAME : waitToolName();
 		const source = unloadedNames.size > 0 ? available.find((tool) => tool.name === LOADER_NAME)?.sourceInfo.path : undefined;
 		const restore = source === undefined ? [] : available
 			.filter((tool) => unloadedNames.has(tool.name) && recorded.has(tool.name) && tool.sourceInfo.path === source)
 			.map((tool) => tool.name);
-		setSelection(pi, recorded.has(SUBAGENT_NAME) || startsEager, loaderSelected, recorded.has(waitToolName()) || (!evidenced.has(waitToolName()) && startsEager), replyOwed ? [...restore, PARENT_SUPERVISOR_NAME] : restore, replyOwed || recorded.has(PARENT_SUPERVISOR_NAME));
+		setSelection(pi, recorded.has(SUBAGENT_NAME) || startsEager, loaderSelected, recorded.has(waitRecord) || (!evidenced.has(waitRecord) && startsEager), replyOwed ? [...restore, PARENT_SUPERVISOR_NAME] : restore, replyOwed || recorded.has(PARENT_SUPERVISOR_NAME));
 		return loaderSelected;
 	}
 	// "auto" goes eager only for an empty session; any history keeps the tools it already sent.
