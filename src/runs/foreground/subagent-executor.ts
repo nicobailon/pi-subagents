@@ -7,7 +7,7 @@ import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatA
 import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
-import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
+import { reportSessionWarning } from "../../shared/session-warnings.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import {
 	beginForegroundChild,
@@ -1171,6 +1171,7 @@ function emitAdvisoryControlEvent(pi: ExtensionAPI, channel: string, payload: un
 }
 
 function persistAsyncWorkflowControlEvent(input: {
+	state: SubagentState;
 	job: AsyncJobState;
 	event: ControlEvent;
 	controlConfig: ResolvedControlConfig;
@@ -1201,8 +1202,8 @@ function persistAsyncWorkflowControlEvent(input: {
 	try {
 		fs.appendFileSync(path.join(input.job.asyncDir, "events.jsonl"), `${JSON.stringify(record)}\n`, "utf-8");
 	} catch (error) {
-		if (!isStorageCapacityError(error)) throw error;
-		console.error("Failed to append async workflow control event while storage is full:", error);
+		// Called from the child's 1 s activity timer, where a throw would exit Pi; the notice itself is still sent.
+		reportSessionWarning(input.state, `Failed to record a control event for workflow ${input.job.asyncId}: ${error instanceof Error ? error.message : String(error)}`, "async-workflow-control-event");
 	}
 }
 
@@ -2520,6 +2521,7 @@ function createForegroundControlNotifier(data: Pick<ExecutionContextData, "contr
 		const enriched = workflowKey && !event.workflowKey ? { ...event, workflowKey } : event;
 		if (asyncWorkflow) {
 			persistAsyncWorkflowControlEvent({
+				state: deps.state,
 				job: asyncWorkflow,
 				event: enriched,
 				controlConfig: data.controlConfig,
@@ -4456,6 +4458,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			suppressUnchangedDelegationUpdates,
 			controlConfig,
 			onControlEvent,
+			onWarning: (message, key) => reportSessionWarning(deps.state, message, key),
 			intercomSessionName: childIntercomTarget,
 			orchestratorIntercomTarget: childBridgeActive ? data.intercomBridge.orchestratorTarget : undefined,
 			nestedRoute: foregroundControl?.nestedRoute,
