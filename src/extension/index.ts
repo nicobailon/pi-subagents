@@ -28,6 +28,7 @@ import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { recordSessionReplacement, recordSessionStart } from "../shared/session-succession.ts";
+import { reportSessionWarning } from "../shared/session-warnings.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { isStaleExtensionContextError, MODEL_ONLY_TOOL, withCachedUiContext } from "../shared/extension-context.ts";
 import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
@@ -152,9 +153,9 @@ function getRuntimeRegistry(): SubagentRuntimeRegistry {
 	return registry;
 }
 
-function logSlowPhase(label: string, startedAt: number): void {
+function logSlowPhase(state: SubagentState, label: string, startedAt: number): void {
 	const elapsed = Date.now() - startedAt;
-	if (elapsed >= SLOW_RELOAD_PHASE_MS) console.error(`Subagent reload phase '${label}' took ${elapsed}ms.`);
+	if (elapsed >= SLOW_RELOAD_PHASE_MS) reportSessionWarning(state, `Subagent reload phase '${label}' took ${elapsed}ms.`, `slow-reload-phase:${label}`);
 }
 
 function formatWorkflowPreflightCall(input: unknown): string {
@@ -1000,10 +1001,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state.lastUiContext = ctx;
 		let phaseStartedAt = Date.now();
 		refreshActiveAsyncCapacity();
-		logSlowPhase("active-capacity", phaseStartedAt);
+		logSlowPhase(state, "active-capacity", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		cleanupSessionArtifacts(ctx);
-		logSlowPhase("session-artifact-cleanup", phaseStartedAt);
+		logSlowPhase(state, "session-artifact-cleanup", phaseStartedAt);
 		state.foregroundControls.clear();
 		retainedNestedRouteTracker?.clear();
 		retainedNestedRouteTracker = undefined;
@@ -1011,19 +1012,19 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state.lastForegroundControlId = null;
 		phaseStartedAt = Date.now();
 		resetJobs(ctx);
-		logSlowPhase("reset-jobs", phaseStartedAt);
+		logSlowPhase(state, "reset-jobs", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		// Runs other sessions in this folder left when their Pi died, from what this restore reads anyway.
 		const interruptedElsewhere = ctx.hasUI ? createInterruptedElsewhereCollector({ currentSessionId: state.currentSessionId, cwd: ctx.cwd, now: Date.now() }) : undefined;
 		restoreForegroundRunHistory(state, { resultsDir: DIRS.results, observeForeign: interruptedElsewhere?.observeForegroundRun });
-		logSlowPhase("foreground-history", phaseStartedAt);
+		logSlowPhase(state, "foreground-history", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		restoreActiveJobs(ctx, interruptedElsewhere?.observeStatus);
-		logSlowPhase("active-job-restore", phaseStartedAt);
+		logSlowPhase(state, "active-job-restore", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		// Read-only and UI-only: never sent to the model, so prompts and history are unchanged.
 		if (interruptedElsewhere) for (const line of interruptedElsewhere.lines()) ctx.ui.notify(line, "info");
-		logSlowPhase("cross-session-notice", phaseStartedAt);
+		logSlowPhase(state, "cross-session-notice", phaseStartedAt);
 		// Before any stored result is delivered, so the interrupted run's notice can name its resume.
 		phaseStartedAt = Date.now();
 		// Launches an earlier session start of this runtime planned and has not started belong to that session.
@@ -1034,22 +1035,22 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				void launchWorkflowAutoResume(entry, ctx);
 			}
 		}
-		logSlowPhase("workflow-auto-resume", phaseStartedAt);
+		logSlowPhase(state, "workflow-auto-resume", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		scheduledRunManager.bindSession(ctx);
-		logSlowPhase("scheduled-runs", phaseStartedAt);
+		logSlowPhase(state, "scheduled-runs", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
-		logSlowPhase("slash-snapshots", phaseStartedAt);
+		logSlowPhase(state, "slash-snapshots", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		waitSubscriptionManager.restore();
-		logSlowPhase("wait-subscriptions", phaseStartedAt);
+		logSlowPhase(state, "wait-subscriptions", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		startResultWatcher();
-		logSlowPhase("result-watcher-start", phaseStartedAt);
+		logSlowPhase(state, "result-watcher-start", phaseStartedAt);
 		phaseStartedAt = Date.now();
 		primeExistingResults({ triggerTurn: !recovering });
-		logSlowPhase("result-prime", phaseStartedAt);
+		logSlowPhase(state, "result-prime", phaseStartedAt);
 		fleetStatus?.setContext(ctx);
 	};
 
