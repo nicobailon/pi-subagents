@@ -239,4 +239,32 @@ describe("command identities and bounded observation", () => {
 		} finally { await commands.shutdown(); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
+	it("still yields when the yield timer cannot save command state", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-child-yield-save-"));
+		const commands = createChildCommandRuntime(dir);
+		const statePath = path.join(dir, "commands.json");
+		const custom: ToolDefinition = {
+			name: "bash", label: "Custom shell", description: "Custom execution", parameters: Type.Object({ command: Type.String() }),
+			async execute(_id, _params, inputSignal) {
+				await new Promise<void>((_resolve, reject) => { inputSignal!.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }); });
+				return { content: [], details: undefined };
+			},
+		};
+		try {
+			const pending = commands.wrap(custom).execute("blocked", { command: "wait", yieldTimeMs: 20 }, undefined, undefined, ctx);
+			// A directory in place of commands.json makes the timer's atomic rename fail on the real filesystem.
+			fs.rmSync(statePath);
+			fs.mkdirSync(statePath);
+			fs.writeFileSync(path.join(statePath, "occupied"), "");
+			const yielded = await pending;
+			assert.match(yielded.content[0].text, /still running/);
+			assert.match(yielded.content[0].text, /saved state is out of date/);
+			assert.equal(commands.operate("status", "blocked").commands[0].state, "yielded");
+		} finally {
+			fs.rmSync(statePath, { recursive: true, force: true });
+			await commands.shutdown();
+			await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+		}
+	});
+
 });

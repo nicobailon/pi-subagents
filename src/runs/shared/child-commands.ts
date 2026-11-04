@@ -140,7 +140,13 @@ export function createChildCommandRuntime(channelDir: string) {
 					persist();
 					startInbox();
 					let timer: ReturnType<typeof setTimeout> | undefined;
-					if (typeof yieldTimeMs === "number") timer = setTimeout(() => operate("yield", toolCallId), yieldTimeMs);
+					let yieldSaveError: unknown;
+					// A throw from this timer would exit Pi. A closed controller is already cancelling the command; a failed
+					// save still yields, and the handle says the saved state is stale.
+					if (typeof yieldTimeMs === "number") timer = setTimeout(() => {
+						if (closed) return;
+						try { operate("yield", toolCallId); } catch (error) { yieldSaveError = error; }
+					}, yieldTimeMs);
 					const execution = Promise.resolve().then(() => tool.execute(toolCallId, args, commandSignal, (update) => {
 						job.snapshot.output = text(update);
 						if (job.snapshot.state === "running") onUpdate?.(update);
@@ -163,7 +169,8 @@ export function createChildCommandRuntime(channelDir: string) {
 					job.settled = execution.then(() => {}, () => {});
 					const result = await Promise.race([execution.then((value) => ({ value })), yielded.then(() => undefined)]);
 					if (result) return result.value;
-					return { content: [{ type: "text", text: `Command is still running (toolCallId: ${toolCallId}). This is not a successful exit. Use subagent_command({ action: "status", toolCallId: ${JSON.stringify(toolCallId)} }) to inspect or wait, or action: "cancel" to stop it.\n${job.snapshot.output}` }], details: { command: { ...job.snapshot } } };
+					const saveWarning = yieldSaveError === undefined ? "" : `\nThe command's saved state is out of date because it could not be saved: ${yieldSaveError instanceof Error ? yieldSaveError.message : String(yieldSaveError)}`;
+					return { content: [{ type: "text", text: `Command is still running (toolCallId: ${toolCallId}). This is not a successful exit. Use subagent_command({ action: "status", toolCallId: ${JSON.stringify(toolCallId)} }) to inspect or wait, or action: "cancel" to stop it.${saveWarning}\n${job.snapshot.output}` }], details: { command: { ...job.snapshot } } };
 				},
 			};
 		},

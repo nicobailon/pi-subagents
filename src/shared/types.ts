@@ -372,6 +372,8 @@ export interface WaitToolConfigObject {
 	enabled?: boolean;
 	/** Default blocking window for bg_wait calls that omit timeoutMs. */
 	defaultTimeoutMs?: number;
+	/** Registers the wait tool under this name instead of bg_wait, e.g. when another extension uses bg_wait. */
+	name?: string;
 }
 
 export type WaitToolConfig = boolean | WaitToolConfigObject;
@@ -852,6 +854,8 @@ export interface SteeringRecoveryDescriptor {
 	/** Launcher name the run was wrapped with, or null when it ran unwrapped; resume re-reads its argv from current user config.
 	 *  Absence (descriptors written before null was recorded) means unknown: resume uses the agent file's current launcher. */
 	launcher?: string | null;
+	/** The launcher and agent definition digest the launch required; a resume refuses unless both still hold. */
+	requiredLauncher?: RequiredRunnerLauncher;
 	cwd: string;
 	model?: string;
 	modelProvider?: string;
@@ -2490,6 +2494,11 @@ export interface RunnerLauncher {
 	name: string;
 	argv: string[];
 }
+/** A call's requirement that its agent runs under this launcher with this agent definition digest. */
+export interface RequiredRunnerLauncher {
+	name: string;
+	definitionDigest: string;
+}
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_PROCESS_TERMINAL_EVENT = "subagent:process-terminal";
 export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete";
@@ -2579,6 +2588,8 @@ export interface RunSyncOptions {
 	/** Internal structured-delegation transport optimization: skip unchanged live snapshots. */
 	suppressUnchangedDelegationUpdates?: boolean;
 	onControlEvent?: (event: ControlEvent) => void;
+	/** Reports a problem found by a timer callback, with a stable key to de-duplicate it; without it the message goes to stderr. */
+	onWarning?: (message: string, key: string) => void;
 	/** Exposes a non-terminating detach callback while the child is active. */
 	onDetachReady?: (detach: (reason?: string) => boolean) => void;
 	/** Internal foreground receipt proposal; returns true only when the outer waiter accepted it. */

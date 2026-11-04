@@ -87,8 +87,8 @@ import { statusStepDescription } from "./chain-append.ts";
 import { currentBootId, currentRecordedPid } from "./boot-id.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { checkRecordedPidLiveness } from "./stale-run-reconciler.ts";
-import { lookupRunnerLauncher, resolveAgentRunnerLauncher, runnerLauncherPlacementError } from "../shared/runner-launcher.ts";
-import { SUBAGENT_PROCESS_TERMINAL_EVENT, type RunnerLauncher } from "../../shared/types.ts";
+import { checkRequiredRunnerLauncher, lookupRunnerLauncher, resolveAgentRunnerLauncher, runnerLauncherPlacementError } from "../shared/runner-launcher.ts";
+import { SUBAGENT_PROCESS_TERMINAL_EVENT, type RequiredRunnerLauncher, type RunnerLauncher } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { resolveLaunchBinding } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
@@ -97,6 +97,7 @@ import { omitGitRoutingEnv } from "../shared/git-environment.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 import { recoveryDescriptorPath } from "../shared/run-launch-folder.ts";
 import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, writeRetainedRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
+import { DEFAULT_WAIT_TOOL_NAME, waitToolName } from "../../shared/wait-tool-name.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
 // Cache failures as well as roots: management must remain loadable, and launches must not retry another SDK.
@@ -292,6 +293,10 @@ interface AsyncSingleParams {
 	machine?: string;
 	/** Launch cwd as typed when a machine is set: a path on that machine, never resolved locally. */
 	machineCwd?: string;
+	/** The launcher and agent definition digest the call requires; checked here, on what this launch spawns. */
+	requireLauncher?: RequiredRunnerLauncher;
+	/** A revived run's inherited requirement: recorded for its own resumes, not checked here (resume already checked it). */
+	carriedRequiredLauncher?: RequiredRunnerLauncher;
 	maxOutput?: MaxOutputConfig;
 	artifactsDir?: string;
 	artifactConfig: ArtifactConfig;
@@ -428,11 +433,11 @@ export type AsyncRunnerStepBuildResult =
 export function formatAsyncStartedMessage(headline: string, interactive: boolean): string {
 	const guidance = interactive
 		? [
-			"Detached. Return control now: native completion wakes you, so do not sleep, poll, or call bg_wait for it.",
+			`Detached. Return control now: native completion wakes you, so do not sleep, poll, or call ${waitToolName()} for it.`,
 			"One-shot check: subagent({ action: \"status\", id: \"...\" }).",
 		]
 		: [
-			"Detached non-interactive run: Pi auto-drains current-session subagent work at agent_end. Do not run sleep timers or polling loops. Use bg_wait only for results this turn needs from work without native notification, and subagent({ action: \"status\", id: \"...\" }) for a one-shot check.",
+			`Detached non-interactive run: Pi auto-drains current-session subagent work at agent_end. Do not run sleep timers or polling loops. Use ${waitToolName()} only for results this turn needs from work without native notification, and subagent({ action: \"status\", id: \"...\" }) for a one-shot check.`,
 		];
 	return [headline, "", ...guidance].join("\n");
 }
@@ -747,7 +752,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	// its own identity before it is allowed to proceed.
 	const launcher = (cfg as { launcher?: RunnerLauncher }).launcher;
 	const bootId = launcher ? undefined : currentBootId();
-	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}), ...(bootId ? { bootId } : {}) };
+	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}), ...(bootId ? { bootId } : {}), ...(waitToolName() !== DEFAULT_WAIT_TOOL_NAME ? { waitToolName: waitToolName() } : {}) };
 	writePrivateAtomicJson(cfgPath, launchConfig);
 	const command = binaryHost ?? nodeExecutable;
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; completionOwnerId?: unknown; revivalLease?: unknown };
@@ -1875,7 +1880,6 @@ export function executeAsyncSingle(
 ): AsyncExecutionResult | Promise<AsyncExecutionResult> {
 	const {
 		agent,
-		agentConfig,
 		ctx,
 		cwd,
 		maxOutput,
@@ -1896,6 +1900,7 @@ export function executeAsyncSingle(
 		childIntercomTarget,
 		nestedRoute,
 	} = params;
+	let agentConfig = params.agentConfig;
 	let lane: WorkflowLaneMetadata | undefined;
 	try {
 		lane = normalizeWorkflowLaneMetadata(params.lane, "lane");
@@ -1947,6 +1952,12 @@ export function executeAsyncSingle(
 	const resolvedLauncher = resolveAgentRunnerLauncher(agentConfig, ctx.runnerLaunchers, requestedMachine);
 	if (resolvedLauncher.error) return formatAsyncStartError("single", resolvedLauncher.error);
 	const launcher = resolvedLauncher.launcher;
+	if (params.requireLauncher) {
+		const required = checkRequiredRunnerLauncher(agentConfig, launcher?.name, params.requireLauncher);
+		if (required.error !== undefined) return formatAsyncStartError("single", required.error);
+		// The launch records the digest it checked, not a second hash of an agent file that may have changed since.
+		agentConfig = { ...agentConfig, definitionDigest: required.definitionDigest };
+	}
 	const registeredExtensions = resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
 	try {
 		assertRequiredChildExtensionsAdmitted([params.requiredExtensions, ctx.childRuntime?.requiredExtensions, registeredExtensions], { agent: agentConfig.name, runnerType: agentConfig.runner?.type, machine: requestedMachine });
@@ -2172,6 +2183,7 @@ export function executeAsyncSingle(
 		agentContract: params.agentContract,
 	});
 	const recoveryAgentConfig = params.recoveryAgentConfig ?? agentConfig;
+	const requiredLauncher = params.requireLauncher ?? params.carriedRequiredLauncher;
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		...(ctx.modelResponseAliases ? { modelResponseAliases: ctx.modelResponseAliases } : {}),
 		version: 1,
@@ -2223,6 +2235,7 @@ export function executeAsyncSingle(
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(params.baseRef !== undefined ? { baseRef: params.baseRef } : {}),
 		launcher: launcher ? launcher.name : null,
+		...(requiredLauncher ? { requiredLauncher: { ...requiredLauncher } } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, recoveryAgentConfig.maxSubagentDepth),
