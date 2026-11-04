@@ -29,6 +29,8 @@ const MAX_MESSAGE_BYTES = 64 * 1024;
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 const CHANNEL_POLL_MS = Math.min(POLL_INTERVAL_MS, 500);
 const CHANNEL_SAFETY_POLL_MS = 5000;
+// A failing scan repeats on every timer tick. Report it once, then one count per interval until a clean poll.
+const REPEATED_POLL_ERROR_SUMMARY_MS = 60_000;
 const STALE_EMPTY_CHANNEL_AGE_MS = 60 * 1000;
 const STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 1000;
 const MAX_SUPERVISOR_REQUEST_CORRELATIONS = 256;
@@ -855,7 +857,28 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		}
 	};
 
-	const poll = (): void => {
+	// A transient temp-root failure can repeat on every 500ms tick; identical messages collapse into one trace
+	// plus one periodic count.
+	const repeatedPollErrors = new Map<string, { suppressed: number; since: number }>();
+	let pollFailed = false;
+	const reportPollError = (error: unknown): void => {
+		pollFailed = true;
+		const text = error instanceof Error ? error.message : String(error);
+		const now = Date.now();
+		const repeated = repeatedPollErrors.get(text);
+		if (!repeated) {
+			repeatedPollErrors.set(text, { suppressed: 0, since: now });
+			console.error("Supervisor channel poll failed:", error);
+			return;
+		}
+		repeated.suppressed++;
+		if (now - repeated.since < REPEATED_POLL_ERROR_SUMMARY_MS) return;
+		console.error(`Supervisor channel poll failed: ${repeated.suppressed} more identical failures in the last ${Math.round((now - repeated.since) / 1000)}s: ${text}`);
+		repeated.suppressed = 0;
+		repeated.since = now;
+	};
+
+	const pollOnce = (): void => {
 		cleanupStaleChannelsIfDue();
 		// Only display notifications require a live UI context, not request registration.
 		refreshPendingRequests(pending, state, observeRequestLifecycle, runState);
@@ -941,6 +964,18 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		}
 		channels?.retire?.();
 		updateSettleSubscription();
+	};
+
+	// Never throws: this runs from timers, watchers and setImmediate, and Pi exits the process on an uncaught
+	// exception, so one unreadable temp directory must not end the session.
+	const poll = (): void => {
+		pollFailed = false;
+		try {
+			pollOnce();
+		} catch (error) {
+			reportPollError(error);
+		}
+		if (!pollFailed) repeatedPollErrors.clear();
 	};
 
 	const handleBeforeSettle = (event: AgentBeforeSettleEvent): AgentBeforeSettleEventResult | undefined => {
