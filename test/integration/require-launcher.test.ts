@@ -143,8 +143,8 @@ describe("requireLauncher", { skip: !available ? "pi packages not available" : u
 		const sourceId = launch.details.asyncId!;
 		assert.equal((await readAsyncPayload(sourceId)).success, true);
 		assert.deepEqual(JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, sourceId), "utf-8")).requiredLauncher, requireLauncher);
-		const resume = (agents: ReturnType<typeof makeAgent>[], extra: Record<string, unknown> = {}) => makeAsyncExecutor(agents, { runnerLaunchers })
-			.execute(`resume-${sourceId}`, { action: "resume", id: sourceId, message: "Continue", acceptance: false, ...extra }, new AbortController().signal, undefined, ctx);
+		const resume = (agents: ReturnType<typeof makeAgent>[], extra: Record<string, unknown> = {}, id = sourceId) => makeAsyncExecutor(agents, { runnerLaunchers })
+			.execute(`resume-${id}`, { action: "resume", id, message: "Continue", acceptance: false, ...extra }, new AbortController().signal, undefined, ctx);
 
 		const capacityBefore = getActiveAsyncCapacitySnapshot("required-resume-session", 4).used;
 		const runsBefore = fs.readdirSync(ASYNC_DIR).length;
@@ -162,6 +162,12 @@ describe("requireLauncher", { skip: !available ? "pi packages not available" : u
 		mockPi.onCall({ output: "resumed run" });
 		const resumed = await resume([agent]);
 		assert.equal(resumed.isError, undefined, resumed.content[0]?.text);
-		assert.equal((await readAsyncPayload(resumed.details.asyncId!)).success, true);
+		const revivedId = resumed.details.asyncId!;
+		assert.equal((await readAsyncPayload(revivedId)).success, true);
+		// The revived run keeps the requirement, so its own resume checks it too.
+		assert.deepEqual(JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, revivedId), "utf-8")).requiredLauncher, requireLauncher);
+		const revivedEdited = await resume([makeAgent("sandboxed", { launcher: "wrap", systemPrompt: "edited after approval" })], {}, revivedId);
+		assert.equal(revivedEdited.isError, true);
+		assert.match(revivedEdited.content[0]?.text ?? "", /agent 'sandboxed' now has digest [0-9a-f]{64}\./);
 	});
 });

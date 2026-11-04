@@ -294,6 +294,8 @@ interface AsyncSingleParams {
 	machineCwd?: string;
 	/** The launcher and agent definition digest the call requires; checked here, on what this launch spawns. */
 	requireLauncher?: RequiredRunnerLauncher;
+	/** A revived run's inherited requirement: recorded for its own resumes, not checked here (resume already checked it). */
+	carriedRequiredLauncher?: RequiredRunnerLauncher;
 	maxOutput?: MaxOutputConfig;
 	artifactsDir?: string;
 	artifactConfig: ArtifactConfig;
@@ -2180,6 +2182,7 @@ export function executeAsyncSingle(
 		agentContract: params.agentContract,
 	});
 	const recoveryAgentConfig = params.recoveryAgentConfig ?? agentConfig;
+	const requiredLauncher = params.requireLauncher ?? params.carriedRequiredLauncher;
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		...(ctx.modelResponseAliases ? { modelResponseAliases: ctx.modelResponseAliases } : {}),
 		version: 1,
@@ -2231,7 +2234,7 @@ export function executeAsyncSingle(
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(params.baseRef !== undefined ? { baseRef: params.baseRef } : {}),
 		launcher: launcher ? launcher.name : null,
-		...(params.requireLauncher ? { requiredLauncher: { ...params.requireLauncher } } : {}),
+		...(requiredLauncher ? { requiredLauncher: { ...requiredLauncher } } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, recoveryAgentConfig.maxSubagentDepth),

@@ -2349,6 +2349,7 @@ async function resumeAsyncRun(input: {
 		goal: effectiveFollowUp,
 		agentConfig,
 		recoveryAgentConfig,
+		carriedRequiredLauncher: recoveryDescriptor?.requiredLauncher,
 		ctx: compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
 			pi: input.deps.pi,
 			cwd: input.requestCwd,
