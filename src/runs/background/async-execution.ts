@@ -2231,6 +2231,7 @@ export function executeAsyncSingle(
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(params.baseRef !== undefined ? { baseRef: params.baseRef } : {}),
 		launcher: launcher ? launcher.name : null,
+		...(params.requireLauncher ? { requiredLauncher: { ...params.requireLauncher } } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, recoveryAgentConfig.maxSubagentDepth),

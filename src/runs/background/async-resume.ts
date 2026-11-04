@@ -331,7 +331,7 @@ export function readAsyncRecoveryDescriptor(runsRoot: string, runId: string): St
 		"subagentOnlyExtensions", "mcpDirectTools", "excludeTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
-		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef", "launcher", "sessionId", "managedWorktree",
+		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef", "launcher", "requiredLauncher", "sessionId", "managedWorktree",
 		"extensionBindings",
 		"requiredExtensions",
 	]);
@@ -344,6 +344,14 @@ export function readAsyncRecoveryDescriptor(runsRoot: string, runId: string): St
 	}
 	if (parsed.version !== 1) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': version must be 1.`);
 	if (parsed.launcher !== undefined && parsed.launcher !== null && (typeof parsed.launcher !== "string" || !RUNNER_LAUNCHER_NAME_PATTERN.test(parsed.launcher))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': launcher must be a launcher name or null.`);
+	if (parsed.requiredLauncher !== undefined) {
+		const required = parsed.requiredLauncher as Record<string, unknown> | null;
+		if (!required || typeof required !== "object" || Array.isArray(required) || Object.keys(required).some((key) => key !== "name" && key !== "definitionDigest")
+			|| typeof required.name !== "string" || !RUNNER_LAUNCHER_NAME_PATTERN.test(required.name)
+			|| typeof required.definitionDigest !== "string" || !/^[0-9a-f]{64}$/.test(required.definitionDigest)) {
+			throw new Error(`Invalid async recovery descriptor '${descriptorPath}': requiredLauncher must be { name, definitionDigest }.`);
+		}
+	}
 	try {
 		parsed.runFanoutBudget = validateRunFanoutBudgetDescriptor(parsed.runFanoutBudget);
 	} catch (error) {

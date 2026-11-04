@@ -852,6 +852,8 @@ export interface SteeringRecoveryDescriptor {
 	/** Launcher name the run was wrapped with, or null when it ran unwrapped; resume re-reads its argv from current user config.
 	 *  Absence (descriptors written before null was recorded) means unknown: resume uses the agent file's current launcher. */
 	launcher?: string | null;
+	/** The launcher and agent definition digest the launch required; a resume refuses unless both still hold. */
+	requiredLauncher?: RequiredRunnerLauncher;
 	cwd: string;
 	model?: string;
 	modelProvider?: string;

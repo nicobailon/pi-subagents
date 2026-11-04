@@ -325,7 +325,7 @@ pi-subagents checks the requirement after every `tool_call` handler has run, aga
 - Only a top-level single-agent call (`agent` + `task`) accepts it, and it runs in the background because launcher agents always do. `tasks`, `chain`, workflows, workflow children (`runs.run`), actions and `resume` are refused.
 - The requirement travels in the call. Another extension's `tool_call` handler that runs after yours can remove it, and pi-subagents cannot tell. Register your handler so it runs last, or check the run's `status.json` (`launcher.name`) afterwards.
 - Releases without this option reject `options.requireLauncher` as an unknown option, so an older install fails the call instead of ignoring it.
-- Resuming a run does not re-check the requirement yet.
+- The run's recovery record keeps the requirement, and `resume` checks it again: it is refused if the agent is gone, names another launcher, or has a different definition digest, and attaching a chain to the run is refused.
 
 ## Structured delegation API
 

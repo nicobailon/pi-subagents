@@ -153,7 +153,7 @@ import {
 } from "../../shared/workflow-child-permit.ts";
 import { deepFreezeWorkflowArgs, normalizeWorkflowArgs, resolveStructuredWorkflowResource, resolveWorkflowResource } from "../../workflows/workflow-resources.ts";
 import { writeWorkflowLaunchRecord, type WorkflowLaunch, type WorkflowLaunchRecord } from "../../workflows/workflow-launch-record.ts";
-import { stableJsonDigest } from "../../shared/launch-contract.ts";
+import { agentDefinitionDigest, stableJsonDigest } from "../../shared/launch-contract.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -2098,6 +2098,18 @@ async function resumeAsyncRun(input: {
 			isError: true,
 			details: { mode: "management", results: [] },
 		};
+	}
+	// Before any worktree protection or chain attachment: a launch that required a launcher and agent definition
+	// resumes only while both still hold.
+	const requiredLauncher = recoveryDescriptor?.requiredLauncher;
+	if (requiredLauncher) {
+		const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true, details: { mode: "management" as const, results: [] } });
+		if (attachChain) return refuse(`Cannot attach a chain to run '${target.runId}': it was launched with requireLauncher, and appended steps would run inside its runner unchecked.`);
+		const currentDigest = discoveredAgentConfig ? agentDefinitionDigest(discoveredAgentConfig) : undefined;
+		const now = !discoveredAgentConfig ? "is missing"
+			: recoveryDescriptor.launcher !== requiredLauncher.name || discoveredAgentConfig.launcher !== requiredLauncher.name ? `uses launcher '${discoveredAgentConfig.launcher ?? "none"}'`
+				: currentDigest !== requiredLauncher.definitionDigest ? `has digest ${currentDigest}` : undefined;
+		if (now) return refuse(`Cannot resume: run '${target.runId}' was launched requiring launcher '${requiredLauncher.name}' and agent definition ${requiredLauncher.definitionDigest}; agent '${target.agent}' now ${now}.`);
 	}
 	if (target.source === "async" && target.runner?.type === "external-cli") {
 		const runner = normalizeExternalCliRunnerStatus(target.runner);

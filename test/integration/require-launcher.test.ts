@@ -8,6 +8,8 @@ import * as path from "node:path";
 import { makeAgent, makeMinimalCtx } from "../support/helpers.ts";
 import { agentDefinitionDigest } from "../../src/shared/launch-contract.ts";
 import { createRunFanoutBudget, getRunFanoutBudgetSnapshot } from "../../src/runs/shared/run-fanout-budget.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
+import { getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
 import {
 	installAsyncExecutionHooks, available, isAsyncAvailable, executeAsyncSingle, ASYNC_DIR,
 	tempDir, mockPi, readAsyncPayload, makeAsyncExecutor, createSubagentExecutor,
@@ -118,5 +120,48 @@ describe("requireLauncher", { skip: !available ? "pi packages not available" : u
 		assert.equal(malformed.isError, true);
 		assert.match(malformed.content[0]?.text ?? "", /requireLauncher must be \{ name, definitionDigest \}/);
 		assert.equal(mockPi.callCount(), 0);
+	});
+
+	// Resume revives a retained session, so the source run is a fork with a pre-created session file.
+	const forkCtx = (name: string) => {
+		const parentSessionFile = path.join(tempDir, `${name}-parent.jsonl`);
+		const sessionFile = path.join(tempDir, `${name}-child.jsonl`);
+		const header = JSON.stringify({ type: "session", version: 1, id: name, cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${header}\n`);
+		fs.writeFileSync(sessionFile, `${header}\n`);
+		return { ...makeMinimalCtx(tempDir), sessionManager: { getSessionId: () => `${name}-session`, getSessionFile: () => parentSessionFile, getLeafId: () => "leaf", openSession: () => ({ createBranchedSession: () => sessionFile }) } };
+	};
+
+	it("resumes a run launched with the requirement only while the agent definition still matches", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+		const { runnerLaunchers } = launchers();
+		const ctx = forkCtx("required-resume");
+		const agent = sandboxed();
+		const requireLauncher = { name: "wrap", definitionDigest: agentDefinitionDigest(agent) };
+		mockPi.onCall({ output: "first run" });
+		const launch = await makeAsyncExecutor([agent], { runnerLaunchers }).execute("required-resume-launch", { agent: "sandboxed", task: "Do work", async: true, context: "fork", acceptance: false, requireLauncher }, new AbortController().signal, undefined, ctx);
+		assert.equal(launch.isError, undefined, launch.content[0]?.text);
+		const sourceId = launch.details.asyncId!;
+		assert.equal((await readAsyncPayload(sourceId)).success, true);
+		assert.deepEqual(JSON.parse(fs.readFileSync(recoveryDescriptorPath(ASYNC_DIR, sourceId), "utf-8")).requiredLauncher, requireLauncher);
+		const resume = (agents: ReturnType<typeof makeAgent>[], extra: Record<string, unknown> = {}) => makeAsyncExecutor(agents, { runnerLaunchers })
+			.execute(`resume-${sourceId}`, { action: "resume", id: sourceId, message: "Continue", acceptance: false, ...extra }, new AbortController().signal, undefined, ctx);
+
+		const capacityBefore = getActiveAsyncCapacitySnapshot("required-resume-session", 4).used;
+		const runsBefore = fs.readdirSync(ASYNC_DIR).length;
+		const edited = await resume([makeAgent("sandboxed", { launcher: "wrap", systemPrompt: "edited after approval" })]);
+		assert.equal(edited.isError, true);
+		assert.match(edited.content[0]?.text ?? "", new RegExp(`Cannot resume: run '${sourceId}' was launched requiring launcher 'wrap' and agent definition ${requireLauncher.definitionDigest}; agent 'sandboxed' now has digest [0-9a-f]{64}\\.`));
+		const missing = await resume([]);
+		assert.match(missing.content[0]?.text ?? "", /agent 'sandboxed' now is missing\./);
+		const attached = await resume([agent], { chain: [{ agent: "sandboxed", task: "More" }], message: undefined });
+		assert.match(attached.content[0]?.text ?? "", /Cannot attach a chain to run .*launched with requireLauncher/);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(getActiveAsyncCapacitySnapshot("required-resume-session", 4).used, capacityBefore);
+		assert.equal(fs.readdirSync(ASYNC_DIR).length, runsBefore, "the refused resumes created no run");
+
+		mockPi.onCall({ output: "resumed run" });
+		const resumed = await resume([agent]);
+		assert.equal(resumed.isError, undefined, resumed.content[0]?.text);
+		assert.equal((await readAsyncPayload(resumed.details.asyncId!)).success, true);
 	});
 });
