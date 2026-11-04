@@ -1,3 +1,5 @@
+import { waitToolName } from "../../shared/wait-tool-name.ts";
+
 export const TOOL_TIMEOUT_ENV = "PI_SUBAGENT_TOOL_TIMEOUT_MS";
 
 /** Maximum delay a Node.js timer accepts without overflow. */
@@ -22,7 +24,7 @@ export const TOOL_TIMEOUT_EXEMPT_TOOLS = new Set(["contact_supervisor", "interco
 export const TOOL_TIMEOUT_ALLOWLIST = TOOL_TIMEOUT_EXEMPT_TOOLS;
 
 export function isToolTimeoutExempt(toolName: string | undefined): boolean {
-	return toolName !== undefined && TOOL_TIMEOUT_EXEMPT_TOOLS.has(toolName);
+	return toolName !== undefined && (TOOL_TIMEOUT_EXEMPT_TOOLS.has(toolName) || toolName === waitToolName());
 }
 
 export function defaultToolTimeoutMs(toolName: string | undefined): number | undefined {

@@ -3,6 +3,7 @@ import type { Details, SubagentState } from "../../shared/types.ts";
 import { listAsyncRuns } from "./async-status.ts";
 import type { ReadonlyDrainObservation } from "../shared/readonly-drain-observation.ts";
 import { backgroundWorkForSession, waitForSubagents, waitRunScopes, type SubagentWaitDeps, type SubagentWaitParams, type WaitEventBus } from "./subagent-wait.ts";
+import { waitToolName } from "../../shared/wait-tool-name.ts";
 
 export const DEFAULT_AUTO_DRAIN_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -78,7 +79,7 @@ export async function drainOutstandingWork(deps: AutoDrainDeps, observation?: Re
 				},
 			);
 			if (waitResult.isError) {
-				throw new Error(`Auto-drain failed for session '${sessionId}': ${resultText(waitResult) || "bg_wait returned an error without details"}.`);
+				throw new Error(`Auto-drain failed for session '${sessionId}': ${resultText(waitResult) || `${waitToolName()} returned an error without details`}.`);
 			}
 			if (waitResult.details.wait?.reason === "supervisor_request") break;
 			if (deps.hasPendingSupervisorRequest?.()) break;

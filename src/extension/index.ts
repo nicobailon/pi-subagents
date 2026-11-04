@@ -62,6 +62,7 @@ import { listHerdrProjectPaneRoots, restoreHerdrProjectPaneSnapshots } from "../
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
+import { DEFAULT_WAIT_TOOL_NAME, setWaitToolName } from "../shared/wait-tool-name.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { registerSubagentToolActivation } from "./tool-activation.ts";
 import { recordedPromptSection, registerPinnedTool, setDeclarationPinning } from "./declaration-pinning.ts";
@@ -298,6 +299,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const config = loadConfig();
 	setDeclarationPinning(pi, config.pinToolDeclarations !== false);
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
+	setWaitToolName(waitToolConfig.name ?? DEFAULT_WAIT_TOOL_NAME);
 	const asyncByDefault = resolveAsyncByDefault(config);
 	const fleetViewEnabled = config.fleetView !== false;
 	const slashCommandsEnabled = config.enableSlashCommands !== false;
@@ -755,7 +757,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		name: "subagent",
 		...MODEL_ONLY_TOOL,
 		label: "Subagent",
-		description: buildSubagentToolDescription(config, { disabledFeatures }),
+		description: buildSubagentToolDescription(config, { disabledFeatures, waitToolName: waitToolConfig.name }),
 		...buildSubagentToolPromptMetadata(config, disabledFeatures),
 		parameters,
 

@@ -84,6 +84,8 @@ export interface ToolDescriptionOptions {
 	warn?: (message: string) => void;
 	/** Removes lines for disabled features from the default and full descriptions; custom descriptions are unchanged apart from the appended safety guidance. */
 	disabledFeatures?: DisabledFeatureSurface;
+	/** config.waitTool.name when it is not bg_wait; the description then names the wait tool by it. */
+	waitToolName?: string;
 }
 
 // No promptGuidelines: the description carries the authorization rule, so it is stated once.
@@ -180,6 +182,11 @@ function withMandatorySafetyGuidance(description: string): string {
 }
 
 export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
+	const description = describeSubagentTool(config, options);
+	return options?.waitToolName ? description.replace(/\bbg_wait\b/g, options.waitToolName) : description;
+}
+
+function describeSubagentTool(config: Pick<ExtensionConfig, "toolDescriptionMode">, options?: ToolDescriptionOptions): string {
 	const on = options?.disabledFeatures ? featureText(options.disabledFeatures) : allEnabled;
 	if (config.toolDescriptionMode === undefined) return essentials(on);
 	const mode = resolveToolDescriptionMode(config, options);
