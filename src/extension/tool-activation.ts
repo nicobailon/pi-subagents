@@ -24,9 +24,17 @@ const isUnloadSentinel = (name: string) => name === LOADER_NAME || name === SUBA
 
 type ToolSelectionMessage = {
 	role: string;
-	toolsAdded?: readonly { name: string }[];
+	// toolsAdded entries are the complete tool definitions that were sent.
+	toolsAdded?: readonly { name: string; parameters?: unknown }[];
 	toolsRemoved?: readonly { name: string }[];
 };
+
+// Every bg_wait pi-subagents has registered (since 0.61.0) takes nonBlocking and stopOnAttention; another extension's
+// bg_wait (@99percentpeople/pi-background-tasks takes id and timeout) does not.
+function isOwnWaitDefinition(tool: { parameters?: unknown }): boolean {
+	const properties = (tool.parameters as { properties?: unknown } | undefined)?.properties;
+	return typeof properties === "object" && properties !== null && Object.hasOwn(properties, "nonBlocking") && Object.hasOwn(properties, "stopOnAttention");
+}
 
 function hasNativeToolSelection(messages: readonly ToolSelectionMessage[]): boolean {
 	return messages.some((message) => message.role === "system"
@@ -80,6 +88,8 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 		const declaredSentinels = new Set<string>();
 		// Tools the surviving transcript says something about: an addition, or a removal that is not an unload.
 		const evidenced = new Set<string>();
+		// Whether the latest bg_wait declaration was this extension's wait tool, from before a waitTool.name rename.
+		let legacyWaitIsOwn = false;
 		for (const message of messages) {
 			if (message.role !== "system") continue;
 			// Pi records an extension unload (update, reload) as a removal of each of its active tools, with no cause.
@@ -101,6 +111,7 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 			for (const tool of message.toolsAdded ?? []) {
 				recorded.add(tool.name);
 				evidenced.add(tool.name);
+				if (tool.name === DEFAULT_WAIT_TOOL_NAME) legacyWaitIsOwn = isOwnWaitDefinition(tool);
 			}
 		}
 		// The loader and subagent record one activation state (cold, warm, eager); bg_wait and subagent_supervisor
@@ -116,9 +127,9 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 		// A new process restores the transcript's tools, where the unload left this extension's tools inactive; only
 		// /reload re-adds them. Restoring them keeps a sentinel declared, so a later unload is recognised too. Tools of
 		// other extensions, and tools excluded for this process (not registered, so not in getAllTools), stay as they are.
-		// A transcript from before a waitTool.name rename records the wait tool as bg_wait; it stands for the renamed
-		// tool until the transcript says something about the new name.
-		const waitRecord = waitToolName() !== DEFAULT_WAIT_TOOL_NAME && !evidenced.has(waitToolName()) && evidenced.has(DEFAULT_WAIT_TOOL_NAME) ? DEFAULT_WAIT_TOOL_NAME : waitToolName();
+		// A transcript from before a waitTool.name rename records the wait tool as bg_wait; that record stands for the
+		// renamed tool while the transcript says nothing about the new name and its latest bg_wait was this extension's.
+		const waitRecord = waitToolName() !== DEFAULT_WAIT_TOOL_NAME && !evidenced.has(waitToolName()) && legacyWaitIsOwn ? DEFAULT_WAIT_TOOL_NAME : waitToolName();
 		const source = unloadedNames.size > 0 ? available.find((tool) => tool.name === LOADER_NAME)?.sourceInfo.path : undefined;
 		const restore = source === undefined ? [] : available
 			.filter((tool) => unloadedNames.has(tool.name) && recorded.has(tool.name) && tool.sourceInfo.path === source)

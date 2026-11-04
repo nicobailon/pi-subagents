@@ -11,6 +11,7 @@ import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
 import { resolvePiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
 import { registerBackgroundWorkProvider } from "../../src/api/background-work.ts";
 import { DEFAULT_WAIT_TOOL_NAME, setWaitToolName } from "../../src/shared/wait-tool-name.ts";
+import { SubagentWaitParams } from "../../src/extension/schemas.ts";
 
 type Handler = (event: any, context: any) => any;
 type Tool = { name: string; description?: string; promptSnippet?: string; parameters?: unknown; execute?: (...args: any[]) => any; sourceInfo?: { path: string } };
@@ -365,9 +366,17 @@ describe("toolActivation modes", () => {
 			await runtime.emit("session_start", RESUME);
 			return runtime.active();
 		};
+		// The transcript keeps each tool's full definition, so a bg_wait record says whose bg_wait it was.
+		const withWait = (parameters: unknown) => {
+			const message = declared(["read", "subagent", "contact_supervisor"]);
+			return { ...message, toolsAdded: [...message.toolsAdded, { name: "bg_wait", description: "wait", parameters }] };
+		};
+		const otherExtensionWait = { type: "object", properties: { id: { type: "string" }, timeout: { type: "number" } } };
 		try {
-			const before = [declared(["read", "subagent", "contact_supervisor", "bg_wait"])];
+			const before = [withWait(SubagentWaitParams)];
 			assert.ok((await reopen(before)).includes("subagent_wait"), "recorded before the rename");
+			assert.equal((await reopen([withWait(otherExtensionWait)])).includes("subagent_wait"), false, "another extension's bg_wait");
+			assert.equal((await reopen([...before, withWait(otherExtensionWait)])).includes("subagent_wait"), false, "another extension's bg_wait declared later");
 			assert.equal((await reopen([...before, declared([], ["bg_wait"])])).includes("subagent_wait"), false, "removed before the rename");
 			assert.equal((await reopen([...before, declared([], ["subagent_wait"])])).includes("subagent_wait"), false, "removed after the rename");
 		} finally {
