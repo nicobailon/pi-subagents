@@ -177,7 +177,9 @@ export function resolveEffectiveGlobalConcurrencyLimit(configured?: number): num
 	}
 	const raw = process.env[GLOBAL_CONCURRENCY_ENV];
 	if (raw) {
-		const parsed = Number.parseInt(raw, 10);
+		// Strict full-string parse: Number.parseInt would accept "2.5" (2) and
+		// "100oops" (100), contradicting the documented positive-integer contract.
+		const parsed = Number(raw);
 		if (Number.isInteger(parsed) && parsed >= 1) return parsed;
 	}
 	return DEFAULT_GLOBAL_CONCURRENCY_LIMIT;

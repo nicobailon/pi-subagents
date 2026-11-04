@@ -45,6 +45,10 @@ describe("global concurrency limit resolution", () => {
 		assert.equal(resolveEffectiveGlobalConcurrencyLimit(), DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 		process.env[GLOBAL_CONCURRENCY_ENV] = "0";
 		assert.equal(resolveEffectiveGlobalConcurrencyLimit(), DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
+		process.env[GLOBAL_CONCURRENCY_ENV] = "2.5";
+		assert.equal(resolveEffectiveGlobalConcurrencyLimit(), DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
+		process.env[GLOBAL_CONCURRENCY_ENV] = "100oops";
+		assert.equal(resolveEffectiveGlobalConcurrencyLimit(), DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 		process.env[GLOBAL_CONCURRENCY_ENV] = "7";
 		assert.equal(resolveEffectiveGlobalConcurrencyLimit(), 7);
 	});
@@ -60,6 +64,19 @@ describe("global concurrency limit resolution", () => {
 			assert.throws(() => updateConfig(() => ({ globalConcurrencyLimit: 0 })), /globalConcurrencyLimit must be a positive integer/);
 			updateConfig(() => ({ globalConcurrencyLimit: 4 }));
 			assert.equal(loadConfig().globalConcurrencyLimit, 4);
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("fail closes when the config file itself carries an invalid globalConcurrencyLimit", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-concurrency-loadconfig-"));
+		try {
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+			fs.mkdirSync(path.dirname(configPath), { recursive: true });
+			fs.writeFileSync(configPath, JSON.stringify({ globalConcurrencyLimit: 0, worktree: false }), "utf-8");
+			assert.throws(() => loadConfig(), /globalConcurrencyLimit must be a positive integer/);
 		} finally {
 			fs.rmSync(agentDir, { recursive: true, force: true });
 		}
