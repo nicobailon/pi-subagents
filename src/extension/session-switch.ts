@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIDialogOptions, SessionShutdownEvent } from "@earendil-works/pi-coding-agent";
 import { isActiveAsyncState } from "../runs/background/active-run-index.ts";
 import { listAsyncRuns } from "../runs/background/async-status.ts";
-import { deliverStopRequest } from "../runs/background/control-channel.ts";
+import { deliverStopRequest, StopInboxClosedError } from "../runs/background/control-channel.ts";
 import { reconcileNestedAsyncDescendants } from "../runs/background/stale-run-reconciler.ts";
 import { readProcessTerminal } from "../runs/background/process-terminal.ts";
 import { isTerminalAsyncState, readWorkflowChildProcessEvidence } from "../runs/background/workflow-terminal-proof.ts";
@@ -143,7 +143,8 @@ export function createSessionSwitchGuard(pi: Pick<ExtensionAPI, "events">, deps:
 			}
 			for (const asyncDir of nested.runs.keys()) {
 				if (requested.has(asyncDir)) continue;
-				deliverStopRequest({ asyncDir, source: "session-switch" });
+				try { deliverStopRequest({ asyncDir, source: "session-switch" }); }
+				catch (error) { if (!(error instanceof StopInboxClosedError)) throw error; }
 				requested.add(asyncDir);
 			}
 			if (now() >= deadline) throw new Error("Could not verify that all background work stopped within five seconds. The switch was cancelled; inspect the runs and retry.");

@@ -7,7 +7,7 @@ import { afterEach, describe, it } from "node:test";
 import type { ExtensionUIDialogOptions } from "@earendil-works/pi-coding-agent";
 import { createSessionSwitchGuard, type SessionSwitchContext } from "../../src/extension/session-switch.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
-import { consumeStopRequestPayloads } from "../../src/runs/background/control-channel.ts";
+import { closeStopInbox, consumeStopRequestPayloads } from "../../src/runs/background/control-channel.ts";
 import { createNestedRoute, nestedRunScope, projectNestedEvents, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { consumeSessionHandoff } from "../../src/shared/session-succession.ts";
 import type { AsyncJobState, AsyncStatus, SubagentState } from "../../src/shared/types.ts";
@@ -304,6 +304,47 @@ describe("session switch decisions", () => {
 		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
 		assert.equal(requests, 1);
 		assert.equal(waits, 2, "nested terminal status alone does not prove runner exit");
+	});
+
+	for (const outcome of ["exited", "unverified", "write-error"] as const) it(`handles nested stop races (${outcome})`, async () => {
+		const f = fixture();
+		const rootId = path.basename(path.dirname(f.source));
+		const route = createNestedRoute(rootId);
+		const nestedRoot = nestedRunScope(rootId).asyncDirRoot;
+		cleanups.push(() => {
+			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+			fs.rmSync(nestedRoot, { recursive: true, force: true });
+		});
+		const writeChild = (id: string, state: "running" | "complete" | "stopped") => {
+			const dir = f.writeRun(id, state, "nested-owner", path.join(nestedRoot, id));
+			f.state.asyncJobs.delete(id);
+			return dir;
+		};
+		for (const [index, id] of ["finishing", "sibling"].entries()) {
+			writeNestedEvent(route, {
+				type: "subagent.nested.started", ts: 100 + index, parentRunId: rootId,
+				child: { id, parentRunId: rootId, depth: 1, path: [{ runId: rootId }], state: "running", asyncDir: writeChild(id, "running") },
+			});
+		}
+		const finishing = path.join(nestedRoot, "finishing");
+		const sibling = path.join(nestedRoot, "sibling");
+		f.state.retainedForegroundNestedRoutes = new Map([[rootId, route]]);
+		if (outcome === "write-error") fs.writeFileSync(path.join(finishing, "control"), "blocks stop writes");
+		else closeStopInbox(finishing);
+		let waits = 0;
+		let requests = 0;
+		f.onSleep = () => {
+			if (++waits === 1) writeChild("finishing", "complete");
+			const stops = consumeStopRequestPayloads(sibling);
+			requests += stops.length;
+			if (stops.length) { writeChild("sibling", "stopped"); f.observeExit("sibling", sibling); }
+			if (waits === 2 && outcome === "exited") f.observeExit("finishing", finishing);
+		};
+		f.choice = async (options) => options[2];
+		assert.deepEqual(await f.guard.beforeSwitch("new", f.ctx), outcome === "exited" ? undefined : { cancel: true });
+		assert.equal(requests, outcome === "write-error" ? 0 : 1, "a closing inbox must not prevent sibling stop requests");
+		if (outcome === "exited") assert.equal(waits, 2);
+		else assert.match(f.notices.at(-1)!, outcome === "unverified" ? /Could not verify/ : /ENOTDIR|EEXIST/);
 	});
 
 	it("does not transfer a completion Pi has already queued for the old session", async () => {

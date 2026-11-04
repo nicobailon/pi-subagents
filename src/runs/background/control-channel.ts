@@ -119,9 +119,14 @@ const REVIVAL_BRIEFS_DIR = "revival-briefs";
 export const MAX_STEER_QUEUE_SIZE = 20;
 const STEER_INBOX_CLOSED_FILE = "steer-inbox-closed.json";
 const STOP_INBOX_CLOSED_FILE = "stop-inbox-closed.json";
-const STOP_INBOX_CLOSED_MESSAGE = "Runner stop inbox is closed. Retry stop after runner shutdown is observed.";
 const MAX_STEER_MESSAGE_BYTES = 128 * 1024;
 const MAX_STEER_REQUEST_ID_LENGTH = 256;
+
+export class StopInboxClosedError extends Error {
+	constructor() {
+		super("Runner stop inbox is closed. Retry stop after runner shutdown is observed.");
+	}
+}
 
 /** Control inbox directory inside an async run dir. */
 export function controlInboxDir(asyncDir: string): string {
@@ -262,13 +267,13 @@ export function requestAsyncStop(
 		throw new Error("stop childId must be a non-empty string without newlines and at most 256 characters.");
 	}
 	const closedPath = stopInboxClosedPath(asyncDir);
-	if (fs.existsSync(closedPath)) throw new Error(STOP_INBOX_CLOSED_MESSAGE);
+	if (fs.existsSync(closedPath)) throw new StopInboxClosedError();
 	const request: StopRequest = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "stop" };
 	const requestPath = path.join(stopRequestsDir(asyncDir), stopRequestFileName(request));
 	(deps.write ?? writeAtomicJson)(requestPath, request);
 	if (fs.existsSync(closedPath)) {
 		fs.rmSync(requestPath, { force: true });
-		throw new Error(STOP_INBOX_CLOSED_MESSAGE);
+		throw new StopInboxClosedError();
 	}
 	return requestPath;
 }
