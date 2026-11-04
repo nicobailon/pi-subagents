@@ -2579,6 +2579,8 @@ export interface RunSyncOptions {
 	/** Internal structured-delegation transport optimization: skip unchanged live snapshots. */
 	suppressUnchangedDelegationUpdates?: boolean;
 	onControlEvent?: (event: ControlEvent) => void;
+	/** Reports a problem found by a timer callback, with a stable key to de-duplicate it; without it the message goes to stderr. */
+	onWarning?: (message: string, key: string) => void;
 	/** Exposes a non-terminating detach callback while the child is active. */
 	onDetachReady?: (detach: (reason?: string) => boolean) => void;
 	/** Internal foreground receipt proposal; returns true only when the outer waiter accepted it. */
