@@ -74,7 +74,7 @@ import {
 	mapConcurrent,
 	aggregateParallelOutputs,
 	MAX_PARALLEL_CONCURRENCY,
-	resolveEffectiveGlobalConcurrencyLimit,
+	DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
 	Semaphore,
 } from "../shared/parallel-utils.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, supervisorChannelDir } from "../shared/child-tool-plan.ts";
@@ -1893,7 +1893,7 @@ export async function runSubagent(
 ): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
-	const globalSemaphore = new Semaphore(resolveEffectiveGlobalConcurrencyLimit(config.globalConcurrencyLimit));
+	const globalSemaphore = new Semaphore(config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 	let previousOutput = "";
 	const outputs: ChainOutputMap = {};
 	const results: StepResult[] = [];

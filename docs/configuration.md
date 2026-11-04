@@ -470,11 +470,9 @@ An explicit `subagent` call value wins over this default. Choose a value at leas
 { "globalConcurrencyLimit": 20 }
 ```
 
-Caps simultaneously running children inside one run, including durable legacy multi-child runs and workflow script launches through `runs.run`/`runs.all`. Queued workflow children retain their stable keys and begin when a running sibling releases capacity. The default is `20`.
+Caps simultaneously running children inside one run, including durable legacy multi-child runs and workflow script launches through `runs.run`/`runs.all`. Queued workflow children retain their stable keys and begin when a running sibling releases capacity. The default is `20`. The value must be a positive integer; an invalid value fails config loading instead of being clamped to `1`.
 
 Inline or file-backed top-level workflow calls may set a positive safe-integer `globalConcurrencyLimit` to override this value for that workflow. The override is workflow-only and is not forwarded to child calls.
-
-`PI_SUBAGENTS_MAX_CONCURRENT` overrides the built-in default when the config value is unset; it must parse as a positive integer and is otherwise ignored. A valid config value always wins over the environment. Use this cap to protect upstream AI provider rate limits when a workflow fans out many children at once (e.g. `runs.all` with a dozen scouts): excess children queue at launch and start as live siblings finish, so they consume no model quota while waiting.
 
 ## `maxSubagentSpawnsPerSession`
 

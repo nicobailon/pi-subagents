@@ -2,7 +2,7 @@ import { accessSync, constants, readFileSync, realpathSync, statSync } from "nod
 import { createRequire } from "node:module";
 import { dirname, resolve as resolvePath } from "node:path";
 import { createWorkflowScriptWorker } from "./workflow-script-worker.ts";
-import { resolveEffectiveGlobalConcurrencyLimit, Semaphore } from "../runs/shared/parallel-utils.ts";
+import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
 import { describeGateAcceptanceConflict, parseGateInput } from "../runs/shared/acceptance.ts";
 import type { AcceptanceRecoveryMetadata, HostStepNode, SingleResult, WorkflowScriptFailureKind } from "../shared/types.ts";
@@ -1280,7 +1280,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	if (options.globalConcurrencyLimit !== undefined && (!Number.isSafeInteger(options.globalConcurrencyLimit) || options.globalConcurrencyLimit < 1)) {
 		throw new WorkflowScriptError("workflow script global concurrency limit must be a positive integer.", emptyPartial(), "runtime");
 	}
-	const launchSemaphore = new Semaphore(resolveEffectiveGlobalConcurrencyLimit(options.globalConcurrencyLimit));
+	const launchSemaphore = new Semaphore(options.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 
 	if (options.processCwd !== undefined) {
 		let staleCwd = false;
