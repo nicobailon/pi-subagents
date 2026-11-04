@@ -20,23 +20,30 @@ function keptWork(): Set<string> {
 	return runtime[KEPT_WORK_KEY];
 }
 
-/** The operator switched away from sessionId and chose to leave its work there, so its successor inherits nothing. */
+/**
+ * The operator switched away from sessionId and chose to leave its work there: its successor inherits nothing, and
+ * sessionId keeps its own chain when it is reopened. The mark lasts until sessionId shuts down again without it,
+ * so a repeated start of the same replacement (RPC rebind) sees it too.
+ */
 export function keepSessionWork(sessionId: string): void {
 	keptWork().delete(sessionId);
 	keptWork().add(sessionId);
 	while (keptWork().size > MAX_RECORDED_SESSIONS) keptWork().delete(keptWork().values().next().value!);
 }
 
+/** sessionId shut down without leaving its work there, so whoever replaces it next inherits as usual. */
+export function releaseSessionWork(sessionId: string): void {
+	keptWork().delete(sessionId);
+}
+
 /** Records that sessionId replaced previousSessionId in this process, inheriting its chain unless its work was kept there. */
 export function recordSessionReplacement(sessionId: string, previousSessionId: string): void {
-	// Not consumed here: an RPC host can start the same replacement twice.
-	if (keptWork().has(previousSessionId)) {
-		successions().delete(sessionId);
-		return;
-	}
+	const inherited = keptWork().has(previousSessionId) ? [] : [previousSessionId, ...(successions().get(previousSessionId) ?? [])];
+	// Nobody took over a session whose work was kept, so on reopening it still owns what it inherited before.
+	const own = keptWork().has(sessionId) ? successions().get(sessionId) ?? [] : [];
 	// Resuming back and forth can revisit a session: keep the chain distinct and free of sessionId
 	// itself, so the bound holds real predecessors and discovery never scans one session twice.
-	const chain = [...new Set([previousSessionId, ...(successions().get(previousSessionId) ?? [])])].filter((id) => id !== sessionId);
+	const chain = [...new Set([...inherited, ...own])].filter((id) => id !== sessionId);
 	successions().delete(sessionId);
 	successions().set(sessionId, chain.slice(0, MAX_INHERITED_SESSIONS));
 	while (successions().size > MAX_RECORDED_SESSIONS) successions().delete(successions().keys().next().value!);
@@ -49,8 +56,10 @@ export function recordSessionReplacement(sessionId: string, previousSessionId: s
  * replaced it took those runs over and keeps them.
  */
 export function recordSessionStart(sessionId: string, startup: boolean): void {
-	if (startup) successions().delete(sessionId);
-	keptWork().delete(sessionId);
+	if (startup) {
+		successions().delete(sessionId);
+		keptWork().delete(sessionId);
+	}
 	for (const [id, chain] of successions()) {
 		if (chain.includes(sessionId)) successions().set(id, chain.filter((inherited) => inherited !== sessionId));
 	}

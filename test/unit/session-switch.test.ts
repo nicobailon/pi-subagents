@@ -127,6 +127,22 @@ describe("session switch decisions", () => {
 		assert.deepEqual(f.switchTo("new"), [f.source], "reopening the original session ends the choice");
 	});
 
+	it("keeps what a session took over when it is resumed after leaving its work", async () => {
+		const f = fixture();
+		const earlier = `${f.source}-earlier`;
+		recordSessionReplacement(f.source, earlier); // The source took the earlier session's work.
+		f.writeRun("live");
+		f.choice = async (options) => options[2];
+		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
+		assert.deepEqual(f.switchTo("new"), []);
+		// /resume back to the source from the new session, twice as an RPC rebind does.
+		for (let start = 0; start < 2; start++) {
+			recordSessionStart(f.source, false);
+			recordSessionReplacement(f.source, f.target);
+			assert.deepEqual(inheritedSessionIds(f.source), [f.target, earlier]);
+		}
+	});
+
 	it("applies a leave choice only to the switch that committed", async () => {
 		for (const mismatch of ["cancelled", "source", "reason"]) {
 			const f = fixture();

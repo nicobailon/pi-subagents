@@ -4,7 +4,7 @@ import { listAsyncRuns } from "../runs/background/async-status.ts";
 import { reconcileNestedAsyncDescendants } from "../runs/background/stale-run-reconciler.ts";
 import { ownsRun } from "../runs/shared/run-ownership.ts";
 import { collectNestedRuns, projectNestedEvents } from "../runs/shared/nested-events.ts";
-import { keepSessionWork } from "../shared/session-succession.ts";
+import { keepSessionWork, releaseSessionWork } from "../shared/session-succession.ts";
 import type { NestedRouteInfo, SubagentState } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 
@@ -118,7 +118,10 @@ export function createSessionSwitchGuard(deps: SessionSwitchDeps) {
 		sessionShutdown(event: SessionShutdownEvent) {
 			const left = leave;
 			leave = undefined;
-			if (left && left.sessionId === deps.state.currentSessionId && left.reason === event.reason) keepSessionWork(left.sessionId);
+			const sessionId = deps.state.currentSessionId;
+			if (!sessionId) return;
+			if (left && left.sessionId === sessionId && left.reason === event.reason) keepSessionWork(sessionId);
+			else releaseSessionWork(sessionId);
 		},
 		dispose() {
 			leave = undefined;
