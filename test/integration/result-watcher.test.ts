@@ -79,8 +79,10 @@ describe("result watcher", () => {
 		const state = createState();
 		state.currentSessionId = "pending-owner";
 		let delivered = 0;
+		let observeForeign = false;
 		const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
 			notifier: { async deliver() { delivered++; return true; } },
+			observedCompletionRunIds: () => observeForeign ? ["foreign"] : [],
 		});
 		try {
 			writeIndexedResult(path.join(resultsDir, "foreign.json"), { id: "foreign", sessionId: "another-session", success: true });
@@ -92,6 +94,10 @@ describe("result watcher", () => {
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			assert.equal(delivered, 0);
 			assert.equal(fs.readFileSync(file, "utf-8"), saved);
+			writeIndexedResult(file, { id: "owned", sessionId: state.currentSessionId, success: true, notificationDeliveredAt: Date.now() });
+			assert.equal(watcher.hasPendingResults(), false, "delivered results awaiting cleanup are not pending work");
+			observeForeign = true;
+			assert.equal(watcher.hasPendingResults(), false, "observer-only results belong outside this session");
 		} finally {
 			watcher.stopResultWatcher();
 			fs.rmSync(resultsDir, { recursive: true, force: true });

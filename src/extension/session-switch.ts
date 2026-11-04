@@ -4,14 +4,16 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIDialogOptions, SessionShutdownEvent } from "@earendil-works/pi-coding-agent";
 import { isActiveAsyncState } from "../runs/background/active-run-index.ts";
 import { listAsyncRuns } from "../runs/background/async-status.ts";
+import { deliverStopRequest } from "../runs/background/control-channel.ts";
+import { reconcileNestedAsyncDescendants } from "../runs/background/stale-run-reconciler.ts";
 import { readProcessTerminal } from "../runs/background/process-terminal.ts";
 import { isTerminalAsyncState, readWorkflowChildProcessEvidence } from "../runs/background/workflow-terminal-proof.ts";
 import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { ownsRun } from "../runs/shared/run-ownership.ts";
-import { hasLiveNestedDescendants } from "../runs/shared/nested-events.ts";
+import { collectNestedRuns, projectNestedEvents, resolveNestedAsyncDir } from "../runs/shared/nested-events.ts";
 import { approveSessionHandoff } from "../shared/session-succession.ts";
 import { expandHomePath } from "../shared/settings.ts";
-import type { SubagentState } from "../shared/types.ts";
+import type { NestedRouteInfo, NestedRunSummary, SubagentState } from "../shared/types.ts";
 import { extractTextFromContent, readStatus } from "../shared/utils.ts";
 
 const CANCEL = "Stay here — keep work running";
@@ -74,12 +76,43 @@ export function createSessionSwitchGuard(pi: Pick<ExtensionAPI, "events">, deps:
 		}
 		return runs;
 	};
-	const hasNestedWork = () => [...deps.state.asyncJobs.values()].some((job) =>
-		ownsRun(deps.state.currentSessionId, job.sessionId) && hasLiveNestedDescendants(job.nestedChildren));
+	const nestedWork = (knownRoutes: ReadonlyMap<string, NestedRouteInfo> = new Map()) => {
+		const routes = new Map(knownRoutes);
+		const roots = new Set<string>();
+		const runs = new Map<string, string>();
+		const collect = (rootId: string, children: NestedRunSummary[] | undefined) => {
+			for (const run of collectNestedRuns(children)) {
+				if (!isActiveAsyncState(run.state)) continue;
+				roots.add(rootId);
+				const dir = resolveNestedAsyncDir(rootId, run);
+				if (dir) runs.set(dir, run.id);
+			}
+		};
+		for (const job of deps.state.asyncJobs.values()) {
+			if (!ownsRun(deps.state.currentSessionId, job.sessionId)) continue;
+			if (job.nestedRoute) routes.set(job.nestedRoute.rootRunId, job.nestedRoute);
+			else collect(job.asyncId, job.nestedChildren);
+		}
+		for (const control of deps.state.foregroundControls.values()) {
+			if (control.sessionId && !ownsRun(deps.state.currentSessionId, control.sessionId)) continue;
+			if (control.nestedRoute) routes.set(control.nestedRoute.rootRunId, control.nestedRoute);
+		}
+		for (const route of deps.state.retainedForegroundNestedRoutes?.values() ?? []) routes.set(route.rootRunId, route);
+		if (deps.state.retainedNestedLookupRoutes?.sessionId === deps.state.currentSessionId) {
+			for (const route of deps.state.retainedNestedLookupRoutes.routes.values()) routes.set(route.rootRunId, route);
+		}
+		for (const route of routes.values()) {
+			reconcileNestedAsyncDescendants(route, { resultsDir: deps.resultsDir });
+			collect(route.rootRunId, projectNestedEvents(route).children);
+		}
+		return { routes, roots, runs };
+	};
 
-	const stopRunningWork = async (ctx: SessionSwitchContext, initialRuns: ReadonlyMap<string, string>) => {
+	const stopRunningWork = async (ctx: SessionSwitchContext, initialRuns: ReadonlyMap<string, string>, initialNested: ReturnType<typeof nestedWork>) => {
 		// Keep exit checks even when runs finish during the prompt or abort.
 		const tracked = new Map([...initialRuns, ...activeRuns()]);
+		let nested = nestedWork(initialNested.routes);
+		const trackedNested = new Map([...initialNested.runs, ...nested.runs]);
 		await ctx.abort();
 		const deadline = now() + STOP_TIMEOUT_MS;
 		const requested = new Set<string>();
@@ -94,16 +127,24 @@ export function createSessionSwitchGuard(pi: Pick<ExtensionAPI, "events">, deps:
 		while (!lifetime.signal.aborted) {
 			const runs = activeRuns();
 			for (const [id, dir] of runs) tracked.set(id, dir);
-			if (runs.size === 0 && !hasNestedWork() && [...tracked].every(([id, dir]) => stopObserved(dir, id))) return;
+			nested = nestedWork(nested.routes);
+			for (const [dir, id] of nested.runs) trackedNested.set(dir, id);
+			if (runs.size === 0 && nested.roots.size === 0 && [...tracked].every(([id, dir]) => stopObserved(dir, id))
+				&& [...trackedNested].every(([dir, id]) => stopObserved(dir, id))) return;
 			for (const [id, asyncDir] of runs) {
-				if (requested.has(id)) continue;
+				if (requested.has(asyncDir)) continue;
 				const result = stopAsyncRun(deps.state, id, undefined, { asyncDir, resolvedId: id });
 				if (!result || result.isError) {
 					// A run may finish before its stop request.
 					if (!activeRuns().has(id)) continue;
 					throw new Error(extractTextFromContent(result?.content) || `Could not stop ${id}.`);
 				}
-				requested.add(id);
+				requested.add(asyncDir);
+			}
+			for (const asyncDir of nested.runs.keys()) {
+				if (requested.has(asyncDir)) continue;
+				deliverStopRequest({ asyncDir, source: "session-switch" });
+				requested.add(asyncDir);
 			}
 			if (now() >= deadline) throw new Error("Could not verify that all background work stopped within five seconds. The switch was cancelled; inspect the runs and retry.");
 			await wait(STOP_POLL_INTERVAL_MS, lifetime.signal);
@@ -119,17 +160,17 @@ export function createSessionSwitchGuard(pi: Pick<ExtensionAPI, "events">, deps:
 			try {
 				const sessionId = deps.state.currentSessionId;
 				const runs = activeRuns();
-				const nested = hasNestedWork();
+				const nested = nestedWork();
 				const results = deps.hasPendingResults();
 				const questions = deps.hasPendingSupervisorRequest();
-				if (runs.size === 0 && !nested && !results && !questions) return;
+				if (runs.size === 0 && nested.roots.size === 0 && !results && !questions) return;
 				if (!ctx.hasUI) throw new Error("Background work is outstanding. Finish or stop it in its original session before switching without an interactive UI.");
 				const title = [
 					"pi-subagents: switch sessions?",
 					"",
 					"Background subagent work in this session:",
 					...(runs.size > 0 ? [`  ${runs.size} run${runs.size === 1 ? "" : "s"} queued or running`] : []),
-					...(nested ? ["  Nested subagents still running"] : []),
+					...(nested.roots.size > 0 ? ["  Nested subagents still running"] : []),
 					...(results ? ["  Undelivered results"] : []),
 					...(questions ? ["  Questions awaiting a reply"] : []),
 				].join("\n");
@@ -143,11 +184,15 @@ export function createSessionSwitchGuard(pi: Pick<ExtensionAPI, "events">, deps:
 					if (!ctx.sessionManager.getSessionFile()) throw new Error("An in-memory session cannot hand off its runs. Stop the work or stay in this session.");
 					// Accepted wakes belong to the old conversation, not a second delivery route.
 					if (deps.hasPendingCompletionWake()) throw new Error("A completion wake is still queued in this session. Let it start, then retry the handoff.");
+					const running = activeRuns();
+					if ([...nestedWork(nested.routes).roots].some((rootId) => !running.has(rootId))) {
+						throw new Error("Nested work without an active background parent cannot be transferred. Stop it or stay in this session.");
+					}
 					approval = { sessionId: sessionId!, reason, targetSessionFile: targetSessionFile ? resolveSessionTarget(targetSessionFile) : undefined };
 					return;
 				}
 				if (choice === STOP) {
-					await stopRunningWork(ctx, runs);
+					await stopRunningWork(ctx, runs, nested);
 					return;
 				}
 				return { cancel: true };

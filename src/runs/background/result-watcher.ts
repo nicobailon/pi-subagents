@@ -716,6 +716,15 @@ export function createResultWatcher(
 		}
 		return files;
 	};
+	const hasPendingResults = () => eligibleResultFiles().some((file) => {
+		const payloadPath = resultPayloadPath(file);
+		if (!payloadPath) return false;
+		const raw = fsApi.readFileSync(payloadPath, "utf-8");
+		const identity = resultFileIdentity(raw, file);
+		return Boolean(identity.sessionId
+			&& ownsResult(identity.sessionId, deliveryOwnerId(identity.sessionId, identity.completionOwnerId, identity.completionOwnerProcess, identity.parentWorkflowRunId))
+			&& !hasDeliveredNotification(parseResult(raw)));
+	});
 	const primeExistingResults = (options: { triggerTurn?: boolean } = {}) => {
 		const triggerTurn = options.triggerTurn !== false;
 		for (const file of eligibleResultFiles()) scheduleResult(file, triggerTurn);
@@ -864,5 +873,5 @@ export function createResultWatcher(
 		identityCache.clear();
 	};
 
-	return { startResultWatcher, transitionResultDelivery, primeExistingResults, deliverPendingResults, hasPendingResults: () => eligibleResultFiles().length > 0, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
+	return { startResultWatcher, transitionResultDelivery, primeExistingResults, deliverPendingResults, hasPendingResults, stopResultWatcher, refreshResultDelivery: () => { primeExistingResults(); startDemandPolling(); } };
 }

@@ -54,7 +54,7 @@ Pi core may print a generic `pi -ne` extension-load hint; that out-of-repo hint 
 Before `/new`, `/resume`, `/fork`, or `/clone` replaces a session with queued/running async work, live nested children, undelivered results, or supervisor questions, pi-subagents asks **pi-subagents: switch sessions?**.
 
 - **Stay here** (default, also Escape): stay in this session and let background work continue.
-- **Switch and transfer**: move background work, results, and saved run history to the next session. That session receives async controls, future results, and supervisor replies when the exact destination starts. A completion wake already queued in the old conversation must start before you retry the handoff.
+- **Switch and transfer**: move background work, results, and saved run history to the next session. That session receives async controls, future results, and supervisor replies when the exact destination starts. A completion wake already queued in the old conversation must start before you retry the handoff. Live nested work without an active background parent must finish or be stopped before transfer.
 - **Stop and switch**: stop background work before changing sessions. This aborts the parent turn and requests stops. If exit cannot be verified within five seconds, cancel the switch. Saved results stay with the original session. A later cancellation does not undo stops.
 
 Finished, delivered history alone neither prompts nor transfers. The prompt never enters model history; its TUI lifetime raises and clears `herdr:blocked`. RPC dialogs time out after one minute; no response or no usable UI cancels an outstanding-work switch. Hosts must invoke Pi's before-switch/before-fork hooks; viewing another conversation need not replace its runtime.

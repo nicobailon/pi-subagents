@@ -8,6 +8,7 @@ import type { ExtensionUIDialogOptions } from "@earendil-works/pi-coding-agent";
 import { createSessionSwitchGuard, type SessionSwitchContext } from "../../src/extension/session-switch.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { consumeStopRequestPayloads } from "../../src/runs/background/control-channel.ts";
+import { createNestedRoute, nestedRunScope, projectNestedEvents, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { consumeSessionHandoff } from "../../src/shared/session-succession.ts";
 import type { AsyncJobState, AsyncStatus, SubagentState } from "../../src/shared/types.ts";
 
@@ -60,8 +61,7 @@ function fixture() {
 		sleep: async (ms) => { clock += ms; onSleep(); },
 	});
 	cleanups.push(() => { guard.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
-	const writeRun = (id: string, status: AsyncJobState["status"] = "running", sessionId = source) => {
-		const asyncDir = path.join(asyncDirRoot, id);
+	const writeRun = (id: string, status: AsyncJobState["status"] = "running", sessionId = source, asyncDir = path.join(asyncDirRoot, id)) => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 			runId: id, mode: "single", state: status, sessionId, pid: process.pid,
@@ -72,7 +72,7 @@ function fixture() {
 		state.asyncJobs.set(id, { asyncId: id, asyncDir, sessionId, status });
 		return asyncDir;
 	};
-	const observeExit = (id: string) => fs.writeFileSync(path.join(asyncDirRoot, id, "process-terminal.json"), JSON.stringify({
+	const observeExit = (id: string, asyncDir = path.join(asyncDirRoot, id)) => fs.writeFileSync(path.join(asyncDir, "process-terminal.json"), JSON.stringify({
 		version: 1, state: "observed", runId: id, runnerProcessInstanceId: `runner-${id}`, observedAt: Date.now(),
 		instances: [{ kind: "runner", processInstanceId: `runner-${id}`, closeObservedAt: Date.now(), exitCode: 0, signal: null }],
 	}));
@@ -258,12 +258,52 @@ describe("session switch decisions", () => {
 		}
 	});
 
-	it("does not mistake a terminal parent with a live nested child for finished work", async () => {
+	for (const parent of ["running", "complete", "foreground"] as const) it(`guards and stops nested work with a ${parent} parent`, async () => {
 		const f = fixture();
-		f.writeRun("parent", "complete");
-		f.state.asyncJobs.get("parent")!.nestedChildren = [{ id: "nested", parentRunId: "parent", depth: 1, path: [{ runId: "parent" }], state: "running" }];
+		const rootId = path.basename(path.dirname(f.source));
+		const route = createNestedRoute(rootId);
+		const dir = path.join(nestedRunScope(rootId).asyncDirRoot, "nested-child");
+		cleanups.push(() => {
+			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+			fs.rmSync(nestedRunScope(rootId).asyncDirRoot, { recursive: true, force: true });
+		});
+		const publish = (state: "running" | "stopped") => {
+			f.writeRun("nested-child", state, "nested-owner", dir);
+			f.state.asyncJobs.delete("nested-child");
+			writeNestedEvent(route, {
+				type: state === "running" ? "subagent.nested.started" : "subagent.nested.completed",
+				ts: state === "running" ? 100 : 200, parentRunId: rootId,
+				child: { id: "nested-child", parentRunId: rootId, depth: 1, path: [{ runId: rootId }], state, asyncDir: dir },
+			});
+		};
+		publish("running");
+		if (parent === "foreground") f.state.retainedForegroundNestedRoutes = new Map([[rootId, route]]);
+		else {
+			f.writeRun(rootId, parent);
+			Object.assign(f.state.asyncJobs.get(rootId)!, { nestedRoute: route, nestedChildren: projectNestedEvents(route).children });
+		}
 		assert.deepEqual(await f.guard.beforeSwitch("new", f.ctx), { cancel: true });
 		assert.match(f.title, /^  Nested subagents still running$/m);
+		f.choice = async (options) => options[1];
+		assert.deepEqual(await f.guard.beforeSwitch("new", f.ctx), parent === "running" ? undefined : { cancel: true });
+		if (parent !== "running") assert.match(f.notices.at(-1)!, /Nested work.*cannot be transferred/);
+		f.ctx.abort = async () => {
+			if (parent === "running") { f.writeRun(rootId, "complete"); f.observeExit(rootId); }
+			f.state.asyncJobs.delete(rootId);
+			f.state.retainedForegroundNestedRoutes?.clear();
+		};
+		let requests = 0;
+		let waits = 0;
+		f.onSleep = () => {
+			const stops = consumeStopRequestPayloads(dir);
+			requests += stops.length;
+			if (stops.length) publish("stopped");
+			if (++waits === 2) f.observeExit("nested-child", dir);
+		};
+		f.choice = async (options) => options[2];
+		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
+		assert.equal(requests, 1);
+		assert.equal(waits, 2, "nested terminal status alone does not prove runner exit");
 	});
 
 	it("does not transfer a completion Pi has already queued for the old session", async () => {
