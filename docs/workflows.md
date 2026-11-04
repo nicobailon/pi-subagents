@@ -47,17 +47,19 @@ The completion notice of a workflow stopped by a Pi exit or a runtime replacemen
 
 After `/new`, `/resume`, or a fork in the same Pi process, the new session owns the async runs of the session it replaced, and of the sessions that one replaced. It can list, `bg_wait` on, steer, stop, and resume them, receives their completion notices, and answers their children's pending supervisor requests. Over RPC, a host can steer, interrupt, stop, resume, and inspect them, and sees them in the fleet and `subagent-async` snapshots. Startup and other Pi processes inherit nothing; `/reload` adds nothing new but keeps what the session already inherited. A replaced session that starts again (pi-web reopening it) takes its runs back. To relaunch a stopped workflow instead of controlling its children one by one, use `options.reuseFrom`.
 
-When a session with a UI has queued or running async work, live nested children, undelivered results, or supervisor questions, `/new`, `/resume`, `/fork`, and `/clone` first ask **pi-subagents: switch sessions?**:
-
-- **Stay here** (default, also Escape): cancel the switch. The work keeps running.
-- **Switch and take the work**: switch, and the new session takes the work over as described above.
-- **Switch and leave the work here**: switch, and the new session inherits nothing from this one. Async single, parallel, and chain runs keep running and belong to this session; reopen it to get their results. Async workflows and detached foreground runs stop on any switch, as before; a stopped workflow resumes automatically only if you reopen this session within 24 hours. A child's question can be answered only until it times out (10 minutes by default).
-
-Without outstanding work, or without a UI (`pi -p`, SDK sessions), there is no prompt and the new session takes the work over. Over RPC the prompt is a select dialog that counts as **Stay here** if the host does not answer within one minute. The prompt never enters model history.
-
 Once the Pi process that started a background single, parallel, or chain run has exited, the run is reported once to a Pi window that has its session open, whether it finished while Pi was closed or finishes later. A workflow's children are reported through their workflow.
 
 Pi core may print a generic `pi -ne` extension-load hint; that out-of-repo hint is not protocol-approved fallback. A verified compaction abort may continue the retained child once on its already resolved model; it does not authorize an execution-mode or model switch.
+
+### Switching sessions with background work
+
+When a session with a UI has queued or running async work, live nested children, undelivered results, or supervisor questions, `/new`, `/resume`, `/fork`, and `/clone` first ask **pi-subagents: switch sessions?**:
+
+- **Stay here** (default, also Escape): cancel the switch. The work keeps running.
+- **Switch and take the work**: the new session takes the work over, as after any switch without the prompt.
+- **Switch and leave the work here**: the new session inherits nothing from this one. Async single, parallel, and chain runs keep running under this session; reopen it to get their results. Async workflows and detached foreground runs stop on any switch, as before; a stopped workflow resumes automatically only if you reopen this session within 24 hours. A child's question can be answered only until it times out (10 minutes by default).
+
+Without outstanding work, or without a UI (`pi -p`, SDK sessions), there is no prompt and the new session takes the work over. Over RPC the prompt is a select dialog that counts as **Stay here** if the host does not answer within one minute. The prompt never enters model history.
 
 ## Prompt shortcuts
 
