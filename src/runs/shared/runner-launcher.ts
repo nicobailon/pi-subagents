@@ -2,6 +2,8 @@ import type { AgentConfig } from "../../agents/agents.ts";
 import { agentDefinitionDigest } from "../../shared/launch-contract.ts";
 import type { RequiredRunnerLauncher, RunnerLauncher } from "../../shared/types.ts";
 
+export const REQUIRE_LAUNCHER_SHAPE_ERROR = "requireLauncher is supported only on a top-level single-agent call (agent + task); it cannot be combined with tasks, chain, workflow, an action, resume, or a workflow child.";
+
 /** Own-property lookup, so an inherited object key can never select a command. */
 export function lookupRunnerLauncher(runnerLaunchers: Record<string, string[]> | undefined, name: string): RunnerLauncher | undefined {
 	const argv = runnerLaunchers && Object.hasOwn(runnerLaunchers, name) ? runnerLaunchers[name] : undefined;

@@ -1,4 +1,5 @@
 import { normalizeWorktreeBaseRef } from "../runs/shared/worktree.ts";
+import { REQUIRE_LAUNCHER_SHAPE_ERROR } from "../runs/shared/runner-launcher.ts";
 
 export interface PublicSubagentExecutionParams {
 	action?: unknown;
@@ -58,7 +59,6 @@ export type PublicSubagentExecutionNormalization<T> =
 const RAW_SCRIPT_FORMS = "workflow: true or a workflow script path";
 const REMOVED_WORKFLOW_SCRIPT = "workflowScript was removed; write the script in one ```js workflow block in this reply and call subagent({ workflow: true }), or pass a script file as workflow: \"./path/to/script.js\".";
 const REMOVED_WORKFLOW_SCRIPT_PATH = "workflowScriptPath was removed; pass the script file as workflow: \"./path/to/script.js\" (a workflow value containing '/' is a path).";
-export const REQUIRE_LAUNCHER_SHAPE_ERROR = "requireLauncher is supported only on a top-level single-agent call (agent + task); it cannot be combined with tasks, chain, workflow, an action, resume, or a workflow child.";
 
 /** A workflow value containing "/" or "\" is a script path; named workflow resource names contain neither. */
 export function isWorkflowScriptPath(workflow: string): boolean {

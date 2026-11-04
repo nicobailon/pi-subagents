@@ -27,7 +27,7 @@ describe("requireLauncher", { skip: !available ? "pi packages not available" : u
 		return { configCopy, runnerLaunchers: { wrap: [wrapper], other: [wrapper] } };
 	};
 
-	it("runs a matching launch under the launcher and records the required digest", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
+	it("lets a matching requirement launch under the launcher, with the agent's digest in the runner config", { timeout: 30_000, skip: !isAsyncAvailable() || process.platform === "win32" ? "requires jiti and a POSIX wrapper" : undefined }, async () => {
 		const { configCopy, runnerLaunchers } = launchers();
 		const agent = sandboxed();
 		const definitionDigest = agentDefinitionDigest(agent);
@@ -105,12 +105,18 @@ describe("requireLauncher", { skip: !available ? "pi packages not available" : u
 			assert.equal(refused.isError, true, JSON.stringify(request));
 			assert.match(refused.content[0]?.text ?? "", SHAPE_ERROR, JSON.stringify(request));
 		}
-		// A runs.run child carries workflowParentRunId; the executor refuses it even though the script passed the field.
-		const workflow = await executor.executePublic("required-child", {
-			async: false,
-			workflowScript: `const child = await runs.run("sandboxed", { agent: "sandboxed", task: "Work", requireLauncher: ${JSON.stringify(requireLauncher)} }); return child.ok ? "ok" : child.error;`,
-		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
-		assert.match(String(workflow.details?.workflow?.value ?? workflow.content[0]?.text), SHAPE_ERROR);
+		// runs.run children are refused even though the script passed the field, including a resume child.
+		for (const child of [{ agent: "sandboxed", task: "Work" }, { resume: "no-such-run", task: "Follow up" }]) {
+			const workflow = await executor.executePublic("required-child", {
+				async: false,
+				workflowScript: `try { const child = await runs.run("sandboxed", ${JSON.stringify({ ...child, requireLauncher })}); return child.ok ? "ok" : child.error; } catch (error) { return error.message; }`,
+			}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.match(String(workflow.details?.workflow?.value ?? workflow.content[0]?.text), SHAPE_ERROR, JSON.stringify(child));
+		}
+		// The internal entry point skips the public shape check; a malformed value is still refused.
+		const malformed = await executor.execute("required-null", { agent: "sandboxed", task: "Work", async: true, requireLauncher: null as never }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(malformed.isError, true);
+		assert.match(malformed.content[0]?.text ?? "", /requireLauncher must be \{ name, definitionDigest \}/);
 		assert.equal(mockPi.callCount(), 0);
 	});
 });
