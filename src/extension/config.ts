@@ -181,6 +181,12 @@ function validateConfig(config: Record<string, unknown>): void {
 			|| config.maxActiveAsyncRunsPerSession < 0)) {
 		throw new Error("config.maxActiveAsyncRunsPerSession must be a non-negative integer");
 	}
+	if (config.globalConcurrencyLimit !== undefined
+		&& (typeof config.globalConcurrencyLimit !== "number"
+			|| !Number.isInteger(config.globalConcurrencyLimit)
+			|| config.globalConcurrencyLimit < 1)) {
+		throw new Error("config.globalConcurrencyLimit must be a positive integer");
+	}
 	if (config.resultScanLogging !== undefined && config.resultScanLogging !== "all" && config.resultScanLogging !== "activity" && config.resultScanLogging !== "off") {
 		throw new Error('config.resultScanLogging must be "all", "activity", or "off"');
 	}
