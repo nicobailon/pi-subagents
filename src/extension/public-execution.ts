@@ -46,6 +46,7 @@ export interface PublicSubagentExecutionParams {
 	suppressRoutineResultIntercom?: unknown;
 	runFanoutBudget?: unknown;
 	runFanoutAdmitted?: unknown;
+	requireLauncher?: unknown;
 }
 
 export type PublicSubagentExecutionMode = "workflow" | "management";
@@ -57,6 +58,7 @@ export type PublicSubagentExecutionNormalization<T> =
 const RAW_SCRIPT_FORMS = "workflow: true or a workflow script path";
 const REMOVED_WORKFLOW_SCRIPT = "workflowScript was removed; write the script in one ```js workflow block in this reply and call subagent({ workflow: true }), or pass a script file as workflow: \"./path/to/script.js\".";
 const REMOVED_WORKFLOW_SCRIPT_PATH = "workflowScriptPath was removed; pass the script file as workflow: \"./path/to/script.js\" (a workflow value containing '/' is a path).";
+export const REQUIRE_LAUNCHER_SHAPE_ERROR = "requireLauncher is supported only on a top-level single-agent call (agent + task); it cannot be combined with tasks, chain, workflow, an action, resume, or a workflow child.";
 
 /** A workflow value containing "/" or "\" is a script path; named workflow resource names contain neither. */
 export function isWorkflowScriptPath(workflow: string): boolean {
@@ -161,6 +163,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		return { ok: false, error: "action must be a non-empty management/control action, or omit action and use workflow.", mode: "management" };
 	}
 	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
+	if (params.requireLauncher !== undefined && (normalizedAction !== undefined || hasWorkflowInput || params.tasks !== undefined || params.chain !== undefined || params.parallel !== undefined || params.resume !== undefined)) {
+		return { ok: false, error: REQUIRE_LAUNCHER_SHAPE_ERROR, mode: normalizedAction !== undefined ? "management" : "workflow" };
+	}
 	if (params.baseRef !== undefined && normalizedAction !== undefined && normalizedAction !== "resume" && normalizedAction !== "schedule.create") {
 		return { ok: false, error: "baseRef is only supported for child execution, resume, and schedule.create.", mode: "management" };
 	}

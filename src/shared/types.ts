@@ -2490,6 +2490,11 @@ export interface RunnerLauncher {
 	name: string;
 	argv: string[];
 }
+/** A call's requirement that its agent runs under this launcher with this agent definition digest. */
+export interface RequiredRunnerLauncher {
+	name: string;
+	definitionDigest: string;
+}
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_PROCESS_TERMINAL_EVENT = "subagent:process-terminal";
 export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete";

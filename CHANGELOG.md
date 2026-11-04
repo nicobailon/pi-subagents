@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- A call can now require a launcher: `options.requireLauncher: { name, definitionDigest }` makes a single background launch run only under that launcher with that exact agent definition, and refuses it otherwise instead of running without the launcher. Extensions that sandbox children through a launcher can use it to make sure the agent they approved is the one that runs. See [Requiring a launcher](docs/extension-api.md#requiring-a-launcher). Thanks to [@ViperJuice](https://github.com/ViperJuice) for the proposal. (#3163)
+
 ### Changed
 
 - The Herdr `title-suffix` token is now always `⏳N`, where N is the number of active subagents (plus `⚠` when a child needs attention). Before, it showed the agent name when exactly one run was active and the newest workflow label when one was set, which changed width as runs started and finished and was truncated in narrow sidebar rows. The `summary` token and state labels still carry the agent names and workflow label. Thanks to [@longyuxi](https://github.com/longyuxi) for the report and #3157. (#3156)

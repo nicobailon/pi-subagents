@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { SUBAGENT_OPTION_KEYS } from "../../src/extension/schemas.ts";
+import { SUBAGENT_OPTION_KEYS, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 import { resolveDisabledFeatureSurface } from "../../src/shared/disabled-features.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/subagent-wait.ts";
@@ -27,6 +27,7 @@ const OPTION_SAMPLES: Record<string, unknown> = {
 	usageBudget: { tokens: { hard: 10 } }, agentScope: "user", machine: "box", artifacts: false, includeProgress: true,
 	share: false, sessionDir: "/tmp/sessions", control: { enabled: false }, outputMode: "file-only", skill: "review",
 	fast: false, outputSchema: { type: "object" }, agentContract: { version: 1 }, acceptance: "checked", gate: "npm test", maxOutput: { bytes: 1000 },
+	requireLauncher: { name: "net", definitionDigest: "a".repeat(64) },
 };
 
 describe("subagent tool options", () => {
@@ -41,6 +42,15 @@ describe("subagent tool options", () => {
 		assert.deepEqual(flattenSubagentToolOptions(flat), flat);
 		assert.deepEqual(flattenSubagentToolOptions({ action: "status", view: "fleet", options: { view: "fleet", lines: 5 } }), { action: "status", view: "fleet", lines: 5 });
 		assert.throws(() => flattenSubagentToolOptions({ action: "status", view: "fleet", lines: 5, options: { view: "transcript", lines: 6 } }), { message: "subagent: 'view', 'lines' given both at the top level and in options with different values; give each once." });
+	});
+
+	it("takes requireLauncher only from options, so the tool schema the model sees does not change", () => {
+		const requireLauncher = { name: "net", definitionDigest: "a".repeat(64) };
+		assert.deepEqual(flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { requireLauncher } }), { agent: "worker", task: "scan", requireLauncher });
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { requireLauncher: { name: "net", definitionDigest: "ABC" } } }), /options\.requireLauncher\.definitionDigest must match pattern/);
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { requireLauncher: { name: "-net", definitionDigest: "a".repeat(64) } } }), /options\.requireLauncher\.name must match pattern/);
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { requireLauncher: { name: "net" } } }), /options\.requireLauncher must have required properties definitionDigest/);
+		assert.equal(JSON.stringify(createSubagentParamsSchema()).includes("requireLauncher"), false);
 	});
 
 	it("converts option scalars a provider sent as strings to their declared types", () => {

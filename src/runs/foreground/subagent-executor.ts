@@ -24,7 +24,7 @@ import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { approveWorkflowChildLaunch, type SubagentLaunchArgs } from "../../extension/subagent-launch-tool.ts";
-import { isWorkflowScriptPath, normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
+import { isWorkflowScriptPath, normalizePublicSubagentExecution, REQUIRE_LAUNCHER_SHAPE_ERROR, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
 import { readReplyWorkflowScript } from "../../extension/reply-workflow-script.ts";
 import { disabledFeatureNotice, disabledFeatureSectionNotice, disabledFeatureUseError, resolveDisabledFeatureSurface, type DisabledFeatureSurface } from "../../shared/disabled-features.ts";
 import { runSync } from "./execution.ts";
@@ -116,7 +116,7 @@ import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest, externalJobStableJson } from "../shared/external-job-runner.ts";
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { formatHerdrMachineRunnerUnsupported, resolveMachinePlacement } from "../shared/herdr-machine.ts";
-import { lookupRunnerLauncher, resolveAgentRunnerLauncher } from "../shared/runner-launcher.ts";
+import { checkRequiredRunnerLauncher, lookupRunnerLauncher, resolveAgentRunnerLauncher } from "../shared/runner-launcher.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, missionAcceptanceStatus, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
@@ -225,6 +225,7 @@ import {
 	truncateOutput,
 	wrapForkTask,
 	type ScheduleOrigin,
+	type RequiredRunnerLauncher,
 	type SteeringTargetState,
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
@@ -388,6 +389,7 @@ export interface SubagentParamsLike {
 	machine?: string;
 	/** Internal: the typed cwd when a machine is set, kept as a remote path and never resolved locally. */
 	machineCwd?: string;
+	requireLauncher?: RequiredRunnerLauncher;
 	maxOutput?: MaxOutputConfig;
 	artifacts?: boolean;
 	includeProgress?: boolean;
@@ -3700,6 +3702,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			requestedCwd: data.requestedCwd,
 			machine: params.machine,
 			machineCwd: params.machineCwd,
+			requireLauncher: params.requireLauncher,
 			maxOutput: params.maxOutput,
 			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 			artifactConfig,
@@ -7808,6 +7811,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		for (const agent of selectedAgents) {
 			const launcherError = agent ? resolveAgentRunnerLauncher(agent, deps.config.runnerLaunchers, effectiveParams.machine ?? agent.machine).error : undefined;
 			if (launcherError) return buildRequestedModeError(effectiveParams, launcherError);
+		}
+		// Refused here, before admission; executeAsyncSingle checks again on the exact agent and launcher it spawns.
+		if (effectiveParams.requireLauncher !== undefined) {
+			if (!hasSingle || effectiveParams.resume !== undefined || effectiveParams.workflowParentRunId !== undefined) return buildRequestedModeError(effectiveParams, REQUIRE_LAUNCHER_SHAPE_ERROR);
+			const required = selectedAgents[0] ? checkRequiredRunnerLauncher(selectedAgents[0], selectedAgents[0].launcher, effectiveParams.requireLauncher) : undefined;
+			if (required?.error) return buildRequestedModeError(effectiveParams, required.error);
 		}
 		if (effectiveAsync && hasSingle && effectiveParams.resume === undefined && effectiveParams.worktree === true) {
 			try {
