@@ -452,6 +452,63 @@ describe("native supervisor channel", () => {
 		}
 	});
 
+	it("keeps the darwin poller alive when a supervisor directory scan fails", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const sent: Array<{ details?: { id?: string } }> = [];
+		let tick: (() => void) | undefined;
+		const ctx = {
+			cwd: process.cwd(), hasUI: false,
+			sessionManager: { getSessionId: () => currentSessionId, getSessionFile: () => null, getEntries: () => [] },
+		};
+		const state = makeState(currentSessionId, ctx);
+		state.foregroundControls.set("run-a", { runId: "run-a" } as never);
+		const channel = createNativeSupervisorChannel({
+			getAllTools: () => [], registerTool: () => {},
+			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
+			getSessionName: () => "shared-name",
+		} as never, state, {
+			platform: "darwin",
+			timers: {
+				setInterval: ((callback: () => void) => { tick = callback; return 1; }) as never,
+				clearInterval: (() => { tick = undefined; }) as never,
+				setImmediate, clearImmediate,
+			},
+		});
+		const readdir = fsDefault.readdirSync;
+		const consoleError = console.error;
+		const reported: string[] = [];
+
+		try {
+			channel.start();
+			channel.activateTransport();
+			assert.equal(typeof tick, "function", "darwin transport demand starts the 500ms poller");
+			let failScans = true;
+			fsDefault.readdirSync = ((dir: fs.PathLike, options?: unknown) => {
+				if (failScans) throw Object.assign(new Error("ENFILE: file table overflow, scandir '/tmp/pisub-repro/temp/supervisor-channels'"), { code: "ENFILE" });
+				return (readdir as (dir: fs.PathLike, options?: unknown) => unknown)(dir, options);
+			}) as typeof fsDefault.readdirSync;
+			syncBuiltinESMExports();
+			console.error = (...args: unknown[]) => { reported.push(args.map((arg) => String(arg)).join(" ")); };
+
+			assert.doesNotThrow(() => tick!(), "a failed scan must not reach Pi's uncaughtException handler");
+			assert.equal(reported.length, 1, "the first scan failure is reported");
+			assert.match(reported[0]!, /ENFILE/);
+			assert.doesNotThrow(() => tick!(), "the next poll survives the same failure");
+			assert.equal(reported.length, 1, "identical scan failures are coalesced");
+
+			failScans = false;
+			const requestId = writeRequest({ sessionId: currentSessionId, runId });
+			assert.doesNotThrow(() => tick!());
+			assert.deepEqual(sent.map((message) => message.details?.id), [requestId]);
+		} finally {
+			console.error = consoleError;
+			channel.dispose();
+			fsDefault.readdirSync = readdir;
+			syncBuiltinESMExports();
+		}
+	});
+
 	it("stops idle Windows polling and restarts it on transport demand", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const state = makeState(currentSessionId, { sessionManager: { getSessionId: () => currentSessionId } });
