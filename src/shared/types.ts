@@ -854,6 +854,8 @@ export interface SteeringRecoveryDescriptor {
 	/** Launcher name the run was wrapped with, or null when it ran unwrapped; resume re-reads its argv from current user config.
 	 *  Absence (descriptors written before null was recorded) means unknown: resume uses the agent file's current launcher. */
 	launcher?: string | null;
+	/** The launcher and agent definition digest the launch required; a resume refuses unless both still hold. */
+	requiredLauncher?: RequiredRunnerLauncher;
 	cwd: string;
 	model?: string;
 	modelProvider?: string;
@@ -2491,6 +2493,11 @@ export const RUNNER_LAUNCHER_NAME_RULE = "must start with a letter or digit and 
 export interface RunnerLauncher {
 	name: string;
 	argv: string[];
+}
+/** A call's requirement that its agent runs under this launcher with this agent definition digest. */
+export interface RequiredRunnerLauncher {
+	name: string;
+	definitionDigest: string;
 }
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_PROCESS_TERMINAL_EVENT = "subagent:process-terminal";

@@ -116,7 +116,7 @@ import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest, externalJobStableJson } from "../shared/external-job-runner.ts";
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { formatHerdrMachineRunnerUnsupported, resolveMachinePlacement } from "../shared/herdr-machine.ts";
-import { lookupRunnerLauncher, resolveAgentRunnerLauncher } from "../shared/runner-launcher.ts";
+import { checkRequiredRunnerLauncher, lookupRunnerLauncher, REQUIRE_LAUNCHER_SHAPE_ERROR, resolveAgentRunnerLauncher } from "../shared/runner-launcher.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, missionAcceptanceStatus, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
@@ -153,7 +153,7 @@ import {
 } from "../../shared/workflow-child-permit.ts";
 import { deepFreezeWorkflowArgs, normalizeWorkflowArgs, resolveStructuredWorkflowResource, resolveWorkflowResource } from "../../workflows/workflow-resources.ts";
 import { writeWorkflowLaunchRecord, type WorkflowLaunch, type WorkflowLaunchRecord } from "../../workflows/workflow-launch-record.ts";
-import { stableJsonDigest } from "../../shared/launch-contract.ts";
+import { agentDefinitionDigest, stableJsonDigest } from "../../shared/launch-contract.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -225,6 +225,7 @@ import {
 	truncateOutput,
 	wrapForkTask,
 	type ScheduleOrigin,
+	type RequiredRunnerLauncher,
 	type SteeringTargetState,
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
@@ -389,6 +390,7 @@ export interface SubagentParamsLike {
 	machine?: string;
 	/** Internal: the typed cwd when a machine is set, kept as a remote path and never resolved locally. */
 	machineCwd?: string;
+	requireLauncher?: RequiredRunnerLauncher;
 	maxOutput?: MaxOutputConfig;
 	artifacts?: boolean;
 	includeProgress?: boolean;
@@ -2098,6 +2100,18 @@ async function resumeAsyncRun(input: {
 			details: { mode: "management", results: [] },
 		};
 	}
+	// Before any worktree protection or chain attachment: a launch that required a launcher and agent definition
+	// resumes only while both still hold.
+	const requiredLauncher = recoveryDescriptor?.requiredLauncher;
+	if (requiredLauncher) {
+		const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], isError: true, details: { mode: "management" as const, results: [] } });
+		if (attachChain) return refuse(`Cannot attach a chain to run '${target.runId}': it was launched with requireLauncher, and appended steps would run inside its runner unchecked.`);
+		const currentDigest = discoveredAgentConfig ? agentDefinitionDigest(discoveredAgentConfig) : undefined;
+		const now = !discoveredAgentConfig ? "is missing"
+			: recoveryDescriptor.launcher !== requiredLauncher.name || discoveredAgentConfig.launcher !== requiredLauncher.name ? `uses launcher '${discoveredAgentConfig.launcher ?? "none"}'`
+				: currentDigest !== requiredLauncher.definitionDigest ? `has digest ${currentDigest}` : undefined;
+		if (now) return refuse(`Cannot resume: run '${target.runId}' was launched requiring launcher '${requiredLauncher.name}' and agent definition ${requiredLauncher.definitionDigest}; agent '${target.agent}' now ${now}.`);
+	}
 	if (target.source === "async" && target.runner?.type === "external-cli") {
 		const runner = normalizeExternalCliRunnerStatus(target.runner);
 		const message = runner
@@ -2336,6 +2350,7 @@ async function resumeAsyncRun(input: {
 		goal: effectiveFollowUp,
 		agentConfig,
 		recoveryAgentConfig,
+		carriedRequiredLauncher: recoveryDescriptor?.requiredLauncher,
 		ctx: compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
 			pi: input.deps.pi,
 			cwd: input.requestCwd,
@@ -3701,6 +3716,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			requestedCwd: data.requestedCwd,
 			machine: params.machine,
 			machineCwd: params.machineCwd,
+			requireLauncher: params.requireLauncher,
 			maxOutput: params.maxOutput,
 			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 			artifactConfig,
@@ -5164,6 +5180,8 @@ export function prepareWorkflowLaunchParams(
 	workflowKey: string,
 	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; awaitDetachedChild?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; externalAsyncRequired?: boolean; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; outputClaimPath?: string } = {},
 ): SubagentParamsLike {
+	// Before the resume branch below, which rebuilds params field by field and would drop the requirement.
+	if (childParams.requireLauncher !== undefined || workflowDefaults.requireLauncher !== undefined) throw new Error(REQUIRE_LAUNCHER_SHAPE_ERROR);
 	const { globalConcurrencyLimit: _globalConcurrencyLimit, maxSubagentSpawnsPerRun: _maxSubagentSpawnsPerRun, ...workflowDefaultsWithoutCapacity } = workflowDefaults;
 	const { globalConcurrencyLimit: _childGlobalConcurrencyLimit, maxSubagentSpawnsPerRun: _childMaxSubagentSpawnsPerRun, ...childParamsWithoutCapacity } = childParams;
 	workflowDefaults = workflowDefaultsWithoutCapacity;
@@ -7809,6 +7827,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		for (const agent of selectedAgents) {
 			const launcherError = agent ? resolveAgentRunnerLauncher(agent, deps.config.runnerLaunchers, effectiveParams.machine ?? agent.machine).error : undefined;
 			if (launcherError) return buildRequestedModeError(effectiveParams, launcherError);
+		}
+		// Refused here, before admission; executeAsyncSingle checks again on the exact agent and launcher it spawns.
+		if (effectiveParams.requireLauncher !== undefined) {
+			if (!effectiveParams.requireLauncher || typeof effectiveParams.requireLauncher !== "object") return buildRequestedModeError(effectiveParams, "requireLauncher must be { name, definitionDigest }.");
+			if (!hasSingle || effectiveParams.resume !== undefined || effectiveParams.workflowParentRunId !== undefined) return buildRequestedModeError(effectiveParams, REQUIRE_LAUNCHER_SHAPE_ERROR);
+			const required = selectedAgents[0] ? checkRequiredRunnerLauncher(selectedAgents[0], selectedAgents[0].launcher, effectiveParams.requireLauncher) : undefined;
+			if (required?.error) return buildRequestedModeError(effectiveParams, required.error);
 		}
 		if (effectiveAsync && hasSingle && effectiveParams.resume === undefined && effectiveParams.worktree === true) {
 			try {

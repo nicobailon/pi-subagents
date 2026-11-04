@@ -155,6 +155,25 @@ describe("async recovery descriptor", () => {
 		}
 	});
 
+	it("reads a recorded launcher requirement and rejects a malformed one", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-required-launcher-"));
+		const write = (requiredLauncher: unknown) => writeFileCreatingDir(recoveryDescriptorPath(path.join(root, "runs"), "run"), JSON.stringify({
+			version: 1, launcher: "net", requiredLauncher, runFanoutBudget: runFanoutBudget("run-required"), sourceRunId: "run-required", agent: "worker", cwd: root,
+			systemPromptMode: "replace", inheritGlobalContext: false, inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+		}), "utf-8");
+		try {
+			const requiredLauncher = { name: "net", definitionDigest: "a".repeat(64) };
+			write(requiredLauncher);
+			assert.deepEqual(readAsyncRecoveryDescriptor(path.join(root, "runs"), "run")!.requiredLauncher, requiredLauncher);
+			for (const malformed of [null, "net", { name: "net" }, { name: "a b", definitionDigest: "a".repeat(64) }, { name: "net", definitionDigest: "ABC" }, { ...requiredLauncher, extra: true }]) {
+				write(malformed);
+				assert.throws(() => readAsyncRecoveryDescriptor(path.join(root, "runs"), "run"), /requiredLauncher must be \{ name, definitionDigest \}/, JSON.stringify(malformed));
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects unsafe baseRef values in persisted recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-bad-base-ref-"));
 		try {

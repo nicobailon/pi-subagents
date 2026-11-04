@@ -4,6 +4,7 @@
 
 ### Added
 
+- A call can now require a launcher: `options.requireLauncher: { name, definitionDigest }` makes a single background launch run only under that launcher with that exact agent definition, and refuses it otherwise instead of running without the launcher. Extensions that sandbox children through a launcher can use it to make sure the agent they approved is the one that runs. See [Requiring a launcher](docs/extension-api.md#requiring-a-launcher). Thanks to [@ViperJuice](https://github.com/ViperJuice) for the proposal. (#3163)
 - The wait tool can be renamed with `waitTool.name` in the pi-subagents config, so pi-subagents can run next to another extension that also registers `bg_wait`. Pi refuses to start when two extensions register the same tool name, and before this there was no setting to avoid that. The default name is still `bg_wait`. Thanks to [@Christopher876](https://github.com/Christopher876) for the report. (#3167)
 
 ### Changed
