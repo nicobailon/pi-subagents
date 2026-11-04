@@ -19,7 +19,8 @@ import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { resolveWorkflowForegroundSteeringTarget, steerWorkflowForegroundTarget } from "../runs/foreground/workflow-foreground-steering.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
 import { foregroundChildStateLabel } from "../runs/foreground/foreground-history.ts";
-import { FLEET_STATUS_WIDGET_KEY, reportFleetWarning } from "./fleet-status.ts";
+import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
+import { reportSessionWarning } from "../shared/session-warnings.ts";
 import { stepTaskSummary } from "./render.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
 import { runningTone } from "./running-tone.ts";
@@ -284,7 +285,7 @@ export function collectFleetSnapshot(
 				entryLimit: MAX_FLEET_HISTORY_CANDIDATES,
 				resultsDir: options.resultsDir ?? DIRS.results,
 				reconcile: false,
-				onCorruptStatus: (warning) => reportFleetWarning(state, warning),
+				onCorruptStatus: (warning) => reportSessionWarning(state, warning),
 			}).filter((run) => !trackedIds.has(run.id));
 			runs = [...trackedRuns, ...history];
 		} else {
@@ -299,7 +300,7 @@ export function collectFleetSnapshot(
 
 	if (state.currentSessionId) {
 		try {
-			for (const run of snapshotExternalRuns(state.currentSessionId, { ignoreMalformed: true, onMalformedRecord: (message) => reportFleetWarning(state, `Removed ${message}`) })) {
+			for (const run of snapshotExternalRuns(state.currentSessionId, { ignoreMalformed: true, onMalformedRecord: (message) => reportSessionWarning(state, `Removed ${message}`) })) {
 				items.push({
 					key: `external:${run.id}`,
 					kind: "external",
