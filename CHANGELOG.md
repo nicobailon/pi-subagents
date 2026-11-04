@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- The wait tool can be renamed with `waitTool.name` in the pi-subagents config, so pi-subagents can run next to another extension that also registers `bg_wait`. Pi refuses to start when two extensions register the same tool name, and before this there was no setting to avoid that. The default name is still `bg_wait`. Thanks to [@Christopher876](https://github.com/Christopher876) for the report. (#3167)
+
 ### Changed
 
 - The Herdr `title-suffix` token is now always `⏳N`, where N is the number of active subagents (plus `⚠` when a child needs attention). Before, it showed the agent name when exactly one run was active and the newest workflow label when one was set, which changed width as runs started and finished and was truncated in narrow sidebar rows. The `summary` token and state labels still carry the agent names and workflow label. Thanks to [@longyuxi](https://github.com/longyuxi) for the report and #3157. (#3156)

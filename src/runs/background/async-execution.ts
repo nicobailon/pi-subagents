@@ -97,6 +97,7 @@ import { omitGitRoutingEnv } from "../shared/git-environment.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 import { recoveryDescriptorPath } from "../shared/run-launch-folder.ts";
 import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, writeRetainedRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
+import { DEFAULT_WAIT_TOOL_NAME, waitToolName } from "../../shared/wait-tool-name.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
 // Cache failures as well as roots: management must remain loadable, and launches must not retry another SDK.
@@ -428,11 +429,11 @@ export type AsyncRunnerStepBuildResult =
 export function formatAsyncStartedMessage(headline: string, interactive: boolean): string {
 	const guidance = interactive
 		? [
-			"Detached. Return control now: native completion wakes you, so do not sleep, poll, or call bg_wait for it.",
+			`Detached. Return control now: native completion wakes you, so do not sleep, poll, or call ${waitToolName()} for it.`,
 			"One-shot check: subagent({ action: \"status\", id: \"...\" }).",
 		]
 		: [
-			"Detached non-interactive run: Pi auto-drains current-session subagent work at agent_end. Do not run sleep timers or polling loops. Use bg_wait only for results this turn needs from work without native notification, and subagent({ action: \"status\", id: \"...\" }) for a one-shot check.",
+			`Detached non-interactive run: Pi auto-drains current-session subagent work at agent_end. Do not run sleep timers or polling loops. Use ${waitToolName()} only for results this turn needs from work without native notification, and subagent({ action: \"status\", id: \"...\" }) for a one-shot check.`,
 		];
 	return [headline, "", ...guidance].join("\n");
 }
@@ -747,7 +748,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	// its own identity before it is allowed to proceed.
 	const launcher = (cfg as { launcher?: RunnerLauncher }).launcher;
 	const bootId = launcher ? undefined : currentBootId();
-	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}), ...(bootId ? { bootId } : {}) };
+	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}), ...(bootId ? { bootId } : {}), ...(waitToolName() !== DEFAULT_WAIT_TOOL_NAME ? { waitToolName: waitToolName() } : {}) };
 	writePrivateAtomicJson(cfgPath, launchConfig);
 	const command = binaryHost ?? nodeExecutable;
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; completionOwnerId?: unknown; revivalLease?: unknown };

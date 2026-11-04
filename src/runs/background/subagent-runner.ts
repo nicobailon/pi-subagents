@@ -157,6 +157,7 @@ import { HerdrExternalNeedsAttentionError, createHerdrExternalAdapter, prepareIn
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { setWaitToolName } from "../../shared/wait-tool-name.ts";
 import {
 	acceptChildWatchdogEvent,
 	applyChildWatchdogMessage,
@@ -225,6 +226,8 @@ export interface SubagentRunConfig {
 	revivalLeaseToken?: string;
 	/** Global cap on simultaneously-running subagent tasks within this run. */
 	globalConcurrencyLimit?: number;
+	/** The parent's config.waitTool.name, when not bg_wait; this process and its children use it. */
+	waitToolName?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	/** Builtin tool names the host runtime provides; used to intersect agent-declared tools. */
@@ -1893,6 +1896,7 @@ export async function runSubagent(
 ): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
+	if (config.waitToolName) setWaitToolName(config.waitToolName);
 	const globalSemaphore = new Semaphore(config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 	let previousOutput = "";
 	const outputs: ChainOutputMap = {};

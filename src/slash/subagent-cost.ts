@@ -7,6 +7,7 @@ import { DIRS, SLASH_RESULT_TYPE, type Details, type SubagentState, type Usage }
 import { readStatus } from "../shared/utils.ts";
 import { readWorkflowReceipt } from "../workflows/workflow-receipt.ts";
 import { resolveSlashMessageDetails } from "./slash-live-state.ts";
+import { waitToolName } from "../shared/wait-tool-name.ts";
 
 /** Structured parent-plus-child accounting for one session; the source of `/subagent-cost` and the RPC `cost` method. */
 export interface SubagentCostReport {
@@ -117,7 +118,7 @@ function detailsFromSessionEntry(entry: unknown): Details | undefined {
 	}
 	if (record.type !== "message" || !record.message || typeof record.message !== "object") return undefined;
 	const message = record.message as { role?: unknown; toolName?: unknown; details?: unknown };
-	if (message.role !== "toolResult" || (message.toolName !== "subagent" && message.toolName !== "bg_wait")) return undefined;
+	if (message.role !== "toolResult" || (message.toolName !== "subagent" && message.toolName !== waitToolName())) return undefined;
 	return isSubagentDetails(message.details) ? message.details : undefined;
 }
 

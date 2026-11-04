@@ -372,6 +372,8 @@ export interface WaitToolConfigObject {
 	enabled?: boolean;
 	/** Default blocking window for bg_wait calls that omit timeoutMs. */
 	defaultTimeoutMs?: number;
+	/** Registers the wait tool under this name instead of bg_wait, e.g. when another extension uses bg_wait. */
+	name?: string;
 }
 
 export type WaitToolConfig = boolean | WaitToolConfigObject;
