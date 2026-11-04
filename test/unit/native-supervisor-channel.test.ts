@@ -452,10 +452,11 @@ describe("native supervisor channel", () => {
 		}
 	});
 
-	it("keeps the darwin poller alive when a supervisor directory scan fails", () => {
+	it("keeps the darwin poller alive when a supervisor directory scan fails, and reports the failure to demand callers", async () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
 		const sent: Array<{ details?: { id?: string } }> = [];
+		const tools = new Map<string, { execute(id: string, params: unknown): Promise<unknown> }>();
 		let tick: (() => void) | undefined;
 		const ctx = {
 			cwd: process.cwd(), hasUI: false,
@@ -464,7 +465,8 @@ describe("native supervisor channel", () => {
 		const state = makeState(currentSessionId, ctx);
 		state.foregroundControls.set("run-a", { runId: "run-a" } as never);
 		const channel = createNativeSupervisorChannel({
-			getAllTools: () => [], registerTool: () => {},
+			getAllTools: () => [...tools.values()],
+			registerTool: (tool: { name: string; execute(id: string, params: unknown): Promise<unknown> }) => { tools.set(tool.name, tool); },
 			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
 			getSessionName: () => "shared-name",
 		} as never, state, {
@@ -477,7 +479,9 @@ describe("native supervisor channel", () => {
 		});
 		const readdir = fsDefault.readdirSync;
 		const consoleError = console.error;
+		const consoleWarn = console.warn;
 		const reported: string[] = [];
+		const errors: string[] = [];
 
 		try {
 			channel.start();
@@ -489,13 +493,20 @@ describe("native supervisor channel", () => {
 				return (readdir as (dir: fs.PathLike, options?: unknown) => unknown)(dir, options);
 			}) as typeof fsDefault.readdirSync;
 			syncBuiltinESMExports();
-			console.error = (...args: unknown[]) => { reported.push(args.map((arg) => String(arg)).join(" ")); };
+			// Without a UI the session warning goes to stderr through console.warn; console.error would draw over the TUI.
+			console.warn = (...args: unknown[]) => { reported.push(args.map((arg) => String(arg)).join(" ")); };
+			console.error = (...args: unknown[]) => { errors.push(args.map((arg) => String(arg)).join(" ")); };
 
 			assert.doesNotThrow(() => tick!(), "a failed scan must not reach Pi's uncaughtException handler");
 			assert.equal(reported.length, 1, "the first scan failure is reported");
 			assert.match(reported[0]!, /ENFILE/);
 			assert.doesNotThrow(() => tick!(), "the next poll survives the same failure");
-			assert.equal(reported.length, 1, "identical scan failures are coalesced");
+			assert.equal(reported.length, 1, "repeated scan failures are reported once");
+			assert.deepEqual(errors, []);
+
+			// A failed scan is not "no pending requests" for callers whose answer a model or a drain decision reads.
+			assert.throws(() => channel.hasPendingRequests(), /ENFILE/);
+			await assert.rejects(tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" }), /ENFILE/);
 
 			failScans = false;
 			const requestId = writeRequest({ sessionId: currentSessionId, runId });
@@ -503,6 +514,7 @@ describe("native supervisor channel", () => {
 			assert.deepEqual(sent.map((message) => message.details?.id), [requestId]);
 		} finally {
 			console.error = consoleError;
+			console.warn = consoleWarn;
 			channel.dispose();
 			fsDefault.readdirSync = readdir;
 			syncBuiltinESMExports();
