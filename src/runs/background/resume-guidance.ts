@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AsyncRunSummary } from "./async-status.ts";
 import { readAsyncRecoveryDescriptor } from "./async-resume.ts";
 import { errorWithoutReplyText } from "../shared/model-resolution.ts";
+import { waitToolName } from "../../shared/wait-tool-name.ts";
 
 const INTERCOM_DETACH_ERROR = "detached for intercom coordination";
 
@@ -13,7 +15,7 @@ function isIntercomDetached(run: AsyncRunSummary): boolean {
 
 function formatIntercomDetachGuidance(run: AsyncRunSummary): string | undefined {
 	if (!isIntercomDetached(run)) return undefined;
-	return `Run "${run.id}" detached for intercom coordination. Reply to the supervisor request first, then wait with bg_wait({ id: "${run.id}" }). Use subagent({ action: "status", id: "${run.id}" }) to recover the result; do not resume or launch a replacement while it remains detached.`;
+	return `Run "${run.id}" detached for intercom coordination. Reply to the supervisor request first, then wait with ${waitToolName()}({ id: "${run.id}" }). Use subagent({ action: "status", id: "${run.id}" }) to recover the result; do not resume or launch a replacement while it remains detached.`;
 }
 
 export function formatAsyncReviveCommand(run: AsyncRunSummary): string | undefined {
@@ -21,7 +23,7 @@ export function formatAsyncReviveCommand(run: AsyncRunSummary): string | undefin
 	const sessionFile = step?.sessionFile ?? (run.steps.length === 1 ? run.sessionFile : undefined);
 	if (!step || !sessionFile || !fs.existsSync(sessionFile)) return undefined;
 	try {
-		const descriptor = readAsyncRecoveryDescriptor(run.asyncDir);
+		const descriptor = readAsyncRecoveryDescriptor(path.dirname(run.asyncDir), path.basename(run.asyncDir));
 		if (!descriptor || descriptor.sourceRunId !== run.id || descriptor.agent !== step.agent) return undefined;
 	} catch {
 		return undefined;

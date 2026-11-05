@@ -37,7 +37,7 @@ When the Pi process that ran an async workflow exits before the workflow finishe
 
 A stopped run is continued by one relaunch only. While that relaunch exists, another relaunch of the same stopped run, by the same script or by `options.reuseFrom`, is refused with `workflow run '<id>' was resumed as <new id>; wait on it or stop it.` If that relaunch stops the same way, relaunch it instead: it carries the children of every run before it. If the Pi process that started the relaunch exits before the relaunch begins, the stopped run can be relaunched again.
 
-To continue a stopped run without sending its script again, resume it by id from the session that owns it: `subagent({ action: "resume", id: "<stopped run id>" })` with no `message`. Every async top-level workflow saves its launch (the script or named resource, its `args` and options) when it starts, and the resume relaunches that launch with `options.reuseFrom` set to the stopped run, in the stopped run's cwd, with no more authority than it had. A named resource is resolved again and must still have the same script. The new run records `workflow.resumeOrigin: { sourceRunId, attempt }`, where `attempt` counts the resumes that followed a Pi exit. Another session cannot resume the run by id; reopen the session that started it, or relaunch the same script with `options.reuseFrom`. When the run cannot be resumed this way (it started before launches were saved, was launched from `tasks` or `chain`, or its resource changed), the refusal says so; relaunch the same script by hand with `options: { reuseFrom: "<stopped run id>" }`.
+To continue a stopped run without sending its script again, resume it by id from the session that owns it: `subagent({ action: "resume", id: "<stopped run id>" })` with no `message`. Every async top-level workflow saves its launch (the script or named resource, its `args` and options) when it starts, outside its run directory, and the resume relaunches that launch with `options.reuseFrom` set to the stopped run, in the stopped run's cwd, with no more authority than it had. A named resource is resolved again and must still have the same script. The new run records `workflow.resumeOrigin: { sourceRunId, attempt }`, where `attempt` counts the resumes that followed a Pi exit. Another session cannot resume the run by id; reopen the session that started it, or relaunch the same script with `options.reuseFrom`. When the run cannot be resumed this way (it started before launches were saved outside run directories, was launched from `tasks` or `chain`, or its resource changed), the refusal says so; relaunch the same script by hand with `options: { reuseFrom: "<stopped run id>" }`.
 
 When the session that owns such a run is reopened or reloaded, the run is resumed this way automatically, once, if it was interrupted in the last 24 hours: for a Pi exit, measured from the last time the dead Pi process updated the run. Session start does not wait for the relaunch. A run that cannot be relaunched is named in its notice (`Not auto-resumed: …`, with how to continue by hand); a launch that fails after session start also posts one `Workflow <id> was not auto-resumed: <reason>.` message. Either way the run is not tried again. `/new` and forks do not resume the runs of the session they replaced. The `autoResume` setting turns this off; see [Configuration](configuration.md#autoresume).
 
@@ -50,6 +50,16 @@ After `/new`, `/resume`, or a fork in the same Pi process, the new session owns 
 Once the Pi process that started a background single, parallel, or chain run has exited, the run is reported once to a Pi window that has its session open, whether it finished while Pi was closed or finishes later. A workflow's children are reported through their workflow.
 
 Pi core may print a generic `pi -ne` extension-load hint; that out-of-repo hint is not protocol-approved fallback. A verified compaction abort may continue the retained child once on its already resolved model; it does not authorize an execution-mode or model switch.
+
+### Switching sessions with background work
+
+When a session with a UI has queued or running async work, live nested children, undelivered results, or supervisor questions, `/new`, `/resume`, `/fork`, and `/clone` first ask **pi-subagents: switch sessions?**:
+
+- **Stay here** (default, also Escape): cancel the switch. The work keeps running.
+- **Switch and take the work**: the new session takes the work over, as after any switch without the prompt.
+- **Switch and leave the work here**: the new session inherits nothing from this one. Async single, parallel, and chain runs keep running under this session; reopen it to get their results. Async workflows and detached foreground runs stop on any switch; a stopped workflow resumes automatically only if you reopen this session within 24 hours. A child's question can be answered only until it times out (10 minutes by default).
+
+Without outstanding work, or without a UI (`pi -p`, SDK sessions), there is no prompt and the new session takes the work over. Over RPC the prompt is a select dialog that counts as **Stay here** if the host does not answer within one minute. The prompt never enters model history.
 
 ## Prompt shortcuts
 
@@ -85,7 +95,7 @@ Workflow-level child controls default onto each `runs.run`/`runs.all` launch; ex
 
 Child results cross into the script as plain JSON data. Non-JSON host metadata is omitted, so use returned fields such as `runId`, `ok`, `output`, and `structuredOutput` for workflow control.
 
-On Node, each script runs in a new permission-restricted process that can read only its supervisor, worker and Acorn parser; Node denies file writes, other reads, child processes and nested workers. The process inherits no host startup flags, preloads or environment variables (except `SystemRoot` on Windows) and starts in Acorn's directory, because Node lets worker threads read their working directory. A small supervisor keeps IPC responsive, so a busy script is still killed when the parent disconnects. Each workflow gets its own process, terminated as soon as the workflow settles.
+On Node, each script runs in a new permission-restricted process that can read only its supervisor, worker and Acorn parser; Node denies file writes, other reads, child processes and nested workers. The process inherits no host startup flags, preloads or environment variables (except `SystemRoot` on Windows) and starts in Acorn's directory, because Node lets worker threads read their working directory. A small supervisor keeps IPC responsive, so a busy script is still killed when the parent disconnects. The process ends when the workflow settles.
 
 This is a permission layer around the VM, not an OS sandbox: network access stays open on Node 22 and 24, and child launches and `runs.host` commands still run in Pi under their own contracts. Bun has no permission model, so it keeps the in-process worker. If the Node process fails to start, the workflow fails; it never retries in an unrestricted worker.
 
@@ -136,6 +146,20 @@ subagent({ workflow: "parallel", args: { tasks: [{ agent: "reviewer", task: "Rev
 The host resolves the name and validates bounded plain-JSON `args` before starting the workflow. Resource provenance is recorded in workflow details and receipts for downstream permission/policy checks. Resource authority is not caller-supplied: `runs.host` is available only when the resolved resource explicitly grants the requested host key and command. Reply-block (`workflow: true`) and file-path scripts remain raw, unknown-provenance inputs, so their `runs.host` calls are unavailable through the public execution boundary. Named resources cannot be combined with `agent` or `task`; the package ships the `review`, `run-ci` and `parallel` resources, not a user/project resource registry.
 
 `parallel` runs independent children together without writing a script: `args.tasks` is a list of `{ agent, task, cwd?, model? }` items, the children run in one `runs.all` batch, and the result lists each child's output in order. `cwd` and `model` are optional per child and apply to that child only, as they do on a `runs.all` item, so one call can fan out across several repositories or mix models. A failed child fails the workflow. Use a workflow script when steps depend on each other.
+
+### Approving workflow children in permission extensions
+
+Before a workflow starts a child, pi-subagents makes a nested `subagent_launch` tool call, so permission extensions see it in their `tool_call` handler like any other tool call. This covers reply-block, file and named workflows, and `chain` and `tasks`. The call's input is `{ workflowRunId, key, agent?, task?, cwd?, model?, async?, worktree?, resume?, commands?, output? }`. `cwd` is the absolute directory the child starts in. It is left out for a resumed child, which keeps its earlier directory, and for a child placed on another machine. `commands` lists, in run order, the shell commands the child's `gate`, `acceptance.verify` or agent `acceptance` will run on this machine after the child finishes, each `{ command, cwd?, env? }`. A command's `cwd` is absolute and is left out when the child's is; for a `worktree: true` child it names the source directory, because the worktree does not exist yet. `env` lists only the variables the command sets on top of the parent's environment. `output` is the absolute path of the file the child's `output` writes. The other optional fields appear when the child request sets them. A blocked or failed call stops that child, so its commands never run and its output file is never written; it fails with `Workflow child '<key>' was not started: …` and the block reason. Allowed calls do nothing else. The tool is not declared to the model.
+
+Extensions that ask about tools they have no rule for ask once per workflow child until you allow `subagent_launch`. Ones that deny unknown tools without a UI, as in `pi -p`, refuse every workflow child until you allow it.
+
+Limits:
+- Children reused from an interrupted run's journal are not offered again; nothing new starts.
+- Starts with no tool call behind them are not offered: schedule ticks, auto-resume on session reopen, `/prompt-workflow` and prompt-template delegation, and RPC or SDK launches. Block `schedule.create`, set `authorityPolicy.scheduleCreate` to `"forbid"`, or set [`autoResume`](configuration.md#autoresume) to `false` to control those.
+- Workflows started inside child agents are not offered: children do not register `subagent_launch`. Neither are workflows in a session whose tool allowlist (`pi --tools …`) leaves it out.
+- Commands are offered at launch, not when they run. An extension's `bash` rules don't apply to them on their own; it has to check `commands`.
+- A resumed child's retained `acceptance.verify` commands are not listed again; only commands the resume request adds are.
+- `runs.host` is only available to built-in workflows (`run-ci` runs only `npm test` or `npm run typecheck`) and is not offered.
 
 ### Opt-in bounded workflows
 

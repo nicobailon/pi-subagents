@@ -12,6 +12,7 @@ import { ASYNC_DIR, type AsyncStatus, type Details, type SteeringRecoveryDescrip
 import { runChildSession, type StepSteerHandler } from "../../src/runs/background/run-child-session.ts";
 import type { ChildSession, ChildSessionFactory } from "../../src/runs/shared/child-session.ts";
 import type { InProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
 
 function createState(): SubagentState {
 	return {
@@ -142,14 +143,16 @@ async function readRequest(asyncDir: string): Promise<SteerRequest> {
 	});
 }
 
-function recoveryDescriptor(runId: string): SteeringRecoveryDescriptor {
+function recoveryDescriptor(runId: string, sessionFile?: string): SteeringRecoveryDescriptor {
 	const runFanoutBudget = createRunFanoutBudget(runId, 64);
 	budgetDirectories.push(runFanoutBudget.directory);
 	return {
 		version: 1,
 		runFanoutBudget,
 		sourceRunId: runId,
+		sessionId: "session",
 		agent: "worker-0",
+		...(sessionFile ? { sessionFile } : {}),
 		cwd: os.tmpdir(),
 		systemPromptMode: "replace",
 		inheritGlobalContext: false,
@@ -539,7 +542,7 @@ describe("acknowledged steering action", () => {
 		const sessionFile = path.join(asyncDir, "child.jsonl");
 		writeStatus(asyncDir, runningStatus(runId));
 		fs.writeFileSync(sessionFile, "", "utf-8");
-		writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor(runId));
+		writePrivateAtomicJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), recoveryDescriptor(runId, sessionFile));
 		const routeOnly = (requestPath: string): AsyncStatus => {
 			const request = JSON.parse(fs.readFileSync(requestPath, "utf-8")) as SteerRequest;
 			const routed = runningStatus(runId);
@@ -581,8 +584,8 @@ describe("acknowledged steering action", () => {
 		const sessionFile = path.join(asyncDir, "child.jsonl");
 		writeStatus(asyncDir, runningStatus(runId));
 		fs.writeFileSync(sessionFile, "", "utf-8");
-		const descriptorPath = path.join(asyncDir, "recovery-descriptor.json");
-		writePrivateAtomicJson(descriptorPath, recoveryDescriptor(runId));
+		const descriptorPath = recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir));
+		writePrivateAtomicJson(descriptorPath, recoveryDescriptor(runId, sessionFile));
 		if (process.platform !== "win32") assert.equal(fs.statSync(descriptorPath).mode & 0o777, 0o600);
 		let receivedLimits: unknown;
 		let recoveryStarted = false;
@@ -648,7 +651,7 @@ describe("acknowledged steering action", () => {
 		const runId = `steer-no-session-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		writeStatus(asyncDir, runningStatus(runId));
-		writePrivateAtomicJson(path.join(asyncDir, "recovery-descriptor.json"), recoveryDescriptor(runId));
+		writePrivateAtomicJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), recoveryDescriptor(runId));
 		let recovered = false;
 		let recoveryCommitted = false;
 		let routed: AsyncStatus | undefined;

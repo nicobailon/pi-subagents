@@ -4,12 +4,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { writeWorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
 import { applySteeringRecoveryAgentConfig, asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { parallelHandoffPath, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../../src/runs/shared/parallel-handoff.ts";
 import { cleanupWorktrees, createWorktrees } from "../../src/runs/shared/worktree.ts";
 import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
 
 function writeJson(filePath: string, value: object): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -107,10 +109,12 @@ describe("async resume lookup", () => {
 			const resultsDir = path.join(root, "results");
 			const sessionFile = path.join(root, "child-session.jsonl");
 			const parentAuthority = { version: 1 as const, allowedAgents: ["researcher", "worker"], denyExtensions: false, sources: ["workflow-parent"] };
+			const statusAuthority = { version: 1 as const, allowedAgents: ["anything"], denyExtensions: false, sources: ["status"] };
 			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeWorkflowLaunchRecord(asyncRoot, "workflow-2", { version: 2, sessionId: "session", source: "structured", scriptDigest: "d", admissionCapabilityCeiling: parentAuthority });
 			writeJson(path.join(asyncRoot, "workflow-2", "status.json"), {
 				runId: "workflow-2", mode: "workflow", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
-				admissionCapabilityCeiling: parentAuthority,
+				admissionCapabilityCeiling: statusAuthority,
 				steps: [{ agent: "worker", status: "complete", sessionFile, capabilityCeiling: { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["agent:worker"] } }],
 			});
 
@@ -125,9 +129,29 @@ describe("async resume lookup", () => {
 				admissionCapabilityCeiling: parentAuthority,
 				results: [{ agent: "worker", success: true, sessionFile }],
 			});
+			// The shared results directory is writable by runs, so a result file alone does not give a ceiling.
 			const resultOnly = resolveAsyncResumeTarget({ id: "workflow-2" }, { asyncDirRoot: asyncRoot, resultsDir });
-			assert.deepEqual(resultOnly.capabilityCeiling, parentAuthority);
-			assert.equal(asyncReviveRequiresRecoveryDescriptor(resultOnly), false);
+			assert.equal(resultOnly.capabilityCeiling, undefined);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor(resultOnly), true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("requires a recovery descriptor for a run that wrote a workflow status into its own directory", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-forged-workflow-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "other-session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncRoot, "single-1", "status.json"), {
+				runId: "single-1", mode: "workflow", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
+				admissionCapabilityCeiling: { version: 1, allowedAgents: ["worker"], denyExtensions: false, sources: ["forged"] },
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
+			});
+			const target = resolveAsyncResumeTarget({ id: "single-1" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			assert.equal(target.capabilityCeiling, undefined);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor(target), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -165,6 +189,94 @@ describe("async resume lookup", () => {
 				() => resolveAsyncResumeTarget({ id: "run-missing-cwd" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
 				/required managed worktree cwd is missing/,
 			);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("takes a managed worktree cwd from handoff.json only when it is the worktree the launch chose", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-forged-handoff-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-forged-handoff");
+			const sessionFile = path.join(root, "session.jsonl");
+			const launchedWorktree = path.join(root, "launched-worktree");
+			const victimRepo = path.join(root, "victim-repo");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.mkdirSync(launchedWorktree);
+			fs.mkdirSync(victimRepo);
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-forged-handoff", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
+			});
+			// The run wrote this into its own folder: cwd === repoRoot makes the cwd the cleanup path itself.
+			const handoffTo = (worktree: string) => writeJson(path.join(asyncDir, "handoff.json"), {
+				version: 1, runId: "run-forged-handoff", mode: "single", source: "async", cwd: root, createdAt: 100, updatedAt: 200,
+				groups: [{
+					stepIndex: 0, baseCommit: "deadbeef", repoRoot: root,
+					children: [{ index: 0, taskIndex: 0, agent: "worker", status: "completed", summary: "done", patch: { path: path.join(root, "patch"), branch: "branch", changed: false, diffStat: "", filesChanged: 0, insertions: 0, deletions: 0 } }],
+					cleanup: { state: "partial", pruned: true, tasks: [{ index: 0, path: worktree, branch: "branch", worktreeRemoved: false, branchRemoved: false, preserved: true }] },
+				}],
+			});
+			const descriptor = (managedWorktree?: unknown) => writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), {
+				version: 1, runFanoutBudget: createRunFanoutBudget("run-forged-handoff", 64), sourceRunId: "run-forged-handoff", agent: "worker", sessionFile, cwd: root,
+				systemPromptMode: "replace", inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+				...(managedWorktree ? { managedWorktree } : {}),
+			});
+			const resume = () => resolveAsyncResumeTarget({ id: "run-forged-handoff" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			handoffTo(victimRepo);
+
+			descriptor();
+			assert.deepEqual({ cwd: resume().cwd, managedWorktree: resume().managedWorktree }, { cwd: root, managedWorktree: undefined }, "a run launched without a worktree keeps the launch cwd");
+			descriptor({ provider: "native", cwd: launchedWorktree });
+			assert.throws(resume, /managed worktree .*victim-repo is not the worktree its launch created/);
+			handoffTo(launchedWorktree);
+			assert.equal(resume().cwd, launchedWorktree);
+			// Without handoff.json the recorded worktree is still required; the source checkout is never used.
+			fs.rmSync(path.join(asyncDir, "handoff.json"));
+			assert.equal(resume().cwd, launchedWorktree);
+			fs.rmSync(launchedWorktree, { recursive: true });
+			assert.throws(resume, /ran in a managed worktree .* that no longer exists; it cannot resume in the source checkout/);
+
+			// Worktrunk picks the path itself, so git must list it on the branch the launch requested.
+			const repo = path.join(root, "repo");
+			const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf-8" });
+			fs.mkdirSync(repo);
+			git("init", "-q");
+			git("-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
+			const worktrunkPath = path.join(root, "wt-launched");
+			git("worktree", "add", "-q", "-b", "pi/launched", worktrunkPath);
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...JSON.parse(fs.readFileSync(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), "utf-8")), cwd: repo, managedWorktree: { provider: "worktrunk", branch: "pi/launched" } });
+			handoffTo(victimRepo);
+			assert.throws(resume, /is not the worktree its launch created/);
+			handoffTo(worktrunkPath);
+			assert.equal(fs.realpathSync.native(resume().cwd!), fs.realpathSync.native(worktrunkPath));
+			fs.rmSync(path.join(asyncDir, "handoff.json"));
+			assert.equal(fs.realpathSync.native(resume().cwd!), fs.realpathSync.native(worktrunkPath));
+			git("worktree", "remove", "--force", worktrunkPath);
+			assert.throws(resume, /branch pi\/launched\) that no longer exists/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("trusts no recovery record for a run folder that is not directly under the runs root", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-nested-forgery-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			// A sandboxed run builds a runs-shaped tree inside its own folder and names it with `dir`.
+			const ownDir = path.join(asyncRoot, "own-run");
+			const fakeDir = path.join(ownDir, "fake-runs", "fake-run");
+			writeJson(path.join(fakeDir, "status.json"), { runId: "fake-run", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root, steps: [{ agent: "worker", status: "complete", sessionFile }] });
+			writeJson(recoveryDescriptorPath(path.join(ownDir, "fake-runs"), "fake-run"), {
+				version: 1, runFanoutBudget: createRunFanoutBudget("fake-run", 64), sourceRunId: "fake-run", agent: "worker", sessionFile, cwd: root, launcher: null,
+				systemPromptMode: "replace", inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+			});
+			const target = resolveAsyncResumeTarget({ dir: fakeDir }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			assert.equal(target.recoveryDescriptor, undefined);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor(target), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -358,7 +470,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("rejects unknown, cross-run, and wrong-agent recovery descriptors", () => {
+	it("rejects unknown and cross-run recovery descriptors and takes the run's identity from the descriptor", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-descriptor-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -371,19 +483,19 @@ describe("async resume lookup", () => {
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
 			const descriptor = {
-				version: 1, runFanoutBudget: createRunFanoutBudget("run-descriptor", 64), sourceRunId: "run-descriptor", agent: "worker", cwd: root, systemPromptMode: "replace",
+				version: 1, runFanoutBudget: createRunFanoutBudget("run-descriptor", 64), sourceRunId: "run-descriptor", agent: "worker", sessionFile, cwd: root, systemPromptMode: "replace",
 				inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
 			};
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, token: "must-not-be-accepted" });
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...descriptor, token: "must-not-be-accepted" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /unknown field 'token'/);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), {
 				...descriptor,
 				capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true },
 			});
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /capabilityCeiling sources/);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), {
 				...descriptor,
 				launchContractDigest: "launch-contract-digest",
 				allowNestedSubagents: true,
@@ -408,31 +520,56 @@ describe("async resume lookup", () => {
 			} as AgentConfig;
 			assert.deepEqual(applySteeringRecoveryAgentConfig(currentAgent, valid.recoveryDescriptor!).allowedAgents, ["scout", "worker"]);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, allowedAgents: [] });
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...descriptor, allowedAgents: [] });
 			const denied = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
 			assert.deepEqual(applySteeringRecoveryAgentConfig(currentAgent, denied.recoveryDescriptor!).allowedAgents, []);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), descriptor);
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), descriptor);
 			const unrestricted = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
 			assert.equal(applySteeringRecoveryAgentConfig(currentAgent, unrestricted.recoveryDescriptor!).allowedAgents, undefined);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, allowNestedSubagents: "true" });
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...descriptor, allowNestedSubagents: "true" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /allowNestedSubagents/);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, allowedAgents: ["bad name"] });
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...descriptor, allowedAgents: ["bad name"] });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /allowedAgents entry 'bad name'/);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, extensionBindings: { invalid: true } });
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...descriptor, extensionBindings: { invalid: true } });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /namespace/);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, requiredExtensions: [{ id: "unsafe id", path: "/provider.mjs" }] });
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...descriptor, requiredExtensions: [{ id: "unsafe id", path: "/provider.mjs" }] });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /safe id/);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, sourceRunId: "another-run" });
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...descriptor, sourceRunId: "another-run" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, agent: "another-agent" });
-			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /not 'worker'/);
+			// With a descriptor, status.json does not choose the agent, transcript, cwd or ceiling: a run
+			// behind a runner launcher can rewrite it to point at another run's transcript.
+			const otherTranscript = path.join(root, "other-run-session.jsonl");
+			fs.writeFileSync(otherTranscript, "", "utf-8");
+			fs.mkdirSync(path.join(root, "elsewhere"));
+			writeJson(path.join(asyncDir, "status.json"), {
+				runId: "run-descriptor", mode: "workflow", state: "paused", startedAt: 100, lastUpdate: 200, cwd: path.join(root, "elsewhere"),
+				capabilityCeiling: { version: 1, allowedTools: ["bash"], denyExtensions: false, sources: ["forged"] },
+				steps: [{ agent: "another-agent", status: "paused", sessionFile: otherTranscript, model: "forged/model" }],
+			});
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...descriptor, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["launch"] } });
+			const fromDescriptor = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.deepEqual(
+				{ mode: fromDescriptor.mode, agent: fromDescriptor.agent, sessionFile: fromDescriptor.sessionFile, cwd: fromDescriptor.cwd, model: fromDescriptor.model, capabilityCeiling: fromDescriptor.capabilityCeiling },
+				{ mode: "single", agent: "worker", sessionFile, cwd: root, model: undefined, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: true, sources: ["launch"] } },
+			);
+			// The owner is the descriptor's session too, whatever status.json claims.
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), { ...descriptor, sessionId: "owner-session" });
+			writeJson(path.join(asyncDir, "status.json"), { runId: "run-descriptor", sessionId: "intruder-session", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root, steps: [{ agent: "worker", status: "paused", sessionFile }] });
+			assert.equal(resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "owner-session" }).agent, "worker");
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }, { sessionId: "intruder-session" }), /not found in the active session/);
+			// A descriptor left in the run folder by an earlier version is not read.
+			fs.rmSync(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)));
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), descriptor);
+			const legacy = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(legacy.recoveryDescriptor, undefined);
+			assert.equal(asyncReviveRequiresRecoveryDescriptor(legacy), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -455,6 +592,7 @@ describe("async resume lookup", () => {
 				runFanoutBudget: createRunFanoutBudget("run-turn-budget", 64),
 				sourceRunId: "run-turn-budget",
 				agent: "worker",
+				sessionFile,
 				cwd: root,
 				systemPromptMode: "replace",
 				inheritGlobalContext: false,
@@ -464,7 +602,7 @@ describe("async resume lookup", () => {
 				maxSubagentDepth: 2,
 				share: false,
 			};
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), {
 				...descriptor,
 				initialTurnBudget: {
 					maxTurns: 8,
@@ -481,7 +619,7 @@ describe("async resume lookup", () => {
 
 			assert.equal("initialTurnBudget" in (target.recoveryDescriptor ?? {}), false);
 
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), {
 				...descriptor,
 				initialTurnBudget: { maxTurns: 8, graceTurns: 2, unrelated: true },
 			});
@@ -504,11 +642,12 @@ describe("async resume lookup", () => {
 				runId: "run-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), {
 				version: 1,
 				runFanoutBudget: createRunFanoutBudget("run-acceptance", 64),
 				sourceRunId: "run-acceptance",
 				agent: "worker",
+				sessionFile,
 				cwd: root,
 				systemPromptMode: "replace",
 				inheritGlobalContext: false,
@@ -553,7 +692,7 @@ describe("async resume lookup", () => {
 				runId: "run-reviewed-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), {
 				version: 1,
 				runFanoutBudget: createRunFanoutBudget("run-reviewed-acceptance", 64),
 				sourceRunId: "run-reviewed-acceptance",
@@ -597,7 +736,7 @@ describe("async resume lookup", () => {
 				runId: "run-inferred-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
 			});
-			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
+			writeJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), {
 				version: 1,
 				runFanoutBudget: createRunFanoutBudget("run-inferred-acceptance", 64),
 				sourceRunId: "run-inferred-acceptance",

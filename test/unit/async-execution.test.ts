@@ -30,7 +30,7 @@ const ctx = {
 };
 
 describe("async runner execution", () => {
-	it("propagates static parallel machine placement before agent pins and rejects group worktrees", { skip: process.platform === "win32" ? "Herdr saved-machine launches are unsupported on Windows" : undefined }, (t) => {
+	it("propagates static parallel machine placement before agent pins, rejects group worktrees, and tells a placed child to return its output", { skip: process.platform === "win32" ? "Herdr saved-machine launches are unsupported on Windows" : undefined }, (t) => {
 		const bin = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-bin-"));
 		const herdr = path.join(bin, "herdr");
 		fs.writeFileSync(herdr, "#!/bin/sh\necho '[{\"id\":\"machine-1\",\"label\":\"workmac\",\"target\":\"host.example\",\"enabled\":true}]'\n", "utf-8");
@@ -64,28 +64,16 @@ describe("async runner execution", () => {
 		});
 		assert.ok("error" in rejected);
 		assert.match(rejected.error, /managed worktrees are local git operations/u);
-	});
 
-	it("tells a child on a Herdr machine to return its output instead of writing a parent-side path", { skip: process.platform === "win32" ? "Herdr saved-machine launches are unsupported on Windows" : undefined }, (t) => {
-		const bin = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-bin-"));
-		const herdr = path.join(bin, "herdr");
-		fs.writeFileSync(herdr, "#!/bin/sh\necho '[{\"id\":\"machine-1\",\"label\":\"workmac\",\"target\":\"host.example\",\"enabled\":true}]'\n", { mode: 0o755 });
-		const previousHerdrBin = process.env.HERDR_BIN;
-		process.env.HERDR_BIN = herdr;
-		t.after(() => {
-			if (previousHerdrBin === undefined) delete process.env.HERDR_BIN;
-			else process.env.HERDR_BIN = previousHerdrBin;
-			fs.rmSync(bin, { recursive: true, force: true });
-		});
-		const built = buildAsyncRunnerSteps("herdr-output", {
+		const placed = buildAsyncRunnerSteps("herdr-output", {
 			chain: [{ agent: "worker", task: "Inspect", machine: "workmac", cwd: "/remote/repo", output: "/parent/report.md" }],
 			agents: [{ ...agent("worker"), tools: ["read", "write"] }],
 			ctx,
 			asyncDir: path.join(bin, "async"),
 			maxSubagentDepth: 1,
 		});
-		assert.ok("steps" in built, "error" in built ? built.error : undefined);
-		const step = built.steps[0];
+		assert.ok("steps" in placed, "error" in placed ? placed.error : undefined);
+		const step = placed.steps[0];
 		assert.ok(step && "task" in step);
 		assert.match(step.task, /Return the complete artifact in your final response\./u);
 		assert.doesNotMatch(step.task, /Write your findings to/u);
@@ -339,7 +327,6 @@ describe("async runner execution", () => {
 			() => assertClaudeCodeOverrideIsLocal("cc", "workmac", { args: ["--effort", "low"] }),
 			/cannot be honored on a saved machine/u,
 		);
-		// A local launch, or one that pins nothing, is unaffected.
 		assert.doesNotThrow(() => assertClaudeCodeOverrideIsLocal("cc", undefined, { args: ["--model", "opus"], model: "opus" }));
 		assert.doesNotThrow(() => assertClaudeCodeOverrideIsLocal("cc", "workmac", undefined));
 	});

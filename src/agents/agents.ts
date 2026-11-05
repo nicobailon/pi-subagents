@@ -1,7 +1,3 @@
-/**
- * Agent discovery and configuration
- */
-
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import { parse as parseYaml } from "yaml";
@@ -1609,7 +1605,6 @@ function applyBuiltinOverrides(
 		const projectOverride = projectSettings.overrides[agent.name];
 		const userOverride = userSettings.overrides[agent.name];
 		if (projectOverride && projectSettingsPath) {
-			// Apply user then project so project fields win without dropping user-only fields.
 			const withUserOverride = userOverride
 				? applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath })
 				: agent;

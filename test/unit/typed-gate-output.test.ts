@@ -121,6 +121,35 @@ describe("typed gate output", () => {
 		assert.match(empty.verifyRuns[0]?.structuredOutputError ?? "", /printed nothing/);
 	});
 
+	it("parses stdout before env redaction, then redacts secrets in the exposed value", async () => {
+		const cwd = tempGitRepo();
+		const run = (stdout: string) => evaluateAcceptance({
+			acceptance: resolveEffectiveAcceptance({
+				agentName: "reviewer",
+				task: "Review the report.",
+				explicit: { level: "verified", verify: [{
+					id: "gate",
+					command: printing(stdout),
+					output: "json",
+					env: { KDE_FULL_SESSION: "true", GATE_TOKEN: "gate-secret-value", GATE_PASSWORD: "48213907", GATE_API_KEY: "12345678901234567890" },
+				}] },
+				agentContract: { version: 1 },
+			}),
+			output: "done",
+			cwd,
+			reportOptional: true,
+		});
+		const ledger = await run('{"output_exists":true,"note":"key gate-secret-value","pin":48213907,"long":12345678901234567890,"n":1.5}');
+		assert.equal(ledger.status, "verified");
+		assert.deepEqual(typedVerifyOutput(ledger), { value: { output_exists: true, note: "key [REDACTED]", pin: "[REDACTED]", long: "[REDACTED]", n: 1.5 } });
+		assert.doesNotMatch(ledger.verifyRuns[0]?.stdout ?? "", /gate-secret-value/);
+
+		const invalid = await run("token=gate-secret-value");
+		assert.equal(invalid.status, "rejected");
+		assert.match(invalid.verifyRuns[0]?.structuredOutputError ?? "", /not valid JSON/);
+		assert.doesNotMatch(invalid.verifyRuns[0]?.structuredOutputError ?? "", /gate-/);
+	});
+
 	it("leaves string gates and non-json verify commands untouched", async () => {
 		const cwd = tempGitRepo();
 		const plain = await runGate(printing('{"verdict":"blocked"}'), cwd);

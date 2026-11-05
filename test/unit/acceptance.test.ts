@@ -474,22 +474,18 @@ describe("acceptance gates", () => {
 			assert.deepEqual(parsed.report?.[field], [], `${field}: empty-string entries dropped`);
 		}
 
-		// Mixed arrays keep only meaningful entries.
 		const mixed = parseAcceptanceReport(report({ reviewFindings: ["blocker: file.ts:12", ""] }));
 		assert.equal(mixed.error, undefined);
 		assert.deepEqual(mixed.report?.reviewFindings, ["blocker: file.ts:12"]);
 
-		// Whitespace-only entries are treated as empty.
 		const whitespace = parseAcceptanceReport(report({ validationOutput: ["  "] }));
 		assert.equal(whitespace.error, undefined);
 		assert.deepEqual(whitespace.report?.validationOutput, []);
 
-		// A single string is still coerced to a one-item array.
 		const coerced = parseAcceptanceReport(report({ changedFiles: "src/file.ts" }));
 		assert.equal(coerced.error, undefined);
 		assert.deepEqual(coerced.report?.changedFiles, ["src/file.ts"]);
 
-		// Structural garbage (non-string entries) is still rejected.
 		const invalid = parseAcceptanceReport(report({ reviewFindings: [{}] }));
 		assert.equal(invalid.report, undefined);
 		assert.match(invalid.error ?? "", /reviewFindings\[0\]: expected non-empty string; got object/);

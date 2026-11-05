@@ -1,9 +1,6 @@
-/**
- * TypeBox schemas for subagent tool parameters
- */
-
 import { Type } from "typebox";
 import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
+import { RUNNER_LAUNCHER_NAME_PATTERN } from "../shared/types.ts";
 import { MAX_ARGS_BYTES, MAX_ARGS_DEPTH, MAX_ARGS_FIELDS, MAX_ARGS_ITEMS } from "../workflows/workflow-resources.ts";
 
 function keepTopLevelParameterDescriptions<T>(schema: T): T {
@@ -247,6 +244,10 @@ const SubagentParamProperties = {
 	agentScope: Type.Optional(Type.String({ description: "user/project/both (default); project wins collisions." })),
 	cwd: Type.Optional(Type.String({ description: "Execution/project-pane directory." })),
 	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label (runs an external CLI agent), a Rex host named in settings (runs a Pi child), or \"local\" (a Pi child in a Rex pane here). On another machine, cwd is a directory there." })),
+	requireLauncher: Type.Optional(Type.Object({
+		name: Type.String({ pattern: RUNNER_LAUNCHER_NAME_PATTERN.source }),
+		definitionDigest: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+	}, { additionalProperties: false, description: "Top-level single async launch only: refuse unless the agent runs under this launcher with this definition digest (preflight agent.definitionDigest)." })),
 	artifacts: Type.Optional(Type.Boolean({ description: "Debug artifacts; default true." })),
 	includeProgress: Type.Optional(Type.Boolean({ description: "Full result progress; default false." })),
 	share: Type.Optional(Type.Boolean({ description: "Upload session to GitHub Gist; default false." })),

@@ -60,8 +60,7 @@ function makeCtx(sessionId: string, sessionFile: string | null = null): { cwd: s
 
 /**
  * Write an ask directly to the channel the way a child's `contact_supervisor` call does, without
- * going through a live poller. This is the state the wave-11 incident was in: the request file was
- * on disk and no scan had happened yet.
+ * going through a live poller.
  */
 function writeRequest(input: { sessionId: string; runId: string; agent?: string; index?: number; message?: string; reason?: "need_decision" | "progress_update"; expiresAt?: number }): string {
 	const agent = input.agent ?? "worker";
@@ -901,9 +900,8 @@ describe("supervisor ask registration", () => {
 		} finally { channel.dispose(); }
 	});
 
-	// D1: `refreshPendingRequests` only re-evaluates asks already in `pending`; it never reads the
-	// filesystem. With no watcher installed and the demand-gated poller stopped, an ask written by
-	// a child was unfindable by ANY number of `action:"pending"` calls.
+	// `refreshPendingRequests` only re-evaluates asks already in `pending`; it never reads the
+	// filesystem.
 	it("discovers an ask written while nothing was polling", async () => {
 		const sessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;

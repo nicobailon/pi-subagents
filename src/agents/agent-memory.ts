@@ -34,7 +34,6 @@ function unquoteFrontmatterValue(value: string): string {
 	return trimmed;
 }
 
-/** Parse a `memory` frontmatter block string into a typed config, or undefined if invalid. */
 export function parseMemoryFrontmatter(raw: string | undefined): AgentMemoryConfig | undefined {
 	if (!raw) return undefined;
 	const entries = new Map<string, string>();
@@ -60,7 +59,7 @@ export function parseMemoryFrontmatter(raw: string | undefined): AgentMemoryConf
 	return { scope, path: scopedPath };
 }
 
-/** Whether an agent can write files this run (inherits default builtins when `tools` is unset). */
+/** Inherits default builtins when `tools` is unset. */
 export function agentHasWriteTools(agent: Pick<AgentConfig, "tools">): boolean {
 	const tools = agent.tools;
 	if (!tools) return true;
@@ -158,8 +157,6 @@ function resolveProjectMemoryRoot(projectRoot: string): string {
 }
 
 /**
- * Resolve a memory directory under `rootDir` for the given scoped path.
- *
  * Rejects empty paths, `.`/`..` segments, paths that escape the root, and
  * existing directories whose real path (via symlink) lands outside the root.
  */

@@ -768,7 +768,6 @@ describe("registerSubagentNotify", () => {
 		assert.match((sent[0]!.message as { content: string }).content, /Background task completed: \*\*ok-1\*\*/);
 		assert.match((sent[1]!.message as { content: string }).content, /Background task failed: \*\*fail-1\*\*/);
 
-		// No deferred emission should arrive later.
 		clock.advance(1000);
 		assert.equal(sent.length, 2);
 	});

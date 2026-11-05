@@ -46,7 +46,7 @@ export type ScheduledRunAction = typeof SCHEDULED_RUN_ACTIONS[number];
 export type ScheduleRunState = "running" | "skipped" | "missed" | "completed" | "failed_launch" | "failed_run";
 export type ScheduleTrigger =
 	| { kind: "once"; at: string; nextRunAt?: string }
-	| { kind: "interval"; every: string; everyMs: number; anchorAt: string; nextRunAt: string }
+	| { kind: "interval"; every: string; everyMs: number; anchorAt: string; nextRunAt?: string }
 	| CalendarTrigger;
 export type ScheduleTarget = { workflowScript: string; args: Record<string, unknown>; baseRef?: string; missionId?: string };
 
@@ -95,6 +95,8 @@ type ScheduledRunManagerDeps = {
 	resolveCapabilityCeiling?: (sessionId: string) => ResolvedSubagentCapabilityCeiling | undefined;
 	timers?: ScheduledRunTimers;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+	/** Shows a warning once per key without drawing over the editor. */
+	reportWarning?: (message: string, key: string) => void;
 };
 
 export function isScheduledRunAction(action: unknown): action is ScheduledRunAction {
@@ -153,6 +155,11 @@ export function parseScheduleInterval(every: string): number {
 
 function timestamp(value: number): string {
 	return new Date(value).toISOString();
+}
+
+/** One-line message for a caught value; a stack trace is never useful in a session warning. */
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 function validateScheduleId(id: string): string {
@@ -339,7 +346,8 @@ function parseSchedule(value: unknown, file: string): ScheduleRecord {
 	if (record.trigger.kind === "once") {
 		if (typeof record.trigger.at !== "string" || (record.trigger.nextRunAt !== undefined && typeof record.trigger.nextRunAt !== "string")) throw new Error(`Schedule record '${file}' has an invalid one-shot trigger.`);
 	} else if (record.trigger.kind === "interval") {
-		if (typeof record.trigger.every !== "string" || typeof record.trigger.everyMs !== "number" || typeof record.trigger.anchorAt !== "string" || typeof record.trigger.nextRunAt !== "string") throw new Error(`Schedule record '${file}' has an invalid interval trigger.`);
+		// A paused interval record may omit nextRunAt; resuming it supplies one.
+		if (typeof record.trigger.every !== "string" || typeof record.trigger.everyMs !== "number" || typeof record.trigger.anchorAt !== "string" || ((!record.paused || record.trigger.nextRunAt !== undefined) && typeof record.trigger.nextRunAt !== "string")) throw new Error(`Schedule record '${file}' has an invalid interval trigger.`);
 	} else if (record.trigger.kind === "calendar") {
 		restoreCalendarTrigger(record.trigger); // Validate without rewriting during read-only list/show.
 	} else throw new Error(`Schedule record '${file}' has an unsupported trigger.`);
@@ -544,25 +552,12 @@ function snapshotContext(ctx: ExtensionContext, cwd: string): ExtensionContext {
 	return { ...ctx, cwd, sessionManager };
 }
 
-/**
- * 规范化会话文件路径, 兼容 Windows 路径大小写差异.
- *
- * @param value 会话文件路径
- * @returns 规范化后的路径, 空值时返回 undefined
- */
 function normalizedSessionFile(value: string | undefined): string | undefined {
 	if (!value || !value.trim()) return undefined;
 	const normalized = path.normalize(path.resolve(value));
 	return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-/**
- * 判断 Schedule 是否属于当前 Pi 会话.
- *
- * @param schedule Schedule 记录
- * @param ctx 当前 Pi 会话上下文
- * @returns 是否允许当前会话执行该 Schedule
- */
 function scheduleBelongsToSession(schedule: ScheduleRecord, ctx: ExtensionContext): boolean {
 	if (schedule.sessionOnly !== true) return true;
 	const ownerSessionFile = normalizedSessionFile(schedule.ownerSessionFile);
@@ -652,7 +647,7 @@ export class ScheduledRunManager {
 			try {
 				ids = store.ids();
 			} catch (error) {
-				console.error(`Failed to inspect schedule store '${store.root}' during async completion:`, error);
+				this.deps.reportWarning?.(`Failed to inspect schedule store '${store.root}': ${errorText(error)}`, `schedule-store:${store.root}:${errorText(error)}`);
 				continue;
 			}
 			for (const id of ids) {
@@ -665,7 +660,8 @@ export class ScheduledRunManager {
 					this.finishRun(store, schedule, run, data.success === true, typeof data.summary === "string" ? data.summary : undefined);
 					return;
 				} catch (error) {
-					console.error(`Failed to inspect schedule '${id}' in '${store.root}' during async completion:`, error);
+					// Runs on every async completion, so the key holds no error text: one warning per record.
+					this.deps.reportWarning?.(`Failed to inspect schedule '${id}' in '${store.root}': ${errorText(error)}`, `schedule-record:${store.root}:${id}`);
 				}
 			}
 		}
@@ -755,6 +751,9 @@ export class ScheduledRunManager {
 		const schedule = this.resolve(params);
 		if (schedule.paused === paused) return textResult(`Schedule ${schedule.id} is already ${paused ? "paused" : "active"}.`, [schedule]);
 		schedule.paused = paused;
+		// A record paused without a next run must get one back here, or resuming would leave a
+		// schedule that is active and never fires.
+		if (!paused && schedule.trigger.kind === "interval" && schedule.trigger.nextRunAt === undefined) schedule.trigger.nextRunAt = timestamp(this.now() + schedule.trigger.everyMs);
 		schedule.updatedAt = timestamp(this.now());
 		this.requireStore().write(schedule);
 		this.requireStore().appendEvent(schedule, paused ? "schedule.paused" : "schedule.resumed");

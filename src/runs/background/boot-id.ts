@@ -33,19 +33,17 @@ export function currentBootId(): string | undefined {
 	return value;
 }
 
-/** This process as a recorded pid, without the fields the platform does not have. */
 export function currentRecordedPid(): RecordedPid {
 	const pidNamespaceScope = currentPidNamespaceScope();
 	const bootId = currentBootId();
 	return { pid: process.pid, ...(pidNamespaceScope ? { pidNamespaceScope } : {}), ...(bootId ? { bootId } : {}) };
 }
 
-/** Fixes the boot id without reading the OS; runners take Pi's value from their config. */
+/** Runners take Pi's value from their config. */
 export function primeBootId(value: string | undefined): void {
 	runtime[BOOT_ID_KEY] = { value };
 }
 
-/** Clears the cache so the next read calls `nextReader` (default: the OS reader). */
 export function resetBootIdForTesting(nextReader?: () => string | undefined): void {
 	reader = nextReader ?? readBootIdFromOs;
 	delete runtime[BOOT_ID_KEY];

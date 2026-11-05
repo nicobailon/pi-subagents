@@ -42,7 +42,6 @@ export function formatSubagentModelVerificationError(
 	return `model_verification_failed: native Pi child reported a different model than the launch candidate. Expected '${expectedModel}' but observed '${observedModel}'. If you have independently verified this response ID identifies the requested model, declare the exact mapping in modelResponseAliases in ~/.pi/agent/extensions/subagent/config.json (see docs/configuration.md#modelresponsealiases). Use the resolved provider/model ID without its thinking suffix as the key. This leaves the outgoing request unchanged. Configuration changes affect new independent native runs; resumed native runs retain their launch-time declaration. External CLI adapters do not use this setting.`;
 }
 
-/** Sentinel model value requesting that a subagent inherit the parent session's model. */
 export const INHERIT_MODEL = "inherit";
 
 /** Minimal shape of the parent session's in-memory model (`ctx.model`). */
@@ -290,6 +289,17 @@ function closestModelCandidates(model: string, availableModels: AvailableModelIn
 		.map((entry) => `${entry.fullId}${thinkingSuffix}`);
 }
 
+/** A configured pin that launch refuses because the registry cannot resolve it. An empty registry checks nothing. */
+export function isUnavailableSubagentModel(
+	model: string | undefined,
+	availableModels: AvailableModelInfo[] | undefined,
+	preferredProvider?: string,
+): boolean {
+	const trimmed = model?.trim();
+	if (!trimmed || trimmed === INHERIT_MODEL || !availableModels?.length) return false;
+	return resolveSubagentModelCandidate(trimmed, availableModels, preferredProvider) === undefined;
+}
+
 function resolveRequiredSubagentModelCandidate(
 	model: string,
 	availableModels: AvailableModelInfo[] | undefined,
@@ -430,7 +440,6 @@ export interface ResolveModelSelectionOptions {
 	onWarn?: (violation: ModelScopeViolation) => void;
 	/** The primary model came from the running parent session, not configuration. */
 	primaryModelFromParent?: boolean;
-	/** How the model was selected. */
 	origin?: ModelOrigin;
 }
 

@@ -1,20 +1,14 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { listBackgroundWorkProviders } from "../../api/background-work.ts";
 import { ReadonlyDrainObservation } from "./readonly-drain-observation.ts";
 import registerFanoutChildSubagentExtension, { createChildSafeState } from "../../extension/fanout-child.ts";
 import registerSubagentFastModeExtension from "./fast-mode-extension.ts";
 import registerSubagentPromptRuntime, { registerSubagentPromptBoundary } from "./subagent-prompt-runtime.ts";
+import { structuredOutputValidatorReady } from "./structured-output.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
-import type { ChildSessionLaunch } from "./child-session.ts";
+import type { ChildHookExtension, ChildSessionLaunch } from "./child-session.ts";
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { projectRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
-
-/** Inline extension shape accepted by pi's resource loader (`extensionFactories`). */
-export interface ChildHookExtension {
-	name: string;
-	factory: (pi: ExtensionAPI) => void;
-}
 
 type OwnedCapture = Required<Pick<ChildRuntimeConfig, "toolDiagnostic" | "runtimeAcknowledgements">>;
 type PromptProof = { config: ChildRuntimeConfig; snapshot: string; factories?: ChildHookExtension["factory"][]; observeNext?: ReadonlyDrainObservation; observation?: ReadonlyDrainObservation; capture?: OwnedCapture; reporting?: { launch: ChildSessionLaunch; callback: ChildSessionLaunch["onExtensionError"] } };
@@ -158,10 +152,16 @@ function childHooks(config: ChildRuntimeConfig, capture?: OwnedCapture, holdFina
 	}
 	const hooks: ChildHookExtension[] = [
 		{ name: "pi-subagents:prompt-runtime", factory: function promptRuntime(pi) {
-			if (!proof?.observeNext) return registerSubagentPromptRuntime(pi, runtime);
-			proof.observation = proof.observeNext;
-			proof.observeNext = undefined;
-			registerSubagentPromptRuntime(pi, runtime, proof.observation);
+			if (!proof?.observeNext) {
+				registerSubagentPromptRuntime(pi, runtime);
+			} else {
+				proof.observation = proof.observeNext;
+				proof.observeNext = undefined;
+				registerSubagentPromptRuntime(pi, runtime, proof.observation);
+			}
+			// Pi awaits extension factories, so structured_output's synchronous prepareArguments has its
+			// validator before the model can call it.
+			if (runtime.structuredOutput) return structuredOutputValidatorReady();
 		} },
 	];
 	if (config.fast) hooks.push({ name: "pi-subagents:fast-mode", factory: (pi) => registerSubagentFastModeExtension(pi) });

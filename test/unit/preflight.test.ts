@@ -141,7 +141,7 @@ describe("public launch contract preflight", () => {
 		assert.equal(projectScope.code, "restricted_agent");
 		assert.match(projectScope.message, /agentScope: "project" requires project trust/u);
 
-		// Omitted trust keeps the project's settings, as before.
+		// Omitted trust keeps the project's settings.
 		const trusted = await resolveSubagentLaunchContract({ agent: "probe", cwd, availableModels });
 		assert.equal(trusted.ok && trusted.contract.model, "openai/astra");
 	});

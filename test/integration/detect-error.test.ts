@@ -19,9 +19,6 @@ try {
 	available = false;
 }
 
-/**
- * Helper to create a tool result message (success or error).
- */
 function toolResult(toolName: string, text: string, isError = false): Record<string, unknown> {
 	return {
 		role: "toolResult",
@@ -42,7 +39,6 @@ function assistantMsg(text: string): Record<string, unknown> {
 	};
 }
 
-/** Assistant message with only a tool call, no text content */
 function assistantToolCall(toolName: string): Record<string, unknown> {
 	return {
 		role: "assistant",
@@ -54,8 +50,6 @@ function assistantToolCall(toolName: string): Record<string, unknown> {
 }
 
 describe("detectSubagentError", { skip: !available ? "utils not importable" : undefined }, () => {
-	// ---- Basic detection (must still work) ----
-
 	it("returns no error for empty messages", () => {
 		assert.equal(detectSubagentError([]).hasError, false);
 	});
@@ -170,8 +164,6 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 		assert.equal(result.errorType, "write");
 	});
 
-	// ---- Edge cases ----
-
 	it("flags error when no assistant messages at all", () => {
 		const messages = [
 			toolResult("read", "ok"),
@@ -216,7 +208,6 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 	});
 
 	it("handles multiple errors with recovery between them", () => {
-		// Error → recovery → error → recovery
 		const messages = [
 			toolResult("read", "ENOENT: no such file", true),
 			assistantMsg("File not found, trying alternative..."),
@@ -228,8 +219,6 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 		assert.equal(result.hasError, false,
 			"all errors have recovery — agent completed successfully");
 	});
-
-	// ---- Real-world regression test ----
 
 	it("real-world: 19-read review run with trailing EISDIR", () => {
 		// Simulate the actual _impl-reviewer run that produced a false positive

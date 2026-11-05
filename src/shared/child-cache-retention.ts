@@ -8,8 +8,7 @@ import type { StreamFn } from "@earendil-works/pi-agent-core";
  * parent keeps `long`, the same split Claude Code makes between its main
  * conversation and its subagents.
  *
- * Unset means children inherit the parent's retention, which is the behaviour
- * before this setting existed.
+ * Unset means children inherit the parent's retention.
  */
 export function childCacheRetention(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return env.PI_SUBAGENT_CACHE_RETENTION || undefined;

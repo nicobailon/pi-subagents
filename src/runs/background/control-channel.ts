@@ -123,32 +123,26 @@ const STOP_INBOX_CLOSED_MESSAGE = "Runner stop inbox is closed. Retry stop after
 const MAX_STEER_MESSAGE_BYTES = 128 * 1024;
 const MAX_STEER_REQUEST_ID_LENGTH = 256;
 
-/** Control inbox directory inside an async run dir. */
 export function controlInboxDir(asyncDir: string): string {
 	return path.join(asyncDir, "control");
 }
 
-/** Path of the portable interrupt request file. */
 export function interruptRequestPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), "interrupt.json");
 }
 
-/** Path of the portable timeout request file. */
 export function timeoutRequestPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), "timeout.json");
 }
 
-/** Path of the portable manual stop request file. */
 export function stopRequestPath(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), "stop.json");
 }
 
-/** Directory of parent-to-runner stop requests. */
 export function stopRequestsDir(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), STOP_REQUESTS_DIR);
 }
 
-/** Directory of parent-to-runner steering requests. */
 export function steerRequestsDir(asyncDir: string): string {
 	return path.join(controlInboxDir(asyncDir), STEER_REQUESTS_DIR);
 }

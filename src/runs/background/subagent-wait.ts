@@ -68,12 +68,12 @@ import { toAgentToolUsage } from "../../shared/utils.ts";
 import { collectWaitCompletions } from "./wait-completions.ts";
 import { formatResumeFirstFailedRunsNote } from "./resume-guidance.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
+import { waitToolName } from "../../shared/wait-tool-name.ts";
 export { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, type ResolvedWaitToolConfig } from "./wait-config.ts";
 
-/** States that mean a run is still in flight (not yet resolved). */
 const ACTIVE_STATES: ReadonlyArray<AsyncRunSummary["state"]> = ["queued", "running"];
 
-const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_POLL_INTERVAL_MS = 250;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
@@ -142,7 +142,6 @@ export interface SubagentWaitDeps {
 	events?: WaitEventBus;
 }
 
-/** Bus channels that indicate a run changed state or needs attention. */
 const WAKE_CHANNELS = [
 	INTERCOM_DETACH_REQUEST_EVENT,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -253,11 +252,10 @@ function foregroundChildrenNeedingAttention(run: ForegroundResumeRun, indices: S
 function formatForegroundAttention(run: ForegroundResumeRun, children: ReturnType<typeof foregroundChildrenNeedingAttention>, elapsedMs: number): AgentToolResult<Details> {
 	const childList = children.map((child) => `${child.agent}${child.index !== undefined ? `#${child.index}` : ""}`).join(", ");
 	return result(
-		`Waited ${formatDuration(elapsedMs)} for remembered detached foreground run "${run.runId}"; attention required. ${children.length} child run(s) need attention: ${childList}. Reply to any pending supervisor request, then call bg_wait({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`,
+		`Waited ${formatDuration(elapsedMs)} for remembered detached foreground run "${run.runId}"; attention required. ${children.length} child run(s) need attention: ${childList}. Reply to any pending supervisor request, then call ${waitToolName()}({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`,
 	);
 }
 
-/** A running run that has flagged it needs the parent's attention. */
 function needsAttention(run: AsyncRunSummary): boolean {
 	return run.activityState === "needs_attention" || run.steps.some((step) => step.activityState === "needs_attention");
 }
@@ -274,7 +272,7 @@ function backgroundWorkIdentity(item: RegisteredBackgroundWorkItem): string {
 
 export function backgroundWorkForSession(deps: Pick<SubagentWaitDeps, "state" | "backgroundWork">, nowMs: number): BackgroundWorkSnapshot {
 	const sessionId = deps.state.currentSessionId;
-	if (!sessionId) throw new Error("bg_wait requires an active session identity to scope background work safely.");
+	if (!sessionId) throw new Error(`${waitToolName()} requires an active session identity to scope background work safely.`);
 	// Providers may key items by the session file path or by getSessionId(); accept both.
 	const piSessionId = deps.state.supervisorOwnerSessionId;
 	const sessionIds = piSessionId ? [sessionId, piSessionId] : [sessionId];
@@ -314,7 +312,6 @@ function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps
 	return runsForSession(params, deps);
 }
 
-/** Runs (from the initial set) currently flagged needs_attention, for reporting. */
 function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps, initialIds: Set<string>): AsyncRunSummary[] {
 	return activeRunsForSession(params, deps).filter((run) => needsAttention(run) && initialIds.has(run.id));
 }
@@ -612,7 +609,7 @@ async function waitForDetachedForegroundRun(
 		}
 		if (now() - startedAt >= timeoutMs) {
 			return windowElapsedResult(
-				`Wait window elapsed after ${formatDuration(timeoutMs)} with remembered foreground run "${run.runId}" still detached. Reply to any pending supervisor request, then call bg_wait({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`,
+				`Wait window elapsed after ${formatDuration(timeoutMs)} with remembered foreground run "${run.runId}" still detached. Reply to any pending supervisor request, then call ${waitToolName()}({ id: "${run.runId}" }) again or inspect status; do not resume or launch a replacement while it remains detached.`,
 				[run.runId],
 			);
 		}
@@ -663,10 +660,10 @@ export async function waitForSubagents(
 	deps: SubagentWaitDeps,
 ): Promise<AgentToolResult<Details>> {
 	if (deps.enabled === false) {
-		return result("bg_wait is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED; returning immediately without blocking background work. Active work keeps going, and you can inspect subagents with subagent({ action: \"status\" }) or rely on completion notifications.");
+		return result(`${waitToolName()} is disabled by config.waitTool or PI_SUBAGENT_WAIT_TOOL_ENABLED; returning immediately without blocking background work. Active work keeps going, and you can inspect subagents with subagent({ action: \"status\" }) or rely on completion notifications.`);
 	}
 	if (!deps.state.currentSessionId) {
-		return result("bg_wait requires an active session identity to scope background work safely.", true);
+		return result(`${waitToolName()} requires an active session identity to scope background work safely.`, true);
 	}
 
 	const now = deps.now ?? Date.now;
@@ -724,7 +721,7 @@ export async function waitForSubagents(
 		}
 		if (selected && params.nonBlocking) {
 			if (!deps.subscribe) {
-				return result("Non-blocking wait subscriptions require a long-lived interactive subagent runtime; this runtime can only use blocking bg_wait calls.", true);
+				return result(`Non-blocking wait subscriptions require a long-lived interactive subagent runtime; this runtime can only use blocking ${waitToolName()} calls.`, true);
 			}
 			try {
 				const registration = deps.subscribe({ targetKind: selected.kind, runId: selected.id, requestedId: params.id, timeoutMs });
@@ -800,7 +797,7 @@ export async function waitForSubagents(
 		}
 		if (now() - startedAt >= timeoutMs) {
 			return windowElapsedResult(
-				`Wait window elapsed after ${formatDuration(timeoutMs)} with ${activeInitialRuns.length} async run(s) and ${activeInitialProviderItems.length} provider item(s) still active: ${stillActive}. The work keeps going; call bg_wait again or inspect subagent status.`,
+				`Wait window elapsed after ${formatDuration(timeoutMs)} with ${activeInitialRuns.length} async run(s) and ${activeInitialProviderItems.length} provider item(s) still active: ${stillActive}. The work keeps going; call ${waitToolName()} again or inspect subagent status.`,
 				activeInitialRuns.map((run) => run.id),
 				activeInitialProviderItems,
 			);
@@ -813,7 +810,7 @@ export async function waitForSubagents(
 			providerSnapshot = params.id ? providerSnapshot : backgroundWorkForSession(deps, now());
 			for (const provider of initialProviderNames) {
 				if (!providerSnapshot.providers.includes(provider)) {
-					return result(`Background-work provider '${provider}' disappeared while bg_wait was tracking its active work; completion cannot be confirmed.`, true);
+					return result(`Background-work provider '${provider}' disappeared while ${waitToolName()} was tracking its active work; completion cannot be confirmed.`, true);
 				}
 			}
 			providerActive = providerSnapshot.items;
@@ -852,7 +849,7 @@ export async function waitForSubagents(
 	// Only when watchdog attention alone ended the wait: stopOnAttention: false would have kept blocking.
 	const keepWaitingHint = stopOnAttention && supervisorAttentionHint === ""
 		&& (waitForAll || finishedAsyncCount + providerFinishedCount === 0)
-		? " These runs are still running and none is waiting on a supervisor reply. To keep waiting through this kind of attention, call bg_wait again with stopOnAttention: false; supervisor requests still end that wait."
+		? ` These runs are still running and none is waiting on a supervisor reply. To keep waiting through this kind of attention, call ${waitToolName()} again with stopOnAttention: false; supervisor requests still end that wait.`
 		: "";
 	const attentionNote = relevantAttention.length > 0
 		? ` ${relevantAttention.length} run(s) need attention: ${relevantAttention.map((run) => run.id).join(", ")} —${supervisorAttentionHint} inspect with subagent({ action: "status" }) then steer a top-level live async child, resume a paused/completed/failed child, or interrupt explicitly.${keepWaitingHint}`
@@ -888,7 +885,7 @@ export async function waitForSubagents(
 	const finishedCount = finishedAsyncCount + providerFinishedCount;
 	const subject = initialProviderIds.size === 0 ? "run(s)" : "item(s)";
 	const remainder = stillRunning > 0
-		? ` ${stillRunning} ${subject} still in flight — call bg_wait again to catch the next one.`
+		? ` ${stillRunning} ${subject} still in flight — call ${waitToolName()} again to catch the next one.`
 		: relevantAttention.length > 0
 			? " No other work is waitable until attention is handled."
 			: initialProviderIds.size === 0 ? " No runs remain in flight." : " No work remains in flight.";

@@ -1,7 +1,3 @@
-/**
- * Core execution logic for running subagents
- */
-
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
@@ -961,12 +957,21 @@ async function runSingleAttempt(
 				toolAttentionTarget.attentionEmitted = true;
 				const durationMs = Math.max(0, now - toolAttentionTarget.startedAt);
 				const toolCallId = toolAttentionTarget.key.startsWith("id:") ? toolAttentionTarget.key.slice(3) : undefined;
+				let hasCommandController = false;
+				// Runs from the 1 s activity timer, where a throw reaches Pi's uncaughtException handler and exits Pi.
+				if (toolCallId) try {
+					hasCommandController = retainsChildCommand(supervisorChannelDir(options.runId, agent.name, options.index ?? 0), toolCallId);
+				} catch (error) {
+					const message = `Could not read the command state of ${agent.name}; its command controls are not offered: ${error instanceof Error ? error.message : String(error)}`;
+					if (options.onWarning) options.onWarning(message, "child-command-state");
+					else console.warn(`[pi-subagents] ${message}`);
+				}
 				return emitNeedsAttention(now, {
 					message: `${agent.name} has had tool '${toolAttentionTarget.tool}' open for ${Math.floor(durationMs / 1000)}s`,
 					reason: "tool_open_threshold",
 					currentTool: toolAttentionTarget.tool,
 					toolCallId,
-					hasCommandController: Boolean(toolCallId && retainsChildCommand(supervisorChannelDir(options.runId, agent.name, options.index ?? 0), toolCallId)),
+					hasCommandController,
 					currentPath: toolAttentionTarget.path,
 					currentToolDurationMs: durationMs,
 				});
@@ -1606,7 +1611,7 @@ async function runSingleAttempt(
 		durationMs: progress.durationMs,
 	};
 	const remoteGitChanged = result.nativeMachine?.initialGit && result.nativeMachine.finalGit ? result.nativeMachine.initialGit.head !== result.nativeMachine.finalGit.head || result.nativeMachine.initialGit.dirty !== result.nativeMachine.finalGit.dirty : undefined;
-	const mutationEvidence = result.nativeMachine && !isRexLocalMachine(options.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : collectTrackedMutationEvidence(mutationSnapshot, mutationCwd);
+	const mutationEvidence = result.nativeMachine && !isRexLocalMachine(options.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : await collectTrackedMutationEvidence(mutationSnapshot, mutationCwd);
 
 	const acceptanceOutput = getFinalOutput(result.messages ?? []);
 	const structuredText = result.structuredOutput === undefined ? undefined : JSON.stringify(result.structuredOutput, null, 2);
@@ -1703,9 +1708,6 @@ function writeStructuredOutputArtifacts(runtime: NonNullable<RunSyncOptions["str
 	}
 }
 
-/**
- * Run a subagent synchronously (blocking until complete)
- */
 async function runSyncCompletionInner(
 	runtimeCwd: string,
 	agents: AgentConfig[],

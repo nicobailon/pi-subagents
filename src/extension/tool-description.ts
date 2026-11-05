@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { ExtensionConfig, ToolDescriptionMode } from "../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { resolveDisabledFeatureSurface, type DisabledFeatureSurface, type SubagentSurfaceFeature } from "../shared/disabled-features.ts";
+import { DEFAULT_WAIT_TOOL_NAME, waitToolName } from "../shared/wait-tool-name.ts";
 
 const CUSTOM_TOOL_DESCRIPTION_FILE = "subagent-tool-description.md";
 const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
@@ -82,7 +83,7 @@ export interface ToolDescriptionOptions {
 	cwd?: string;
 	agentDir?: string;
 	warn?: (message: string) => void;
-	/** Removes lines for disabled features from the default and full descriptions; custom descriptions are unchanged apart from the appended safety guidance. */
+	/** Removes lines for disabled features from the default and full descriptions, including the ones custom templates insert with placeholders. */
 	disabledFeatures?: DisabledFeatureSurface;
 }
 
@@ -109,15 +110,15 @@ function customDescriptionPaths(options?: ToolDescriptionOptions): string[] {
 	];
 }
 
-function renderCustomTemplate(template: string, options?: ToolDescriptionOptions): string {
+function renderCustomTemplate(template: string, on: FeatureText, options?: ToolDescriptionOptions): string {
 	const cwd = options?.cwd ?? process.cwd();
 	const agentDir = options?.agentDir ?? getAgentDir();
 	const projectConfigDir = getProjectConfigDir(cwd);
 	const variables: Record<string, () => string> = {
-		fullDescription: () => FULL_SUBAGENT_TOOL_DESCRIPTION,
-		full: () => FULL_SUBAGENT_TOOL_DESCRIPTION,
-		compactDescription: () => COMPACT_SUBAGENT_TOOL_DESCRIPTION,
-		compact: () => COMPACT_SUBAGENT_TOOL_DESCRIPTION,
+		fullDescription: () => fullDescription(on),
+		full: () => fullDescription(on),
+		compactDescription: () => essentials(on),
+		compact: () => essentials(on),
 		safetyGuidance: () => SUBAGENT_SAFETY_GUIDANCE,
 		safety: () => SUBAGENT_SAFETY_GUIDANCE,
 		agentDir: () => agentDir,
@@ -131,7 +132,7 @@ function renderCustomTemplate(template: string, options?: ToolDescriptionOptions
 	});
 }
 
-function loadCustomToolDescription(options?: ToolDescriptionOptions): string | undefined {
+function loadCustomToolDescription(on: FeatureText, options?: ToolDescriptionOptions): string | undefined {
 	for (const filePath of customDescriptionPaths(options)) {
 		let stat: fs.Stats;
 		try {
@@ -155,7 +156,7 @@ function loadCustomToolDescription(options?: ToolDescriptionOptions): string | u
 				warn(options, `Ignoring empty custom tool description '${filePath}'.`);
 				continue;
 			}
-			const rendered = renderCustomTemplate(template, options).trim();
+			const rendered = renderCustomTemplate(template, on, options).trim();
 			if (!rendered) {
 				warn(options, `Ignoring custom tool description '${filePath}' because it rendered empty.`);
 				continue;
@@ -180,12 +181,18 @@ function withMandatorySafetyGuidance(description: string): string {
 }
 
 export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
+	const description = describeSubagentTool(config, options);
+	const name = waitToolName();
+	return name === DEFAULT_WAIT_TOOL_NAME ? description : description.replace(/\bbg_wait\b/g, name);
+}
+
+function describeSubagentTool(config: Pick<ExtensionConfig, "toolDescriptionMode">, options?: ToolDescriptionOptions): string {
 	const on = options?.disabledFeatures ? featureText(options.disabledFeatures) : allEnabled;
 	if (config.toolDescriptionMode === undefined) return essentials(on);
 	const mode = resolveToolDescriptionMode(config, options);
 	if (mode === "compact") return essentials(on);
 	if (mode === "custom") {
-		const custom = loadCustomToolDescription(options);
+		const custom = loadCustomToolDescription(on, options);
 		if (custom) return withMandatorySafetyGuidance(custom);
 		warn(options, `${CUSTOM_TOOL_DESCRIPTION_FILE} was not found or valid for toolDescriptionMode "custom"; using full description.`);
 	}

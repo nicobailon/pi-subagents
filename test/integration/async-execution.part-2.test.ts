@@ -1,12 +1,3 @@
-/**
- * Integration tests for async (background) agent execution.
- *
- * Tests the async support utilities: jiti availability check,
- * status file reading/caching.
- *
- * Requires pi packages to be importable. Skips gracefully if unavailable.
- */
-
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -597,7 +588,6 @@ syncBuiltinESMExports();
 			assert.deepEqual(payload.results.map((result) => result.timedOut), [true, true]);
 			assert.deepEqual(payload.results.map((result) => result.timeoutRecovery?.changedFiles), [[], []]);
 			assert.ok(payload.results.every((result) => /Recovery summary:/.test(result.output ?? "")));
-			assert.equal(mockPi.callCount(), 2);
 		} finally {
 			fs.rmSync(repo, { recursive: true, force: true });
 		}

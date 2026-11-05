@@ -1865,140 +1865,13 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 
-	it("preserves file-command detection after a durable acceptance metadata rejection", async () => {
-		const recovery = {
-			status: "available-for-review" as const,
-			reason: "acceptance-metadata-rejected" as const,
-			reportPath: "/tmp/writer-report.md",
-			reportHash: "a".repeat(64),
-		};
-		for (const [command, blocked] of [
-			["rm -rf .", true],
-			["/usr/bin/rmdir dir", true],
-			["folder'part/unlink file", true],
-			['folder"part/truncate file', true],
-			["folder;part/mv a b", true],
-			["folder,part/cp a b", true],
-			["folder(part[part{part/CHMOD file", true],
-			["folder`part/chown file", true],
-			["folder.part/rmé", true],
-			["xrm", false],
-			["folder-rm", false],
-			["/usr/bin/rm_", false],
-			["/usr/bin/rmdirx", false],
-			["folder'part/rmx", false],
-			["folder\\rm", false],
-		] as const) {
-			const launches: string[] = [];
-			const task = `Read-only review. Do not edit files. ${command}`;
-			const result = runWorkflowScript({
-				script: `
-					await runs.run("writer", { agent: "worker", task: "write" });
-					return await runs.run("review", { agent: "reviewer", task: ${JSON.stringify(task)}, acceptance: false });
-				`,
-				launch(key) {
-					launches.push(key);
-					return Promise.resolve(key === "writer"
-						? { key, ok: false, output: "saved writer report", recovery, artifactPaths: [recovery.reportPath] }
-						: { key, ok: true, output: "review complete", artifactPaths: [] });
-				},
-				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
-			});
-			if (blocked) {
-				await assert.rejects(result, (error: unknown) => error instanceof WorkflowScriptError && /only explicit read-only review children with acceptance:false may follow/.test(error.message), command);
-			} else {
-				assert.equal((await result).children.at(-1)?.ok, true, command);
-			}
-			assert.deepEqual(launches, blocked ? ["writer"] : ["writer", "review"], command);
-		}
-	});
-
-	it("checks long file-command prefixes promptly after acceptance metadata recovery", async () => {
-		const recovery = {
-			status: "available-for-review" as const,
-			reason: "acceptance-metadata-rejected" as const,
-			reportPath: "/tmp/writer-report.md",
-			reportHash: "a".repeat(64),
-		};
-		const start = performance.now();
-		for (const prefix of ["'".repeat(100_000), '"'.repeat(100_000), ";,.([{`".repeat(15_000), "/".repeat(100_000)]) {
-			const launches: string[] = [];
-			const task = `Read-only review. Do not edit files. ${prefix}`;
-			const result = await runWorkflowScript({
-				script: `
-					await runs.run("writer", { agent: "worker", task: "write" });
-					return await runs.run("review", { agent: "reviewer", task: ${JSON.stringify(task)}, acceptance: false });
-				`,
-				launch(key) {
-					launches.push(key);
-					return Promise.resolve(key === "writer"
-						? { key, ok: false, output: "saved writer report", recovery, artifactPaths: [recovery.reportPath] }
-						: { key, ok: true, output: "review complete", artifactPaths: [] });
-				},
-				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
-			});
-			assert.deepEqual(launches, ["writer", "review"]);
-			assert.equal(result.children.at(-1)?.ok, true);
-		}
-		assert.ok(performance.now() - start < 10_000, "long file-command prefixes should finish within 10 seconds");
-	});
-
-	it("keeps non-matching git syntax allowed and scans adversarial option streams in bounded time", async () => {
-		const recovery = {
-			status: "available-for-review" as const,
-			reason: "acceptance-metadata-rejected" as const,
-			reportPath: "/tmp/writer-report.md",
-			reportHash: "a".repeat(64),
-		};
-		// The upstream pattern does not match -C=x: short options only take separated values.
-		// The long streams are 198,003 and 175,000 characters: exponential and repeated-start
-		// regressions respectively. The elapsed-time assertion includes the workflow process.
-		for (const optionStream of ["git -C=x reset", `git${" -a".repeat(66_000)}`, "git -a ".repeat(25_000)]) {
-			const launches: string[] = [];
-			const startedAt = performance.now();
-			const result = await runWorkflowScript({
-				script: `
-					const writer = await runs.run("writer", { agent: "worker", task: "write" });
-					const review = await runs.run("review", { agent: "reviewer", task: ${JSON.stringify(`Read-only review. Do not edit files. ${optionStream}`)}, acceptance: false });
-					return review.ok;
-				`,
-				launch(key) {
-					launches.push(key);
-					if (key === "writer") {
-						return Promise.resolve({
-							key,
-							ok: false,
-							output: "saved writer report",
-							error: "Acceptance rejected: malformed acceptance-report",
-							runId: "writer-run",
-							outputReference: recovery.reportPath,
-							recovery,
-							artifactPaths: [recovery.reportPath],
-							results: [{ acceptance: { status: "rejected", recovery } }],
-						});
-					}
-					return Promise.resolve({ key, ok: true, output: "review complete", runId: "review-run", artifactPaths: [] });
-				},
-				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
-			});
-			const elapsedMs = performance.now() - startedAt;
-
-			assert.deepEqual(launches, ["writer", "review"]);
-			assert.equal(result.value, true);
-			assert.ok(
-				elapsedMs < 10_000,
-				`the read-only review scan took ${Math.round(elapsedMs)} ms on a ${optionStream.length}-character prompt`,
-			);
-		}
-	});
-
-	const dashLiveRecovery = {
+	const reviewRecovery = {
 		status: "available-for-review" as const,
 		reason: "acceptance-metadata-rejected" as const,
 		reportPath: "/tmp/writer-report.md",
 		reportHash: "a".repeat(64),
 	};
-	const runDashLiveReview = (task: string) => {
+	const runReviewAfterRejectedWriter = (task: string) => {
 		const launches: string[] = [];
 		const run = runWorkflowScript({
 			script: `
@@ -2015,10 +1888,10 @@ describe("scripted workflow runtime", () => {
 						output: "saved writer report",
 						error: "Acceptance rejected: malformed acceptance-report",
 						runId: "writer-run",
-						outputReference: dashLiveRecovery.reportPath,
-						recovery: dashLiveRecovery,
-						artifactPaths: [dashLiveRecovery.reportPath],
-						results: [{ acceptance: { status: "rejected", recovery: dashLiveRecovery } }],
+						outputReference: reviewRecovery.reportPath,
+						recovery: reviewRecovery,
+						artifactPaths: [reviewRecovery.reportPath],
+						results: [{ acceptance: { status: "rejected", recovery: reviewRecovery } }],
 					});
 				}
 				return Promise.resolve({ key, ok: true, output: "review complete", runId: "review-run", artifactPaths: [] });
@@ -2028,6 +1901,36 @@ describe("scripted workflow runtime", () => {
 		return { launches, run };
 	};
 
+	it("preserves file-command detection after a durable acceptance metadata rejection", async () => {
+		for (const [command, blocked] of [
+			["rm -rf .", true],
+			["/usr/bin/rmdir dir", true],
+			["folder'part/unlink file", true],
+			['folder"part/truncate file', true],
+			["folder;part/mv a b", true],
+			["folder,part/cp a b", true],
+			["folder(part[part{part/CHMOD file", true],
+			["folder`part/chown file", true],
+			["folder.part/rmé", true],
+			["xrm", false],
+			["folder-rm", false],
+			["/usr/bin/rm_", false],
+			["/usr/bin/rmdirx", false],
+			["folder'part/rmx", false],
+			["folder\\rm", false],
+			// Short git options take only separated values, so -C=x is not a work-tree option.
+			["git -C=x reset", false],
+		] as const) {
+			const { launches, run } = runReviewAfterRejectedWriter(`Read-only review. Do not edit files. ${command}`);
+			if (blocked) {
+				await assert.rejects(run, (error: unknown) => error instanceof WorkflowScriptError && /only explicit read-only review children with acceptance:false may follow/.test(error.message), command);
+			} else {
+				assert.equal((await run).value, true, command);
+			}
+			assert.deepEqual(launches, blocked ? ["writer"] : ["writer", "review"], command);
+		}
+	});
+
 	it("blocks dash-live actions and allows inert separator text after a durable acceptance metadata rejection", async () => {
 		// Every separator reaches a live action even when another separator sits inside the line it
 		// has to scan.
@@ -2036,7 +1939,7 @@ describe("scripted workflow runtime", () => {
 			"Read-only review. Do not edit files. Delta – git status:restore. Return findings only.",
 			"Read-only review. Do not edit files. Delta -- git log:x8 switch main. Return findings only.",
 		]) {
-			const { launches, run } = runDashLiveReview(task);
+			const { launches, run } = runReviewAfterRejectedWriter(task);
 			await assert.rejects(
 				run,
 				(error: unknown) => error instanceof WorkflowScriptError && /only explicit read-only review children with acceptance:false may follow/.test(error.message),
@@ -2054,19 +1957,29 @@ describe("scripted workflow runtime", () => {
 			"Read-only review. Do not edit files. Delta — git logging:x8. Return findings only.",
 			"Read-only review. Do not edit files. Delta - review the patch. Return findings only.",
 		]) {
-			const { launches, run } = runDashLiveReview(task);
+			const { launches, run } = runReviewAfterRejectedWriter(task);
 			assert.equal((await run).value, true);
 			assert.deepEqual(launches, ["writer", "review"]);
 		}
 	});
 
-	it("scans adversarial dash-live prompts in bounded time", async () => {
-		// Each prompt repeats one separator family that the former pattern rescanned from every
-		// separator: 150,000 to 280,000 characters took 12 to 21 seconds before and are linear now.
+	it("scans adversarial read-only review prompts in bounded time", async () => {
+		// Each prompt repeats one quote, separator or git-option family, 100,000 to 280,000 characters.
 		// The elapsed-time assertion includes the workflow process.
-		for (const separatorStream of ["--/".repeat(90_000), "—/".repeat(75_000), ":/".repeat(90_000), "-- git ".repeat(40_000)]) {
+		for (const stream of [
+			"'".repeat(100_000),
+			'"'.repeat(100_000),
+			";,.([{`".repeat(15_000),
+			"/".repeat(100_000),
+			`git${" -a".repeat(66_000)}`,
+			"git -a ".repeat(25_000),
+			"--/".repeat(90_000),
+			"—/".repeat(75_000),
+			":/".repeat(90_000),
+			"-- git ".repeat(40_000),
+		]) {
 			const startedAt = performance.now();
-			const { launches, run } = runDashLiveReview(`Read-only review. Do not edit files. ${separatorStream}`);
+			const { launches, run } = runReviewAfterRejectedWriter(`Read-only review. Do not edit files. ${stream}`);
 			const result = await run;
 			const elapsedMs = performance.now() - startedAt;
 
@@ -2074,7 +1987,7 @@ describe("scripted workflow runtime", () => {
 			assert.equal(result.value, true);
 			assert.ok(
 				elapsedMs < 10_000,
-				`the read-only review scan took ${Math.round(elapsedMs)} ms on a ${separatorStream.length}-character prompt`,
+				`the read-only review scan took ${Math.round(elapsedMs)} ms on a ${stream.length}-character prompt`,
 			);
 		}
 	});
@@ -2761,6 +2674,9 @@ describe("scripted workflow runtime", () => {
 
 	it("steers a still-running sibling after Promise.race and awaits both children", async () => {
 		let resolveSlow!: (result: { key: string; ok: true; output: string; artifactPaths: never[] }) => void;
+		// The host can take a runs.steer call before it has started the launch it follows, so steer waits for it.
+		let slowLaunched!: () => void;
+		const slowStarted = new Promise<void>((resolve) => { slowLaunched = resolve; });
 		const result = await runWorkflowScript({
 			script: `
 				const fast = runs.run("fast", { agent: "worker", task: "fast" });
@@ -2772,13 +2688,14 @@ describe("scripted workflow runtime", () => {
 			`,
 			launch(key) {
 				if (key === "fast") return Promise.resolve({ key, ok: true, output: "fast", artifactPaths: [] });
-				return new Promise((resolve) => { resolveSlow = resolve; });
+				return new Promise((resolve) => { resolveSlow = resolve; slowLaunched(); });
 			},
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			async steer(key, message, options) {
 				assert.equal(key, "slow");
 				assert.equal(message, "Focus on tests.");
 				assert.deepEqual(options, { mode: "auto", index: 0, ackTimeoutMs: 100 });
+				await slowStarted;
 				resolveSlow({ key, ok: true, output: "slow", artifactPaths: [] });
 				return { key, state: "delivered", requestId: "request-1", deliveryStatus: "delivered", targets: [{ index: 0, state: "delivered" }] };
 			},
@@ -2795,6 +2712,9 @@ describe("scripted workflow runtime", () => {
 	it("uses Promise.race to roll through child completions and steer the remaining work", async () => {
 		let resolveBeta!: (result: { key: string; ok: true; output: string; artifactPaths: never[] }) => void;
 		let resolveGamma!: (result: { key: string; ok: true; output: string; artifactPaths: never[] }) => void;
+		let launched!: () => void;
+		let pendingLaunches = 2;
+		const betaAndGammaStarted = new Promise<void>((resolve) => { launched = () => { if (--pendingLaunches === 0) resolve(); }; });
 		const result = await runWorkflowScript({
 			script: `
 				let pending = [
@@ -2813,14 +2733,15 @@ describe("scripted workflow runtime", () => {
 			`,
 			launch(key) {
 				if (key === "alpha") return Promise.resolve({ key, ok: true, output: "alpha done", artifactPaths: [] });
-				if (key === "beta") return new Promise((resolve) => { resolveBeta = resolve; });
-				return new Promise((resolve) => { resolveGamma = resolve; });
+				if (key === "beta") return new Promise((resolve) => { resolveBeta = resolve; launched(); });
+				return new Promise((resolve) => { resolveGamma = resolve; launched(); });
 			},
 			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			async steer(key, message, options) {
 				assert.equal(key, "gamma");
 				assert.equal(message, "Challenge the first result: alpha done");
 				assert.deepEqual(options, { mode: "auto", ackTimeoutMs: 100 });
+				await betaAndGammaStarted;
 				resolveGamma({ key, ok: true, output: "gamma done", artifactPaths: [] });
 				setTimeout(() => resolveBeta({ key: "beta", ok: true, output: "beta done", artifactPaths: [] }), 5);
 				return { key, state: "delivered", requestId: "request-rolling", deliveryStatus: "delivered", targets: [{ index: 0, state: "delivered" }] };
@@ -3794,10 +3715,10 @@ describe("scripted workflow runtime", () => {
 	});
 
 	it("keeps every child alive when a host trace callback throws", async () => {
-		// Regression: hosts persist a status journal from onTrace, and onTrace is called
-		// from inside the run-promise handlers. A failed status write used to reject the
-		// child promise, so one locked status.json marked a finished child failed and
-		// aborted its still-running siblings through Promise.all inside runs.all.
+		// Hosts persist a status journal from onTrace, and onTrace is called
+		// from inside the run-promise handlers. If a failed status write rejected the child
+		// promise, one locked status.json would mark a finished child failed and abort its
+		// still-running siblings through Promise.all inside runs.all.
 		let thrown = 0;
 		const abortedWhileRunning: string[] = [];
 		const result = await runWorkflowScript({

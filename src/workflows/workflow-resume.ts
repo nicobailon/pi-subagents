@@ -18,7 +18,7 @@ type WorkflowResumeTrigger = "auto" | "manual";
 
 export type WorkflowResumeRefusalCode =
 	| "not-owned" | "not-interrupted" | "claim-busy" | "claim-resumed"
-	| "launch-missing" | "launch-invalid" | "structured" | "digest" | "authority"
+	| "launch-missing" | "launch-invalid" | "structured" | "internal" | "digest" | "authority"
 	| "capacity" | "attempts" | "launch-failed";
 
 export interface WorkflowResumeRefusalReason {
@@ -42,7 +42,7 @@ export interface PreparedWorkflowResume {
 type WorkflowResumePreparation = { ok: true; prepared: PreparedWorkflowResume } | ({ ok: false } & WorkflowResumeRefusalReason);
 
 export function workflowResumeRefusal(code: WorkflowResumeRefusalCode, reason: string, runId: string): WorkflowResumeRefusalReason {
-	const byHand = code === "launch-missing" || code === "launch-invalid" || code === "structured" || code === "digest" || code === "authority"
+	const byHand = code === "launch-missing" || code === "launch-invalid" || code === "structured" || code === "internal" || code === "digest" || code === "authority"
 		? relaunchByHandText(runId)
 		: code === "capacity" || code === "attempts" || code === "launch-failed" ? resumeByHandText(runId) : "";
 	return { code, reason, byHand };
@@ -80,10 +80,14 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 	const { asyncDirRoot, sourceRunId, trigger } = input;
 	const refuse = (code: WorkflowResumeRefusalCode, reason: string): WorkflowResumePreparation => ({ ok: false, ...workflowResumeRefusal(code, reason, sourceRunId) });
 	const sourceAsyncDir = path.join(asyncDirRoot, sourceRunId);
+	// What is relaunched, by whom and under which ceiling comes only from the parent-owned launch
+	// record: a run behind a runner launcher can rewrite every file in its own run directory.
+	const read = readWorkflowLaunchRecord(asyncDirRoot, sourceRunId);
+	if (!read.ok) return read.missing ? refuse("launch-missing", "launch.json is missing (the run started before launches were saved outside its run directory)") : refuse("launch-invalid", `launch.json is invalid: ${read.error}`);
+	const record = read.record;
 	// Only the session that owns the run (itself or one it replaced) may resume it, and nothing is
 	// written into another session's run, so this comes before the reconcile.
-	const stored = readStatus(sourceAsyncDir);
-	if (stored && !ownsRun(input.currentSessionId, stored.sessionId)) return refuse("not-owned", "it was started in another session; reopen that session to resume it");
+	if (!ownsRun(input.currentSessionId, record.sessionId)) return refuse("not-owned", "it was started in another session; reopen that session to resume it");
 	// Session start has already reconciled this session's runs; a resume by id may come later.
 	if (trigger === "manual") reconcileAsyncRun(sourceAsyncDir);
 	const status = readStatus(sourceAsyncDir);
@@ -91,10 +95,8 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 	// The attempt the resumed run records: only resumes that follow a Pi exit count.
 	const attempt = (status.workflow?.resumeOrigin?.attempt ?? 0) + (status.workflow?.stopCause === WORKFLOW_STOP_CAUSE_OWNER_EXITED ? 1 : 0);
 	if (trigger === "auto" && attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) return refuse("attempts", `${MAX_WORKFLOW_RESUME_ATTEMPTS} resumes already followed Pi exits`);
-	const read = readWorkflowLaunchRecord(sourceAsyncDir);
-	if (!read.ok) return read.missing ? refuse("launch-missing", "launch.json is missing (the run started before launches were saved)") : refuse("launch-invalid", `launch.json is invalid: ${read.error}`);
-	const record = read.record;
 	if (record.source === "structured") return refuse("structured", "launched from tasks/chain");
+	if (record.source === "internal") return refuse("internal", "launched by a schedule or prompt-template delegation");
 	if (record.source === "script" && (typeof record.params.workflowScript !== "string" || workflowScriptDigest(record.params.workflowScript) !== record.scriptDigest)) {
 		return refuse("launch-invalid", "launch.json is invalid: its script does not match its scriptDigest");
 	}
@@ -116,7 +118,7 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 				...record.params,
 				async: true,
 				reuseFrom: sourceRunId,
-				...(status.admissionCapabilityCeiling ? { capabilityCeiling: status.admissionCapabilityCeiling } : {}),
+				...(record.admissionCapabilityCeiling ? { capabilityCeiling: record.admissionCapabilityCeiling } : {}),
 			},
 			expectedScriptDigest: record.scriptDigest,
 			resumeOrigin: { sourceRunId, attempt },

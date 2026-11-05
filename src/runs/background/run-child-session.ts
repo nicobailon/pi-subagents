@@ -66,7 +66,6 @@ export interface ChildEvent {
 	willRetry?: unknown;
 }
 
-/** Outcome of handing a steer request to a live child session. */
 export interface SteerDelivery {
 	state: "delivered" | "queued" | "failed";
 	deliveryStatus?: SteerDeliveryStatus;
@@ -588,12 +587,12 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			return commandError;
 		};
 
-		/** The child run ended (or was forced to end); fold in the outcome once the child's shutdown work is done. */
 		const failUnconsumedSteers = (): void => {
 			for (const entry of acceptedSteers.splice(0)) {
 				input.onSteerOutcome?.(entry.request, { state: "failed", message: unconsumedSteerReason(entry.request.mode) });
 			}
 		};
+		/** The child run ended (or was forced to end); fold in the outcome once the child's shutdown work is done. */
 		const settle = (promptError: unknown, forced = false): void => {
 			if (settled) return;
 			settled = true;

@@ -29,7 +29,6 @@ export interface SubagentCapabilityAudit {
 	effectiveMcpTools: string[];
 	agentAllowed: boolean;
 	agentRestrictionSources?: string[];
-	/** Builtin tools declared but unavailable on the host runtime. */
 }
 
 export interface RegisterSubagentCapabilityCeilingOptions {

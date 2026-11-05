@@ -1,0 +1,372 @@
+/**
+ * Fleet transcript reading: trusted-path validation, tail reads, and JSONL
+ * parsing into display events. Pure data layer — no TUI imports — so both the
+ * engine (run status) and the TUI (fleet view) can share one parser.
+ */
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { safeTerminalText as safeDisplayText } from "./display-text.ts";
+import { isTrustedRecordedSessionFile } from "./session-file-trust.ts";
+
+const DEFAULT_MAX_RECORDS = 240;
+const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
+const MAX_MESSAGE_CHARS = 64 * 1024;
+
+function sanitizeJsonDisplayValue(value: unknown): { value: unknown; changed: boolean } {
+	if (typeof value === "string") {
+		const safe = safeDisplayText(value);
+		return { value: safe, changed: safe !== value };
+	}
+	if (Array.isArray(value)) {
+		const sanitized = value.map(sanitizeJsonDisplayValue);
+		return {
+			value: sanitized.map((entry) => entry.value),
+			changed: sanitized.some((entry) => entry.changed),
+		};
+	}
+	if (value && typeof value === "object") {
+		let changed = false;
+		const sanitized: Record<string, unknown> = Object.create(null);
+		for (const [key, nested] of Object.entries(value)) {
+			const safeKey = safeDisplayText(key);
+			const safeValue = sanitizeJsonDisplayValue(nested);
+			sanitized[safeKey] = safeValue.value;
+			changed ||= safeKey !== key || safeValue.changed;
+		}
+		return { value: changed ? sanitized : value, changed };
+	}
+	return { value, changed: false };
+}
+
+function safeToolArgsPayload(payload: string): string {
+	try {
+		const sanitized = sanitizeJsonDisplayValue(JSON.parse(payload));
+		return sanitized.changed ? JSON.stringify(sanitized.value) : safeDisplayText(payload);
+	} catch {
+		return safeDisplayText(payload);
+	}
+}
+
+
+export type FleetTranscriptEvent =
+	| { kind: "assistant"; text: string; model?: string; timestamp?: number }
+	| { kind: "user"; text: string; timestamp?: number }
+	| { kind: "tool"; toolCallId?: string; name: string; args?: string; argsPayload?: string; output?: string; outputTruncated?: boolean; status: "running" | "complete" | "error"; error?: string; startedAt?: number; endedAt?: number; timestamp?: number }
+	| { kind: "notice"; text: string; tone: "muted" | "warning" | "error"; timestamp?: number };
+
+export interface FleetTranscript {
+	path: string;
+	events: FleetTranscriptEvent[];
+	truncated: boolean;
+	warning?: string;
+	/** The path was refused or the file could not be read, as opposed to a read that only skipped records. */
+	readFailed?: true;
+}
+
+export interface FleetTranscriptReadOptions {
+	trustedRoots: string[];
+	trustedFiles?: string[];
+	trustedFileRoot?: string;
+	maxRecords?: number;
+	maxBytes?: number;
+}
+
+interface MutableToolEvent {
+	kind: "tool";
+	toolCallId?: string;
+	name: string;
+	args?: string;
+	argsPayload?: string;
+	output?: string;
+	outputTruncated?: boolean;
+	status: "running" | "complete" | "error";
+	error?: string;
+	startedAt?: number;
+	endedAt?: number;
+	timestamp?: number;
+	resultSeen?: boolean;
+}
+
+export function objectValue(value: unknown): Record<string, unknown> | undefined {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function pathWithin(base: string, candidate: string): boolean {
+	const resolvedBase = path.resolve(base);
+	const resolvedCandidate = path.resolve(candidate);
+	return resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`);
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function isNotFoundError(error: unknown): boolean {
+	return Boolean(objectValue(error)?.code === "ENOENT");
+}
+
+function validateTranscriptPath(filePath: string, trustedRoots: string[], trustedFiles: string[] = [], trustedFileRoot?: string): { resolvedPath?: string; warning?: string } {
+	if (trustedRoots.length === 0 && (!trustedFileRoot || trustedFiles.length === 0)) return { warning: `Transcript preview has no trusted root: ${filePath}` };
+	const resolvedPath = path.resolve(filePath);
+	const recordedCandidate = trustedFileRoot
+		&& pathWithin(trustedFileRoot, resolvedPath)
+		&& trustedFiles.some((file) => path.resolve(file) === resolvedPath);
+	if (!trustedRoots.some((root) => pathWithin(root, resolvedPath)) && !recordedCandidate) {
+		return { warning: `Transcript is outside trusted roots: ${filePath}` };
+	}
+	let stat: fs.Stats;
+	try {
+		stat = fs.lstatSync(resolvedPath);
+	} catch (error) {
+		if (isNotFoundError(error)) return {};
+		return { warning: `Transcript could not be inspected: ${errorMessage(error)}` };
+	}
+	if (stat.isSymbolicLink()) return { warning: `Transcript preview refused a symlink: ${filePath}` };
+	if (!stat.isFile()) return { warning: `Transcript path is not a file: ${filePath}` };
+	try {
+		const realPath = fs.realpathSync(resolvedPath);
+		const realRoots = trustedRoots
+			.filter((root) => fs.existsSync(root))
+			.map((root) => fs.realpathSync(root));
+		if (!realRoots.some((root) => pathWithin(root, realPath)) && !isTrustedRecordedSessionFile(realPath, trustedFiles, trustedFileRoot)) {
+			return { warning: `Transcript resolves outside trusted roots: ${filePath}` };
+		}
+		return { resolvedPath: realPath };
+	} catch (error) {
+		return { warning: `Transcript path could not be resolved: ${errorMessage(error)}` };
+	}
+}
+
+function isCompleteRecord(line: string | undefined): boolean {
+	if (!line?.trim()) return false;
+	try {
+		return objectValue(JSON.parse(line)) !== undefined;
+	} catch {
+		return false;
+	}
+}
+
+function readTailLines(filePath: string, maxBytes: number): { lines: string[]; truncated: boolean; warning?: string } {
+	let fd: number | undefined;
+	try {
+		const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+		fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+		const stat = fs.fstatSync(fd);
+		if (!stat.isFile()) return { lines: [], truncated: false, warning: `Transcript path is not a file: ${filePath}` };
+		if (stat.size === 0) return { lines: [], truncated: false };
+		const bytesToRead = Math.min(stat.size, maxBytes);
+		const start = stat.size - bytesToRead;
+		const buffer = Buffer.alloc(bytesToRead);
+		const bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, start);
+		const content = buffer.subarray(0, bytesRead).toString("utf-8");
+		const endsWithNewline = content.endsWith("\n");
+		let lines = content.split(/\r?\n/);
+		if (start > 0 && lines.length > 0) lines = lines.slice(1);
+		if (lines.at(-1) === "") lines = lines.slice(0, -1);
+		else if (!endsWithNewline && !isCompleteRecord(lines.at(-1))) lines = lines.slice(0, -1);
+		return { lines, truncated: start > 0 };
+	} catch (error) {
+		return { lines: [], truncated: false, warning: `Transcript could not be read: ${errorMessage(error)}` };
+	} finally {
+		if (fd !== undefined) fs.closeSync(fd);
+	}
+}
+
+function clipMessage(text: string): string {
+	if (text.length <= MAX_MESSAGE_CHARS) return text;
+	return `${text.slice(0, MAX_MESSAGE_CHARS)}\n\n… message truncated`;
+}
+
+export function safeTranscriptEvent(event: FleetTranscriptEvent): FleetTranscriptEvent {
+	if (event.kind === "assistant") {
+		return {
+			...event,
+			text: safeDisplayText(event.text),
+			...(event.model ? { model: safeDisplayText(event.model) } : {}),
+		};
+	}
+	if (event.kind === "user" || event.kind === "notice") {
+		return { ...event, text: safeDisplayText(event.text) };
+	}
+	return {
+		...event,
+		name: safeDisplayText(event.name),
+		...(event.args !== undefined ? { args: safeDisplayText(event.args) } : {}),
+		...(event.argsPayload !== undefined ? { argsPayload: safeToolArgsPayload(event.argsPayload) } : {}),
+		...(event.output !== undefined ? { output: safeDisplayText(event.output) } : {}),
+		...(event.error !== undefined ? { error: safeDisplayText(event.error) } : {}),
+	};
+}
+
+function findTool(
+	events: FleetTranscriptEvent[],
+	toolCallId: string | undefined,
+	name: string | undefined,
+): MutableToolEvent | undefined {
+	if (toolCallId) {
+		for (let index = events.length - 1; index >= 0; index--) {
+			const event = events[index];
+			if (event?.kind === "tool" && event.toolCallId === toolCallId) return event as MutableToolEvent;
+		}
+		return undefined;
+	}
+	for (let index = events.length - 1; index >= 0; index--) {
+		const event = events[index];
+		if (event?.kind !== "tool") continue;
+		const tool = event as MutableToolEvent;
+		if ((!name || tool.name === name) && !tool.resultSeen) return tool;
+	}
+	return undefined;
+}
+
+function appendTextEvent(
+	events: FleetTranscriptEvent[],
+	kind: "assistant" | "user",
+	text: string,
+	metadata: { model?: string; timestamp?: number },
+): void {
+	const clipped = clipMessage(text.trim());
+	if (!clipped) return;
+	const previous = events.at(-1);
+	if (previous?.kind === kind && previous.text === clipped) return;
+	events.push({ kind, text: clipped, ...metadata });
+}
+
+function parseTranscriptLines(lines: string[], conversationStarted = false): { events: FleetTranscriptEvent[]; malformed: number; explicitTruncation: boolean } {
+	const events: FleetTranscriptEvent[] = [];
+	let malformed = 0;
+	let explicitTruncation = false;
+	let assistantSeen = conversationStarted;
+
+	for (const line of lines) {
+		if (!line.trim()) continue;
+		let record: Record<string, unknown> | undefined;
+		try {
+			record = objectValue(JSON.parse(line));
+		} catch {
+			malformed++;
+			continue;
+		}
+		if (!record) {
+			malformed++;
+			continue;
+		}
+
+		const recordType = stringValue(record.recordType);
+		const timestamp = numberValue(record.ts);
+		if (recordType === "truncated") {
+			explicitTruncation = true;
+			continue;
+		}
+		if (recordType === "tool_start") {
+			const name = stringValue(record.toolName) ?? "tool";
+			events.push({
+				kind: "tool",
+				...(stringValue(record.toolCallId) ? { toolCallId: stringValue(record.toolCallId) } : {}),
+				name,
+				...(stringValue(record.argsPreview) ? { args: stringValue(record.argsPreview) } : {}),
+				...(stringValue(record.argsPayload) ? { argsPayload: stringValue(record.argsPayload) } : {}),
+				status: "running",
+				...(timestamp !== undefined ? { timestamp, startedAt: timestamp } : {}),
+			});
+			continue;
+		}
+		if (recordType === "tool_end") {
+			const tool = findTool(events, stringValue(record.toolCallId), stringValue(record.toolName));
+			if (tool && !tool.resultSeen) tool.status = record.isError === true ? "error" : "complete";
+			if (tool && timestamp !== undefined && tool.endedAt === undefined) tool.endedAt = timestamp;
+			continue;
+		}
+		if (recordType === "stderr") {
+			const text = stringValue(record.text);
+			if (text) events.push({ kind: "notice", text: clipMessage(text), tone: "error", ...(timestamp !== undefined ? { timestamp } : {}) });
+			continue;
+		}
+		if (recordType !== "message") continue;
+
+		const message = objectValue(record.message);
+		const role = stringValue(record.role) ?? stringValue(message?.role);
+		const text = stringValue(record.text) ?? stringValue(message?.text) ?? stringValue(message?.content);
+		if (role === "toolResult" || role === "tool_result") {
+			const toolCallId = stringValue(record.toolCallId) ?? stringValue(message?.toolCallId);
+			const name = stringValue(record.toolName) ?? stringValue(message?.toolName) ?? "tool";
+			const failed = record.isError === true || message?.isError === true;
+			let tool = findTool(events, toolCallId, name);
+			if (!tool) {
+				tool = {
+					kind: "tool",
+					...(toolCallId ? { toolCallId } : {}),
+					name,
+					status: failed ? "error" : "complete",
+					...(timestamp !== undefined ? { timestamp } : {}),
+				};
+				events.push(tool);
+			}
+			if (!tool.resultSeen) {
+				tool.resultSeen = true;
+				tool.status = failed ? "error" : "complete";
+				if (timestamp !== undefined && tool.endedAt === undefined) tool.endedAt = timestamp;
+				if (text && (!failed || tool.output === undefined)) {
+					tool.output = clipMessage(text);
+					tool.outputTruncated = record.outputTruncated === true || text.includes("… payload truncated") || text.includes("[Showing lines");
+				}
+				if (failed && text) tool.error = clipMessage(text.split(/\r?\n/).find((candidate) => candidate.trim()) ?? text);
+			}
+			continue;
+		}
+		if (role === "assistant") {
+			assistantSeen = true;
+			// The transcript writer records the assistant message's provider-local id, which can itself contain a slash.
+			const rawModel = stringValue(record.model) ?? stringValue(message?.model);
+			const provider = stringValue(message?.provider);
+			const model = rawModel && provider ? `${provider}/${rawModel}` : rawModel;
+			if (text) appendTextEvent(events, "assistant", text, {
+				...(model ? { model } : {}),
+				...(timestamp !== undefined ? { timestamp } : {}),
+			});
+			continue;
+		}
+		if (role === "user" && assistantSeen && text) {
+			appendTextEvent(events, "user", text, timestamp !== undefined ? { timestamp } : {});
+		}
+	}
+
+	for (const event of events) {
+		if (event.kind === "tool") delete (event as MutableToolEvent).resultSeen;
+	}
+	return { events: events.map(safeTranscriptEvent), malformed, explicitTruncation };
+}
+
+export function readFleetTranscript(filePath: string, options: FleetTranscriptReadOptions): FleetTranscript {
+	const validated = validateTranscriptPath(filePath, options.trustedRoots, options.trustedFiles, options.trustedFileRoot);
+	if (!validated.resolvedPath) {
+		return { path: filePath, events: [], truncated: false, readFailed: true, ...(validated.warning ? { warning: safeDisplayText(validated.warning) } : {}) };
+	}
+	const maxRecords = Math.max(1, options.maxRecords ?? DEFAULT_MAX_RECORDS);
+	const tail = readTailLines(validated.resolvedPath, Math.max(1024, options.maxBytes ?? DEFAULT_MAX_BYTES));
+	const recordsOmitted = tail.truncated || tail.lines.length > maxRecords;
+	const selectedLines = tail.lines.slice(-maxRecords);
+	const parsed = parseTranscriptLines(selectedLines, recordsOmitted);
+	const warnings = [
+		tail.warning,
+		parsed.malformed > 0 ? `Skipped ${parsed.malformed} malformed transcript record${parsed.malformed === 1 ? "" : "s"}.` : undefined,
+	].filter((value): value is string => Boolean(value));
+	return {
+		path: filePath,
+		events: parsed.events,
+		truncated: tail.truncated || tail.lines.length > maxRecords || parsed.explicitTruncation,
+		...(tail.warning ? { readFailed: true as const } : {}),
+		...(warnings.length ? { warning: safeDisplayText(warnings.join(" ")) } : {}),
+	};
+}

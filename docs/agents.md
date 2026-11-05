@@ -366,6 +366,7 @@ How it behaves:
 - **Resume and revival.** A resumed run uses the launcher recorded when the run was first launched, not the agent file's current value, and looks up that name's argv in the config the session loaded, like a new launch does; edits to `runnerLaunchers` apply after `/reload`. A run recorded as launched without a launcher stays unwrapped even if its agent file gains `launcher` later. When no launcher choice is recorded (a run started before this was recorded, a foreground run, or a workflow child resumed through its workflow run), the resume uses the agent file's current `launcher`, so it never runs unwrapped just because the record is missing. If the recorded name is no longer in `runnerLaunchers`, the resume fails before anything starts, and the run can be resumed once the name is defined again.
 - **Several agents in one runner.** A new chain attached to a running subagent, or steps appended to a running chain, run in one background runner. All agents in it must name the same launcher, or none; a mix is refused before anything starts, and the error names each agent and its launcher. Appended steps must also match the launcher of the runner they join. Steps in one wrapped chain share its sandbox; to give branches different sandboxes, run them as workflow-script children, which each get their own runner.
 - **Agent management.** `subagent({ action: "create" })` and `update` cannot set `launcher`; edit the agent file instead. Other updates keep an existing `launcher` line.
+- **Requiring a launcher from the call.** `options.requireLauncher: { name, definitionDigest }` refuses a launch unless it runs under that launcher with that agent definition. See [Requiring a launcher](extension-api.md#requiring-a-launcher).
 
 ### Wrapper requirements
 
@@ -378,11 +379,25 @@ A launcher command must:
 
 Steering, stop, and supervisor requests and replies travel through files in those directories, not through signals, so they work as long as the paths are shared.
 
+With `~/.pi/agent` read-only, a child cannot refresh an OAuth login, because Pi locks and rewrites `auth.json` there, so it fails once its token needs a refresh; API keys are unaffected. Child sessions sit under `~/.pi/agent/sessions/` by default, so the child session directory still needs its own read-write binding.
+
+### Isolating a run from the parent
+
+A launcher can also keep a run from reaching the parent session and other runs. Resume and auto-resume take what to relaunch and under which identity only from records the parent keeps in `async-subagent-launches/<id>/` under the temp root: a workflow's saved launch (its script, owning session and capability ceiling), and a single run's recovery descriptor (its agent, session file, cwd, model, tools, ceilings and launcher). A run that rewrites files in its own run directory, such as `status.json`, cannot make a later resume start something else or continue another run's transcript. For the isolation to hold, the launcher must not give the run write access to:
+
+- `async-subagent-launches/`, or other runs' directories under `async-subagent-runs/`;
+- `~/.pi/agent`: extensions, settings and agent files there load into the parent session, so write access to them is a way into the parent. Bind it read-only.
+
+The run's working directory stays writable, so a run can still reach the parent through it: the project's `.pi/` extensions and agents, or `.git/config` settings such as `core.fsmonitor` that the parent's git commands run. Give an isolated run a checkout the parent session does not use.
+
+Runs that a child starts itself (nested runs) keep these records in their root run's folder under `nested-subagent-runs/`. The child's runner writes them, so they add no isolation.
+
 ### Broker wrappers
 
 Some sandboxes, such as nono's broker mode, start the runner in a separate process instead of as a child of the launcher command. pi-subagents does not rely on the launcher's process being the runner:
 
 - Before it starts any work, the runner reports its own process id. The launch waits up to 10 seconds for it and fails if it does not arrive. `status.json` and run events use the runner's process id, not the launcher's.
+- If the launch fails before the runner is told to proceed, pi-subagents stops the reported process only when it is the launcher's process or one of its descendants, so a runner cannot make the parent signal an unrelated process. A broker-started runner is not signalled; it exits by itself within 30 seconds when it is never told to proceed.
 - When the launcher process exits, its exit code and signal are kept in `launcher-close.json` in the run directory. That exit is treated as the runner's exit only when the runner's process is confirmed dead. A runner killed by a signal may be reported by the launcher as exit code `128 + n` (for example `143` for `SIGTERM`).
 - If only the launcher process is killed while the runner keeps working, the run keeps running and still accepts steer and stop. No process-exit proof is recorded when the runner later exits, so if `maxActiveAsyncRunsPerSession` is set, the run's capacity slot stays held; the abandoned-slot policy releases it only if the run ends failed.
 - If the sandbox does not let the parent check the runner's process id, a runner that dies without its launcher noticing stays `running` until the stale-run check marks it failed after 24 hours without a status update.

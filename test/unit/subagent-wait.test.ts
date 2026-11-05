@@ -11,6 +11,8 @@ import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.t
 import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
+import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
+import { writeFileCreatingDir } from "../support/helpers.ts";
 
 function writeStatus(asyncRoot: string, runId: string, state: AsyncStatus["state"], extra: object = {}): void {
 	const dir = path.join(asyncRoot, runId);
@@ -35,7 +37,7 @@ function writeStatus(asyncRoot: string, runId: string, state: AsyncStatus["state
 }
 
 function writeRecoveryDescriptor(asyncRoot: string, runId: string, agent: string, sessionFile: string, cwd: string): void {
-	fs.writeFileSync(path.join(asyncRoot, runId, "recovery-descriptor.json"), JSON.stringify({
+	writeFileCreatingDir(recoveryDescriptorPath(asyncRoot, runId), JSON.stringify({
 		version: 1,
 		sourceRunId: runId,
 		agent,
@@ -235,6 +237,14 @@ describe("bg_wait tool", () => {
 		assert.throws(() => resolveWaitToolConfig({ defaultTimeoutMs: 1.5 }, {}), /config\.waitTool\.defaultTimeoutMs/);
 		assert.throws(() => resolveWaitToolConfig(undefined, { [WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV]: "0" }), /PI_SUBAGENT_WAIT_TOOL_DEFAULT_TIMEOUT_MS/);
 		assert.throws(() => resolveWaitToolConfig(undefined, { [WAIT_TOOL_ENABLED_ENV]: "maybe" }), /PI_SUBAGENT_WAIT_TOOL_ENABLED/);
+	});
+
+	it("accepts a waitTool.name that is a plain tool name and not one of pi-subagents' own tools", () => {
+		assert.deepEqual(resolveWaitToolConfig({ name: "subagent_wait" }, {}), { enabled: true, name: "subagent_wait" });
+		assert.deepEqual(resolveWaitToolConfig({ name: "bg_wait" }, {}), { enabled: true });
+		assert.throws(() => resolveWaitToolConfig({ name: "subagent-wait" }, {}), /config\.waitTool\.name/);
+		assert.throws(() => resolveWaitToolConfig({ name: 7 } as never, {}), /config\.waitTool\.name/);
+		assert.throws(() => resolveWaitToolConfig({ name: "subagent" }, {}), /already a pi-subagents tool/);
 	});
 
 	it("returns immediately without polling when waitTool is disabled", async () => {
@@ -1003,7 +1013,6 @@ describe("bg_wait tool", () => {
 			assert.match(text, /1 of 3 run\(s\) finished/);
 			assert.match(text, /1 complete/);
 			assert.match(text, /2 run\(s\) still in flight/);
-			// Must not have blocked on b and c: a bounded number of polls.
 			assert.ok(polls <= 2, `first-completion should return promptly, polled ${polls}`);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -1015,7 +1024,6 @@ describe("bg_wait tool", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const state = makeState("sess-1");
-			// A run from another session must be ignored.
 			writeStatus(asyncRoot, "run-other", "running", { sessionId: "sess-2", pid: 999999 });
 			const result = await waitForSubagents({}, undefined, baseDeps(root, state));
 			assert.equal(result.isError, undefined);

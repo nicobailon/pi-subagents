@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { collectSubagentCost, formatSubagentCostReport } from "../../src/slash/subagent-cost.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { DIRS, SLASH_RESULT_TYPE } from "../../src/shared/types.ts";
+import { DEFAULT_WAIT_TOOL_NAME, setWaitToolName } from "../../src/shared/wait-tool-name.ts";
 
 function collectWithErrors(branch: unknown[]) {
 	const ctx = { cwd: process.cwd(), sessionManager: { getBranch: () => branch, getSessionFile: () => undefined } };
@@ -29,6 +30,21 @@ describe("collectSubagentCost workflow receipts", () => {
 		assert.deepEqual(errors, []);
 		assert.equal(report.children.length, 1);
 		assert.equal(report.childTotal.input, 12);
+	});
+
+	it("counts wait results saved as bg_wait after waitTool.name renames the tool", () => {
+		const usage = { input: 7, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.1, turns: 1 };
+		setWaitToolName("subagent_wait");
+		try {
+			const { report } = collectWithErrors([
+				{ type: "message", message: { role: "toolResult", toolName: "bg_wait", details: { mode: "single", runId: `foreground-wait-${process.pid}`, results: [{ agent: "scout", usage }] } } },
+				{ type: "message", message: { role: "toolResult", toolName: "bg_wait", details: { status: "done", taskId: "shell-1" } } },
+			]);
+			assert.equal(report.children.length, 1);
+			assert.equal(report.childTotal.input, 7);
+		} finally {
+			setWaitToolName(DEFAULT_WAIT_TOOL_NAME);
+		}
 	});
 
 	it("counts a running async workflow without a receipt as unavailable without logging", () => {

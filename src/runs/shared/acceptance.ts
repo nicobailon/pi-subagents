@@ -1170,11 +1170,34 @@ function verifyRedactionEnv(env: Record<string, string> | undefined): Record<str
 	}));
 }
 
-function redactVerifyEnv(value: string, env: Record<string, string> | undefined): string {
+function verifySecrets(env: Record<string, string> | undefined): string[] {
+	return [...new Set(Object.values(verifyRedactionEnv(env)).filter(Boolean))].sort((left, right) => right.length - left.length);
+}
+
+function redactSecrets(value: string, secrets: readonly string[]): string {
 	let redacted = value;
-	const secrets = [...new Set(Object.values(verifyRedactionEnv(env)).filter(Boolean))].sort((left, right) => right.length - left.length);
 	for (const secret of secrets) redacted = redacted.replaceAll(secret, "[REDACTED]");
 	return redacted;
+}
+
+function redactVerifyEnv(value: string, env: Record<string, string> | undefined): string {
+	return redactSecrets(value, verifySecrets(env));
+}
+
+/** Numbers are matched on their source text: parsing rounds or respells them (12345678901234567890, 1.50), which would hide a secret. */
+function parseRedactedVerifyValue(text: string, secrets: readonly string[]): unknown {
+	return JSON.parse(text, (_key: string, value: unknown, context?: { source?: string }) => {
+		if (typeof value === "string") return redactSecrets(value, secrets);
+		if (typeof value === "number" && secrets.length > 0) {
+			// Node 22+ and Bun pass the source text; without it, fail closed.
+			const source = context?.source;
+			return source !== undefined && redactSecrets(source, secrets) === source ? value : "[REDACTED]";
+		}
+		if (value && typeof value === "object" && !Array.isArray(value)) {
+			return Object.fromEntries(Object.entries(value).map(([key, item]) => [redactSecrets(key, secrets), item]));
+		}
+		return value;
+	});
 }
 
 function uniqueStrings(items: Array<string | undefined>): string[] {
@@ -1259,29 +1282,44 @@ const TYPED_VERIFY_OUTPUT_MAX_BYTES = 12_000;
  * A passing `output: "json"` command must print one JSON document on stdout.
  * The parsed value becomes the run's structured output; anything else turns
  * the passing run into a failed one so acceptance rejects rather than
- * silently dropping the verdict. Stdout is already bounded by trimOutput, so a
- * truncated document is detected by its marker instead of a parse guess.
+ * silently dropping the verdict. The raw stdout is parsed, because the stored
+ * stdout is redacted and redaction can hit JSON syntax (`true` in KDE_FULL_SESSION).
+ * The schema checks the raw value so a redacted string cannot fail a correct
+ * gate. Error messages quote parts of their input (a parse error quotes ~10
+ * chars, schema paths escape `/` and `~`), so each one is built from the
+ * redacted text or value, never the raw one.
  */
-async function applyTypedVerifyOutput(command: AcceptanceVerifyCommand, run: AcceptanceVerifyResult): Promise<void> {
+async function applyTypedVerifyOutput(command: AcceptanceVerifyCommand, run: AcceptanceVerifyResult, rawStdout: string): Promise<void> {
 	if (run.status !== "passed") return;
-	const stdout = run.stdout ?? "";
+	const secrets = verifySecrets(command.env);
+	const stdout = rawStdout.trim();
 	const fail = (message: string): void => {
 		run.status = "failed";
-		run.structuredOutputError = message;
+		run.structuredOutputError = redactSecrets(message, secrets);
 	};
-	if (!stdout.trim()) return fail("output: \"json\" command printed nothing on stdout.");
-	if (stdout.endsWith("...[truncated]")) return fail(`output: "json" stdout exceeded ${TYPED_VERIFY_OUTPUT_MAX_BYTES} characters and was truncated.`);
+	if (!stdout) return fail("output: \"json\" command printed nothing on stdout.");
+	if (stdout.length > TYPED_VERIFY_OUTPUT_MAX_BYTES) return fail(`output: "json" stdout exceeded ${TYPED_VERIFY_OUTPUT_MAX_BYTES} characters and was truncated.`);
 	let value: unknown;
 	try {
 		value = JSON.parse(stdout);
-	} catch (error) {
-		return fail(`output: "json" stdout is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+	} catch {
+		let reason = "parse failed";
+		try {
+			JSON.parse(redactSecrets(stdout, secrets));
+		} catch (error) {
+			reason = error instanceof Error ? error.message : String(error);
+		}
+		return fail(`output: "json" stdout is not valid JSON: ${reason}`);
 	}
+	const redactedValue = parseRedactedVerifyValue(stdout, secrets);
 	if (command.schema) {
 		const validation = await validateStructuredOutputValue(command.schema, value);
-		if (validation.status === "invalid") return fail(`output: "json" stdout does not match gate.schema: ${validation.message}`);
+		if (validation.status === "invalid") {
+			const redactedValidation = await validateStructuredOutputValue(command.schema, redactedValue);
+			return fail(`output: "json" stdout does not match gate.schema${redactedValidation.status === "invalid" ? `: ${redactedValidation.message}` : "."}`);
+		}
 	}
-	run.structuredOutput = value;
+	run.structuredOutput = redactedValue;
 }
 
 /** The first typed verify result on a ledger, if any command produced one. */
@@ -1296,6 +1334,13 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 	artifactsDir?: string;
 	runId?: string;
 } = {}): Promise<AcceptanceVerifyResult> {
+	// Typed gates read inputs (a report file, a log) that can change without
+	// the tracked tree changing, so their verdicts are never reused.
+	if (command.output === "json") {
+		const { run, rawStdout } = await runVerifyCommand(command, defaultCwd, options);
+		await applyTypedVerifyOutput(command, run, rawStdout);
+		return run;
+	}
 	const cwd = command.cwd ? path.resolve(defaultCwd, command.cwd) : defaultCwd;
 	let workspaceState: VerifyWorkspaceState | undefined;
 	try {
@@ -1303,10 +1348,8 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 	} catch {
 		workspaceState = undefined;
 	}
-	// Typed gates read inputs (a report file, a log) that can change without
-	// the tracked tree changing, so their verdicts are never reused.
-	if (!workspaceState || !options.artifactsDir || !options.runId || command.output === "json") {
-		return runVerifyCommand(command, defaultCwd, options);
+	if (!workspaceState || !options.artifactsDir || !options.runId) {
+		return (await runVerifyCommand(command, defaultCwd, options)).run;
 	}
 	const envKeys = Object.keys(command.env ?? {}).sort();
 	const envHash = hash(JSON.stringify(Object.fromEntries(Object.entries(effectiveVerifyEnv(command.env)).sort(([left], [right]) => left.localeCompare(right)))));
@@ -1331,7 +1374,7 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 	} catch {
 		// A cache miss or unreadable artifact must not prevent host verification.
 	}
-	const result = await runVerifyCommand(command, defaultCwd, options);
+	const { run: result } = await runVerifyCommand(command, defaultCwd, options);
 	const evidenced: AcceptanceVerifyResult = { ...result, artifactPath, cacheKey, memoized: false, envKeys, envHash, workspaceState };
 	try {
 		fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
@@ -1397,7 +1440,8 @@ export function quoteExecutableForShell(command: string, platform: string = proc
 	return command;
 }
 
-function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string } = {}): Promise<AcceptanceVerifyResult> {
+/** `rawStdout` is unredacted and never stored; only typed output parsing reads it. */
+function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string } = {}): Promise<{ run: AcceptanceVerifyResult; rawStdout: string }> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
 		const cwd = command.cwd ? path.resolve(defaultCwd, command.cwd) : defaultCwd;
@@ -1420,11 +1464,14 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 			if (hardKill) clearTimeout(hardKill);
 			options.signal?.removeEventListener("abort", abortVerification);
 			resolve({
-				id: command.id,
-				command: command.command,
-				cwd,
-				durationMs: Date.now() - startedAt,
-				...result,
+				run: {
+					id: command.id,
+					command: command.command,
+					cwd,
+					durationMs: Date.now() - startedAt,
+					...result,
+				},
+				rawStdout: stdout,
 			});
 		};
 		const abortVerification = () => {
@@ -1583,7 +1630,6 @@ export async function evaluateAcceptance(input: {
 					artifactsDir: input.artifactsDir,
 					runId: input.runId,
 				});
-				if (command.output === "json") await applyTypedVerifyOutput(command, run);
 				ledger.verifyRuns.push(run);
 				if (input.signal?.aborted) break;
 			}

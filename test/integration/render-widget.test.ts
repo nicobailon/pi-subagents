@@ -1333,7 +1333,6 @@ describe("subagent async widget rendering", () => {
 			assert.match(text, /issue-1695\.fresh-review · worker · queued/);
 			assert.doesNotMatch(text, /bottleneck ·/);
 			assert.match(text, /Press the expand key for details/);
-			// The 10-line card at 30 rows folds the oldest done lanes, not the active one (#3118).
 			assert.ok(lines.length <= 10, text);
 			assert.match(text, /… 3 earlier done/);
 			assert.doesNotMatch(text, /scope-scout/);

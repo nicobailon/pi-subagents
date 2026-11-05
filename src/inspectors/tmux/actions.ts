@@ -48,7 +48,6 @@ export function readTmuxInspectorBinding(asyncDir: string, index?: number): Tmux
 	}
 }
 
-/** Read a binding only when it belongs to the requested inspector target. */
 export function readTmuxInspectorBindingForTarget(target: InspectorTarget): TmuxInspectorBinding | undefined {
 	const binding = readTmuxInspectorBinding(target.asyncDir, target.index);
 	if (!binding || binding.runId !== target.runId || binding.childIndex !== target.index) return undefined;

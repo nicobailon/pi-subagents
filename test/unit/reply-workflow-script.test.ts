@@ -23,7 +23,7 @@ describe("reply workflow block", () => {
 		const block = "```js workflow\nreturn 1;\n```";
 		for (const [manager, pattern] of [
 			[branch({ type: "text", text: "no block" }, call("call-1")), /exact line "```js workflow".*found 0\. If the block is in your reply: .*options: \{ script: "\.\.\." \} in place of workflow: true/],
-			[branch({ type: "thinking", thinking: "```js workflow\nreturn 1;\n```" }, call("call-1")), /no text in the session, so any ```js workflow block written with it is not in it\. .*options: \{ script: "\.\.\." \} in place of workflow: true/],
+			[branch({ type: "thinking", thinking: "```js workflow\nreturn 1;\n```" }, call("call-1")), /no text in the session, so no ```js workflow block reached it\. .*options: \{ script: "\.\.\." \} in place of workflow: true/],
 			[branch({ type: "text", text: "```js\na();\n```\n```js\nb();\n```" }, call("call-1")), /found 0\. This reply has 2 untagged js blocks/],
 			[branch({ type: "text", text: `${block}\n${block}` }, call("call-1")), /found 2/],
 			[branch({ type: "text", text: "```js workflow\nreturn 1;" }, call("call-1")), /not closed/],

@@ -500,6 +500,7 @@ describe("Herdr status bridge", () => {
 			label: "⏳ 2 subagents (worker, reviewer)",
 		}]);
 		assert.ok(commands[0]?.includes("summary=⏳ 2 subagents (worker, reviewer) ⚠"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳2⚠"));
 
 		bridge.dispose();
 		await bridge.flush();
@@ -537,7 +538,7 @@ describe("Herdr status bridge", () => {
 		await bridge.flush();
 
 		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker) · 1 pane"));
-		assert.ok(commands[0]?.includes("title-suffix=⏳worker"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳1"));
 		assert.ok(commands[1]?.includes("summary=⏳ 2 subagents (worker, reviewer) · 1 pane"));
 		assert.ok(commands[1]?.includes("title-suffix=⏳2"));
 		assert.ok(commands[2]?.includes("title-suffix=⏳2⚠"));
@@ -583,10 +584,10 @@ describe("Herdr status bridge", () => {
 		await bridge.flush();
 
 		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker) · Build auth flow"));
-		assert.ok(commands[0]?.includes("title-suffix=⏳Build auth flow"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳1"));
 		assert.ok(commands[1]?.some((argument) => argument.startsWith("summary=⏳ 2 subagents") && argument.length < 180));
-		assert.ok(commands[1]?.some((argument) => argument.startsWith("title-suffix=⏳Review ") && argument.length < 70));
-		assert.ok(commands[2]?.includes("title-suffix=⏳Build auth flow"));
+		assert.ok(commands[1]?.some((argument) => argument === "title-suffix=⏳2"));
+		assert.ok(commands[2]?.includes("title-suffix=⏳1"));
 		assert.ok(commands[3]?.includes("--clear-state-labels"));
 		assert.doesNotMatch(commands.flat().join("\n"), /raw secret prompt|another raw prompt/);
 
@@ -607,7 +608,7 @@ describe("Herdr status bridge", () => {
 		await bridge.flush();
 
 		assert.ok(commands[0]?.includes("summary=⏳ 1 subagent (worker)"));
-		assert.ok(commands[0]?.includes("title-suffix=⏳worker"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳1"));
 		assert.doesNotMatch(commands.flat().join("\n"), /\u001b\[31m/);
 
 		bridge.dispose();
@@ -633,9 +634,9 @@ describe("Herdr status bridge", () => {
 		intervals.fireAll();
 		await bridge.flush();
 
-		assert.ok(commands[0]?.includes("title-suffix=⏳Build auth"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳1"));
 		assert.ok(commands[1]?.includes("summary=⏳ 1 subagent (worker)"));
-		assert.ok(commands[1]?.includes("title-suffix=⏳worker"));
+		assert.ok(commands[1]?.includes("title-suffix=⏳1"));
 		assert.doesNotMatch(commands[1]?.join("\n") ?? "", /Build auth/);
 
 		bridge.dispose();

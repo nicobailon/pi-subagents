@@ -161,6 +161,9 @@ interface JsonSchemaValidationError {
 type CompileJsonSchema = (schema: unknown) => CompiledJsonSchema;
 
 let cachedCompile: Promise<CompileJsonSchema> | undefined;
+// prepareArguments is synchronous, so it can only use a compiler that has already loaded.
+let loadedCompile: CompileJsonSchema | undefined;
+let compileLoadError: unknown;
 
 export async function resolveCompileFromPackageRoot(packageRoot: string): Promise<CompileJsonSchema | undefined> {
 	const requireFromRoot = createRequire(path.join(packageRoot, "package.json"));
@@ -201,12 +204,21 @@ async function importCompile(): Promise<CompileJsonSchema> {
 
 function loadCompile(): Promise<CompileJsonSchema> {
 	if (!cachedCompile) {
-		cachedCompile = importCompile().catch((error) => {
+		cachedCompile = importCompile().then((compile) => {
+			loadedCompile = compile;
+			return compile;
+		}, (error) => {
 			cachedCompile = undefined;
+			compileLoadError = error;
 			throw error;
 		});
 	}
 	return cachedCompile;
+}
+
+/** Resolves once the validator has loaded or failed; a failure is reported by the structured_output call. */
+export function structuredOutputValidatorReady(): Promise<void> {
+	return loadCompile().then(() => undefined, () => undefined);
 }
 
 function jsonPointerTarget(root: unknown, pointer: string): unknown {
@@ -378,15 +390,37 @@ export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?
 }
 
 export async function validateStructuredOutputValue(schema: JsonSchemaObject, value: unknown): Promise<{ status: "valid" } | { status: "invalid"; message: string }> {
-	const compile = await loadCompile();
+	return validateWithCompile(await loadCompile(), schema, value);
+}
+
+/**
+ * The tool's `prepareArguments` hook: checks the raw `value` before Pi converts tool arguments
+ * (Pi can turn `"x"` into `["x"]` or `null` into `"null"`), so only a value that already matches
+ * the schema is captured. Fails closed when the validator has not loaded.
+ */
+export function prepareStructuredOutputArguments(schema: JsonSchemaObject, args: unknown): unknown {
+	if (!args || typeof args !== "object" || !("value" in args)) return args;
+	if (!loadedCompile) throw compileLoadError ?? new Error("Structured output validator is still loading; call structured_output again.");
+	const validation = validateWithCompile(loadedCompile, schema, args.value);
+	if (validation.status === "invalid") throw new Error(`Structured output validation failed: ${validation.message}`);
+	return args;
+}
+
+function validateWithCompile(compile: CompileJsonSchema, schema: JsonSchemaObject, value: unknown): { status: "valid" } | { status: "invalid"; message: string } {
 	let validator: CompiledJsonSchema;
 	try {
 		validator = compile(schema);
 	} catch (error) {
 		return { status: "invalid", message: `invalid outputSchema: ${error instanceof Error ? error.message : String(error)}` };
 	}
-	if (validator.Check(value)) return { status: "valid" };
-	const originalErrors = [...validator.Errors(value)];
+	let originalErrors: JsonSchemaValidationError[];
+	try {
+		if (validator.Check(value)) return { status: "valid" };
+		originalErrors = [...validator.Errors(value)];
+	} catch (error) {
+		// A recursive $ref compiles but overflows the stack when checked.
+		return { status: "invalid", message: `outputSchema cannot be validated (cyclic or too deep): ${error instanceof Error ? error.message : String(error)}` };
+	}
 	const errors: string[] = [];
 	const uniqueErrors = new Set<string>();
 	const seen = new Set<string>();

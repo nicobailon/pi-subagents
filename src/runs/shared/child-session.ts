@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { cleanupSessionResources, registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { CHILD_COMMAND_TOOL, createChildCommandRuntime } from "./child-commands.ts";
 import { supervisorChannelDir } from "./child-tool-plan.ts";
@@ -44,7 +45,7 @@ export interface ChildSessionExtensionError {
 
 export interface ChildHookExtension {
 	name: string;
-	factory: (pi: ExtensionAPI) => void;
+	factory: (pi: ExtensionAPI) => void | Promise<void>;
 }
 
 export type ChildSessionStorage =
@@ -257,6 +258,22 @@ function prioritizeChildCommandRuntime<T extends { extensions: Array<{ path: str
 	const [commands] = extensions.splice(index, 1);
 	extensions.unshift(commands!);
 	return { ...result, extensions };
+}
+
+/**
+ * `dispose()` releases session resources only in the SDK's copy of pi-ai. Under Pi's bundled CLI, the host's
+ * extensions register theirs in a different copy: the one this module imports. The observer is registered per
+ * dispose because Pi reloads extensions without a module cache, so a module-level one would pile up on each reload.
+ */
+function disposeChildSession(session: { readonly sessionId: string; dispose(): void }): void {
+	let released = false;
+	const unregister = registerSessionResourceCleanup((sessionId) => { if (sessionId === session.sessionId) released = true; });
+	try {
+		session.dispose();
+	} finally {
+		unregister();
+		if (!released) cleanupSessionResources(session.sessionId);
+	}
 }
 
 /** One launch at a time from env application through `session_start`, so parallel launches never observe each other's `processEnv` while their extensions load and start. */
@@ -573,7 +590,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				} catch (error) {
 					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
 				} finally {
-					session.dispose();
+					disposeChildSession(session);
 				}
 			};
 			let inheritedProviders = new Set<string>();
@@ -642,7 +659,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 						},
 					});
 				} catch (error) {
-					session.dispose();
+					disposeChildSession(session);
 					throw error;
 				} finally {
 					binding = false;

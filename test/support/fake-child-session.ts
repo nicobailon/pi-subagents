@@ -44,7 +44,6 @@ export interface FakeChildResponse {
 	missingTools?: string[];
 	/** Rejects the session creation itself (a startup failure). */
 	createError?: string;
-	/** Keeps the run open until the parent aborts it. */
 	hangUntilAbort?: boolean;
 	/** After draining a post-final steer/follow-up into pending (hasQueuedMessages false), delay before `turn_start`. */
 	queuedMessageTurnStartDelayMs?: number;

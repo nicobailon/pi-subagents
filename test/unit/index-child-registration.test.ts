@@ -520,6 +520,42 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("registers the wait tool under waitTool.name and names it in the subagent description", () => {
+		const script = String.raw`
+			import registerSubagentExtension from "./index.ts";
+			const tools = new Map();
+			const fakePi = new Proxy({
+				events: { on() { return () => {}; }, emit() {} },
+				registerTool(tool) { tools.set(tool.name, tool); },
+				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			registerSubagentExtension(fakePi);
+			const wait = tools.get("subagent_wait") ?? tools.get("bg_wait");
+			process.stdout.write(JSON.stringify({ names: [...tools.keys()], subagent: tools.get("subagent").description, wait: wait.description }));
+		`;
+		const register = (config: object) => {
+			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-name-"));
+			try {
+				const configDir = path.join(agentDir, "extensions", "subagent");
+				fs.mkdirSync(configDir, { recursive: true });
+				fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
+				const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" });
+				return JSON.parse(output) as { names: string[]; subagent: string; wait: string };
+			} finally {
+				fs.rmSync(agentDir, { recursive: true, force: true });
+			}
+		};
+		const defaults = register({});
+		const renamed = register({ waitTool: { name: "subagent_wait" } });
+		assert.ok(defaults.names.includes("bg_wait"));
+		assert.ok(renamed.names.includes("subagent_wait"));
+		assert.equal(renamed.names.includes("bg_wait"), false, "a renamed wait tool leaves bg_wait free for another extension");
+		assert.match(defaults.subagent, /bg_wait/);
+		assert.equal(renamed.subagent, defaults.subagent.replaceAll("bg_wait", "subagent_wait"));
+		assert.equal(renamed.wait, defaults.wait.replaceAll("bg_wait", "subagent_wait"));
+		assert.doesNotMatch(renamed.wait, /bg_wait/);
+	});
+
 	it("registers no slash commands or shortcut when enableSlashCommands is false, and keeps the subagent tool", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
@@ -1284,7 +1320,9 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("delivers a replaced session's async results to the session started in its place", () => {
+	for (const leave of [false, true]) it(leave
+		? "keeps a session's async results with it when the operator leaves the work there"
+		: "delivers a replaced session's async results to the session that took the work", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-session-transition-"));
 		const configDir = path.join(agentDir, "extensions", "subagent");
 		fs.mkdirSync(configDir, { recursive: true });
@@ -1295,7 +1333,9 @@ describe("subagent extension child mode", () => {
 			import registerSubagentExtension from "./index.ts";
 			import { currentCompletionOwnerId } from "./src/shared/completion-owner.ts";
 			import { writeAsyncResultFile } from "./src/runs/background/result-files.ts";
+			import { updateActiveRunIndex } from "./src/runs/background/active-run-index.ts";
 			import { DIRS } from "./src/shared/types.ts";
+			const leave = ${leave};
 			// Pi tears the old session's extension instance down and starts a new one on every session switch.
 			const makePi = () => {
 				const handlers = new Map();
@@ -1334,20 +1374,45 @@ describe("subagent extension child mode", () => {
 			const waitFor = async (predicate) => { for (let i = 0; i < 100 && !predicate(); i += 1) await new Promise((resolve) => setTimeout(resolve, 20)); };
 			const first = makePi();
 			await emit(first, "session_start", { reason: "startup" }, ctxFor(oldSession));
-			await emit(first, "session_shutdown", { reason: "new" });
+			const liveDir = path.join(DIRS.async, "transition-live-" + stamp);
+			fs.mkdirSync(liveDir, { recursive: true });
+			fs.writeFileSync(path.join(liveDir, "status.json"), JSON.stringify({ runId: path.basename(liveDir), mode: "single", state: "running", sessionId: oldSession, pid: process.pid, startedAt: stamp, lastUpdate: stamp, steps: [{ agent: "worker", status: "running" }] }));
+			updateActiveRunIndex(liveDir, "running");
+			const switchCtx = ctxFor(oldSession);
+			let prompts = 0;
+			switchCtx.hasUI = true;
+			switchCtx.ui.select = async (_title, options) => { prompts += 1; return options[leave ? 2 : 1]; };
+			switchCtx.ui.notify = (message) => { throw new Error(message); };
+			for (const handler of first.handlers.get("session_before_switch") ?? []) {
+				if ((await handler({ reason: "new" }, switchCtx))?.cancel) throw new Error("switch was cancelled");
+			}
+			if (prompts !== 1) throw new Error("running work must prompt once");
+			await emit(first, "session_shutdown", { reason: "new", targetSessionFile: newSession });
 			// Finished while the old session was shutting down and nobody owned delivery.
 			const before = writeResult("before", oldSession);
 			const foreign = writeResult("foreign", foreignSession);
 			const second = makePi();
-			await emit(second, "session_start", { reason: "new", previousSessionFile: oldSession }, ctxFor(newSession));
-			await waitFor(() => delivered(second, before) > 0);
+			const newCtx = ctxFor(newSession);
+			await emit(second, "session_start", { reason: "new", previousSessionFile: oldSession }, newCtx);
+			// Pi RPC rebinds after replacement and emits session_start again for the same runtime.
+			await emit(second, "session_start", { reason: "new", previousSessionFile: oldSession }, newCtx);
+			if (!leave) await waitFor(() => delivered(second, before) > 0);
 			second.events.emit("subagent:async-complete", { id: "transition-after-" + stamp, agent: "worker", success: true, summary: "after", timestamp: stamp + 1, sessionId: oldSession, completionOwnerId: owner });
 			second.events.emit("subagent:async-complete", { id: "transition-live-foreign-" + stamp, agent: "worker", success: true, summary: "foreign", timestamp: stamp + 2, sessionId: foreignSession, completionOwnerId: owner });
 			await new Promise((resolve) => setTimeout(resolve, 200));
 			const counts = { before: delivered(second, before), after: delivered(second, "transition-after-" + stamp), foreign: delivered(second, foreign), liveForeign: delivered(second, "transition-live-foreign-" + stamp), old: first.sent.length };
 			await emit(second, "session_shutdown", { reason: "quit" });
+			if (leave) {
+				const reopened = makePi();
+				await emit(reopened, "session_start", { reason: "startup" }, ctxFor(oldSession));
+				await waitFor(() => delivered(reopened, before) > 0);
+				if (delivered(reopened, before) !== 1) throw new Error("the original session did not get its saved result");
+				await emit(reopened, "session_shutdown", { reason: "quit" });
+			}
+			fs.rmSync(liveDir, { recursive: true, force: true });
 			fs.rmSync(path.join(DIRS.results, foreign + ".json"), { force: true });
-			if (JSON.stringify(counts) !== JSON.stringify({ before: 1, after: 1, foreign: 0, liveForeign: 0, old: 0 })) throw new Error("unexpected deliveries " + JSON.stringify(counts));
+			const expected = leave ? 0 : 1;
+			if (JSON.stringify(counts) !== JSON.stringify({ before: expected, after: expected, foreign: 0, liveForeign: 0, old: 0 })) throw new Error("unexpected deliveries " + JSON.stringify(counts));
 		`;
 
 		try {

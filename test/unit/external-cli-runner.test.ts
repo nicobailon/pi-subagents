@@ -298,6 +298,41 @@ process.stdout.write('ok');`);
 		);
 	});
 
+	it("stops the process, removes temporary paths, and rejects when the start status cannot be written", async () => {
+		const dir = tempDir();
+		const promptFilePath = path.join(dir, "prompt.txt");
+		const scratch = path.join(dir, "scratch");
+		let pid: number | undefined;
+		await assert.rejects(
+			runExternalCli({
+				command: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 5,
+				promptFilePath, temporaryDirectories: [scratch],
+				onProcess: (status) => { pid ??= status.pid; if (status.endedAt === undefined) throw new Error("status write failed: EISDIR"); },
+			}),
+			/status write failed: EISDIR/,
+		);
+		assert.ok(pid !== undefined);
+		assert.throws(() => process.kill(pid!, 0), { code: "ESRCH" });
+		assert.equal(fs.existsSync(promptFilePath), false);
+		assert.equal(fs.existsSync(scratch), false);
+	});
+
+	it("removes temporary paths and rejects when the final status cannot be written", { timeout: 10_000 }, async () => {
+		const dir = tempDir();
+		const promptFilePath = path.join(dir, "prompt.txt");
+		const scratch = path.join(dir, "scratch");
+		await assert.rejects(
+			runExternalCli({
+				command: process.execPath, args: ["-e", "process.stdout.write('done')"], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 6,
+				promptFilePath, temporaryDirectories: [scratch],
+				onProcess: (status) => { if (status.endedAt !== undefined) throw new Error("status write failed: EEXIST"); },
+			}),
+			/status write failed: EEXIST/,
+		);
+		assert.equal(fs.existsSync(promptFilePath), false);
+		assert.equal(fs.existsSync(scratch), false);
+	});
+
 	it("returns stderr for a nonzero exit", async () => {
 		const dir = tempDir();
 		const result = await runExternalCli({ command: process.execPath, args: ["-e", "console.error('specific failure');process.exit(7)"], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 1 });

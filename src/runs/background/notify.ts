@@ -1,6 +1,4 @@
 /**
- * Completion notification delivery.
- *
  * Async result files call this notifier directly and are deleted only after
  * `sendMessage()` accepts the notification. The event bus remains an
  * observation channel, not a delivery acknowledgement.

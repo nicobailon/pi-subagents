@@ -1,15 +1,7 @@
-/**
- * Integration tests for error handling across execution modes.
- *
- * Tests: agent crashes, stderr capture, detectSubagentError override,
- * signal/abort handling, and error propagation in chains.
- *
- * Requires pi packages for execution tests. Skips gracefully if unavailable.
- */
-
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
+import * as fs from "node:fs";
 import type { MockPi } from "../support/helpers.ts";
 import {
 	createMockPi,
@@ -22,18 +14,14 @@ import {
 	tryImport,
 } from "../support/helpers.ts";
 
-// Top-level await
 const utils = await tryImport<any>("./src/shared/utils.ts");
 const execution = await tryImport<any>("./src/runs/foreground/execution.ts");
+const childToolPlan = await tryImport<any>("./src/runs/shared/child-tool-plan.ts");
 
 const piAvailable = !!(execution && utils);
 
 const runSync = execution?.runSync;
 const detectSubagentError = utils?.detectSubagentError;
-
-// ---------------------------------------------------------------------------
-// detectSubagentError
-// ---------------------------------------------------------------------------
 
 describe("detectSubagentError", { skip: !detectSubagentError ? "utils not importable" : undefined }, () => {
 	it("returns no error for successful messages", () => {
@@ -103,10 +91,6 @@ describe("detectSubagentError", { skip: !detectSubagentError ? "utils not import
 		assert.equal(result.errorType, "write");
 	});
 });
-
-// ---------------------------------------------------------------------------
-// runSync error handling
-// ---------------------------------------------------------------------------
 
 describe("runSync error handling", { skip: !piAvailable ? "pi packages not available" : undefined }, () => {
 	let tempDir: string;
@@ -294,6 +278,34 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 		assert.match(attention?.message ?? "", /tool 'bash' open/);
 	});
 
+	it("still emits open-tool attention when the child's command state cannot be read", async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [{ type: "tool_execution_start", toolCallId: "long", toolName: "bash", args: { command: "sleep 2" } }] },
+			{ delay: 1600, jsonl: [{ type: "tool_execution_end", toolCallId: "long", toolName: "bash" }, events.toolResult("bash", "done"), events.assistantMessage("Done")] },
+		] });
+		const runId = "foreground-unreadable-command-state";
+		const channelDir = childToolPlan.supervisorChannelDir(runId, "worker", 0);
+		fs.mkdirSync(channelDir, { recursive: true });
+		// A truncated file makes the 1 s activity timer's read throw.
+		fs.writeFileSync(path.join(channelDir, "commands.json"), "{");
+		const notices: Array<{ reason?: string; hasCommandController?: boolean }> = [];
+		const warnings: Array<{ message: string; key: string }> = [];
+		try {
+			const result = await runSync(tempDir, makeAgentConfigs(["worker"]), "worker", "Run a command", {
+				runId,
+				controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 100, notifyOn: ["needs_attention"] },
+				onControlEvent: (event: { reason?: string; hasCommandController?: boolean }) => notices.push(event),
+				onWarning: (message: string, key: string) => warnings.push({ message, key }),
+			});
+			assert.equal(result.exitCode, 0);
+			assert.deepEqual(notices.filter((event) => event.reason === "tool_open_threshold").map((event) => event.hasCommandController), [false]);
+			assert.equal(warnings.length, 1);
+			assert.match(warnings[0]!.message, /Could not read the command state of worker/);
+		} finally {
+			fs.rmSync(channelDir, { recursive: true, force: true });
+		}
+	});
+
 	it("emits attention once per long-open foreground call after an earlier attention state", async () => {
 		mockPi.onCall({ steps: [
 			{ jsonl: [{ type: "tool_execution_start", toolCallId: "first", toolName: "bash", args: { command: "sleep 2" } }] },
@@ -348,7 +360,6 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 		});
 		const elapsed = Date.now() - start;
 
-		// Key: should complete much faster than the 10s delay
 		assert.ok(elapsed < 5000, `should abort early, took ${elapsed}ms`);
 		assert.doesNotMatch(result.error ?? "", /exited during 'bash' tool execution/);
 	});

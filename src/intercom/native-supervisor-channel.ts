@@ -13,6 +13,7 @@ import { ownsRun } from "../runs/shared/run-ownership.ts";
 import { writeAtomicJson, writePrivateAtomicJson } from "../shared/atomic-json.ts";
 import { shouldUseNativeFsWatch } from "../shared/watch-strategy.ts";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
+import { reportSessionWarning } from "../shared/session-warnings.ts";
 import {
 	SUPERVISOR_REQUEST_MESSAGE_TYPE,
 	SUPERVISOR_REPLY_ENTRY_TYPE,
@@ -832,7 +833,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	};
 
 	const registerParentTools = (): void => {
-		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pi, pending, state, observeRequestLifecycle, () => poll(), runState, endedRequests));
+		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pi, pending, state, observeRequestLifecycle, () => pollOnce(), runState, endedRequests));
 	};
 	// A session that never delegated through `subagent` does not declare the reply tool (scheduled runs, runs
 	// adopted after a resume), so declare it before the model is asked to use it.
@@ -855,7 +856,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		}
 	};
 
-	const poll = (): void => {
+	const pollOnce = (): void => {
 		cleanupStaleChannelsIfDue();
 		// Only display notifications require a live UI context, not request registration.
 		refreshPendingRequests(pending, state, observeRequestLifecycle, runState);
@@ -941,6 +942,17 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		}
 		channels?.retire?.();
 		updateSettleSubscription();
+	};
+
+	// Never throws: this runs from timers, watchers, setImmediate and event handlers, and Pi exits the process on an
+	// uncaught exception, so one unreadable temp directory must not end the session. Callers whose answer a model or a
+	// drain decision reads use pollOnce, so a failed scan is not mistaken for "no pending requests".
+	const poll = (): void => {
+		try {
+			pollOnce();
+		} catch (error) {
+			reportSessionWarning(state, `Supervisor channel poll failed: ${error instanceof Error ? error.message : String(error)}`, "supervisor-channel-poll");
+		}
 	};
 
 	const handleBeforeSettle = (event: AgentBeforeSettleEvent): AgentBeforeSettleEventResult | undefined => {
@@ -1130,7 +1142,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		},
 		hasPendingRequests: () => {
 			if (!started) return false;
-			poll();
+			pollOnce();
 			return pending.size > 0;
 		},
 		start: () => {
