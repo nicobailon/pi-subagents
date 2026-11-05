@@ -198,12 +198,12 @@ describe("Claude Code adapter", () => {
 		});
 		writeWorkflowReceipt(runDir, receipt);
 		assert.deepEqual(readWorkflowReceipt(root, "source").entries.claude?.externalAdapter?.safetySource, { measured: false, command: "/opt/wrappers/claude-verify" });
-		const write = (replace: (key: string, value: unknown) => unknown): void => fs.writeFileSync(path.join(runDir, "workflow-receipt.json"), JSON.stringify(receipt, replace), "utf-8");
-		write((key, value) => key === "measured" ? true : value);
+		const write = (field: string, replacement: boolean | undefined): void => fs.writeFileSync(path.join(runDir, "workflow-receipt.json"), JSON.stringify(receipt, (key, value) => key === field ? replacement : value), "utf-8");
+		write("measured", true);
 		assert.throws(() => readWorkflowReceipt(root, "source"), /externalAdapter\.safetySource is invalid/);
-		write((key, value) => key === "safety" ? undefined : value);
+		write("safety", undefined);
 		assert.throws(() => readWorkflowReceipt(root, "source"), /externalAdapter\.safety is missing/);
-		write((key, value) => key === "safetySource" ? undefined : value);
+		write("safetySource", undefined);
 		assert.deepEqual(readWorkflowReceipt(root, "source").entries.claude?.externalAdapter?.safety, runner.safety);
 	});
 
