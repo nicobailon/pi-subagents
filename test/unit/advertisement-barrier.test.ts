@@ -85,6 +85,11 @@ if (phase === "old") {
 				await before(event, ctx);
 				return event.systemPromptOptions.sections.advertised_subagents;
 			};
+			const waitForFile = async (file, message, ms = 3000) => {
+				const deadline = Date.now() + ms;
+				while (!fs.existsSync(file) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+				assert.equal(fs.existsSync(file), true, message);
+			};
 			start({ reason: "startup" }, ctx);
 			let tick = false;
 			setTimeout(() => { tick = true; }, 10);
@@ -114,9 +119,7 @@ if (phase === "old") {
 			process.env.TEST_NPM_PHASE = "old";
 			const oldStarted = Date.now();
 			start({ reason: "reload" }, ctx);
-			const readyDeadline = Date.now() + 3000;
-			while (!fs.existsSync(process.env.TEST_OLD_PID) && Date.now() < readyDeadline) await new Promise(resolve => setTimeout(resolve, 10));
-			assert.equal(fs.existsSync(process.env.TEST_OLD_PID), true);
+			await waitForFile(process.env.TEST_OLD_PID);
 			const waitingOnOld = advertise();
 			const waitingLoader = tools.get("subagents_enable").execute("reload", {}, new AbortController().signal, undefined, ctx);
 			const registration = registerRuntimeAgent({ pi, name: "runtime-test", definition: { description: "Test", systemPrompt: "Test" } });
@@ -128,9 +131,7 @@ if (phase === "old") {
 			// The latest catalog must not wait for the obsolete lookup timeout.
 			assert.ok(Date.now() - oldStarted < 5000, "old lookup held the new session's prompt");
 			if (process.platform !== "win32") {
-				const cancelledDeadline = Date.now() + 3000;
-				while (!fs.existsSync(process.env.TEST_OLD_DONE) && Date.now() < cancelledDeadline) await new Promise(resolve => setTimeout(resolve, 10));
-				assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true, "superseded owned lookup must exit without release");
+				await waitForFile(process.env.TEST_OLD_DONE, "superseded owned lookup must exit without release");
 			}
 			fs.writeFileSync(process.env.TEST_OLD_RELEASE, "release");
 			assert.match(latest, /<name>new-specialist<\/name>/);
@@ -150,9 +151,7 @@ if (phase === "old") {
 			assert.match(runtime, /new-specialist/, "execution must resolve the advertised agent");
 			assert.doesNotMatch(runtime, /Unknown agent|not found/i);
 			// Windows shell descendants may need the release; POSIX owned children were cancelled above.
-			const oldDeadline = Date.now() + 15_000;
-			while (!fs.existsSync(process.env.TEST_OLD_DONE) && Date.now() < oldDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
-			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true, "old lookup completed");
+			await waitForFile(process.env.TEST_OLD_DONE, "old lookup completed", 15_000);
 			await new Promise((resolve) => setTimeout(resolve, 500));
 			const afterStale = await advertise();
 			assert.match(afterStale, /<name>new-specialist<\/name>/);
@@ -171,9 +170,7 @@ if (phase === "old") {
 			fs.rmSync(process.env.TEST_OLD_RELEASE, {force: true});
 			process.env.TEST_NPM_PHASE = "old";
 			start({ reason: "reload" }, ctx);
-			const shutdownReady = Date.now() + 3000;
-			while (!fs.existsSync(process.env.TEST_OLD_PID) && Date.now() < shutdownReady) await new Promise(resolve => setTimeout(resolve, 10));
-			assert.equal(fs.existsSync(process.env.TEST_OLD_PID), true);
+			await waitForFile(process.env.TEST_OLD_PID);
 			const waitingAtShutdown = advertise();
 			await Promise.all(hooks.get("session_shutdown").map(handler => handler({reason: "exit"}, ctx)));
 			let shutdownWatchdog;
@@ -184,9 +181,7 @@ if (phase === "old") {
 				clearTimeout(shutdownWatchdog);
 				fs.writeFileSync(process.env.TEST_OLD_RELEASE, "release");
 			}
-			const shutdownDone = Date.now() + 3000;
-			while (!fs.existsSync(process.env.TEST_OLD_DONE) && Date.now() < shutdownDone) await new Promise(resolve => setTimeout(resolve, 10));
-			assert.equal(fs.existsSync(process.env.TEST_OLD_DONE), true);
+			await waitForFile(process.env.TEST_OLD_DONE);
 			await new Promise(resolve => setTimeout(resolve, 50));
 			assert.equal(await advertise(), undefined, "shutdown must not republish a late catalog");
 			// A prompt still waiting when a runtime with a finished catalog shuts down must not get that catalog.

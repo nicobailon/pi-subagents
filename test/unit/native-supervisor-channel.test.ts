@@ -493,7 +493,7 @@ describe("native supervisor channel", () => {
 				return (readdir as (dir: fs.PathLike, options?: unknown) => unknown)(dir, options);
 			}) as typeof fsDefault.readdirSync;
 			syncBuiltinESMExports();
-			// Without a UI the session warning goes to stderr through console.warn; console.error would draw over the TUI.
+			// Without a UI the session warning goes to console.warn.
 			console.warn = (...args: unknown[]) => { reported.push(args.map((arg) => String(arg)).join(" ")); };
 			console.error = (...args: unknown[]) => { errors.push(args.map((arg) => String(arg)).join(" ")); };
 

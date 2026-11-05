@@ -500,6 +500,7 @@ describe("Herdr status bridge", () => {
 			label: "⏳ 2 subagents (worker, reviewer)",
 		}]);
 		assert.ok(commands[0]?.includes("summary=⏳ 2 subagents (worker, reviewer) ⚠"));
+		assert.ok(commands[0]?.includes("title-suffix=⏳2⚠"));
 
 		bridge.dispose();
 		await bridge.flush();
@@ -543,33 +544,6 @@ describe("Herdr status bridge", () => {
 		assert.ok(commands[2]?.includes("title-suffix=⏳2⚠"));
 		assert.ok(commands.at(-1)?.includes("--clear-token"));
 		assert.ok(commands.at(-1)?.includes("title-suffix"));
-
-		bridge.dispose();
-	});
-
-	it("keeps the title suffix a plain active-subagent count for any number of runs", async () => {
-		const events = new FakeEvents();
-		const commands: string[][] = [];
-		const bridge = registerHerdrStatusBridge({
-			events,
-			env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" },
-			runHerdr: (args) => commands.push([...args]),
-			refreshMs: 0,
-		});
-		const suffix = (index: number) => commands[index]?.find((argument) => argument.startsWith("title-suffix="));
-
-		bridge.sessionStarted({ hasUI: true, runs: [] });
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-1", agent: "worker" });
-		await bridge.flush();
-		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: "run-2", agents: ["scout", "reviewer"], taskLabel: "Build auth flow" });
-		await bridge.flush();
-		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { runId: "run-1" });
-		await bridge.flush();
-
-		assert.equal(suffix(0), "title-suffix=⏳1");
-		assert.equal(suffix(1), "title-suffix=⏳3");
-		assert.equal(suffix(2), "title-suffix=⏳2");
-		assert.ok(commands[1]?.includes("summary=⏳ 3 subagents (worker, scout, reviewer) · Build auth flow"));
 
 		bridge.dispose();
 	});

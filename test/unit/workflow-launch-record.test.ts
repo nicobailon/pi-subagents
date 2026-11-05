@@ -3,7 +3,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { readWorkflowLaunchRecord, workflowLaunchRecordDir } from "../../src/workflows/workflow-launch-record.ts";
+import { runLaunchDir } from "../../src/runs/shared/run-launch-folder.ts";
+import { readWorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
+import { writeFileCreatingDir } from "../support/helpers.ts";
 
 describe("workflow launch record", () => {
 	it("reports a missing or invalid record", () => {
@@ -11,8 +13,7 @@ describe("workflow launch record", () => {
 		try {
 			const runs = path.join(root, "async-subagent-runs");
 			assert.deepEqual(readWorkflowLaunchRecord(runs, "run"), { ok: false, missing: true, error: "launch.json is missing" });
-			fs.mkdirSync(workflowLaunchRecordDir(runs, "run"), { recursive: true });
-			const write = (value: string) => fs.writeFileSync(path.join(workflowLaunchRecordDir(runs, "run"), "launch.json"), value, "utf-8");
+			const write = (value: string) => writeFileCreatingDir(path.join(runLaunchDir(runs, "run"), "launch.json"), value);
 			const cases: Array<[string, RegExp]> = [
 				["{not json", /^not valid JSON: /],
 				["[]", /^not a JSON object$/],

@@ -9,10 +9,9 @@ import { applySteeringRecoveryAgentConfig, readAsyncRecoveryDescriptor } from ".
 import { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { DIRS } from "../../src/shared/types.ts";
-import { makeAgent } from "../support/helpers.ts";
+import { makeAgent, writeFileCreatingDir } from "../support/helpers.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
-import { writeFileCreatingDir } from "../support/helpers.ts";
 
 const budgetDirectories: string[] = [];
 

@@ -288,6 +288,16 @@ Package skill content.
 		assert.throws(() => loadConfig(), /config\.disabledFeatures entry "watchdogs" is not one of:/);
 	});
 
+	it("loads a positive integer globalConcurrencyLimit and fails config load on any other value", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ globalConcurrencyLimit: 4 }));
+		assert.equal(loadConfig().globalConcurrencyLimit, 4);
+		for (const globalConcurrencyLimit of [0, 2.5, "4"]) {
+			writeFile(configPath, JSON.stringify({ globalConcurrencyLimit }));
+			assert.throws(() => loadConfig(), /config\.globalConcurrencyLimit must be a positive integer/);
+		}
+	});
+
 	it("loads runnerLaunchers and fails closed on malformed launchers", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		const runnerLaunchers = { net: ["nono", "run", "--profile", " net ", "--"], "subagent-net": ["subagent-net"], "net.v2_x-1": ["wrap"] };

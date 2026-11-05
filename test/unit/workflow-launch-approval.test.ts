@@ -28,11 +28,10 @@ it("offers each workflow child start to tool_call handlers and does not start a 
 	const faux = fauxProvider({ provider: "launch-approval", models: [{ id: "local" }], tokensPerSecond: 100_000 });
 	const respond = (context: { messages: Array<{ role: string; content: unknown }> }) => {
 		const last = context.messages.at(-1)!;
-		if (last.role === "user" && JSON.stringify(last.content).includes("background review")) {
-			return fauxAssistantMessage(fauxToolCall("subagent", { async: true, options: { script: script("Review in the background") } }), { stopReason: "toolUse" });
-		}
-		if (last.role === "user" && JSON.stringify(last.content).includes("foreground review")) {
-			return fauxAssistantMessage(fauxToolCall("subagent", { async: false, options: { script: script("Review now") } }), { stopReason: "toolUse" });
+		const text = JSON.stringify(last.content);
+		const background = text.includes("background review");
+		if (last.role === "user" && (background || text.includes("foreground review"))) {
+			return fauxAssistantMessage(fauxToolCall("subagent", { async: background, options: { script: script(background ? "Review in the background" : "Review now") } }), { stopReason: "toolUse" });
 		}
 		if (last.role === "toolResult") toolResults.push((last.content as Array<{ type: string; text?: string }>).flatMap((block) => block.type === "text" ? [block.text!] : []).join("\n"));
 		return fauxAssistantMessage("ok");
