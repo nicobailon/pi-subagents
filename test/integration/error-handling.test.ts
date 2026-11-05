@@ -1,12 +1,3 @@
-/**
- * Integration tests for error handling across execution modes.
- *
- * Tests: agent crashes, stderr capture, detectSubagentError override,
- * signal/abort handling, and error propagation in chains.
- *
- * Requires pi packages for execution tests. Skips gracefully if unavailable.
- */
-
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
@@ -23,7 +14,6 @@ import {
 	tryImport,
 } from "../support/helpers.ts";
 
-// Top-level await
 const utils = await tryImport<any>("./src/shared/utils.ts");
 const execution = await tryImport<any>("./src/runs/foreground/execution.ts");
 const childToolPlan = await tryImport<any>("./src/runs/shared/child-tool-plan.ts");
@@ -32,10 +22,6 @@ const piAvailable = !!(execution && utils);
 
 const runSync = execution?.runSync;
 const detectSubagentError = utils?.detectSubagentError;
-
-// ---------------------------------------------------------------------------
-// detectSubagentError
-// ---------------------------------------------------------------------------
 
 describe("detectSubagentError", { skip: !detectSubagentError ? "utils not importable" : undefined }, () => {
 	it("returns no error for successful messages", () => {
@@ -105,10 +91,6 @@ describe("detectSubagentError", { skip: !detectSubagentError ? "utils not import
 		assert.equal(result.errorType, "write");
 	});
 });
-
-// ---------------------------------------------------------------------------
-// runSync error handling
-// ---------------------------------------------------------------------------
 
 describe("runSync error handling", { skip: !piAvailable ? "pi packages not available" : undefined }, () => {
 	let tempDir: string;
@@ -378,7 +360,6 @@ describe("runSync error handling", { skip: !piAvailable ? "pi packages not avail
 		});
 		const elapsed = Date.now() - start;
 
-		// Key: should complete much faster than the 10s delay
 		assert.ok(elapsed < 5000, `should abort early, took ${elapsed}ms`);
 		assert.doesNotMatch(result.error ?? "", /exited during 'bash' tool execution/);
 	});

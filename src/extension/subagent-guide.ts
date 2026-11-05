@@ -101,7 +101,7 @@ function readGuideFiles(topic: string, files: string[], root: string): string[] 
 	}
 }
 
-/** Reads a guide topic. Docs-backed topics return their intro and table of contents; `topic/section` returns one section. */
+/** Docs-backed topics return their intro and table of contents; `topic/section` returns one section. */
 export function readSubagentGuide(topic = "overview", root = packageRoot): string {
 	const separator = topic.indexOf("/");
 	const name = separator === -1 ? topic : topic.slice(0, separator);

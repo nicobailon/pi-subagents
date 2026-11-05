@@ -45,7 +45,6 @@ function boundedStringArray(value: unknown, label: string, maxItems: number, max
 	});
 }
 
-/** Normalize and validate launch-declared lane metadata. */
 export function normalizeWorkflowLaneMetadata(value: unknown, label = "lane"): WorkflowLaneMetadata | undefined {
 	if (value === undefined) return undefined;
 	assertPlainObject(value, label);

@@ -178,8 +178,8 @@ describe("a forked child session", () => {
 
 	type Request = { tools: string[]; declarations: string; results: Message[]; messages: Message[] };
 
-	/** Runs a real SDK session on `sessionFile` and returns what each provider request declared. */
 	type Launch = Partial<Parameters<typeof buildInProcessChildLaunch>[0]>;
+	/** Runs a real SDK session on `sessionFile` and returns what each provider request declared. */
 	async function run(options: { sessionFile: string; tools: string[]; replies: Array<ReturnType<typeof fauxAssistantMessage>>; forkCacheKey?: string; launch?: Launch; hooks?: Array<(pi: ExtensionAPI) => void> }): Promise<Request[]> {
 		const faux = fauxProvider({ provider: "probe", models: [{ id: "local" }], tokensPerSecond: 100_000 });
 		const requests: Request[] = [];

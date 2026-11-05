@@ -327,7 +327,6 @@ describe("async runner execution", () => {
 			() => assertClaudeCodeOverrideIsLocal("cc", "workmac", { args: ["--effort", "low"] }),
 			/cannot be honored on a saved machine/u,
 		);
-		// A local launch, or one that pins nothing, is unaffected.
 		assert.doesNotThrow(() => assertClaudeCodeOverrideIsLocal("cc", undefined, { args: ["--model", "opus"], model: "opus" }));
 		assert.doesNotThrow(() => assertClaudeCodeOverrideIsLocal("cc", "workmac", undefined));
 	});

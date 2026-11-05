@@ -3715,10 +3715,10 @@ describe("scripted workflow runtime", () => {
 	});
 
 	it("keeps every child alive when a host trace callback throws", async () => {
-		// Regression: hosts persist a status journal from onTrace, and onTrace is called
-		// from inside the run-promise handlers. A failed status write used to reject the
-		// child promise, so one locked status.json marked a finished child failed and
-		// aborted its still-running siblings through Promise.all inside runs.all.
+		// Hosts persist a status journal from onTrace, and onTrace is called
+		// from inside the run-promise handlers. If a failed status write rejected the child
+		// promise, one locked status.json would mark a finished child failed and abort its
+		// still-running siblings through Promise.all inside runs.all.
 		let thrown = 0;
 		const abortedWhileRunning: string[] = [];
 		const result = await runWorkflowScript({

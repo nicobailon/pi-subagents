@@ -1,7 +1,3 @@
-/**
- * Rendering functions for subagent results
- */
-
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -3163,9 +3159,6 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 	return buildWidgetLinesWithProjection(roots, theme, width, expanded, frame, projectionFor);
 }
 
-/**
- * Render the async jobs widget
- */
 export function renderWidget(ctx: ExtensionContext, jobs: AsyncJobState[], initiallyCollapsed = false, layout: AsyncWidgetLayout = "adaptive"): void {
 	// Advance round tracking on every widget update, including the empty-jobs
 	// cleanup path below, which never reaches container.render.
@@ -3539,9 +3532,6 @@ export function renderSubagentSummary(
 	);
 }
 
-/**
- * Render a subagent result
- */
 export function renderSubagentResult(
 	result: AgentToolResult<Details>,
 	options: { expanded: boolean },

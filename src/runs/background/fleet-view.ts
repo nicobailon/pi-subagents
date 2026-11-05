@@ -491,8 +491,6 @@ function appendKnownArtifacts(lines: string[], input: { outputPaths: string[]; s
 }
 
 /**
- * Sanitizes each assembled line independently.
- *
  * Sanitizing the joined response would let a single binary fragment in child
  * output collapse the whole transcript, including run state, artifact paths, and
  * warnings, into the binary placeholder. Per-line sanitization keeps that damage

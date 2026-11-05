@@ -45,11 +45,9 @@ const waitUntil = async <T>(label: string, read: () => T | undefined | false, ti
 		await new Promise((resolve) => setTimeout(resolve, 25));
 	}
 };
-/** Runs that resumed `sourceRunId`. */
 const resumedRuns = (sourceRunId: string) => fs.readdirSync(DIRS.async)
 	.filter((entry) => readStatusFile(entry)?.workflow?.resumeOrigin?.sourceRunId === sourceRunId);
 const claimFiles = (runId: string) => fs.readdirSync(path.join(DIRS.async, runId)).filter((name) => name.startsWith("resumed-by.")).sort();
-/** The completion notices delivered for `runId`. */
 const noticesFor = (sent: SentMessage[], runId: string) => sent
 	.filter((entry) => entry.message.customType === "subagent-notify" && typeof entry.message.content === "string" && entry.message.content.split("\n").includes(`Workflow run: ${runId}`))
 	.map((entry) => entry.message.content as string);

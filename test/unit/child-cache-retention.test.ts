@@ -5,7 +5,6 @@ import { childCacheRetention, childCacheRetentionEnv, pinChildCacheRetention } f
 
 type StreamOptions = Parameters<StreamFn>[2];
 
-/** Records the options each call receives so tests can assert on the request env. */
 function recordingAgent(): { agent: { streamFunction: StreamFn }; calls: StreamOptions[]; original: StreamFn } {
 	const calls: StreamOptions[] = [];
 	const original = ((_model, _context, options) => {

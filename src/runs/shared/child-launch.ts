@@ -150,7 +150,6 @@ export function createReportedChildSessionInput(launch: InProcessChildLaunch, tr
 	return withChildSessionErrorReporting(launch.session, transcriptWriter);
 }
 
-/** Escape XML-significant characters in a string for safe attribute interpolation. */
 function escapeXmlAttr(value: string): string {
 	return value
 		.replace(/&/g, "&amp;")

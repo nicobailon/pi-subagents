@@ -146,7 +146,6 @@ describe("mapConcurrent", () => {
 			await new Promise((r) => setTimeout(r, 10));
 		});
 
-		// All workers should start nearly simultaneously
 		const d1 = startTimes[1]! - startTimes[0]!;
 		const d2 = startTimes[2]! - startTimes[0]!;
 		assert.ok(d1 < 20, `worker 1 should start immediately, got ${d1}ms delay`);

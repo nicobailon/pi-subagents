@@ -230,7 +230,6 @@ export interface SubagentRunConfig {
 	waitToolName?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
-	/** Builtin tool names the host runtime provides; used to intersect agent-declared tools. */
 	launchContractDigest?: string;
 	launchResolvedExtensions?: LaunchResolvedChildExtensions;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensions;
@@ -276,7 +275,6 @@ interface StepResult {
 	nativeMachine?: import("../../shared/types.ts").SingleResult["nativeMachine"];
 	thinking?: string;
 	requestedModel?: string;
-	/** True when the dispatch failed because the input exceeded the model's context window. */
 	contextOverflow?: boolean;
 	totalCost?: CostSummary;
 	artifactPaths?: ArtifactPaths;
@@ -666,7 +664,6 @@ async function readGitFingerprint(cwd: string, signal: AbortSignal, onError: (er
 	}
 }
 
-/** Context for running a single step */
 interface SingleStepContext {
 	previousOutput: string;
 	outputs?: ChainOutputMap;
@@ -682,7 +679,6 @@ interface SingleStepContext {
 	outputFile: string;
 	transcriptPath?: string;
 	piPackageRoot?: string;
-	/** Factory the runner creates this step's child session through. */
 	childSessions: ChildSessionFactory;
 	/** The launching executor's own child runtime; nested route, depth, and ceilings come from here. */
 	inheritedChildRuntime?: InheritedChildRuntime;
@@ -3013,7 +3009,7 @@ export async function runSubagent(
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
 	};
-	// Records a finished child's result on its status step; the sequential and both parallel paths share it.
+	// The sequential and both parallel paths share it.
 	const recordStepResult = (fi: number, singleResult: StepResult, startedAt: number, endedAt: number, recordLaunchContractDigest = false): void => {
 		const step = requiredStatusStep(statusPayload, fi);
 		const childStopped = singleResult.stopped === true;
@@ -3057,7 +3053,6 @@ export async function runSubagent(
 		if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
 		if (singleResult.capabilityAudit) statusPayload.capabilityAudit = singleResult.capabilityAudit;
 	};
-	// Adds a parallel child's cost to the in-flight usage ledger.
 	const addParallelUsageCost = (totalCost: StepResult["totalCost"]): void => {
 		if (!totalCost) return;
 		pendingParallelUsageCost = {

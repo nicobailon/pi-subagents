@@ -378,7 +378,6 @@ export function finalizeSingleOutput(params: {
 }
 
 /**
- * Determines whether an output resolution error represents an unrecoverable settlement failure.
  * Returns true for fatal claim-path mismatches in any mode, or when required file-only output
  * fails to persist without a savedPath. Inline and optional outputs remain nonfatal warnings.
  */

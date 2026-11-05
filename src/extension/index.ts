@@ -1,17 +1,3 @@
-/**
- * Subagent Tool
- *
- * Full-featured subagent with sync and async modes.
- * - Sync (default): Streams output, renders markdown, tracks usage
- * - Async: Background execution, emits events when done
- *
- * Public execution mode: workflow (workflow: true reply block, script path, or named resource)
- * Toggle: async parameter (default: true; set asyncByDefault:false in config.json to opt out)
- *
- * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "defaultSubagentContext": "fork", "forkContext": { "mode": "pruned", "model": "provider/model" }, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
- */
-
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -170,7 +156,6 @@ function formatWorkflowPreflightCall(input: unknown): string {
 }
 
 /**
- * Derive subagent session base directory from parent session file.
  * If parent session is ~/.pi/agent/sessions/abc123.jsonl,
  * returns ~/.pi/agent/sessions/abc123/ as the base.
  * Callers add runId to create the actual session root: abc123/{runId}/

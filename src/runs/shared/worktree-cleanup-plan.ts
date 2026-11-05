@@ -175,7 +175,6 @@ function realpathExisting(
 	}
 }
 
-/** Internal test seam; this is not part of the public subagent tool API. */
 export const __testables = { realpathExisting };
 
 function comparablePath(candidate: string): string {

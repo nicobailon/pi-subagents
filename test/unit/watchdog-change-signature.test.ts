@@ -190,7 +190,7 @@ describe("watchdog change signature", () => {
 		// The per-file hash is not exposed on the public signature, so prove the
 		// metadata marker (largeFileHash = "large:size:mtime") behaviorally: content
 		// is unchanged but the mtime changes, so a metadata-keyed hash yields a new
-		// key while a content SHA-256 (unfixed main) would produce the same key.
+		// key while a content SHA-256 would produce the same key.
 		const laterMtime = new Date(1_600_000_100_000);
 		fs.utimesSync(filePath, laterMtime, laterMtime);
 		const afterMtime = computeWatchdogRepoChangeSignature(repo);

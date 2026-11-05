@@ -46,7 +46,6 @@ function requireRexSuccess(result: PlacementCommandResult, what: string): void {
 	if (result.status !== 0) throw new Error(`Rex ${what} exited with code ${result.status}: ${result.stderr.trim().slice(0, 512)}`);
 }
 
-/** Parses rex's JSON output against its schema; undefined when the shape does not match. */
 function parseRexJson<T extends TSchema>(text: string, validator: Validator<{}, T>, what: string): StaticEncode<T, {}> | undefined {
 	let value: unknown; try { value = JSON.parse(text); } catch { throw new Error(`Rex ${what} returned malformed JSON.`); }
 	return validator.Check(value) ? value : undefined;
@@ -248,7 +247,6 @@ function removeRexRuntimeDir(access: PlacementMachineAccess, runtimeDir: string)
 	try { removePlacedRuntimeDir(access, runtimeDir); } catch (error) { if (runtimeDirPresent(access, runtimeDir)) throw error; }
 }
 
-/** The placed-run owner bound to Rex and the pane machine's access. */
 export class RexPlacedRunOwner extends PlacedRunOwner<RexConnection, RexMachineReference> {
 	private constructor(machine: RexMachineReference, runId: string, runtimeDir: string, connection: RexConnection, access: PlacementMachineAccess, host: PlacementPaneHost<RexConnection, RexPaneCandidate>) { super(machine, runId, runtimeDir, connection, host, access, () => removeRexRuntimeDir(access, runtimeDir)); }
 	/** A Rex SSH owner's machine carries the resolved remote cwd, and its host reconnects only to the session recorded here. */

@@ -30,7 +30,6 @@ export function readWorkflowChildRunModel(
 	}
 }
 
-/** Fill a workflow child roster row from the child's own reported model. */
 export function withWorkflowChildRunModel<T extends { runId?: string; model?: string; thinking?: string }>(workflowAsyncDir: string, child: T): T {
 	if (child.model && child.thinking) return child;
 	const reported = readWorkflowChildRunModel(workflowAsyncDir, { async: true, runId: child.runId });

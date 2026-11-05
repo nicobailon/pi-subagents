@@ -1,7 +1,3 @@
-/**
- * Formatting utilities for display output
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Usage, SingleResult, TokenUsage } from "./types.ts";
@@ -10,9 +6,6 @@ import { isDynamicParallelStep, isParallelStep } from "./settings.ts";
 import { previewDisplayText, sanitizeDisplayText } from "./display-text.ts";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.ts";
 
-/**
- * Format token count for compact display.
- */
 export function formatTokens(n: number): string {
 	if (n < 1000) return String(n);
 	if (n < 10000) return `${(n / 1000).toFixed(1)}k`;
@@ -40,9 +33,6 @@ export function formatModelThinking(model?: string, thinking?: string): string {
 	return [displayModel, displayThinking ? `thinking ${displayThinking}` : undefined].filter(Boolean).join(" · ");
 }
 
-/**
- * Format usage statistics into a compact string
- */
 export function formatUsage(u: Usage, model?: string): string {
 	const parts: string[] = [];
 	if (u.turns) parts.push(`${u.turns} turn${u.turns > 1 ? "s" : ""}`);
@@ -55,18 +45,12 @@ export function formatUsage(u: Usage, model?: string): string {
 	return parts.join(" ");
 }
 
-/**
- * Format duration in human-readable form
- */
 export function formatDuration(ms: number): string {
 	if (ms < 1000) return `${ms}ms`;
 	if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
 	return `${Math.floor(ms / 60000)}m${Math.floor((ms % 60000) / 1000)}s`;
 }
 
-/**
- * Build a summary string for a completed/failed chain
- */
 export function buildChainSummary(
 	steps: ChainStep[],
 	results: SingleResult[],
@@ -105,9 +89,6 @@ export function buildChainSummary(
 	}
 }
 
-/**
- * Format a tool call for display
- */
 export function formatToolCall(name: string, args: Record<string, unknown>, expanded = false): string {
 	switch (name) {
 		case "bash": {

@@ -101,7 +101,6 @@ describe("active async capacity", () => {
 	it("counts corrupt slot metadata as occupied", () => {
 		const rootDir = tempRoot();
 		try {
-			// Create a valid occupied slot, then corrupt only its owner metadata.
 			const handle = acquireActiveAsyncCapacity({ sessionId: "session-corrupt", limit: 1, runId: "run-a", kind: "runner", asyncDir: path.join(rootDir, "run-a") }, { rootDir });
 			assert.ok(handle);
 			fs.writeFileSync(path.join(rootDir, handle.owner.ownerSessionKey, "slot-0", "owner.json"), "not json");

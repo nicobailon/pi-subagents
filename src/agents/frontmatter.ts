@@ -1,6 +1,3 @@
-/**
- * Escape regex special characters for use in a RegExp constructor.
- */
 function escapeRegex(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -101,7 +98,7 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 	let currentLiteral = false;
 
 	for (const line of lines) {
-		const indent = line.search(/\S|$/); // position of first non-whitespace char
+		const indent = line.search(/\S|$/);
 		const trimmed = line.trim();
 
 		// Comment lines are content only inside a | or > block scalar. Elsewhere they must
@@ -110,12 +107,10 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 
 		// Exactly-empty lines belong to any pending block, not only to | and > scalars.
 		if (currentKey !== null && currentBlockLines !== null && (indent > (currentIndent ?? 0) || trimmed === "")) {
-			// This line is part of the current block value
 			currentBlockLines.push(line);
 			continue;
 		}
 
-		// Flush any pending block value
 		if (currentKey !== null && currentBlockLines !== null) {
 			frontmatter[currentKey] = flushBlockLines(currentBlockLines, currentFolded, currentLiteral);
 			currentKey = null;
@@ -147,13 +142,11 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 				currentFolded = isFolded;
 				currentLiteral = isLiteral;
 			} else {
-				// Simple key: value
 				frontmatter[key] = value;
 			}
 		}
 	}
 
-	// Flush final block value
 	if (currentKey !== null && currentBlockLines !== null) {
 		frontmatter[currentKey] = flushBlockLines(currentBlockLines, currentFolded, currentLiteral);
 	}

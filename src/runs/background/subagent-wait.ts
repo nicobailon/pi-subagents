@@ -71,10 +71,9 @@ import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
 import { waitToolName } from "../../shared/wait-tool-name.ts";
 export { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, type ResolvedWaitToolConfig } from "./wait-config.ts";
 
-/** States that mean a run is still in flight (not yet resolved). */
 const ACTIVE_STATES: ReadonlyArray<AsyncRunSummary["state"]> = ["queued", "running"];
 
-const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_POLL_INTERVAL_MS = 250;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
@@ -143,7 +142,6 @@ export interface SubagentWaitDeps {
 	events?: WaitEventBus;
 }
 
-/** Bus channels that indicate a run changed state or needs attention. */
 const WAKE_CHANNELS = [
 	INTERCOM_DETACH_REQUEST_EVENT,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -258,7 +256,6 @@ function formatForegroundAttention(run: ForegroundResumeRun, children: ReturnTyp
 	);
 }
 
-/** A running run that has flagged it needs the parent's attention. */
 function needsAttention(run: AsyncRunSummary): boolean {
 	return run.activityState === "needs_attention" || run.steps.some((step) => step.activityState === "needs_attention");
 }
@@ -315,7 +312,6 @@ function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps
 	return runsForSession(params, deps);
 }
 
-/** Runs (from the initial set) currently flagged needs_attention, for reporting. */
 function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps, initialIds: Set<string>): AsyncRunSummary[] {
 	return activeRunsForSession(params, deps).filter((run) => needsAttention(run) && initialIds.has(run.id));
 }

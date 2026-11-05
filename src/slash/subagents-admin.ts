@@ -450,7 +450,6 @@ export async function openSubagentsAdmin(pi: ExtensionAPI, ctx: ExtensionContext
 			ctx.ui.notify(message, "info");
 			sendAdminMessage(pi, message);
 		} else if (action === "Show details") {
-			// Full metadata is now opt-in (previously always posted to the thread).
 			sendAdminMessage(pi, metadataFor(agent));
 		}
 	} catch (error) {

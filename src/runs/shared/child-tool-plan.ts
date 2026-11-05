@@ -249,7 +249,6 @@ export function projectLaunchResolvedChildExtensions(
 }
 
 /**
- * Resolve the permission-system extension entry point when installed.
  * Returns the absolute path to the extension's main module, or undefined
  * when the package is not installed. Callers can check `autoInject` config
  * to decide whether to include it in child sessions.

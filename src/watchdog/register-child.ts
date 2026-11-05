@@ -44,9 +44,8 @@ function childWarningDetails(details: WatchdogWarningDetails, config: ChildWatch
 }
 
 /**
- * Register the child-side watchdog. Status events go to the sink the hosting
- * process passed in the child runtime config; the host folds them into the
- * child's event stream.
+ * Status events go to the sink the hosting process passed in the child runtime
+ * config; the host folds them into the child's event stream.
  */
 export function registerChildWatchdog(
 	pi: ExtensionAPI,
