@@ -22,7 +22,8 @@ import { foregroundChildStateLabel } from "../runs/foreground/foreground-history
 import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { reportSessionWarning } from "../shared/session-warnings.ts";
 import { stepTaskSummary } from "./render.ts";
-import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
+import { renderFleetTranscript } from "./fleet-transcript.ts";
+import { readFleetTranscript, type FleetTranscript } from "../shared/fleet-transcript-reader.ts";
 import { runningTone } from "./running-tone.ts";
 import { childThinkingLevel, type ThinkingLevel } from "../shared/model-info.ts";
 import { handleInspectorAction } from "../inspectors/actions.ts";
