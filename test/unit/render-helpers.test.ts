@@ -945,4 +945,41 @@ test("expanded async rows show the only running child's whole task; two running 
 	const taskStart = huge.findIndex((line) => line.trim().startsWith("task: "));
 	const marker = huge.findIndex((line) => line.trim() === "…");
 	assert.ok(taskStart >= 0 && marker > taskStart && marker - taskStart <= 8, huge.join("\n"));
+
+	const structured = ["Fix the login bug.", "  - check src/auth.ts", "\t- then src/session.ts", "", "", "Report: one paragraph."].join("\n");
+	const layout = buildWidgetLines([job([structured])], theme, 120, true);
+	const layoutStart = layout.findIndex((line) => line.endsWith("task: Fix the login bug."));
+	const layoutIndent = layout[layoutStart]!.indexOf("task: ");
+	assert.deepEqual(layout.slice(layoutStart + 1, layoutStart + 5).map((line) => line.slice(layoutIndent)), ["  - check src/auth.ts", "  - then src/session.ts", "", "Report: one paragraph."], layout.join("\n"));
+
+	const single = (asyncId: string, running: boolean, description: string): AsyncJobState => ({
+		asyncId,
+		asyncDir: `/tmp/${asyncId}`,
+		status: running ? "running" : "complete",
+		mode: "single",
+		agents: ["worker"],
+		startedAt: 1_000,
+		updatedAt: 2_000,
+		steps: [{ index: 0, agent: "worker", status: running ? "running" : "complete", description }],
+	});
+	const hasAuthTask = (lines: string[]) => auth.slice(1).every((authored) => lines.some((line) => line.endsWith(authored)));
+	const pair = [single("live-one", true, auth.join("\n")), single("done-one", false, billing.join("\n"))];
+	const pairExpanded = buildWidgetLines(pair, theme, 120, true);
+	assert.ok(hasAuthTask(pairExpanded), pairExpanded.join("\n"));
+	assert.ok(!pairExpanded.some((line) => line.includes("Objective: make src/billing.ts")), pairExpanded.join("\n"));
+	assert.ok(!buildWidgetLines(pair, theme, 120).some((line) => line.includes("Objective:")));
+
+	const workflow: AsyncJobState = {
+		asyncId: "wf-parent",
+		asyncDir: "/tmp/wf-parent",
+		status: "running",
+		mode: "workflow",
+		agents: ["worker"],
+		startedAt: 1_000,
+		updatedAt: 2_000,
+		steps: [{ index: 0, agent: "worker", status: "running", workflowKey: "impl", runId: "wf-child", description: auth.join("\n") }],
+	};
+	const workflowChild: AsyncJobState = { ...single("wf-child", true, auth.join("\n")), parentWorkflowRunId: "wf-parent", workflowKey: "impl" };
+	const workflowExpanded = buildWidgetLines([workflow, workflowChild], theme, 120, true);
+	assert.ok(hasAuthTask(workflowExpanded), workflowExpanded.join("\n"));
 });
