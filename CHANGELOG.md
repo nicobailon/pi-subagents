@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A custom `subagent` tool description that uses `{{compactDescription}}` or `{{fullDescription}}` no longer describes features turned off with `disabledFeatures`. Before, the placeholders always inserted the text for every feature, so with workflow scripts disabled the model was told how to write workflow scripts. Thanks to [@ohlulu](https://github.com/ohlulu) for the report. (#3192)
+
 ## [0.85.0] - 2026-11-04
 
 ### Highlights
