@@ -18,7 +18,8 @@ type Tool = { name: string; description?: string; promptSnippet?: string; parame
 
 const runtimes: Array<{ handlers: Map<string, Handler[]>; context: any }> = [];
 
-type RuntimeOptions = { config?: Record<string, unknown>; model?: unknown };
+// `branch`: the session's full message history, which getBranch returns; it defaults to the compacted context's messages.
+type RuntimeOptions = { config?: Record<string, unknown>; model?: unknown; branch?: any[] };
 const DYNAMIC: RuntimeOptions = { config: { toolActivation: "dynamic" } };
 
 function createRuntime(messages: any[] = [], excluded: string[] = [], missingApis: string[] = [], options: RuntimeOptions = {}) {
@@ -57,6 +58,7 @@ function createRuntime(messages: any[] = [], excluded: string[] = [], missingApi
 		sessionManager: {
 			getSessionId() { return "activation-session"; }, getSessionFile() { return null; }, getEntries() { return []; },
 			buildSessionContext() { return { messages }; },
+			getBranch() { return (options.branch ?? messages).map((message) => message.role === "compactionSummary" ? { type: "compaction" } : { type: "message", message }); },
 		},
 		modelRegistry: { getAvailable() { return []; } },
 	};
@@ -471,6 +473,20 @@ describe("toolActivation modes", () => {
 		}
 		await replayAll([declared(["read", "subagents_enable"]), compacted, declared(["bg_wait"])], { model: COMPATIBLE }, ["subagents_enable", "bg_wait"], "checkpointed cold",
 			{ subagents_enable: true, subagent: false, bg_wait: true });
+	});
+
+	it("keeps the selection from before an extension unload that a compaction checkpoint folded away", async () => {
+		const enabled = ["subagent", "contact_supervisor", "bg_wait", "subagent_supervisor"];
+		// The checkpoint declares the tools active when the compaction ran, which the unload had left off.
+		const checkpointed = [declared(["read"]), compacted];
+		for (const caseModel of [COMPATIBLE, INCOMPATIBLE]) {
+			await replayAll(checkpointed, { model: caseModel, branch: [declared(["read", ...enabled]), declared([], enabled), compacted] }, [], "warm unload",
+				{ subagents_enable: false, subagent: true, contact_supervisor: true, bg_wait: true, subagent_supervisor: true });
+			await replayAll(checkpointed, { model: caseModel, branch: [declared(["read", "subagents_enable"]), declared([], ["subagents_enable"]), compacted] }, [], "cold unload",
+				{ subagents_enable: true, subagent: false });
+			await replayAll([declared(["read", "bg_wait", "subagent_supervisor"]), compacted], { model: caseModel, branch: [declared(["read", ...enabled]), declared([], ["subagent", "contact_supervisor"]), compacted] }, ["bg_wait", "subagent_supervisor"], "deliberate removal",
+				{ subagents_enable: false, subagent: false });
+		}
 	});
 
 	it("keeps the loader of a lost activation state across an unload recorded after the compaction", async () => {
