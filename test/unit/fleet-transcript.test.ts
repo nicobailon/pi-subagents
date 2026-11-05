@@ -4,7 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
-import { readFleetTranscript, renderFleetTranscript } from "../../src/tui/fleet-transcript.ts";
+import { renderFleetTranscript } from "../../src/tui/fleet-transcript.ts";
+import { readFleetTranscript } from "../../src/shared/fleet-transcript-reader.ts";
 
 const theme = {
 	fg: (_name: string, text: string) => text,
