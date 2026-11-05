@@ -413,8 +413,14 @@ function validateWithCompile(compile: CompileJsonSchema, schema: JsonSchemaObjec
 	} catch (error) {
 		return { status: "invalid", message: `invalid outputSchema: ${error instanceof Error ? error.message : String(error)}` };
 	}
-	if (validator.Check(value)) return { status: "valid" };
-	const originalErrors = [...validator.Errors(value)];
+	let originalErrors: JsonSchemaValidationError[];
+	try {
+		if (validator.Check(value)) return { status: "valid" };
+		originalErrors = [...validator.Errors(value)];
+	} catch (error) {
+		// A recursive $ref compiles but overflows the stack when checked.
+		return { status: "invalid", message: `outputSchema cannot be validated (cyclic or too deep): ${error instanceof Error ? error.message : String(error)}` };
+	}
 	const errors: string[] = [];
 	const uniqueErrors = new Set<string>();
 	const seen = new Set<string>();
