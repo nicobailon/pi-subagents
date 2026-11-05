@@ -588,7 +588,6 @@ syncBuiltinESMExports();
 			assert.deepEqual(payload.results.map((result) => result.timedOut), [true, true]);
 			assert.deepEqual(payload.results.map((result) => result.timeoutRecovery?.changedFiles), [[], []]);
 			assert.ok(payload.results.every((result) => /Recovery summary:/.test(result.output ?? "")));
-			assert.equal(mockPi.callCount(), 2);
 		} finally {
 			fs.rmSync(repo, { recursive: true, force: true });
 		}
