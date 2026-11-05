@@ -196,33 +196,9 @@ The read-only smoke must report `writeCanaryExists: false`. The writer smoke mus
 
 #### Safety record and wrapper commands
 
-Each code-owned adapter run records a `safety` block in its runner status, in `subagent({ action: "status" })`, and in its workflow receipt entry. The block is the adapter's profile: the access its own argv asks the CLI for. Nothing in it is measured from the launched process.
+Each code-owned adapter run records a `safety` block in its runner status, in `subagent({ action: "status" })`, and in its workflow receipt entry. The block is the adapter's profile: the access its own argv asks the CLI for. Nothing in it is measured from the launched process, and status labels it `Safety (adapter profile, not measured)`.
 
-`runner.command` can name a wrapper script that changes argv before it starts the CLI. The adapter cannot see that change, so its profile can then be wrong in either direction, for example `tools` listing editors the wrapper removed and missing `Bash` the wrapper added. The record carries a `safetySource` next to `safety` so a reader can tell:
-
-```json
-"safetySource": { "measured": false, "command": "/opt/wrappers/claude-verify", "declaredFields": ["tools", "mcp"] }
-```
-
-`command` is the launch command as configured. `declaredFields` lists the fields that came from the agent profile; every other field is the adapter profile value.
-
-A wrapper's agent declares what it really grants with `runner.declaredSafety`. The declared values replace the profile values for those fields only:
-
-```yaml
-runner:
-  type: external-cli
-  adapter: claude-code-writer
-  command: /opt/wrappers/claude-verify
-  declaredSafety:
-    tools: Read,Glob,Grep,Bash,WebFetch,WebSearch
-    mcp: wrapper-injected
-```
-
-`declaredSafety` needs a code-owned `adapter`. Its keys must be fields the selected adapter already records, at least one is required, string fields take a non-empty trimmed string of at most 512 characters, and boolean fields take a boolean. A declaration is the agent author's statement, not something Pi enforces or checks; it changes the record, not the launch. Status prints a declared block as `Safety (declared tools, mcp): ...` and adds a `Safety source:` line naming the command.
-
-A workflow receipt still requires every undeclared field to equal the adapter profile, so a receipt that changes `tools` without listing it in `declaredFields` is rejected. Receipts and status written before `safetySource` existed are read as the adapter profile. Status rebuilds undeclared fields from the current adapter profile, so its `Safety source:` line says "current".
-
-A run placed on a Herdr saved machine launches the adapter's own argv in a remote pane and never runs `runner.command`, so an agent with `declaredSafety` is refused there before launch.
+The record carries `safetySource: { "measured": false, "command": "..." }` beside it. `command` is the launch command as configured; a run on a Herdr saved machine records none, because the remote pane runs the adapter's own binary. When `runner.command` is a wrapper script that changes argv before it starts the CLI, the wrapper can grant more or less than the profile shows, so read the wrapper to know the real grant. Receipts written before `safetySource` existed are read as profile values.
 
 #### Native oracle compared with external advisors
 

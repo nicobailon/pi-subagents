@@ -1,7 +1,6 @@
 import type {
 	ExternalCliReceiptMetadata,
 	ExternalCliCapabilityNarrowing,
-	ExternalCliDeclaredSafety,
 	ExternalCliRunnerStatus,
 	ExternalCliMachineStatus,
 	ExternalProcessStatus,
@@ -66,8 +65,7 @@ export function validateCodeOwnedProfileRunner(
 }
 
 // What each adapter's own argv asks the CLI for. It is a profile, not a measurement:
-// a runner command that wraps the CLI can grant something else, and declares it with
-// runner.declaredSafety.
+// a runner command that wraps the CLI can grant something else.
 export const EXTERNAL_CLI_ADAPTER_SAFETY = {
 	"codex-exec": { sandbox: "read-only", approvalPolicy: "never", ephemeral: true },
 	"codex-exec-writer": { access: "workspace-write", sandbox: "workspace-write", approvalPolicy: "never", ephemeral: true },
@@ -76,27 +74,6 @@ export const EXTERNAL_CLI_ADAPTER_SAFETY = {
 	"cursor-agent": { access: "read-only", authentication: "cursor-api-key-or-existing-login", mode: "ask", sandbox: "enabled", workspaceTrust: "existing-required", sessionReuse: false },
 	"cursor-agent-writer": { access: "workspace-write", authentication: "cursor-api-key-or-existing-login", mode: "print", sandbox: "enabled", workspaceTrust: "existing-required", sessionReuse: false },
 } as const satisfies Record<CodeOwnedExternalCliAdapterId, Record<string, string | boolean>>;
-
-const MAX_DECLARED_SAFETY_VALUE_LENGTH = 512;
-
-export function parseExternalCliDeclaredSafety(value: unknown, adapter: CodeOwnedExternalCliAdapterId | undefined, label: string): ExternalCliDeclaredSafety | undefined {
-	if (value === undefined) return undefined;
-	if (!adapter) throw new Error(`${label} requires a code-owned adapter; the generic external-cli runner has no safety profile.`);
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
-	const input = value as Record<string, unknown>;
-	const profile: Record<string, string | boolean> = EXTERNAL_CLI_ADAPTER_SAFETY[adapter];
-	const unknown = Object.keys(input).filter((key) => !Object.hasOwn(profile, key));
-	if (unknown.length > 0) throw new Error(`${label} has unsupported fields: ${unknown.join(", ")}. The '${adapter}' adapter records: ${Object.keys(profile).join(", ")}.`);
-	if (Object.keys(input).length === 0) throw new Error(`${label} must declare at least one field.`);
-	for (const [key, setting] of Object.entries(input)) {
-		if (typeof profile[key] === "boolean") {
-			if (typeof setting !== "boolean") throw new Error(`${label}.${key} must be a boolean.`);
-		} else if (typeof setting !== "string" || !setting.trim() || setting.trim() !== setting || setting.length > MAX_DECLARED_SAFETY_VALUE_LENGTH || /[\u0000-\u001f\u007f]/.test(setting)) {
-			throw new Error(`${label}.${key} must be a non-empty trimmed string of at most ${MAX_DECLARED_SAFETY_VALUE_LENGTH} characters.`);
-		}
-	}
-	return input as ExternalCliDeclaredSafety;
-}
 
 export function parseExternalCliCapabilityNarrowing(value: unknown, label: string): ExternalCliCapabilityNarrowing | undefined {
 	if (value === undefined) return undefined;
@@ -116,7 +93,6 @@ export function resolveExternalCliRunnerStatus(input: {
 	args?: string[];
 	promptDelivery?: "stdin";
 	capabilities?: ExternalCliCapabilityNarrowing;
-	declaredSafety?: ExternalCliDeclaredSafety;
 	machine?: HerdrMachineReference;
 }): ExternalCliRunnerStatus {
 	const cursor = input.adapter === "cursor-agent" || input.adapter === "cursor-agent-writer";
@@ -129,8 +105,9 @@ export function resolveExternalCliRunnerStatus(input: {
 		promptDelivery: cursor ? "prompt-file" : input.promptDelivery ?? "stdin",
 		adapter: { id: input.adapter ?? "external-cli", version: 1, executionMode: cursor ? "one-shot-prompt-file" : "one-shot-stdin" },
 		...(profileSafety ? {
-			safety: { ...profileSafety, ...input.declaredSafety },
-			safetySource: { measured: false as const, command: input.command, declaredFields: Object.keys(input.declaredSafety ?? {}) },
+			safety: { ...profileSafety },
+			// A Herdr saved machine launches the remote adapter binary, never runner.command.
+			safetySource: { measured: false as const, ...(input.machine ? {} : { command: input.command }) },
 		} : {}),
 		...(input.machine ? { machine: input.machine } : {}),
 		capabilities: {
@@ -176,27 +153,7 @@ export function normalizeExternalCliRunnerStatus(value: unknown): ExternalCliRun
 		};
 	}
 	const adapter = isCodeOwnedExternalCliAdapterId(adapterId) ? adapterId : undefined;
-	let declaredSafety: ExternalCliDeclaredSafety | undefined;
-	try {
-		declaredSafety = persistedDeclaredSafety(input, adapter);
-	} catch {
-		return undefined;
-	}
-	return resolveExternalCliRunnerStatus({ ...(adapter ? { adapter } : {}), command: input.command, ...(args ? { args } : {}), ...(promptDelivery ? { promptDelivery } : {}), ...(declaredSafety ? { declaredSafety } : {}), ...(machine ? { machine } : {}) });
-}
-
-// Status written before safetySource existed has no declared fields and gets the profile.
-function persistedDeclaredSafety(input: Record<string, unknown>, adapter: CodeOwnedExternalCliAdapterId | undefined): ExternalCliDeclaredSafety | undefined {
-	const source = input.safetySource;
-	if (source === undefined) return undefined;
-	if (!source || typeof source !== "object" || Array.isArray(source)) throw new Error("safetySource must be an object.");
-	const declaredFields = (source as Record<string, unknown>).declaredFields;
-	if (!Array.isArray(declaredFields) || declaredFields.some((field) => typeof field !== "string")) throw new Error("safetySource.declaredFields must be a string array.");
-	if (declaredFields.length === 0) return undefined;
-	const safety = input.safety;
-	if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error("safety is missing.");
-	const declared = Object.fromEntries(declaredFields.map((field: string) => [field, (safety as Record<string, unknown>)[field]]));
-	return parseExternalCliDeclaredSafety(declared, adapter, "safety");
+	return resolveExternalCliRunnerStatus({ ...(adapter ? { adapter } : {}), command: input.command, ...(args ? { args } : {}), ...(promptDelivery ? { promptDelivery } : {}), ...(machine ? { machine } : {}) });
 }
 
 export function externalCliReceiptMetadata(input: {
@@ -211,7 +168,7 @@ export function externalCliReceiptMetadata(input: {
 		capabilities: { ...runner.capabilities },
 		...(machine ? { machine: { ...machine, ...(machine.remoteGit ? { remoteGit: { ...machine.remoteGit } } : {}) } } : {}),
 		...(runner.safety ? { safety: { ...runner.safety } } : {}),
-		...(runner.safetySource ? { safetySource: { ...runner.safetySource, declaredFields: [...runner.safetySource.declaredFields] } } : {}),
+		...(runner.safetySource ? { safetySource: { ...runner.safetySource } } : {}),
 		...(input.externalProcess ? {
 			outputArtifacts: {
 				stdoutPath: input.externalProcess.stdoutPath,

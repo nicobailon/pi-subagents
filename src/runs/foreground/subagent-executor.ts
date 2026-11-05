@@ -2694,7 +2694,7 @@ function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentCo
 		params = omitUndefinedProperties({ ...params, agent: result.name });
 		const agent = agents.find((candidate) => candidate.name === result.name);
 		if (params.extensionBindings !== undefined && (agent?.runner?.type === "external-cli" || agent?.runner?.type === "external-job")) return { error: `extensionBindings is not supported for runner.type='${agent.runner.type}'.` };
-		const machineError = agent ? formatHerdrMachineRunnerUnsupported({ machine: params.machine ?? agent.machine, agentName: agent.name, runnerType: agent.runner?.type, adapter: agent.runner?.type === "external-cli" ? agent.runner.adapter : undefined, declaredSafety: agent.runner?.type === "external-cli" && agent.runner.declaredSafety !== undefined, worktree: params.worktree }) : undefined;
+		const machineError = agent ? formatHerdrMachineRunnerUnsupported({ machine: params.machine ?? agent.machine, agentName: agent.name, runnerType: agent.runner?.type, adapter: agent.runner?.type === "external-cli" ? agent.runner.adapter : undefined, worktree: params.worktree }) : undefined;
 		if (machineError) return { error: machineError };
 	}
 	if (params.extensionBindings !== undefined) {

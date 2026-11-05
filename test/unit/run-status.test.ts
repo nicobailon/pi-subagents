@@ -389,26 +389,16 @@ describe("async run status inspection", () => {
 		}
 	});
 
-	it("labels external-cli safety as an unmeasured profile and names declared fields", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-declared-safety-"));
+	it("labels external-cli safety as the adapter profile, not a measurement", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-safety-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
-			for (const [runId, runner] of [
-				["run-profile-safety", resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "claude" })],
-				["run-declared-safety", resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "claude-verify", declaredSafety: { tools: "Read,Glob,Grep,Bash", mcp: "wrapper-injected" } })],
-			] as const) {
-				fs.mkdirSync(path.join(asyncRoot, runId), { recursive: true });
-				fs.writeFileSync(path.join(asyncRoot, runId, "status.json"), JSON.stringify({ runId, mode: "single", state: "complete", startedAt: 100, lastUpdate: 200, steps: [{ agent: "writer", status: "complete", runner }] }), "utf-8");
-			}
+			const runner = resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "claude" });
+			fs.mkdirSync(path.join(asyncRoot, "run-safety"), { recursive: true });
+			fs.writeFileSync(path.join(asyncRoot, "run-safety", "status.json"), JSON.stringify({ runId: "run-safety", mode: "single", state: "complete", startedAt: 100, lastUpdate: 200, steps: [{ agent: "writer", status: "complete", runner }] }), "utf-8");
 
-			const profile = textContent(inspectSubagentStatus({ id: "run-profile-safety" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }));
-			assert.match(profile, /\n  Safety: access=workspace-write, .*tools=Read,Write,Edit,Glob,Grep, mcp=empty-strict/);
-			assert.match(profile, /Safety source: current claude-code-writer adapter profile; command 'claude'; not measured from the launched process/);
-
-			const declared = textContent(inspectSubagentStatus({ id: "run-declared-safety" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }));
-			assert.match(declared, /Safety \(declared tools, mcp\): access=workspace-write, .*tools=Read,Glob,Grep,Bash, mcp=wrapper-injected/);
-			assert.match(declared, /Safety source: tools, mcp declared by the agent profile, other fields from the current claude-code-writer adapter profile; command 'claude-verify'; not measured/);
-			assert.doesNotMatch(declared, /\n  Safety: /);
+			const status = textContent(inspectSubagentStatus({ id: "run-safety" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }));
+			assert.match(status, /\n  Safety \(adapter profile, not measured\): access=workspace-write, .*tools=Read,Write,Edit,Glob,Grep, mcp=empty-strict/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

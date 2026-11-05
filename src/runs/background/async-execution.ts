@@ -1110,7 +1110,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const requestedMachine = s.machine ?? launchMachine ?? a.machine;
 		const externalRunner = a.runner?.type === "external-cli" || a.runner?.type === "external-job";
 		const externalRunnerType = a.runner?.type;
-		const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: a.name, runnerType: a.runner?.type, adapter: a.runner?.type === "external-cli" ? a.runner.adapter : undefined, declaredSafety: a.runner?.type === "external-cli" && a.runner.declaredSafety !== undefined, worktree: s.worktree });
+		const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: a.name, runnerType: a.runner?.type, adapter: a.runner?.type === "external-cli" ? a.runner.adapter : undefined, worktree: s.worktree });
 		if (machineUnsupported) throw new AsyncStartValidationError(machineUnsupported);
 		const launcherError = runnerLauncherPlacementError(a, requestedMachine);
 		if (launcherError) throw new AsyncStartValidationError(launcherError);
@@ -1932,7 +1932,7 @@ export function executeAsyncSingle(
 	}
 	const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
 	const requestedMachine = params.machine ?? agentConfig.machine;
-	const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: agentConfig.name, runnerType: agentConfig.runner?.type, adapter: agentConfig.runner?.type === "external-cli" ? agentConfig.runner.adapter : undefined, declaredSafety: agentConfig.runner?.type === "external-cli" && agentConfig.runner.declaredSafety !== undefined, worktree: params.worktree });
+	const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: agentConfig.name, runnerType: agentConfig.runner?.type, adapter: agentConfig.runner?.type === "external-cli" ? agentConfig.runner.adapter : undefined, worktree: params.worktree });
 	if (machineUnsupported) return formatAsyncStartError("single", machineUnsupported);
 	// Refuse before the runner starts; the placed launch would refuse only after the run exists.
 	if (requestedMachine && params.revivalLease) return formatAsyncStartError("single", PLACED_RESTORE_UNSUPPORTED);

@@ -7,7 +7,7 @@ import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 import { HOST_STEP_MAX_COUNT, assertUniqueHostStepIds, parseHostStepNode } from "../runs/shared/host-step-status.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../runs/shared/lane-metadata.ts";
 import { projectWorkflowKeyRevival } from "./workflow-revival.ts";
-import { EXTERNAL_CLI_ADAPTER_SAFETY, isCodeOwnedExternalCliAdapterId, parseExternalCliDeclaredSafety, type CodeOwnedExternalCliAdapterId } from "../runs/shared/external-cli-contract.ts";
+import { EXTERNAL_CLI_ADAPTER_SAFETY, isCodeOwnedExternalCliAdapterId, type CodeOwnedExternalCliAdapterId } from "../runs/shared/external-cli-contract.ts";
 
 export type { WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
 
@@ -133,27 +133,23 @@ function parseExternalCliMachine(value: unknown, label: string): void {
 	if (unknownRemoteGit.length > 0 || (remoteGit.head !== undefined && (typeof remoteGit.head !== "string" || !remoteGit.head.trim())) || (remoteGit.branch !== undefined && (typeof remoteGit.branch !== "string" || !remoteGit.branch.trim())) || (remoteGit.dirty !== undefined && typeof remoteGit.dirty !== "boolean")) throw new Error(`${label}.machine.remoteGit is invalid.`);
 }
 
-// Fields not in declaredFields must still equal the adapter profile, so an unwrapped launch
-// keeps its strict check and a declared field cannot hide a change to an undeclared one.
-function parseCodeOwnedSafety(value: unknown, adapter: CodeOwnedExternalCliAdapterId, declaredFields: readonly string[], label: string): void {
+function parseCodeOwnedSafety(value: unknown, adapter: CodeOwnedExternalCliAdapterId, label: string): void {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label}.safety is missing.`);
 	const safety = value as Record<string, unknown>;
 	const profile: Record<string, string | boolean> = EXTERNAL_CLI_ADAPTER_SAFETY[adapter];
 	const unknownSafety = Object.keys(safety).filter((field) => !Object.hasOwn(profile, field));
 	if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
-	if (Object.entries(profile).some(([field, expected]) => !declaredFields.includes(field) && safety[field] !== expected)) throw new Error(`${label}.safety is invalid.`);
-	if (declaredFields.length > 0) parseExternalCliDeclaredSafety(Object.fromEntries(declaredFields.map((field) => [field, safety[field]])), adapter, `${label}.safety`);
+	if (Object.entries(profile).some(([field, expected]) => safety[field] !== expected)) throw new Error(`${label}.safety is invalid.`);
 }
 
-function parseExternalCliSafetySource(value: unknown, label: string): string[] | undefined {
-	if (value === undefined) return undefined;
+function parseExternalCliSafetySource(value: unknown, label: string): boolean {
+	if (value === undefined) return false;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label}.safetySource must be an object.`);
 	const source = value as Record<string, unknown>;
-	const unknownSource = Object.keys(source).filter((field) => !["measured", "command", "declaredFields"].includes(field));
+	const unknownSource = Object.keys(source).filter((field) => !["measured", "command"].includes(field));
 	if (unknownSource.length > 0) throw new Error(`${label}.safetySource has unsupported fields: ${unknownSource.join(", ")}.`);
-	const fields = source.declaredFields;
-	if (source.measured !== false || typeof source.command !== "string" || !source.command.trim() || !Array.isArray(fields) || fields.some((field) => typeof field !== "string") || new Set(fields).size !== fields.length) throw new Error(`${label}.safetySource is invalid.`);
-	return fields as string[];
+	if (source.measured !== false || (source.command !== undefined && (typeof source.command !== "string" || !source.command.trim()))) throw new Error(`${label}.safetySource is invalid.`);
+	return true;
 }
 
 function parseExternalCliReceiptMetadata(value: unknown, key: string, source: string): ExternalCliReceiptMetadata | undefined {
@@ -179,22 +175,22 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 	}
 	if (metadata.machine !== undefined) parseExternalCliMachine(metadata.machine, label);
 	const safety = metadata.safety;
-	const declaredFields = parseExternalCliSafetySource(metadata.safetySource, label);
-	if (adapterRecord.id === "claude-code" && declaredFields === undefined && safety && typeof safety === "object" && !Array.isArray(safety) && (safety as Record<string, unknown>).authentication === undefined) {
+	const hasSafetySource = parseExternalCliSafetySource(metadata.safetySource, label);
+	if (adapterRecord.id === "claude-code" && !hasSafetySource && safety && typeof safety === "object" && !Array.isArray(safety) && (safety as Record<string, unknown>).authentication === undefined) {
 		const safetyRecord = safety as Record<string, unknown>;
 		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["permissionMode", "tools", "mcp", "settingSources", "sessionPersistence"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
 		if (safetyRecord.permissionMode !== "plan" || safetyRecord.tools !== "none" || safetyRecord.mcp !== "empty-strict" || safetyRecord.settingSources !== "none" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
 	} else if (isCodeOwnedExternalCliAdapterId(adapterRecord.id)) {
-		parseCodeOwnedSafety(safety, adapterRecord.id, declaredFields ?? [], label);
+		parseCodeOwnedSafety(safety, adapterRecord.id, label);
 	} else if (adapterRecord.id === "grok-build") {
-		if (declaredFields !== undefined) throw new Error(`${label}.safetySource is invalid for the legacy grok-build adapter.`);
+		if (hasSafetySource) throw new Error(`${label}.safetySource is invalid for the legacy grok-build adapter.`);
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
 		const safetyRecord = safety as Record<string, unknown>;
 		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "permissionMode", "tools", "deniedTools", "sandbox", "webSearch", "subagents", "config", "updates", "sessionPersistence"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
 		if (safetyRecord.access !== "read-only" || safetyRecord.authentication !== "xai-api-key-required" || safetyRecord.permissionMode !== "plan" || safetyRecord.tools !== "read_file,grep,list_dir" || safetyRecord.deniedTools !== "run_terminal_cmd,search_replace,Agent,Bash,Edit,Write,MCPTool" || safetyRecord.sandbox !== "read-only" || safetyRecord.webSearch !== false || safetyRecord.subagents !== false || safetyRecord.config !== "temporary-home" || safetyRecord.updates !== "disabled" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
-	} else if (safety !== undefined || declaredFields !== undefined) throw new Error(`${label}.safety is invalid for the generic adapter.`);
+	} else if (safety !== undefined || hasSafetySource) throw new Error(`${label}.safety is invalid for the generic adapter.`);
 	const handoff = metadata.handoff;
 	if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) throw new Error(`${label}.handoff must be an object.`);
 	const handoffRecord = handoff as Record<string, unknown>;

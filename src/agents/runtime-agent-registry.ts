@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
-import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, parseExternalCliDeclaredSafety, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
+import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
@@ -175,12 +175,11 @@ function validateRunner(value: unknown): AgentRunnerConfig | undefined {
 	if (runner.adapter !== undefined && Array.isArray(runner.args) && runner.args.length > 0) throw new Error(`Runtime agent definition ${runner.adapter} adapter owns its argv; runner args are not supported.`);
 	if (runner.promptDelivery !== undefined && runner.promptDelivery !== "stdin") throw new Error("Runtime agent definition external-cli runner promptDelivery must be 'stdin'.");
 	const capabilities = parseExternalCliCapabilityNarrowing(runner.capabilities, "Runtime agent definition external-cli runner capabilities");
-	const declaredSafety = parseExternalCliDeclaredSafety(runner.declaredSafety, isCodeOwnedExternalCliAdapterId(runner.adapter) ? runner.adapter : undefined, "Runtime agent definition external-cli runner declaredSafety");
-	const supported = new Set(["type", "adapter", "command", "args", "promptDelivery", "capabilities", "declaredSafety"]);
+	const supported = new Set(["type", "adapter", "command", "args", "promptDelivery", "capabilities"]);
 	const unknown = Object.keys(runner).filter((key) => !supported.has(key));
 	if (unknown.length > 0) throw new Error(`Runtime agent definition external-cli runner has unsupported fields: ${unknown.join(", ")}.`);
 	const args = runner.args as string[] | undefined;
-	return { type: "external-cli", ...(isCodeOwnedExternalCliAdapterId(runner.adapter) ? { adapter: runner.adapter } : {}), command: runner.command.trim(), ...(args?.length ? { args } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}), ...(capabilities ? { capabilities } : {}), ...(declaredSafety ? { declaredSafety } : {}) };
+	return { type: "external-cli", ...(isCodeOwnedExternalCliAdapterId(runner.adapter) ? { adapter: runner.adapter } : {}), command: runner.command.trim(), ...(args?.length ? { args } : {}), ...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}), ...(capabilities ? { capabilities } : {}) };
 }
 
 function validateAcceptance(value: unknown): AcceptanceInput | undefined {
