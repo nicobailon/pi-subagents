@@ -1098,7 +1098,7 @@ export async function runSingleStepInner(
 	let actualLaunchContractDigest = step.launchContractDigest;
 	// A machine 'local' child edits this disk, so its local Git evidence is authoritative, as for an unplaced run.
 	const mutationSnapshot = step.machine && !isRexLocalMachine(step.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, cwd: step.cwd ?? ctx.cwd, dirtyFiles: [], fingerprints: {}, unavailable: "Local Git evidence is not authoritative for a pane-native remote run." } : snapshotTrackedMutations(step.cwd ?? ctx.cwd);
-	let finalMutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
+	let finalMutationEvidence = await collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 
 	let contextOverflow = false;
 	let launchWarningsEmitted = false;
@@ -1314,7 +1314,7 @@ export async function runSingleStepInner(
 			? formatEmptyTerminalAssistantResponseError(run.messages)
 			: undefined;
 		const remoteGitChanged = run.nativeMachine?.initialGit && run.nativeMachine.finalGit ? run.nativeMachine.initialGit.head !== run.nativeMachine.finalGit.head || run.nativeMachine.initialGit.dirty !== run.nativeMachine.finalGit.dirty : undefined;
-		const mutationEvidence = run.nativeMachine && !isRexLocalMachine(step.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
+		const mutationEvidence = run.nativeMachine && !isRexLocalMachine(step.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : await collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
 		const mutationAttemptObserved = run.observedMutationAttempt === true || mutationEvidence.attemptedMutation === true;
 		// Validated structured output is persistable file content even when the final text is only
