@@ -9,6 +9,8 @@ import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../.
 import { clearExternalCliPreflightCacheForTests } from "../../src/runs/shared/external-cli-preflight.ts";
 import { runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
 import { buildWorkflowReceipt, readWorkflowReceipt, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
+import { runSubagent } from "../../src/runs/background/subagent-runner.ts";
+import { createFakeChildSessions } from "../support/fake-child-session.ts";
 
 const tempDirs: string[] = [];
 function tempDir(): string {
@@ -207,9 +209,19 @@ describe("Claude Code adapter", () => {
 		assert.deepEqual(readWorkflowReceipt(root, "source").entries.claude?.externalAdapter?.safety, runner.safety);
 	});
 
-	it("names no launch command for a run on a Herdr saved machine, which runs the remote adapter binary", () => {
-		const machine = { provider: "herdr" as const, id: "mini", target: "mini", cwd: "/srv/repo" };
-		assert.deepEqual(resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "/opt/wrappers/claude-verify", machine }).safetySource, { measured: false });
+	it("names no launch command for a run on a Herdr saved machine, which runs the remote adapter binary", { skip: process.platform === "win32" }, async () => {
+		// ssh rejects a host name with a space before any connection, so the placed launch fails at once.
+		const machine = { provider: "herdr" as const, id: "mini", target: "no such host", cwd: "/srv/repo" };
+		const runner = { type: "external-cli" as const, adapter: "claude-code-writer" as const, command: "/opt/wrappers/claude-verify" };
+		assert.deepEqual(resolveExternalCliRunnerStatus({ ...runner, machine }).safetySource, { measured: false });
+
+		const root = tempDir();
+		const asyncDir = path.join(root, "async");
+		fs.mkdirSync(asyncDir);
+		const launch = runSubagent({ id: "placed", steps: [{ agent: "writer", task: "write", runner, machine }], resultPath: path.join(root, "result.json"), cwd: root, asyncDir, sessionId: "session-placed", artifactConfig: { enabled: false }, share: false, placeholder: "{previous}" }, createFakeChildSessions(() => root).factory);
+		await assert.rejects(launch, /Could not provision a run-private remote bridge runtime directory/);
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+		assert.deepEqual(status.steps[0].runner.safetySource, { measured: false });
 	});
 
 	it("discovers the built-in profile without probing Claude Code", () => {

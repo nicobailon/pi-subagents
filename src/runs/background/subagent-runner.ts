@@ -1597,9 +1597,9 @@ type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
 	description?: string;
 };
 
-function externalRunnerStatus(runner: SubagentStep["runner"]): ExternalCliRunnerStatus | ExternalJobRunnerStatus | undefined {
+function externalRunnerStatus(runner: SubagentStep["runner"], machine: SubagentStep["machine"]): ExternalCliRunnerStatus | ExternalJobRunnerStatus | undefined {
 	if (runner?.type === "external-cli") {
-		return resolveExternalCliRunnerStatus(runner);
+		return resolveExternalCliRunnerStatus(machine?.provider === "herdr" ? { ...runner, machine } : runner);
 	}
 	if (runner?.type === "external-job") {
 		return {
@@ -1949,7 +1949,7 @@ export async function runSubagent(
 					agent: task.agent,
 					...(task.lane ? { lane: task.lane } : config.lane ? { lane: config.lane } : {}),
 					...(taskSessionName ? { sessionName: taskSessionName } : {}),
-					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
+					...(externalRunnerStatus(task.runner, task.machine) ? { runner: externalRunnerStatus(task.runner, task.machine) } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
 					phase: task.phase,
@@ -1979,7 +1979,7 @@ export async function runSubagent(
 			parallelGroups.push({ start: flatStepCount, count: 1, stepIndex });
 			initialStatusSteps.push(omitUndefinedProperties({
 				agent: `expand:${step.parallel.agent}`,
-				...(externalRunnerStatus(step.parallel.runner) ? { runner: externalRunnerStatus(step.parallel.runner) } : {}),
+				...(externalRunnerStatus(step.parallel.runner, step.parallel.machine) ? { runner: externalRunnerStatus(step.parallel.runner, step.parallel.machine) } : {}),
 				...(step.parallel.context ? { context: step.parallel.context } : {}),
 				phase: step.phase ?? step.parallel.phase,
 				label: step.label ?? step.parallel.label ?? `Dynamic fanout (${step.collect.as})`,
@@ -2003,7 +2003,7 @@ export async function runSubagent(
 				agent: step.agent,
 				...(step.lane ? { lane: step.lane } : config.lane ? { lane: config.lane } : {}),
 				...(stepSessionName ? { sessionName: stepSessionName } : {}),
-				...(externalRunnerStatus(step.runner) ? { runner: externalRunnerStatus(step.runner) } : {}),
+				...(externalRunnerStatus(step.runner, step.machine) ? { runner: externalRunnerStatus(step.runner, step.machine) } : {}),
 				...(statusStepDescription(step.task) ? { description: statusStepDescription(step.task) } : {}),
 				...(step.context ? { context: step.context } : {}),
 				phase: step.phase,
@@ -3722,7 +3722,7 @@ export async function runSubagent(
 				return omitUndefinedProperties({
 					agent: task.agent,
 					...(task.sessionName ? { sessionName: task.sessionName } : {}),
-					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
+					...(externalRunnerStatus(task.runner, task.machine) ? { runner: externalRunnerStatus(task.runner, task.machine) } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
 					...(task.phase ?? step.phase ? { phase: task.phase ?? step.phase } : {}),

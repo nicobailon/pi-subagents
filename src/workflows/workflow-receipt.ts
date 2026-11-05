@@ -190,7 +190,8 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "permissionMode", "tools", "deniedTools", "sandbox", "webSearch", "subagents", "config", "updates", "sessionPersistence"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
 		if (safetyRecord.access !== "read-only" || safetyRecord.authentication !== "xai-api-key-required" || safetyRecord.permissionMode !== "plan" || safetyRecord.tools !== "read_file,grep,list_dir" || safetyRecord.deniedTools !== "run_terminal_cmd,search_replace,Agent,Bash,Edit,Write,MCPTool" || safetyRecord.sandbox !== "read-only" || safetyRecord.webSearch !== false || safetyRecord.subagents !== false || safetyRecord.config !== "temporary-home" || safetyRecord.updates !== "disabled" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
-	} else if (safety !== undefined || hasSafetySource) throw new Error(`${label}.safety is invalid for the generic adapter.`);
+	} else if (hasSafetySource) throw new Error(`${label}.safetySource is invalid for the generic adapter.`);
+	else if (safety !== undefined) throw new Error(`${label}.safety is invalid for the generic adapter.`);
 	const handoff = metadata.handoff;
 	if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) throw new Error(`${label}.handoff must be an object.`);
 	const handoffRecord = handoff as Record<string, unknown>;
