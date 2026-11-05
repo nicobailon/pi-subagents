@@ -1184,8 +1184,7 @@ function redactVerifyEnv(value: string, env: Record<string, string> | undefined)
 	return redactSecrets(value, verifySecrets(env));
 }
 
-/** Parses JSON text with its strings, keys and numbers redacted, so booleans, null and the document's syntax survive redaction.
- *  Numbers are matched on their source text: parsing rounds or respells them (12345678901234567890, 1.50), which would hide a secret. */
+/** Numbers are matched on their source text: parsing rounds or respells them (12345678901234567890, 1.50), which would hide a secret. */
 function parseRedactedVerifyValue(text: string, secrets: readonly string[]): unknown {
 	return JSON.parse(text, (_key: string, value: unknown, context?: { source?: string }) => {
 		if (typeof value === "string") return redactSecrets(value, secrets);
