@@ -64,6 +64,17 @@ export function validateCodeOwnedProfileRunner(
 	return undefined;
 }
 
+// What each adapter's own argv asks the CLI for. It is a profile, not a measurement:
+// a runner command that wraps the CLI can grant something else.
+export const EXTERNAL_CLI_ADAPTER_SAFETY = {
+	"codex-exec": { sandbox: "read-only", approvalPolicy: "never", ephemeral: true },
+	"codex-exec-writer": { access: "workspace-write", sandbox: "workspace-write", approvalPolicy: "never", ephemeral: true },
+	"claude-code": { access: "read-only", authentication: "existing-cli-required", permissionMode: "plan", tools: "none", mcp: "empty-strict", settingSources: "user", userSettingsTrust: "required", sessionPersistence: false },
+	"claude-code-writer": { access: "workspace-write", authentication: "existing-cli-required", permissionMode: "acceptEdits", tools: "Read,Write,Edit,Glob,Grep", mcp: "empty-strict", settingSources: "user", userSettingsTrust: "required", sessionPersistence: false },
+	"cursor-agent": { access: "read-only", authentication: "cursor-api-key-or-existing-login", mode: "ask", sandbox: "enabled", workspaceTrust: "existing-required", sessionReuse: false },
+	"cursor-agent-writer": { access: "workspace-write", authentication: "cursor-api-key-or-existing-login", mode: "print", sandbox: "enabled", workspaceTrust: "existing-required", sessionReuse: false },
+} as const satisfies Record<CodeOwnedExternalCliAdapterId, Record<string, string | boolean>>;
+
 export function parseExternalCliCapabilityNarrowing(value: unknown, label: string): ExternalCliCapabilityNarrowing | undefined {
 	if (value === undefined) return undefined;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
@@ -84,13 +95,8 @@ export function resolveExternalCliRunnerStatus(input: {
 	capabilities?: ExternalCliCapabilityNarrowing;
 	machine?: HerdrMachineReference;
 }): ExternalCliRunnerStatus {
-	const codexExec = input.adapter === "codex-exec";
-	const codexExecWriter = input.adapter === "codex-exec-writer";
-	const claudeCode = input.adapter === "claude-code";
-	const claudeCodeWriter = input.adapter === "claude-code-writer";
-	const cursorAgent = input.adapter === "cursor-agent";
-	const cursorAgentWriter = input.adapter === "cursor-agent-writer";
-	const cursor = cursorAgent || cursorAgentWriter;
+	const cursor = input.adapter === "cursor-agent" || input.adapter === "cursor-agent-writer";
+	const profileSafety = input.adapter ? EXTERNAL_CLI_ADAPTER_SAFETY[input.adapter] : undefined;
 	const unsupported = cursor ? PROMPT_FILE_UNSUPPORTED : UNSUPPORTED;
 	return {
 		type: "external-cli",
@@ -98,12 +104,11 @@ export function resolveExternalCliRunnerStatus(input: {
 		args: input.args ?? [],
 		promptDelivery: cursor ? "prompt-file" : input.promptDelivery ?? "stdin",
 		adapter: { id: input.adapter ?? "external-cli", version: 1, executionMode: cursor ? "one-shot-prompt-file" : "one-shot-stdin" },
-		...(codexExec ? { safety: { sandbox: "read-only" as const, approvalPolicy: "never" as const, ephemeral: true as const } } : {}),
-		...(codexExecWriter ? { safety: { access: "workspace-write" as const, sandbox: "workspace-write" as const, approvalPolicy: "never" as const, ephemeral: true as const } } : {}),
-		...(claudeCode ? { safety: { access: "read-only" as const, authentication: "existing-cli-required" as const, permissionMode: "plan" as const, tools: "none" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
-		...(claudeCodeWriter ? { safety: { access: "workspace-write" as const, authentication: "existing-cli-required" as const, permissionMode: "acceptEdits" as const, tools: "Read,Write,Edit,Glob,Grep" as const, mcp: "empty-strict" as const, settingSources: "user" as const, userSettingsTrust: "required" as const, sessionPersistence: false as const } } : {}),
-		...(cursorAgent ? { safety: { access: "read-only" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "ask" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
-		...(cursorAgentWriter ? { safety: { access: "workspace-write" as const, authentication: "cursor-api-key-or-existing-login" as const, mode: "print" as const, sandbox: "enabled" as const, workspaceTrust: "existing-required" as const, sessionReuse: false as const } } : {}),
+		...(profileSafety ? {
+			safety: { ...profileSafety },
+			// A Herdr saved machine launches the remote adapter binary, never runner.command.
+			safetySource: { measured: false as const, ...(input.machine ? {} : { command: input.command }) },
+		} : {}),
 		...(input.machine ? { machine: input.machine } : {}),
 		capabilities: {
 			stop: true,
@@ -163,6 +168,7 @@ export function externalCliReceiptMetadata(input: {
 		capabilities: { ...runner.capabilities },
 		...(machine ? { machine: { ...machine, ...(machine.remoteGit ? { remoteGit: { ...machine.remoteGit } } : {}) } } : {}),
 		...(runner.safety ? { safety: { ...runner.safety } } : {}),
+		...(runner.safetySource ? { safetySource: { ...runner.safetySource } } : {}),
 		...(input.externalProcess ? {
 			outputArtifacts: {
 				stdoutPath: input.externalProcess.stdoutPath,

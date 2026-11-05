@@ -8,6 +8,7 @@ import { updateActiveRunIndex } from "../../src/runs/background/active-run-index
 import { summarizeAsyncStatus } from "../../src/runs/background/async-status.ts";
 import { formatAsyncResultTranscript, formatAsyncRunTranscript } from "../../src/runs/background/fleet-view.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
+import { resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { TEMP_ROOT_DIR, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
@@ -383,6 +384,21 @@ describe("async run status inspection", () => {
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Adapter: external-cli v1 \(one-shot-stdin\)/);
 			assert.match(text, /Unsupported resume: The one-shot stdin adapter has no durable external session identity/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("labels external-cli safety as the adapter profile, not a measurement", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-safety-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const runner = resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "claude" });
+			fs.mkdirSync(path.join(asyncRoot, "run-safety"), { recursive: true });
+			fs.writeFileSync(path.join(asyncRoot, "run-safety", "status.json"), JSON.stringify({ runId: "run-safety", mode: "single", state: "complete", startedAt: 100, lastUpdate: 200, steps: [{ agent: "writer", status: "complete", runner }] }), "utf-8");
+
+			const status = textContent(inspectSubagentStatus({ id: "run-safety" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }));
+			assert.match(status, /\n  Safety \(adapter profile, not measured\): access=workspace-write, .*tools=Read,Write,Edit,Glob,Grep, mcp=empty-strict/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

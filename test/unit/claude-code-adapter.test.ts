@@ -9,6 +9,9 @@ import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../.
 import { clearExternalCliPreflightCacheForTests } from "../../src/runs/shared/external-cli-preflight.ts";
 import { runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
 import { buildWorkflowReceipt, readWorkflowReceipt, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
+import { runSubagent } from "../../src/runs/background/subagent-runner.ts";
+import { requestAsyncStop } from "../../src/runs/background/control-channel.ts";
+import { createFakeChildSessions } from "../support/fake-child-session.ts";
 
 const tempDirs: string[] = [];
 function tempDir(): string {
@@ -178,8 +181,49 @@ describe("Claude Code adapter", () => {
 			state: "complete",
 			children: [{ key: "claude", ok: true, output: "done", resumability: { state: "not-resumable", reason: writer.nonResumableReason }, continuation: { runIds: [] }, externalAdapter: externalCliReceiptMetadata({ runner: resolveExternalCliRunnerStatus({ adapter: "claude-code", command: "claude" }) }), results: [], artifactPaths: [] }],
 		});
-		fs.writeFileSync(path.join(runDir, "workflow-receipt.json"), JSON.stringify(legacy, (key, value) => key === "safety" ? { permissionMode: "plan", tools: "none", mcp: "empty-strict", settingSources: "none", sessionPersistence: false } : value), "utf-8");
+		fs.writeFileSync(path.join(runDir, "workflow-receipt.json"), JSON.stringify(legacy, (key, value) => key === "safetySource" ? undefined : key === "safety" ? { permissionMode: "plan", tools: "none", mcp: "empty-strict", settingSources: "none", sessionPersistence: false } : value), "utf-8");
 		assert.equal(readWorkflowReceipt(root, "legacy-claude").entries.claude?.externalAdapter?.adapter.id, "claude-code");
+	});
+
+	it("records the launch command and that the adapter profile is not measured", () => {
+		const runner = resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "/opt/wrappers/claude-verify" });
+		assert.deepEqual(runner.safetySource, { measured: false, command: "/opt/wrappers/claude-verify" });
+		assert.equal(resolveExternalCliRunnerStatus({ command: "review-cli" }).safetySource, undefined);
+
+		const root = tempDir();
+		const runDir = path.join(root, "source");
+		fs.mkdirSync(runDir);
+		const metadata = externalCliReceiptMetadata({ runner });
+		const receipt = buildWorkflowReceipt({
+			workflowRunId: "source",
+			state: "complete",
+			children: [{ key: "claude", ok: true, output: "done", resumability: { state: "not-resumable", reason: metadata.nonResumableReason }, continuation: { runIds: [] }, externalAdapter: metadata, results: [], artifactPaths: [] }],
+		});
+		writeWorkflowReceipt(runDir, receipt);
+		assert.deepEqual(readWorkflowReceipt(root, "source").entries.claude?.externalAdapter?.safetySource, { measured: false, command: "/opt/wrappers/claude-verify" });
+		const write = (field: string, replacement: boolean | undefined): void => fs.writeFileSync(path.join(runDir, "workflow-receipt.json"), JSON.stringify(receipt, (key, value) => key === field ? replacement : value), "utf-8");
+		write("measured", true);
+		assert.throws(() => readWorkflowReceipt(root, "source"), /externalAdapter\.safetySource is invalid/);
+		write("safety", undefined);
+		assert.throws(() => readWorkflowReceipt(root, "source"), /externalAdapter\.safety is missing/);
+		write("safetySource", undefined);
+		assert.deepEqual(readWorkflowReceipt(root, "source").entries.claude?.externalAdapter?.safety, runner.safety);
+	});
+
+	it("names no launch command for a run on a Herdr saved machine, which runs the remote adapter binary", async () => {
+		const machine = { provider: "herdr" as const, id: "mini", target: "mini", cwd: "/srv/repo" };
+		const runner = { type: "external-cli" as const, adapter: "claude-code-writer" as const, command: "/opt/wrappers/claude-verify" };
+		assert.deepEqual(resolveExternalCliRunnerStatus({ ...runner, machine }).safetySource, { measured: false });
+
+		const root = tempDir();
+		const asyncDir = path.join(root, "async");
+		fs.mkdirSync(asyncDir);
+		// A stop requested before the runner starts ends the run before the placed launch, so no ssh runs.
+		requestAsyncStop(asyncDir);
+		await runSubagent({ id: "placed", steps: [{ agent: "writer", task: "write", runner, machine }], resultPath: path.join(root, "result.json"), cwd: root, asyncDir, sessionId: "session-placed", artifactConfig: { enabled: false }, share: false, placeholder: "{previous}" }, createFakeChildSessions(() => root).factory);
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+		assert.equal(status.steps[0].status, "stopped");
+		assert.deepEqual(status.steps[0].runner.safetySource, { measured: false });
 	});
 
 	it("discovers the built-in profile without probing Claude Code", () => {

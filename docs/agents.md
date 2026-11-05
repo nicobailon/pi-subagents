@@ -194,6 +194,12 @@ node --experimental-strip-types --import ./test/support/register-loader.mjs \
 
 The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports record `workspaceTrust: "operator-managed-saved"`, confirm that the external prompt root was added, and include startup duration and terminal proof without raw protocol output, prompts, or credentials. A trust-required error remains terminal; the harness does not retry with a trust, force, or yolo flag.
 
+#### Safety record and wrapper commands
+
+Each code-owned adapter run records a `safety` block in its runner status, in `subagent({ action: "status" })`, and in its workflow receipt entry. The block is the adapter's profile: the access its own argv asks the CLI for. Nothing in it is measured from the launched process, and status labels it `Safety (adapter profile, not measured)`.
+
+The record carries `safetySource: { "measured": false, "command": "..." }` beside it. `command` is the launch command as configured; a run on a Herdr saved machine records none, because the remote pane runs the adapter's own binary. When `runner.command` is a wrapper script that changes argv before it starts the CLI, the wrapper can grant more or less than the profile shows, so read the wrapper to know the real grant. Receipts written before `safetySource` existed are read as profile values.
+
 #### Native oracle compared with external advisors
 
 Native `oracle` runs inside Pi and can use its configured read tools. The Claude profiles send the assembled prompt to the local Claude Code CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.

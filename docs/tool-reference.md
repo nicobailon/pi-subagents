@@ -539,6 +539,8 @@ async: true
 
 Supported: status artifacts, stdout/stderr logs, timeout, and stop. Full stdout and stderr are written to log files, while the in-memory final stdout response and stderr error are limited to their last 64 KiB.
 
+A code-owned adapter (`adapter: claude-code-writer` and the others in [agents.md](agents.md#claude-code-profiles)) records a `safety` block and a `safetySource: { measured: false, command }` beside it. The block is the adapter's profile, not a measurement, so a wrapper `command` that changes the CLI's argv can grant something else; see [Safety record and wrapper commands](agents.md#safety-record-and-wrapper-commands).
+
 Intentionally unsupported: native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless the runner explicitly implements them. Foreground/clarify, steer/resume/interrupt-as-pause, and nested subagents are also unsupported.
 
 ## Session sharing

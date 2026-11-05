@@ -1827,18 +1827,28 @@ export interface ExternalCliReceiptMetadata {
 	adapter: { id: "external-cli" | "codex-exec" | "codex-exec-writer" | "claude-code" | "claude-code-writer" | "cursor-agent" | "cursor-agent-writer" | "grok-build"; version: 1; executionMode: "one-shot-stdin" | "one-shot-prompt-file" };
 	capabilities: ExternalCliCapabilities;
 	machine?: ExternalCliMachineStatus;
-	safety?:
-		| { sandbox: "read-only"; approvalPolicy: "never"; ephemeral: true }
-		| { access: "workspace-write"; sandbox: "workspace-write"; approvalPolicy: "never"; ephemeral: true }
-		| { permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "none"; sessionPersistence: false }
-		| { access: "read-only"; authentication: "existing-cli-required"; permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
-		| { access: "workspace-write"; authentication: "existing-cli-required"; permissionMode: "acceptEdits"; tools: "Read,Write,Edit,Glob,Grep"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
-		| { access: "read-only"; authentication: "cursor-api-key-or-existing-login"; mode: "ask"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false }
-		| { access: "workspace-write"; authentication: "cursor-api-key-or-existing-login"; mode: "print"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false };
+	safety?: ExternalCliProfileSafety;
+	/** Where `safety` came from. Nothing in it is measured from the launched process. */
+	safetySource?: ExternalCliSafetySource;
 	outputArtifacts?: { stdoutPath?: string; stderrPath?: string; finalOutputPath?: string };
 	handoff: { mode: "fresh" };
 	supervisor: { mode: "unsupported"; reason: string };
 	nonResumableReason: string;
+}
+
+export type ExternalCliProfileSafety =
+	| { sandbox: "read-only"; approvalPolicy: "never"; ephemeral: true }
+	| { access: "workspace-write"; sandbox: "workspace-write"; approvalPolicy: "never"; ephemeral: true }
+	| { permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "none"; sessionPersistence: false }
+	| { access: "read-only"; authentication: "existing-cli-required"; permissionMode: "plan"; tools: "none"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
+	| { access: "workspace-write"; authentication: "existing-cli-required"; permissionMode: "acceptEdits"; tools: "Read,Write,Edit,Glob,Grep"; mcp: "empty-strict"; settingSources: "user"; userSettingsTrust: "required"; sessionPersistence: false }
+	| { access: "read-only"; authentication: "cursor-api-key-or-existing-login"; mode: "ask"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false }
+	| { access: "workspace-write"; authentication: "cursor-api-key-or-existing-login"; mode: "print"; sandbox: "enabled"; workspaceTrust: "existing-required"; sessionReuse: false };
+
+export interface ExternalCliSafetySource {
+	measured: false;
+	/** The launch command, absent on a Herdr saved machine. A wrapper script here can grant more or less than the adapter profile. */
+	command?: string;
 }
 
 export interface ExternalCliRunnerStatus {
@@ -1848,6 +1858,7 @@ export interface ExternalCliRunnerStatus {
 	promptDelivery: "stdin" | "prompt-file";
 	adapter: ExternalCliReceiptMetadata["adapter"];
 	safety?: ExternalCliReceiptMetadata["safety"];
+	safetySource?: ExternalCliSafetySource;
 	capabilities: ExternalCliCapabilities;
 	unsupportedReasons: Record<Exclude<keyof ExternalCliCapabilities, "stop">, string>;
 	nonResumableReason: string;

@@ -7,6 +7,7 @@ import { parseWorkflowChildSummary } from "./workflow-child-summary.ts";
 import { HOST_STEP_MAX_COUNT, assertUniqueHostStepIds, parseHostStepNode } from "../runs/shared/host-step-status.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../runs/shared/lane-metadata.ts";
 import { projectWorkflowKeyRevival } from "./workflow-revival.ts";
+import { EXTERNAL_CLI_ADAPTER_SAFETY, isCodeOwnedExternalCliAdapterId, type CodeOwnedExternalCliAdapterId } from "../runs/shared/external-cli-contract.ts";
 
 export type { WorkflowReceipt, WorkflowReceiptEntry, WorkflowReceiptState } from "../shared/types.ts";
 
@@ -132,12 +133,31 @@ function parseExternalCliMachine(value: unknown, label: string): void {
 	if (unknownRemoteGit.length > 0 || (remoteGit.head !== undefined && (typeof remoteGit.head !== "string" || !remoteGit.head.trim())) || (remoteGit.branch !== undefined && (typeof remoteGit.branch !== "string" || !remoteGit.branch.trim())) || (remoteGit.dirty !== undefined && typeof remoteGit.dirty !== "boolean")) throw new Error(`${label}.machine.remoteGit is invalid.`);
 }
 
+function parseCodeOwnedSafety(value: unknown, adapter: CodeOwnedExternalCliAdapterId, label: string): void {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label}.safety is missing.`);
+	const safety = value as Record<string, unknown>;
+	const profile: Record<string, string | boolean> = EXTERNAL_CLI_ADAPTER_SAFETY[adapter];
+	const unknownSafety = Object.keys(safety).filter((field) => !Object.hasOwn(profile, field));
+	if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
+	if (Object.entries(profile).some(([field, expected]) => safety[field] !== expected)) throw new Error(`${label}.safety is invalid.`);
+}
+
+function parseExternalCliSafetySource(value: unknown, label: string): boolean {
+	if (value === undefined) return false;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label}.safetySource must be an object.`);
+	const source = value as Record<string, unknown>;
+	const unknownSource = Object.keys(source).filter((field) => !["measured", "command"].includes(field));
+	if (unknownSource.length > 0) throw new Error(`${label}.safetySource has unsupported fields: ${unknownSource.join(", ")}.`);
+	if (source.measured !== false || (source.command !== undefined && (typeof source.command !== "string" || !source.command.trim()))) throw new Error(`${label}.safetySource is invalid.`);
+	return true;
+}
+
 function parseExternalCliReceiptMetadata(value: unknown, key: string, source: string): ExternalCliReceiptMetadata | undefined {
 	if (value === undefined) return undefined;
 	const label = `Invalid workflow receipt '${source}': entry '${key}' externalAdapter`;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
 	const metadata = value as Record<string, unknown>;
-	const unknownMetadata = Object.keys(metadata).filter((field) => !["adapter", "capabilities", "machine", "safety", "outputArtifacts", "handoff", "supervisor", "nonResumableReason"].includes(field));
+	const unknownMetadata = Object.keys(metadata).filter((field) => !["adapter", "capabilities", "machine", "safety", "safetySource", "outputArtifacts", "handoff", "supervisor", "nonResumableReason"].includes(field));
 	if (unknownMetadata.length > 0) throw new Error(`${label} has unsupported fields: ${unknownMetadata.join(", ")}.`);
 	const adapter = metadata.adapter;
 	if (!adapter || typeof adapter !== "object" || Array.isArray(adapter)) throw new Error(`${label}.adapter must be an object.`);
@@ -155,49 +175,23 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 	}
 	if (metadata.machine !== undefined) parseExternalCliMachine(metadata.machine, label);
 	const safety = metadata.safety;
-	if (adapterRecord.id === "codex-exec") {
-		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
+	const hasSafetySource = parseExternalCliSafetySource(metadata.safetySource, label);
+	if (adapterRecord.id === "claude-code" && !hasSafetySource && safety && typeof safety === "object" && !Array.isArray(safety) && (safety as Record<string, unknown>).authentication === undefined) {
 		const safetyRecord = safety as Record<string, unknown>;
-		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["sandbox", "approvalPolicy", "ephemeral"].includes(field));
+		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["permissionMode", "tools", "mcp", "settingSources", "sessionPersistence"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
-		if (safetyRecord.sandbox !== "read-only" || safetyRecord.approvalPolicy !== "never" || safetyRecord.ephemeral !== true) throw new Error(`${label}.safety is invalid.`);
-	} else if (adapterRecord.id === "codex-exec-writer") {
-		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
-		const safetyRecord = safety as Record<string, unknown>;
-		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "sandbox", "approvalPolicy", "ephemeral"].includes(field));
-		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
-		if (safetyRecord.access !== "workspace-write" || safetyRecord.sandbox !== "workspace-write" || safetyRecord.approvalPolicy !== "never" || safetyRecord.ephemeral !== true) throw new Error(`${label}.safety is invalid.`);
-	} else if (adapterRecord.id === "claude-code") {
-		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
-		const safetyRecord = safety as Record<string, unknown>;
-		const legacy = safetyRecord.authentication === undefined;
-		const unknownSafety = Object.keys(safetyRecord).filter((field) => !(legacy
-			? ["permissionMode", "tools", "mcp", "settingSources", "sessionPersistence"]
-			: ["access", "authentication", "permissionMode", "tools", "mcp", "settingSources", "userSettingsTrust", "sessionPersistence"]).includes(field));
-		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
-		if (legacy) {
-			if (safetyRecord.permissionMode !== "plan" || safetyRecord.tools !== "none" || safetyRecord.mcp !== "empty-strict" || safetyRecord.settingSources !== "none" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
-		} else if (safetyRecord.access !== "read-only" || safetyRecord.authentication !== "existing-cli-required" || safetyRecord.permissionMode !== "plan" || safetyRecord.tools !== "none" || safetyRecord.mcp !== "empty-strict" || safetyRecord.settingSources !== "user" || safetyRecord.userSettingsTrust !== "required" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
-	} else if (adapterRecord.id === "claude-code-writer") {
-		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
-		const safetyRecord = safety as Record<string, unknown>;
-		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "permissionMode", "tools", "mcp", "settingSources", "userSettingsTrust", "sessionPersistence"].includes(field));
-		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
-		if (safetyRecord.access !== "workspace-write" || safetyRecord.authentication !== "existing-cli-required" || safetyRecord.permissionMode !== "acceptEdits" || safetyRecord.tools !== "Read,Write,Edit,Glob,Grep" || safetyRecord.mcp !== "empty-strict" || safetyRecord.settingSources !== "user" || safetyRecord.userSettingsTrust !== "required" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
-	} else if (adapterRecord.id === "cursor-agent" || adapterRecord.id === "cursor-agent-writer") {
-		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
-		const safetyRecord = safety as Record<string, unknown>;
-		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "mode", "sandbox", "workspaceTrust", "sessionReuse"].includes(field));
-		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
-		const writer = adapterRecord.id === "cursor-agent-writer";
-		if (safetyRecord.access !== (writer ? "workspace-write" : "read-only") || safetyRecord.authentication !== "cursor-api-key-or-existing-login" || safetyRecord.mode !== (writer ? "print" : "ask") || safetyRecord.sandbox !== "enabled" || safetyRecord.workspaceTrust !== "existing-required" || safetyRecord.sessionReuse !== false) throw new Error(`${label}.safety is invalid.`);
+		if (safetyRecord.permissionMode !== "plan" || safetyRecord.tools !== "none" || safetyRecord.mcp !== "empty-strict" || safetyRecord.settingSources !== "none" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
+	} else if (isCodeOwnedExternalCliAdapterId(adapterRecord.id)) {
+		parseCodeOwnedSafety(safety, adapterRecord.id, label);
 	} else if (adapterRecord.id === "grok-build") {
+		if (hasSafetySource) throw new Error(`${label}.safetySource is invalid for the legacy grok-build adapter.`);
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
 		const safetyRecord = safety as Record<string, unknown>;
 		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "permissionMode", "tools", "deniedTools", "sandbox", "webSearch", "subagents", "config", "updates", "sessionPersistence"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
 		if (safetyRecord.access !== "read-only" || safetyRecord.authentication !== "xai-api-key-required" || safetyRecord.permissionMode !== "plan" || safetyRecord.tools !== "read_file,grep,list_dir" || safetyRecord.deniedTools !== "run_terminal_cmd,search_replace,Agent,Bash,Edit,Write,MCPTool" || safetyRecord.sandbox !== "read-only" || safetyRecord.webSearch !== false || safetyRecord.subagents !== false || safetyRecord.config !== "temporary-home" || safetyRecord.updates !== "disabled" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
-	} else if (safety !== undefined) throw new Error(`${label}.safety is invalid for the generic adapter.`);
+	} else if (hasSafetySource) throw new Error(`${label}.safetySource is invalid for the generic adapter.`);
+	else if (safety !== undefined) throw new Error(`${label}.safety is invalid for the generic adapter.`);
 	const handoff = metadata.handoff;
 	if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) throw new Error(`${label}.handoff must be an object.`);
 	const handoffRecord = handoff as Record<string, unknown>;
