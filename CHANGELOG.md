@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `mcp:` selectors now resolve for pi-mcp-adapter servers that set `directTools: "search"` or use `${NAME:-default}` in their config. Before, a `"search"` server was dropped from the config, and a default changed the server's cache key, so every selector for it was reported as unresolved. A server url that used a default failed the launch.
+
 ## [0.86.0] - 2026-11-05
 
 ### Highlights

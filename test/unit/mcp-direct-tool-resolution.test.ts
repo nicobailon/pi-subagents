@@ -83,10 +83,44 @@ describe("MCP direct-tool resolution config sources", () => {
 		assert.deepEqual(resolution.unresolvedSelectors, []);
 	});
 
+	it("resolves direct tools from a server whose directTools is \"search\"", () => {
+		// pi-mcp-adapter accepts "search"; rejecting it dropped the server and left every selector unresolved.
+		const definition: McpServerDefinition = { ...CURRENT_DEFINITION, directTools: "search" };
+		writeServerConfig(path.join(agentDir, "mcp-adapter.json"), definition);
+		writeMetadataCache(definition);
+
+		const resolution = resolveMcpDirectToolResolution(SELECTORS, projectDir);
+
+		assert.deepEqual(resolution.selections.map((selection) => selection.name), SELECTED_NAMES);
+		assert.deepEqual(resolution.unresolvedSelectors, []);
+	});
+
 	it("computes config hashes identical to pi-mcp-adapter 3.1.0 for stdio servers", () => {
 		// Values reproduced from pi-mcp-adapter 3.1.0's real cache; drift breaks stdio direct-tool resolution.
 		assert.equal(computeMcpServerHash(CURRENT_DEFINITION), "d2b80559f0b1c85ccc625a4c7f875f64e0defc60648f56d2a51cbe5dfa3d967e");
 		assert.equal(computeMcpServerHash({ ...CURRENT_DEFINITION, inheritEnv: false }), "345b359732aa3ece7fdf8b98b9927809243685846c2b375e98a312a80e89e333");
+	});
+
+	it("expands ${NAME:-default} like pi-mcp-adapter when hashing", () => {
+		// Values computed by pi-mcp-adapter's computeServerHash with the same environment.
+		const names = ["PI_SUBAGENTS_TEST_SET", "PI_SUBAGENTS_TEST_EMPTY", "PI_SUBAGENTS_TEST_UNSET"] as const;
+		const saved = names.map((name) => process.env[name]);
+		process.env.PI_SUBAGENTS_TEST_SET = "set-value";
+		process.env.PI_SUBAGENTS_TEST_EMPTY = "";
+		delete process.env.PI_SUBAGENTS_TEST_UNSET;
+		try {
+			assert.equal(computeMcpServerHash({ command: "node", env: { E: "${PI_SUBAGENTS_TEST_UNSET:-fallback}" } }), "63b3dd0b3af2e0d992f09b9ad3b5dc664e5a5b2be637efb7fd2ac5b049df1800");
+			assert.equal(computeMcpServerHash({ command: "node", env: { E: "${PI_SUBAGENTS_TEST_SET:-fallback}" } }), "e0ba06cbb914582d09692eb5567676e0440e89d49771feee60d203819bb2f75a");
+			assert.equal(computeMcpServerHash({ command: "node", env: { E: "${PI_SUBAGENTS_TEST_EMPTY:-fallback}" } }), "8d90759297b01c9017f3b000df7efb7b7fea6eb3137bab3d90c14059fc147fc3");
+			assert.equal(computeMcpServerHash({ url: "http://localhost/mcp", headers: { A: "${PI_SUBAGENTS_TEST_UNSET:-token}" } }), "dfe2954daf368fe0b2d99c360398ee02573a8ad8ba802540322ef4f9393e41b2");
+			assert.equal(computeMcpServerHash({ url: "${PI_SUBAGENTS_TEST_UNSET:-http://localhost:3000}/mcp" }), "8f950f5b7a4a5627a3facf5775dc18519ff6f66642e245f0f4c0285adaab8a4d");
+		} finally {
+			names.forEach((name, index) => {
+				const value = saved[index];
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			});
+		}
 	});
 
 	it("ignores Pi's own mcp.json files, which the adapter no longer reads", () => {
