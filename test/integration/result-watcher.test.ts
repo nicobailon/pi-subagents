@@ -568,27 +568,32 @@ describe("result watcher", () => {
 				assert.equal(syncFailures("corrupt-binding.json"), 1, "an unchanged corrupt binding is diagnosed once across retries");
 				assert.equal(fs.existsSync(resultPath), true, "corrupt mission completion stays unacknowledged and retryable");
 				assert.deepEqual(fs.readFileSync(bindingPath), corruptBinding);
-				fs.writeFileSync(bindingPath, JSON.stringify({
+				const validBinding = JSON.stringify({
 					schemaVersion: 1,
 					missionId: binding.missionId,
 					projectRoot: binding.location.projectRoot,
 					missionDir: binding.location.missionDir,
 					globalIndexDir: binding.location.globalIndexDir,
 					writeGlobalIndex: binding.location.writeGlobalIndex,
-				}));
+				});
+				fs.writeFileSync(bindingPath, validBinding);
 				const missionPath = path.join(binding.location.missionDir, `${binding.missionId}.json`);
 				const mission = fs.readFileSync(missionPath);
 				fs.writeFileSync(missionPath, corruptBinding);
 				await watcher.deliverPendingResults();
 				assert.equal(fs.existsSync(resultPath), true, "a corrupt mission record also keeps the completion retryable");
 				assert.equal(syncFailures("corrupt-binding.json"), 2, "a changed failure message is reported again");
+				fs.writeFileSync(bindingPath, corruptBinding);
+				await watcher.deliverPendingResults();
+				assert.equal(syncFailures("corrupt-binding.json"), 3, "a failure that returns after a different one is reported again");
+				fs.writeFileSync(bindingPath, validBinding);
 				fs.writeFileSync(missionPath, mission);
 				await watcher.deliverPendingResults();
 				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath)), true, "the repaired record retries and is reconciled");
 				fs.writeFileSync(bindingPath, corruptBinding);
 				writeIndexedResult(resultPath, { id: "corrupt-binding", runId: "corrupt-binding", sessionId: "session-current", asyncDir, state: "complete", success: true });
 				await watcher.deliverPendingResults();
-				assert.equal(syncFailures("corrupt-binding.json"), 3, "the same failure after a successful sync is reported again");
+				assert.equal(syncFailures("corrupt-binding.json"), 4, "the same failure after a successful sync is reported again");
 			} finally {
 				watcher.stopResultWatcher();
 			}

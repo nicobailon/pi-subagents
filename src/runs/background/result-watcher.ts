@@ -244,8 +244,8 @@ export function createResultWatcher(
 	// Result file -> last logged mission-sync error. A failed sync is retried
 	// every pass, so the same error is logged once per result file.
 	const reportedMissionSyncFailures = new Map<string, string>();
-	// Bumped when a recovered sync clears its map entry, so the same failure after recovery gets a fresh session-warning key.
-	const missionSyncRecoveries = new Map<string, number>();
+	// reportedMissionSyncFailures decides when to report; each report gets its own key so the session warning dedupe never hides it.
+	let missionSyncReports = 0;
 	let deliveryActive = true;
 	let deliveryEpoch = 0;
 	let resultScanTimer: ReturnType<typeof setInterval> | null = null;
@@ -438,13 +438,13 @@ export function createResultWatcher(
 			let observerSucceeded = true;
 			try {
 				syncMissionFromAsyncCompletion({ ...data, runId });
-				if (reportedMissionSyncFailures.delete(file)) missionSyncRecoveries.set(file, (missionSyncRecoveries.get(file) ?? 0) + 1);
+				reportedMissionSyncFailures.delete(file);
 			} catch (error) {
 				observerSucceeded = false;
 				const message = error instanceof Error ? error.message : String(error);
 				if (reportedMissionSyncFailures.get(file) !== message) {
 					reportedMissionSyncFailures.set(file, message);
-					reportResultWatcherWarning(state, `Mission completion sync failed for '${resultPath}'`, `result-mission-sync-failed:${resultPath}:${missionSyncRecoveries.get(file) ?? 0}:${message}`, error);
+					reportResultWatcherWarning(state, `Mission completion sync failed for '${resultPath}'`, `result-mission-sync-failed:${++missionSyncReports}`, error);
 				}
 			}
 			try {
