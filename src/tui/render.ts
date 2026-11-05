@@ -315,10 +315,7 @@ export function compactTaskText(task: string | undefined, label?: string): strin
 
 const EXPANDED_TASK_MAX_LINES = 8;
 
-/** The task as authored for expanded rows: line breaks, leading indentation (tabs as two spaces)
- *  and single blank lines kept, wrapped to `width`, at most EXPANDED_TASK_MAX_LINES lines plus a
- *  "…" line. This runs on every spinner frame, so the task is cut to what the cap can show
- *  before any sanitizing or wrapping. */
+/** Runs on every spinner frame, so the task is cut to what the line cap can show before any sanitizing or wrapping. */
 function expandedTaskLines(task: string | undefined, label: string | undefined, width: number): string[] | undefined {
 	const taskText = task?.trim();
 	if (!taskText || taskText === PROMPT_REDACTED || width <= 0) return undefined;
