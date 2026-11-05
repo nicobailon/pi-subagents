@@ -5,6 +5,7 @@
 ### Fixed
 
 - A custom `subagent` tool description that uses `{{compactDescription}}` or `{{fullDescription}}` no longer describes features turned off with `disabledFeatures`. Before, the placeholders always inserted the text for every feature, so with workflow scripts disabled the model was told how to write workflow scripts. Thanks to [@ohlulu](https://github.com/ohlulu) for the report. (#3192)
+- A child's `structured_output` call no longer fails with a bare `RangeError: Maximum call stack size exceeded` when the `outputSchema` refers to itself through `$ref` (for example `{"allOf": [{"$ref": "#"}]}`). The call is now rejected with "Structured output validation failed: outputSchema cannot be validated (cyclic or too deep)", and typed gates, dynamic fanout and saved structured output report the same error instead of throwing. Thanks to [@G0-0000](https://github.com/G0-0000) for the report. (#3190)
 
 ## [0.85.0] - 2026-11-04
 
