@@ -409,6 +409,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			return (await getExecutor()).executeScheduled(randomUUID(), params, signal, ctx);
 		},
 		resolveCapabilityCeiling: (sessionId) => resolveCurrentSubagentCapabilityCeiling(sessionId),
+		reportWarning: (message, key) => reportSessionWarning(state, message, key),
 	});
 	let refreshResultDelivery = () => {};
 	let advertisedAgents: AgentConfig[] = [];

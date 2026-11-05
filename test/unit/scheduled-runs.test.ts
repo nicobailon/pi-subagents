@@ -1622,18 +1622,19 @@ describe("a schedule record the store cannot read", () => {
 	function recordFile(h: Harness, id: string): string {
 		return path.join(scheduledRunStorePath(h.ctx.cwd, undefined, storeRoot(h)), id, "schedule.json");
 	}
-	function manager(h: Harness, ctx: ExtensionContext): ScheduledRunManager {
+	function manager(h: Harness, reportWarning?: (message: string, key: string) => void): ScheduledRunManager {
 		return createScheduledRunManager({
 			config: { scheduledRuns: { enabled: true } },
 			storeRoot: storeRoot(h),
 			now: () => h.clock.now,
 			randomId: () => "generated",
 			timers: h.timers,
+			reportWarning,
 			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
 		});
 	}
 	/** A record paused the way an operator pauses it by editing the file: no next run. */
-	function writePausedRecord(h: Harness, id: string): void {
+	function writePausedRecord(h: Harness, id: string, nextRunAt?: null): void {
 		const file = recordFile(h, id);
 		fs.mkdirSync(path.dirname(file), { recursive: true });
 		fs.writeFileSync(file, JSON.stringify({
@@ -1641,7 +1642,7 @@ describe("a schedule record the store cannot read", () => {
 			id,
 			name: "Encryption watch",
 			cwd: h.ctx.cwd,
-			trigger: { kind: "interval", every: "15m", everyMs: 900_000, anchorAt: new Date(h.clock.now).toISOString() },
+			trigger: { kind: "interval", every: "15m", everyMs: 900_000, anchorAt: new Date(h.clock.now).toISOString(), nextRunAt },
 			target: { workflowScript: "return runs.run('main', { agent: 'worker' })", args: {} },
 			overlap: "skip",
 			catchUp: "latest",
@@ -1655,7 +1656,7 @@ describe("a schedule record the store cannot read", () => {
 		const h = harness();
 		writePausedRecord(h, "paused-watch");
 		const ctx = context(h.ctx.cwd, "session-b");
-		const bound = manager(h, ctx);
+		const bound = manager(h);
 		bound.bindSession(ctx); // used to throw: one unreadable record stopped the whole store loading
 		assert.match(text(await bound.handleToolCall({ action: "schedule.list" }, ctx)), /paused-watch \| paused \| no next run/);
 		const resumed = await bound.handleToolCall({ action: "schedule.resume", id: "paused-watch" }, ctx);
@@ -1665,11 +1666,17 @@ describe("a schedule record the store cannot read", () => {
 		assert.equal(h.timers.values.size, 1, "a resumed record is armed");
 	});
 
+	it("still rejects a paused interval record whose next run is present but not a time", () => {
+		const h = harness();
+		writePausedRecord(h, "null-watch", null);
+		assert.throws(() => manager(h).bindSession(context(h.ctx.cwd, "session-b")), /invalid interval trigger/);
+	});
+
 	it("reports a record that stops parsing once, not on every async completion", async () => {
 		const h = harness();
-		const warnings: string[] = [];
-		const ctx = { ...context(h.ctx.cwd, "session-b"), ui: { notify: (message: string) => warnings.push(message) } } as unknown as ExtensionContext;
-		const bound = manager(h, ctx);
+		const warnings = new Map<string, string>();
+		const ctx = context(h.ctx.cwd, "session-b");
+		const bound = manager(h, (message, key) => { if (!warnings.has(key)) warnings.set(key, message); });
 		bound.bindSession(ctx);
 		const created = await bound.handleToolCall({ action: "schedule.create", id: "watch", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, ctx);
 		assert.equal(created.isError, undefined, text(created));
@@ -1678,6 +1685,6 @@ describe("a schedule record the store cannot read", () => {
 
 		for (let i = 0; i < 3; i++) bound.handleAsyncCompletion({ runId: "unknown-run" });
 
-		assert.equal(warnings.filter((line) => line.includes("Failed to inspect schedule 'watch'")).length, 1);
+		assert.deepEqual([...warnings.values()].map((message) => message.replace(/: .*/, "")), [`Failed to inspect schedule 'watch' in '${scheduledRunStorePath(h.ctx.cwd, undefined, storeRoot(h))}'`]);
 	});
 });

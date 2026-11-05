@@ -95,6 +95,8 @@ type ScheduledRunManagerDeps = {
 	resolveCapabilityCeiling?: (sessionId: string) => ResolvedSubagentCapabilityCeiling | undefined;
 	timers?: ScheduledRunTimers;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+	/** Shows a warning once per key without drawing over the editor. */
+	reportWarning?: (message: string, key: string) => void;
 };
 
 export function isScheduledRunAction(action: unknown): action is ScheduledRunAction {
@@ -344,11 +346,8 @@ function parseSchedule(value: unknown, file: string): ScheduleRecord {
 	if (record.trigger.kind === "once") {
 		if (typeof record.trigger.at !== "string" || (record.trigger.nextRunAt !== undefined && typeof record.trigger.nextRunAt !== "string")) throw new Error(`Schedule record '${file}' has an invalid one-shot trigger.`);
 	} else if (record.trigger.kind === "interval") {
-		// A paused interval schedule has no next run, so nextRunAt is optional while paused and
-		// mandatory once the schedule is active again (pause() supplies it on resume). Requiring it
-		// unconditionally made a paused record impossible to represent: the whole store stopped
-		// loading for every session in the project.
-		if (typeof record.trigger.every !== "string" || typeof record.trigger.everyMs !== "number" || typeof record.trigger.anchorAt !== "string" || (!record.paused && typeof record.trigger.nextRunAt !== "string")) throw new Error(`Schedule record '${file}' has an invalid interval trigger.`);
+		// A paused interval record may omit nextRunAt; resuming it supplies one.
+		if (typeof record.trigger.every !== "string" || typeof record.trigger.everyMs !== "number" || typeof record.trigger.anchorAt !== "string" || ((!record.paused || record.trigger.nextRunAt !== undefined) && typeof record.trigger.nextRunAt !== "string")) throw new Error(`Schedule record '${file}' has an invalid interval trigger.`);
 	} else if (record.trigger.kind === "calendar") {
 		restoreCalendarTrigger(record.trigger); // Validate without rewriting during read-only list/show.
 	} else throw new Error(`Schedule record '${file}' has an unsupported trigger.`);
@@ -588,7 +587,6 @@ export class ScheduledRunManager {
 	private readonly stores = new Map<string, ScheduleStore>();
 	private readonly contexts = new Map<string, ExtensionContext>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
-	private readonly reportedWarnings = new Set<string>();
 	private readonly observedAsyncIds = new Set<string>();
 	private readonly now: () => number;
 	private readonly randomId: () => string;
@@ -613,7 +611,6 @@ export class ScheduledRunManager {
 		this.stores.clear();
 		this.contexts.clear();
 		this.observedAsyncIds.clear();
-		this.reportedWarnings.clear();
 	}
 
 	async handleToolCall(params: SubagentParamsLike, ctx: ExtensionContext): Promise<AgentToolResult<Details>> {
@@ -653,26 +650,6 @@ export class ScheduledRunManager {
 		return runIds;
 	}
 
-	/**
-	 * Reports a schedule inspection failure once per key: a TUI warning when a session context is
-	 * bound, otherwise one stderr line. This path runs on every async completion, in every session
-	 * sharing the project, so an unreadable record must not print a stack trace each time.
-	 */
-	private reportScheduleWarning(store: ScheduleStore, message: string, key: string): void {
-		const reportedKey = `${store.root}\u0000${key}`;
-		if (this.reportedWarnings.has(reportedKey)) return;
-		this.reportedWarnings.add(reportedKey);
-		const text = `[pi-subagents] ${message}`;
-		const ctx = this.contexts.get(store.root);
-		if (ctx) {
-			try {
-				ctx.ui.notify(text, "warning");
-				return;
-			} catch { /* a torn-down UI must not lose the report: fall through to stderr */ }
-		}
-		console.warn(text);
-	}
-
 	handleAsyncCompletion(payload: unknown): void {
 		if (!payload || typeof payload !== "object") return;
 		const data = payload as { id?: unknown; runId?: unknown; success?: unknown; state?: unknown; summary?: unknown };
@@ -683,7 +660,7 @@ export class ScheduledRunManager {
 			try {
 				ids = store.ids();
 			} catch (error) {
-				this.reportScheduleWarning(store, `Failed to inspect schedule store '${store.root}'`, `store:${store.root}:${errorText(error)}`);
+				this.deps.reportWarning?.(`Failed to inspect schedule store '${store.root}': ${errorText(error)}`, `schedule-store:${store.root}:${errorText(error)}`);
 				continue;
 			}
 			for (const id of ids) {
@@ -696,9 +673,8 @@ export class ScheduledRunManager {
 					this.finishRun(store, schedule, run, data.success === true, typeof data.summary === "string" ? data.summary : undefined);
 					return;
 				} catch (error) {
-					// Once per record: this runs for every async completion in every session, so an
-					// unreadable record used to paint a stack trace over the editor each time.
-					this.reportScheduleWarning(store, `Failed to inspect schedule '${id}' in '${store.root}': ${errorText(error)}`, `schedule:${store.root}:${id}`);
+					// Runs on every async completion, so the key holds no error text: one warning per record.
+					this.deps.reportWarning?.(`Failed to inspect schedule '${id}' in '${store.root}': ${errorText(error)}`, `schedule-record:${store.root}:${id}`);
 				}
 			}
 		}
