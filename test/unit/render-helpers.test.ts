@@ -893,7 +893,7 @@ test("main-window renderer config caps only collapsed rich result rows", () => {
 	assert.doesNotMatch(expanded.join("\n"), /rows hidden/);
 });
 
-test("expanded async rows show a running child's whole task wrapped to width, capped for huge tasks", () => {
+test("expanded async rows show the only running child's whole task; two running children keep one-line tasks", () => {
 	const shared = "Implement the fix described in the report below and keep the change narrow, focused, and tested.";
 	const brief = (file: string) => [
 		shared,
@@ -903,7 +903,7 @@ test("expanded async rows show a running child's whole task wrapped to width, ca
 		"Deliverable: one commit with a focused regression test.",
 		"Acceptance: the new test fails on main and passes with the change.",
 	];
-	const job = (tasks: string[]): AsyncJobState => ({
+	const job = (tasks: string[], running = tasks.length): AsyncJobState => ({
 		asyncId: "expanded-task",
 		asyncDir: "/tmp/expanded-task",
 		status: "running",
@@ -912,7 +912,7 @@ test("expanded async rows show a running child's whole task wrapped to width, ca
 		stepsTotal: tasks.length,
 		startedAt: 1_000,
 		updatedAt: 2_000,
-		steps: tasks.map((description, index) => ({ index, agent: "worker", status: "running", description })),
+		steps: tasks.map((description, index) => ({ index, agent: "worker", status: index < running ? "running" : "complete", description })),
 	});
 	const auth = brief("src/auth.ts");
 	const billing = brief("src/billing.ts");
@@ -923,8 +923,15 @@ test("expanded async rows show a running child's whole task wrapped to width, ca
 	assert.equal(collapsedTasks.length, 2);
 	for (const line of collapsedTasks) assert.ok(line.endsWith(`task: ${shared.slice(0, 93)}...`), line);
 
-	const expanded = buildWidgetLines([both], theme, 120, true);
-	for (const authored of [...auth, ...billing]) {
+	const expandedBoth = buildWidgetLines([both], theme, 120, true);
+	assert.ok(expandedBoth.some((line) => line.includes("Agent 1/2:")) && expandedBoth.some((line) => line.includes("Agent 2/2:")), expandedBoth.join("\n"));
+	const expandedTasks = expandedBoth.filter((line) => line.includes("task: "));
+	assert.equal(expandedTasks.length, 2);
+	for (const line of expandedTasks) assert.ok(line.endsWith(`task: ${shared.slice(0, 93)}...`), line);
+	assert.equal(expandedBoth.length, buildWidgetLines([job(["Short task one", "Short task two"])], theme, 120, true).length);
+
+	const expanded = buildWidgetLines([job([auth.join("\n"), billing.join("\n")], 1)], theme, 120, true);
+	for (const authored of auth) {
 		assert.ok(expanded.some((line) => line.trim() === authored || line.trim() === `task: ${authored}`), `missing ${authored}\n${expanded.join("\n")}`);
 	}
 	assert.ok(expanded.every((line) => visibleWidth(line) <= 120));
