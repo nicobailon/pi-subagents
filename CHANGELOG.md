@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- A passing `output: "json"` gate no longer fails as "not valid JSON" when an environment variable with a secret-looking name holds a common value, such as `KDE_FULL_SESSION=true` or `XDG_SESSION_CLASS=user` on KDE. The gate's stdout is now parsed before secrets are redacted, and the redaction is applied to the parsed value's strings instead, so `true`, numbers and the JSON syntax are left alone. Thanks to [@nhp](https://github.com/nhp) for the report. (#3191)
+- A passing `output: "json"` gate no longer fails as "not valid JSON" when an environment variable with a secret-looking name holds a common value, such as `KDE_FULL_SESSION=true` or `XDG_SESSION_CLASS=user` on KDE. The gate's stdout is now parsed before secrets are redacted, and the redaction is applied to the parsed value's strings, keys and numbers instead, so `true`, `null` and the JSON syntax are left alone. Thanks to [@nhp](https://github.com/nhp) for the report. (#3191)
 
 ## [0.85.0] - 2026-11-04
 

@@ -1184,9 +1184,10 @@ function redactVerifyEnv(value: string, env: Record<string, string> | undefined)
 	return redactSecrets(value, verifySecrets(env));
 }
 
-/** Redacts a parsed JSON value's strings and keys, so booleans, numbers, null and the document's syntax survive redaction. */
+/** Redacts a parsed JSON value's strings, keys and numbers, so booleans, null and the document's syntax survive redaction. */
 function redactVerifyValue(value: unknown, secrets: readonly string[]): unknown {
 	if (typeof value === "string") return redactSecrets(value, secrets);
+	if (typeof value === "number") return redactSecrets(String(value), secrets) === String(value) ? value : "[REDACTED]";
 	if (Array.isArray(value)) return value.map((item) => redactVerifyValue(item, secrets));
 	if (value && typeof value === "object") {
 		return Object.fromEntries(Object.entries(value).map(([key, item]) => [redactSecrets(key, secrets), redactVerifyValue(item, secrets)]));
@@ -1279,7 +1280,9 @@ const TYPED_VERIFY_OUTPUT_MAX_BYTES = 12_000;
  * silently dropping the verdict. The raw stdout is parsed, because the stored
  * stdout is redacted and redaction can hit JSON syntax (`true` in KDE_FULL_SESSION).
  * The schema checks the raw value so a redacted string cannot fail a correct
- * gate; the exposed value and every error message are redacted.
+ * gate. Error messages quote parts of their input (a parse error quotes ~10
+ * chars, schema paths escape `/` and `~`), so each one is built from the
+ * redacted text or value, never the raw one.
  */
 async function applyTypedVerifyOutput(command: AcceptanceVerifyCommand, run: AcceptanceVerifyResult, rawStdout: string): Promise<void> {
 	if (run.status !== "passed") return;
@@ -1294,14 +1297,24 @@ async function applyTypedVerifyOutput(command: AcceptanceVerifyCommand, run: Acc
 	let value: unknown;
 	try {
 		value = JSON.parse(stdout);
-	} catch (error) {
-		return fail(`output: "json" stdout is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+	} catch {
+		let reason = "parse failed";
+		try {
+			JSON.parse(redactSecrets(stdout, secrets));
+		} catch (error) {
+			reason = error instanceof Error ? error.message : String(error);
+		}
+		return fail(`output: "json" stdout is not valid JSON: ${reason}`);
 	}
+	const redactedValue = redactVerifyValue(value, secrets);
 	if (command.schema) {
 		const validation = await validateStructuredOutputValue(command.schema, value);
-		if (validation.status === "invalid") return fail(`output: "json" stdout does not match gate.schema: ${validation.message}`);
+		if (validation.status === "invalid") {
+			const redactedValidation = await validateStructuredOutputValue(command.schema, redactedValue);
+			return fail(`output: "json" stdout does not match gate.schema${redactedValidation.status === "invalid" ? `: ${redactedValidation.message}` : "."}`);
+		}
 	}
-	run.structuredOutput = redactVerifyValue(value, secrets);
+	run.structuredOutput = redactedValue;
 }
 
 /** The first typed verify result on a ledger, if any command produced one. */
