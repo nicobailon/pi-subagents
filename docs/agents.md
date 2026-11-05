@@ -194,6 +194,34 @@ node --experimental-strip-types --import ./test/support/register-loader.mjs \
 
 The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports record `workspaceTrust: "operator-managed-saved"`, confirm that the external prompt root was added, and include startup duration and terminal proof without raw protocol output, prompts, or credentials. A trust-required error remains terminal; the harness does not retry with a trust, force, or yolo flag.
 
+#### Safety record and wrapper commands
+
+Each code-owned adapter run records a `safety` block in its runner status, in `subagent({ action: "status" })`, and in its workflow receipt entry. The block is the adapter's profile: the access its own argv asks the CLI for. Nothing in it is measured from the launched process.
+
+`runner.command` can name a wrapper script that changes argv before it starts the CLI. The adapter cannot see that change, so its profile can then be wrong in either direction, for example `tools` listing editors the wrapper removed and missing `Bash` the wrapper added. The record carries a `safetySource` next to `safety` so a reader can tell:
+
+```json
+"safetySource": { "measured": false, "command": "/opt/wrappers/claude-verify", "declaredFields": ["tools", "mcp"] }
+```
+
+`command` is the launch command as configured. `declaredFields` lists the fields that came from the agent profile; every other field is the adapter profile value.
+
+A wrapper's agent declares what it really grants with `runner.declaredSafety`. The declared values replace the profile values for those fields only:
+
+```yaml
+runner:
+  type: external-cli
+  adapter: claude-code-writer
+  command: /opt/wrappers/claude-verify
+  declaredSafety:
+    tools: Read,Glob,Grep,Bash,WebFetch,WebSearch
+    mcp: wrapper-injected
+```
+
+`declaredSafety` needs a code-owned `adapter`. Its keys must be fields the selected adapter already records, at least one is required, string fields take a non-empty trimmed string of at most 512 characters, and boolean fields take a boolean. A declaration is the agent author's statement, not something Pi enforces or checks; it changes the record, not the launch. Status prints a declared block as `Safety (declared tools, mcp): ...` and adds a `Safety source:` line naming the command.
+
+A workflow receipt still requires every undeclared field to equal the adapter profile, so a receipt that changes `tools` without listing it in `declaredFields` is rejected. Receipts and status written before `safetySource` existed are read as the adapter profile.
+
 #### Native oracle compared with external advisors
 
 Native `oracle` runs inside Pi and can use its configured read tools. The Claude profiles send the assembled prompt to the local Claude Code CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
