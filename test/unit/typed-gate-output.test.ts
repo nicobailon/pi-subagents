@@ -121,6 +121,25 @@ describe("typed gate output", () => {
 		assert.match(empty.verifyRuns[0]?.structuredOutputError ?? "", /printed nothing/);
 	});
 
+	it("parses stdout before env redaction, then redacts secrets in the exposed value", async () => {
+		const cwd = tempGitRepo();
+		const acceptance = resolveEffectiveAcceptance({
+			agentName: "reviewer",
+			task: "Review the report.",
+			explicit: { level: "verified", verify: [{
+				id: "gate",
+				command: printing('{"output_exists":true,"note":"key gate-secret-value"}'),
+				output: "json",
+				env: { KDE_FULL_SESSION: "true", GATE_TOKEN: "gate-secret-value" },
+			}] },
+			agentContract: { version: 1 },
+		});
+		const ledger = await evaluateAcceptance({ acceptance, output: "done", cwd, reportOptional: true });
+		assert.equal(ledger.status, "verified");
+		assert.deepEqual(typedVerifyOutput(ledger), { value: { output_exists: true, note: "key [REDACTED]" } });
+		assert.doesNotMatch(ledger.verifyRuns[0]?.stdout ?? "", /gate-secret-value/);
+	});
+
 	it("leaves string gates and non-json verify commands untouched", async () => {
 		const cwd = tempGitRepo();
 		const plain = await runGate(printing('{"verdict":"blocked"}'), cwd);
