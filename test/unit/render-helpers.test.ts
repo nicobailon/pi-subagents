@@ -892,3 +892,50 @@ test("main-window renderer config caps only collapsed rich result rows", () => {
 	assert.ok(expanded.length > 3);
 	assert.doesNotMatch(expanded.join("\n"), /rows hidden/);
 });
+
+test("expanded async rows show a running child's whole task wrapped to width, capped for huge tasks", () => {
+	const shared = "Implement the fix described in the report below and keep the change narrow, focused, and tested.";
+	const brief = (file: string) => [
+		shared,
+		`Objective: make ${file} reject expired sessions before it reads the cache.`,
+		"Context: the cache keeps entries for one hour after logout.",
+		`Constraints: touch only ${file} and its unit test; no new config.`,
+		"Deliverable: one commit with a focused regression test.",
+		"Acceptance: the new test fails on main and passes with the change.",
+	];
+	const job = (tasks: string[]): AsyncJobState => ({
+		asyncId: "expanded-task",
+		asyncDir: "/tmp/expanded-task",
+		status: "running",
+		mode: "parallel",
+		agents: tasks.map(() => "worker"),
+		stepsTotal: tasks.length,
+		startedAt: 1_000,
+		updatedAt: 2_000,
+		steps: tasks.map((description, index) => ({ index, agent: "worker", status: "running", description })),
+	});
+	const auth = brief("src/auth.ts");
+	const billing = brief("src/billing.ts");
+	const both = job([auth.join("\n"), billing.join("\n")]);
+
+	const collapsed = buildWidgetLines([both], theme, 120);
+	const collapsedTasks = collapsed.filter((line) => line.includes("task: "));
+	assert.equal(collapsedTasks.length, 2);
+	for (const line of collapsedTasks) assert.ok(line.endsWith(`task: ${shared.slice(0, 93)}...`), line);
+
+	const expanded = buildWidgetLines([both], theme, 120, true);
+	for (const authored of [...auth, ...billing]) {
+		assert.ok(expanded.some((line) => line.trim() === authored || line.trim() === `task: ${authored}`), `missing ${authored}\n${expanded.join("\n")}`);
+	}
+	assert.ok(expanded.every((line) => visibleWidth(line) <= 120));
+
+	const narrow = buildWidgetLines([job([auth.join("\n")])], theme, 80, true);
+	assert.ok(narrow.every((line) => visibleWidth(line) <= 80));
+	const narrowTask = narrow.slice(narrow.findIndex((line) => line.trim().startsWith("task: ")), narrow.findIndex((line) => line.includes("⎿")));
+	assert.equal(narrowTask.join("").replace(/\s/g, ""), `task:${auth.join("")}`.replace(/\s/g, ""), narrow.join("\n"));
+
+	const huge = buildWidgetLines([job(["word ".repeat(20_000)])], theme, 120, true);
+	const taskStart = huge.findIndex((line) => line.trim().startsWith("task: "));
+	const marker = huge.findIndex((line) => line.trim() === "…");
+	assert.ok(taskStart >= 0 && marker > taskStart && marker - taskStart <= 8, huge.join("\n"));
+});

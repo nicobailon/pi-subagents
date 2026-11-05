@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- In the expanded background-agents widget, a running child's task is now shown as written, with its line breaks kept and wrapped to the terminal width, up to 8 lines. Before, it was squeezed onto one line and cut at 96 characters, so children whose tasks start the same way looked identical. The collapsed widget is unchanged. Thanks to [@marshamonkey25-hue](https://github.com/marshamonkey25-hue) for the report. (#3187)
+
 ## [0.85.0] - 2026-11-04
 
 ### Highlights

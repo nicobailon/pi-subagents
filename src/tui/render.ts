@@ -313,6 +313,25 @@ export function compactTaskText(task: string | undefined, label?: string): strin
 	return previewDisplayText(normalized, COMPACT_TASK_MAX_CHARS);
 }
 
+const EXPANDED_TASK_MAX_LINES = 8;
+
+/** The task as authored for expanded rows: line breaks kept, wrapped to `width`, at most
+ *  EXPANDED_TASK_MAX_LINES lines plus a "…" line. This runs on every spinner frame, so the
+ *  task is cut to what the cap can show before any sanitizing or wrapping. */
+function expandedTaskLines(task: string | undefined, label: string | undefined, width: number): string[] | undefined {
+	const taskText = task?.trim();
+	if (!taskText || taskText === PROMPT_REDACTED || width <= 0) return undefined;
+	const shown = truncateDisplayText(taskText, EXPANDED_TASK_MAX_LINES * width);
+	const labelText = label?.trim() && label.trim() !== PROMPT_REDACTED ? sanitizeDisplayText(label) : "";
+	const head = labelText && labelText !== sanitizeDisplayText(shown) ? `${labelText} — ` : "";
+	const lines = `task: ${head}${shown}`.split("\n")
+		.map(sanitizeDisplayText)
+		.filter(Boolean)
+		.flatMap((line) => wrapPlainText(line, width));
+	if (lines.length <= EXPANDED_TASK_MAX_LINES && shown.length === taskText.length) return lines;
+	return [...lines.slice(0, EXPANDED_TASK_MAX_LINES), "…"];
+}
+
 export interface AsyncLaneProjection {
 	label?: string;
 	role: string;
@@ -2379,7 +2398,10 @@ function foregroundStyleWidgetStepLines(
 	const lines = [`${rowIndent}${rowMarker}${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame, thinking)} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const lane = projectAsyncLane(job, step);
 	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, detailIndent));
-	const task = collapseDetails ? stepTaskSummary(step, displayName) : compactTaskText(step.description, step.label);
+	// Multi-job cards prefix every line with a 4-column tree continuation after this returns.
+	const fullTask = expanded && step.status === "running" ? expandedTaskLines(step.description, step.label, width - detailIndent.length - 4) : undefined;
+	const task = fullTask ? undefined : collapseDetails ? stepTaskSummary(step, displayName) : compactTaskText(step.description, step.label);
+	for (const line of fullTask ?? []) lines.push(`${detailIndent}${theme.fg("dim", line)}`);
 	if (task) lines.push(`${detailIndent}${theme.fg("dim", `task: ${task}`)}`);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	const currentPath = options?.includeCurrentPath && step.currentPath ? shortenPath(step.currentPath) : undefined;
