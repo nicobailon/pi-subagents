@@ -400,11 +400,8 @@ export async function validateStructuredOutputValue(schema: JsonSchemaObject, va
  */
 export function prepareStructuredOutputArguments(schema: JsonSchemaObject, args: unknown): unknown {
 	if (!args || typeof args !== "object" || !("value" in args)) return args;
-	if (!loadedCompile) {
-		if (compileLoadError !== undefined) throw compileLoadError;
-		throw new Error("Structured output validator is still loading; call structured_output again.");
-	}
-	const validation = validateWithCompile(loadedCompile, schema, (args as { value: unknown }).value);
+	if (!loadedCompile) throw compileLoadError ?? new Error("Structured output validator is still loading; call structured_output again.");
+	const validation = validateWithCompile(loadedCompile, schema, args.value);
 	if (validation.status === "invalid") throw new Error(`Structured output validation failed: ${validation.message}`);
 	return args;
 }

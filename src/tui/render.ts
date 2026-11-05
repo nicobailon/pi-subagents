@@ -796,20 +796,19 @@ function visibleWorkflowRows(rows: WorkflowChatProgressRow[]): { rows: WorkflowC
 
 /**
  * Lines for at most `cap` rows: every unfinished row plus the newest finished ones, in order, with the
- * older finished rows folded into one line. Live widgets list rows oldest first, so a plain head cut hides
- * the active and newest rows (#3118). Unfinished rows are never folded; when they alone fill `cap`, only
- * they are returned, since the fold line would push one of them out. A later budget cut still applies.
+ * older finished rows folded into one line, because live widgets list rows oldest first. When unfinished
+ * rows alone fill `cap`, only they are returned, possibly more than `cap`.
  */
-function foldEarlierDoneLines<T>(rows: readonly T[], cap: number, isDone: (row: T) => boolean, line: (row: T) => string, foldLine: (hidden: number) => string): string[] {
+function foldEarlierDoneLines<T extends { state: string }>(rows: readonly T[], cap: number, line: (row: T) => string, foldLine: (hidden: number) => string): string[] {
 	if (rows.length <= cap) return rows.map(line);
-	const unfinished = rows.filter((row) => !isDone(row)).length;
-	if (unfinished >= cap) return rows.filter((row) => !isDone(row)).map(line);
+	const unfinished = rows.filter((row) => row.state !== "complete");
+	if (unfinished.length >= cap) return unfinished.map(line);
 	// rows.length > cap, so at least two rows fold into the one line.
 	const hidden = rows.length - cap + 1;
 	const lines: string[] = [];
 	let skipped = 0;
 	for (const row of rows) {
-		if (skipped < hidden && isDone(row)) {
+		if (skipped < hidden && row.state === "complete") {
 			if (++skipped === hidden) lines.push(foldLine(hidden));
 			continue;
 		}
@@ -1405,7 +1404,7 @@ function workflowChecklistWidgetLines(checklist: WorkflowChecklistProjection | u
 			const items = [...phase.items].sort((left, right) => workflowChecklistItemPriority(left.state) - workflowChecklistItemPriority(right.state));
 			const line = (item: WorkflowChecklistItem): string => workflowChecklistItemLine(item, theme, `${indent}  `, frame, includeItemErrors || item.kind === "host");
 			const cap = liveExpanded ? items.filter((item) => item.state !== "complete").length + EXPANDED_WIDGET_DONE_ITEMS + 1 : items.length;
-			lines.push(...foldEarlierDoneLines(items, cap, (item) => item.state === "complete", line, (hidden) => `${indent}  ${theme.fg("dim", `… ${hidden} earlier done`)}`));
+			lines.push(...foldEarlierDoneLines(items, cap, line, (hidden) => `${indent}  ${theme.fg("dim", `… ${hidden} earlier done`)}`));
 		}
 	}
 	if (!liveExpanded && bottleneckLine) lines.push(bottleneckLine);
@@ -1614,7 +1613,7 @@ function compactWorkflowWidgetBodyLines(job: AsyncJobState, theme: Theme, frame:
 	if (rows.length) {
 		const shown = rows.filter((row) => !projection.materializedKeys?.has(row.key));
 		const cap = lineBudget === undefined ? shown.length : Math.max(1, lineBudget - lines.length - Number(Boolean(bottleneck)) - Number(hint));
-		lines.push(...foldEarlierDoneLines(shown, cap, (row) => row.state === "complete", (row) => compactWorkflowLaneLine(row, theme, "  ", frame), (hidden) => `  ${theme.fg("dim", `… ${hidden} earlier done`)}`));
+		lines.push(...foldEarlierDoneLines(shown, cap, (row) => compactWorkflowLaneLine(row, theme, "  ", frame), (hidden) => `  ${theme.fg("dim", `… ${hidden} earlier done`)}`));
 	} else {
 		lines.push(`  ${theme.fg("dim", "◦ waiting for workflow lanes")}`);
 	}
@@ -2792,9 +2791,7 @@ function buildProgressiveWidgetLines(jobs: AsyncJobState[], theme: Theme, width:
 		const laneRows = job.mode === "workflow" ? compactWorkflowLaneRows(job, projection.checklist) : undefined;
 		lines.push(progressiveJobLine(job, theme, width, frame, projection, laneRows));
 		if (!laneRows || projection.inlineFleetCovered) continue;
-		const laneLines = spareRows > 0
-			? foldEarlierDoneLines(laneRows, spareRows, (row) => row.state === "complete", (row) => truncLine(compactWorkflowLaneLine(row, theme, "    ", frame), width), (hidden) => truncLine(`    ${theme.fg("dim", `… ${hidden} earlier done`)}`, width)).slice(0, spareRows)
-			: [];
+		const laneLines = foldEarlierDoneLines(laneRows, spareRows, (row) => truncLine(compactWorkflowLaneLine(row, theme, "    ", frame), width), (hidden) => truncLine(`    ${theme.fg("dim", `… ${hidden} earlier done`)}`, width)).slice(0, spareRows);
 		lines.push(...laneLines);
 		spareRows -= laneLines.length;
 	}
@@ -3138,7 +3135,7 @@ function buildWidgetLinesWithProjection(jobs: AsyncJobState[], theme: Theme, wid
 	}
 
 	// Fold the oldest done lanes of compact workflow cards by the overflow, so later cards and
-	// materialized children stay inside the line budget (#3118).
+	// materialized children stay inside the line budget.
 	let overflow = 1 + items.reduce((sum, item) => sum + item.length, 0) - widgetLineBudget(expanded);
 	for (const card of compactCards) {
 		if (overflow <= 0) break;

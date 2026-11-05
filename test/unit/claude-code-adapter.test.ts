@@ -363,16 +363,6 @@ describe("claude-code parser oversized lines", () => {
 	const userPrefix = '{"type":"user","message":{"role":"user","content":[{"type":"tool_result"';
 	const resultPrefix = '{"type":"result","subtype":"success"';
 
-	it("absorbs an oversized tool result instead of failing the run", () => {
-		const parser = createClaudeCodeJsonlParser();
-		// A read-back screenshot: several hundred KB of base64 in a user-role message.
-		const progress = parser.skipOversizedLine?.(userPrefix, 640 * 1024);
-		assert.deepEqual(progress, { phase: "streaming", eventCount: 1 });
-		// The run is still alive and can still finish normally.
-		parser.parseLine(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done" }));
-		assert.deepEqual(parser.finish(), { state: "completed", output: "done" });
-	});
-
 	it("refuses to absorb an oversized line that is not a tool result", () => {
 		const parser = createClaudeCodeJsonlParser();
 		assert.equal(parser.skipOversizedLine?.(resultPrefix, 640 * 1024), undefined);

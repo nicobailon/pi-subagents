@@ -67,10 +67,9 @@ import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
 import { appendWorkflowChildJournal, runtimeReplacedAbortReason, workflowChildFingerprint } from "../../src/workflows/workflow-reuse.ts";
-import { workflowLaunchRecordDir } from "../../src/workflows/workflow-launch-record.ts";
 import { updateTerminalRunIndex } from "../../src/runs/background/terminal-run-index.ts";
 import { getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
-import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
+import { recoveryDescriptorPath, runLaunchDir } from "../../src/runs/shared/run-launch-folder.ts";
 import { writeFileCreatingDir } from "../support/helpers.ts";
 
 function writeRetainedEchoRun(runId: string, options: { outputPath: string; state: "complete" | "failed"; steps: number }) {
@@ -2010,7 +2009,7 @@ Answer only from the supplied synthetic text.
 
 	describe("saving an async workflow's launch", () => {
 		const skip = !createSubagentExecutor ? "executor not importable" : undefined;
-		const readLaunch = (runId: string) => JSON.parse(fs.readFileSync(path.join(workflowLaunchRecordDir(DIRS.async, runId), "launch.json"), "utf-8"));
+		const readLaunch = (runId: string) => JSON.parse(fs.readFileSync(path.join(runLaunchDir(DIRS.async, runId), "launch.json"), "utf-8"));
 		const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 		const launchAndSettle = async (executor: ReturnType<typeof makeExecutor>, id: string, params: Record<string, unknown>, ctx = makeMinimalCtx(tempDir)) => {
 			const started = await executor.executePublic(id, { async: true, mission: false, ...params }, new AbortController().signal, undefined, ctx);

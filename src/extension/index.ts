@@ -765,7 +765,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		name: "subagent",
 		...MODEL_ONLY_TOOL,
 		label: "Subagent",
-		description: buildSubagentToolDescription(config, { disabledFeatures, waitToolName: waitToolConfig.name }),
+		description: buildSubagentToolDescription(config, { disabledFeatures }),
 		...buildSubagentToolPromptMetadata(config, disabledFeatures),
 		parameters,
 

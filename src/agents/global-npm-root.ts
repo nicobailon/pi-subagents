@@ -18,10 +18,7 @@ export async function resolveGlobalNpmRoot(options: {
 	if ((options.platform ?? process.platform) === "win32" && env.APPDATA) {
 		const appDataRoot = path.join(env.APPDATA, "npm", "node_modules");
 		try {
-			if ((await fs.stat(appDataRoot)).isDirectory()) {
-				const root = await fs.realpath(appDataRoot);
-				return signal?.aborted ? null : root;
-			}
+			if ((await fs.stat(appDataRoot)).isDirectory()) return await fs.realpath(appDataRoot);
 		} catch {
 			// Invalid APPDATA roots fall back to npm (including disappearing directories).
 		}
@@ -31,7 +28,6 @@ export async function resolveGlobalNpmRoot(options: {
 	const timeoutMs = options.timeoutMs ?? 5000;
 	const output = await new Promise<string | null>((resolve) => {
 		let settled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
 		const finish = (value: string | null) => {
 			if (settled) return;
 			settled = true;
@@ -57,13 +53,12 @@ export async function resolveGlobalNpmRoot(options: {
 			finish(null);
 		};
 		// Resolve at the deadline even if inherited pipes hold the callback open.
-		timer = setTimeout(cancel, timeoutMs);
+		const timer = setTimeout(cancel, timeoutMs);
 		signal?.addEventListener("abort", cancel, { once: true });
 	});
-	if (!output || signal?.aborted) return null;
+	if (!output) return null;
 	try {
-		const root = await fs.realpath(output);
-		return signal?.aborted ? null : root;
+		return await fs.realpath(output);
 	} catch {
 		return null;
 	}

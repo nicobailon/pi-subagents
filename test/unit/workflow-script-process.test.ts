@@ -35,8 +35,8 @@ describe("restricted Node workflow process", { skip: Boolean(process.versions.bu
 			parentPort.postMessage({
 				read: denied(() => require("node:fs").readFileSync(${JSON.stringify(secret)})),
 				readUrl: denied(() => require("node:fs").readFileSync(new URL(${JSON.stringify(pathToFileURL(secret).href)}))),
-					supervisor: denied(() => require("node:fs").readFileSync(new URL(${JSON.stringify(supervisor.href)}))),
-					packageManifest: denied(() => require("node:fs").readFileSync(new URL(${JSON.stringify(packageManifest.href)}))),
+				supervisor: denied(() => require("node:fs").readFileSync(new URL(${JSON.stringify(supervisor.href)}))),
+				packageManifest: denied(() => require("node:fs").readFileSync(new URL(${JSON.stringify(packageManifest.href)}))),
 				write: denied(() => require("node:fs").writeFileSync(${JSON.stringify(canary)}, "bad")),
 				spawn: denied(() => require("node:child_process").spawnSync(process.execPath, ["-e", ""])),
 				worker: denied(() => new Worker("", { eval: true })),

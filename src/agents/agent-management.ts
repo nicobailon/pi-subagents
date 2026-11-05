@@ -834,7 +834,7 @@ function agentCapabilityRow(agent: AgentConfig, options: { executable: boolean; 
 		aliases: agent.aliases ? [...agent.aliases] : undefined,
 		runner: agentCapabilityRunner(agent, options.providerNames, options.externalCliAvailability),
 		tools: agentCapabilityTools(agent),
-		model: presentDetails({ value: agent.model, thinking: agent.thinking, ...(options.unavailableModels.has(agent) ? { unavailable: true as const } : {}) }),
+		model: presentDetails({ value: agent.model, thinking: agent.thinking, unavailable: options.unavailableModels.has(agent) || undefined }),
 		execution: presentDetails({ defaultAsync: agent.defaultAsync, timeoutMs: agent.defaultTimeoutMs }),
 		acceptance: presentDetails({ policy: agent.defaultAcceptance, role: agent.acceptanceRole }),
 		output: presentDetails({ path: agent.output, mode: agent.outputMode }),
@@ -994,7 +994,7 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	const capabilityMode = params.capabilities === true;
 	const externalCliAvailability = capabilityMode ? externalCliAvailabilityForAgents([...agents, ...restrictedAgents]) : undefined;
 	const availableModels = capabilityMode ? ctx.modelRegistry.getAvailable().map(toModelInfo) : [];
-	const unavailableModels = new Set([...agents, ...restrictedAgents].filter((agent) => (agent.runner === undefined || agent.runner.type === "pi")
+	const unavailableModels = new Set([...agents, ...restrictedAgents].filter((agent) => (agent.runner?.type ?? "pi") === "pi"
 		&& isUnavailableSubagentModel(agent.model, availableModels, agent.modelProvider ?? ctx.model?.provider)));
 	const formatLine = capabilityMode
 		? (agent: AgentConfig, names: Set<string> | undefined) => formatAgentCapabilitiesLine(agent, names, externalCliAvailability, unavailableModels)
@@ -1082,7 +1082,7 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 	for (const { agent, name } of modelEntries) {
 		const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, agent.modelProvider ?? preferredProvider);
 		const shownModel = resolvedModel === undefined ? "(unresolved)"
-			: (agent.runner === undefined || agent.runner.type === "pi") && isUnavailableSubagentModel(agent.model, availableModels, agent.modelProvider ?? preferredProvider) ? `${resolvedModel} ${UNAVAILABLE_MODEL_MARKER}` : resolvedModel;
+			: (agent.runner?.type ?? "pi") === "pi" && isUnavailableSubagentModel(agent.model, availableModels, agent.modelProvider ?? preferredProvider) ? `${resolvedModel} ${UNAVAILABLE_MODEL_MARKER}` : resolvedModel;
 		const effectiveThinking = resolveEffectiveThinking(resolvedModel, agent.thinking)
 			?? (agent.thinking === false ? "off" : undefined);
 		const source = `${formatModelSource(agent, currentModel)}${agent.disabled ? "; disabled" : ""}${isAgentAllowedByCapabilityCeiling(agent.name, capabilityCeiling) ? "" : "; restricted"}`;

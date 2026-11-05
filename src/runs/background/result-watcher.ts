@@ -151,8 +151,7 @@ function resultFileIdentity(raw: string, file: string): ResultFileIdentity {
 	};
 }
 
-/** Routes a watcher diagnostic through the session warning helper, once per runtime and key; appends the error message when given. */
-function reportResultWatcherWarning(state: SubagentState, message: string, key: string, error?: unknown): void {
+function reportResultWatcherWarning(state: SubagentState, message: string, error?: unknown, key = message): void {
 	const detail = error === undefined ? "" : `: ${error instanceof Error ? error.message : String(error)}`;
 	reportSessionWarning(state, `${message}${detail}`, key);
 }
@@ -160,12 +159,12 @@ function reportResultWatcherWarning(state: SubagentState, message: string, key: 
 function sanitizeNestedResultChildren(state: SubagentState, value: unknown, resultPath: string, label: string): NestedRunSummary[] | undefined {
 	if (value === undefined) return undefined;
 	if (!Array.isArray(value)) {
-		reportResultWatcherWarning(state, `Ignoring invalid nested children in subagent result file '${resultPath}' at ${label}: expected an array.`, `result-nested-invalid:${resultPath}:${label}`);
+		reportResultWatcherWarning(state, `Ignoring invalid nested children in subagent result file '${resultPath}' at ${label}: expected an array.`);
 		return undefined;
 	}
 	const children = value.map((child) => sanitizeSummary(child)).filter((child): child is NestedRunSummary => Boolean(child));
 	if (children.length !== value.length) {
-		reportResultWatcherWarning(state, `Ignoring ${value.length - children.length} invalid nested child record(s) in subagent result file '${resultPath}' at ${label}.`, `result-nested-records-invalid:${resultPath}:${label}`);
+		reportResultWatcherWarning(state, `Ignoring ${value.length - children.length} invalid nested child record(s) in subagent result file '${resultPath}' at ${label}.`, undefined, `result-nested-records-invalid:${resultPath}:${label}`);
 	}
 	return children.length ? children : undefined;
 }
@@ -276,7 +275,7 @@ export function createResultWatcher(
 		try {
 			return fsApi.statSync(publicResultPath(file)).isFile();
 		} catch (error) {
-			if (!isAbsentResultCandidate(error)) reportResultWatcherWarning(state, `Failed to inspect subagent result file '${publicResultPath(file)}'`, `result-inspect-failed:${publicResultPath(file)}`, error);
+			if (!isAbsentResultCandidate(error)) reportResultWatcherWarning(state, `Failed to inspect subagent result file '${publicResultPath(file)}'`, error);
 			return false;
 		}
 	};
@@ -309,7 +308,7 @@ export function createResultWatcher(
 		} catch (error) {
 			identityCache.delete(file);
 			if (isAccessDenied(error)) throw error;
-			if (!isAbsentResultCandidate(error)) reportResultWatcherWarning(state, `Failed to inspect subagent result file '${resultPath}'`, `result-inspect-failed:${resultPath}`, error);
+			if (!isAbsentResultCandidate(error)) reportResultWatcherWarning(state, `Failed to inspect subagent result file '${resultPath}'`, error);
 			return undefined;
 		}
 	};
@@ -327,7 +326,7 @@ export function createResultWatcher(
 		} catch (error) {
 			identityCache.delete(file);
 			if (isAccessDenied(error)) throw error;
-			if (!isAbsentResultCandidate(error)) reportResultWatcherWarning(state, `Failed to inspect subagent result file '${resultPath}'`, `result-inspect-failed:${resultPath}`, error);
+			if (!isAbsentResultCandidate(error)) reportResultWatcherWarning(state, `Failed to inspect subagent result file '${resultPath}'`, error);
 			return undefined;
 		}
 	};
@@ -336,7 +335,7 @@ export function createResultWatcher(
 		try {
 			return new Set(deps.observedCompletionRunIds?.() ?? []);
 		} catch (error) {
-			reportResultWatcherWarning(state, `Failed to inspect observed subagent completion ids`, `result-observed-ids-failed`, error);
+			reportResultWatcherWarning(state, "Failed to inspect observed subagent completion ids", error);
 			return new Set();
 		}
 	};
@@ -362,7 +361,7 @@ export function createResultWatcher(
 			if (retireResultSnapshot(publicResultPath(file), read, undefined, CLEANUP_LEASE_WAIT_MS) === "replaced") scheduleResult(file, triggerTurn);
 		} catch (error) {
 			if (isAbsentResultCandidate(error)) return;
-			if (!(error instanceof FileLeaseBusyError)) reportResultWatcherWarning(state, `Failed to remove delivered subagent result '${publicResultPath(file)}'; will retry`, `result-remove-delivered-failed:${file}`, error);
+			if (!(error instanceof FileLeaseBusyError)) reportResultWatcherWarning(state, `Failed to remove delivered subagent result '${publicResultPath(file)}'; will retry`, error);
 			scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 		}
 	};
@@ -377,7 +376,7 @@ export function createResultWatcher(
 			}
 		} catch (error) {
 			if (!isAccessDenied(error)) throw error;
-			reportResultWatcherWarning(state, `Failed to inspect subagent result file '${publicResultPath(file)}'; will retry`, `result-inspect-retry:${file}`, error);
+			reportResultWatcherWarning(state, `Failed to inspect subagent result file '${publicResultPath(file)}'; will retry`, error);
 			scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 			return;
 		}
@@ -429,7 +428,7 @@ export function createResultWatcher(
 					if (!resultSnapshotReplaced(publicResultPath(file), read)) return false;
 				} catch (error) {
 					if (isAccessDenied(error)) throw error;
-					reportResultWatcherWarning(state, `Failed to re-read subagent result file '${publicResultPath(file)}'`, `result-reread-failed:${file}`, error);
+					reportResultWatcherWarning(state, `Failed to re-read subagent result file '${publicResultPath(file)}'`, error);
 				}
 				identityCache.delete(file);
 				rereadReplacedPayload = true;
@@ -444,21 +443,21 @@ export function createResultWatcher(
 				const message = error instanceof Error ? error.message : String(error);
 				if (reportedMissionSyncFailures.get(file) !== message) {
 					reportedMissionSyncFailures.set(file, message);
-					reportResultWatcherWarning(state, `Mission completion sync failed for '${resultPath}'`, `result-mission-sync-failed:${++missionSyncReports}`, error);
+					reportResultWatcherWarning(state, `Mission completion sync failed for '${resultPath}'`, error, `result-mission-sync-failed:${++missionSyncReports}`);
 				}
 			}
 			try {
 				deps.observeCompletion?.({ ...data, runId });
 			} catch (error) {
 				observerSucceeded = false;
-				reportResultWatcherWarning(state, `Completion observer failed for '${resultPath}'`, `result-observer-failed:${resultPath}`, error);
+				reportResultWatcherWarning(state, `Completion observer failed for '${resultPath}'`, error);
 			}
 			if (observerSucceeded) {
 				try {
 					if (acknowledgeMissionObserverSnapshot(publicResultPath(file), read, CLEANUP_LEASE_WAIT_MS) === "replaced") rereadReplacedPayload = true;
 				} catch (error) {
 					observerSucceeded = false;
-					if (!(error instanceof FileLeaseBusyError)) reportResultWatcherWarning(state, `Failed to acknowledge the mission observer for '${resultPath}'; will retry`, `result-observer-ack-failed:${resultPath}`, error);
+					if (!(error instanceof FileLeaseBusyError)) reportResultWatcherWarning(state, `Failed to acknowledge the mission observer for '${resultPath}'; will retry`, error);
 				}
 			}
 			const epoch = deliveryEpoch;
@@ -475,7 +474,7 @@ export function createResultWatcher(
 				try {
 					nestedChildren = compactNestedResultChildren(projectNestedRegistryForRoot(runId)?.children);
 				} catch (error) {
-					reportResultWatcherWarning(state, `Failed to enrich subagent result file '${resultPath}' with nested registry children; will retry later`, `result-nested-enrich-failed:${resultPath}`, error);
+					reportResultWatcherWarning(state, `Failed to enrich subagent result file '${resultPath}' with nested registry children; will retry later`, error);
 					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 					return;
 				}
@@ -582,7 +581,7 @@ export function createResultWatcher(
 					...(data.parallelHandoff ? { parallelHandoff: data.parallelHandoff } : {}),
 				}));
 				if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
-				if (!intercomDelivered) reportResultWatcherWarning(state, `Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`, `result-intercom-unacknowledged:${resultPath}`);
+				if (!intercomDelivered) reportResultWatcherWarning(state, `Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`);
 			}
 
 			const delivery = notifier.deliver({
@@ -625,7 +624,7 @@ export function createResultWatcher(
 				}
 				({ data, read } = marked);
 			} catch (error) {
-				reportResultWatcherWarning(state, `Failed to mark subagent result notification delivered for '${resultPath}'; will retry`, `result-mark-delivered-failed:${resultPath}`, error);
+				reportResultWatcherWarning(state, `Failed to mark subagent result notification delivered for '${resultPath}'; will retry`, error);
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
 				return;
 			}
@@ -651,7 +650,7 @@ export function createResultWatcher(
 					} : {}),
 				});
 			} catch (error) {
-				reportResultWatcherWarning(state, `Completion observer failed for '${resultPath}'`, `result-observer-failed:${resultPath}`, error);
+				reportResultWatcherWarning(state, `Completion observer failed for '${resultPath}'`, error);
 			}
 			if (!observerSucceeded) {
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
@@ -665,9 +664,9 @@ export function createResultWatcher(
 			removeDeliveredResult(file, triggerTurn, read);
 		} catch (error) {
 			if (isAccessDenied(error)) {
-				reportResultWatcherWarning(state, `Failed to process subagent result file '${resultPath}'; will retry`, `result-process-retry:${resultPath}`, error);
+				reportResultWatcherWarning(state, `Failed to process subagent result file '${resultPath}'; will retry`, error);
 				scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
-			} else if (!isNotFound(error)) reportResultWatcherWarning(state, `Failed to process subagent result file '${resultPath}'`, `result-process-failed:${resultPath}`, error);
+			} else if (!isNotFound(error)) reportResultWatcherWarning(state, `Failed to process subagent result file '${resultPath}'`, error);
 		} finally {
 			processing.delete(file);
 			if (rereadReplacedPayload) scheduleResult(file, triggerTurn);
@@ -721,7 +720,7 @@ export function createResultWatcher(
 			}
 			logScanStats(stats);
 		} catch (error) {
-			if (!isNotFound(error)) reportResultWatcherWarning(state, `Failed to scan subagent result index in '${resultsDir}'`, `result-index-scan-failed:${resultsDir}`, error);
+			if (!isNotFound(error)) reportResultWatcherWarning(state, `Failed to scan subagent result index in '${resultsDir}'`, error);
 		}
 		return files;
 	};
@@ -773,7 +772,7 @@ export function createResultWatcher(
 		try {
 			return deps.hasDeliveryDemand?.() === true;
 		} catch (error) {
-			reportResultWatcherWarning(state, `Failed to inspect subagent result delivery demand`, `result-demand-failed`, error);
+			reportResultWatcherWarning(state, "Failed to inspect subagent result delivery demand", error);
 			return false;
 		}
 	};
@@ -798,7 +797,7 @@ export function createResultWatcher(
 		state.watcher = null;
 		clearResultScan();
 		if (state.watcherRestartTimer) return;
-		reportResultWatcherWarning(state, `Subagent result watcher for '${resultsDir}' fell back to polling because native fs.watch is unavailable (${errorCode(reason) ?? "unknown error"}).`, `result-poll-fallback:${resultsDir}`);
+		reportResultWatcherWarning(state, `Subagent result watcher for '${resultsDir}' fell back to polling because native fs.watch is unavailable (${errorCode(reason) ?? "unknown error"}).`, undefined, `result-poll-fallback:${resultsDir}`);
 		primeExistingResults();
 		state.watcherRestartTimer = timers.setInterval(primeExistingResults, POLL_INTERVAL_MS);
 		state.watcherRestartTimer.unref?.();
@@ -814,7 +813,7 @@ export function createResultWatcher(
 				startResultWatcher();
 			} catch (error) {
 				if (shouldPoll(error)) return startPolling(error);
-				reportResultWatcherWarning(state, `Failed to restart subagent result watcher for '${resultsDir}'`, `result-restart-failed:${resultsDir}`, error);
+				reportResultWatcherWarning(state, `Failed to restart subagent result watcher for '${resultsDir}'`, error);
 				scheduleRestart();
 			}
 		}, WATCHER_RESTART_DELAY_MS);
@@ -855,7 +854,7 @@ export function createResultWatcher(
 			});
 			state.watcher.on("error", (error) => {
 				if (shouldPoll(error)) return startPolling(error);
-				reportResultWatcherWarning(state, `Subagent result watcher failed for '${resultsDir}'`, `result-watcher-failed:${resultsDir}`, error);
+				reportResultWatcherWarning(state, `Subagent result watcher failed for '${resultsDir}'`, error);
 				state.watcher?.close();
 				state.watcher = null;
 				scheduleRestart();
@@ -865,7 +864,7 @@ export function createResultWatcher(
 			resultScanTimer.unref?.();
 		} catch (error) {
 			if (shouldPoll(error)) return startPolling(error);
-			reportResultWatcherWarning(state, `Failed to start subagent result watcher for '${resultsDir}'`, `result-start-failed:${resultsDir}`, error);
+			reportResultWatcherWarning(state, `Failed to start subagent result watcher for '${resultsDir}'`, error);
 			state.watcher = null;
 			scheduleRestart();
 		}

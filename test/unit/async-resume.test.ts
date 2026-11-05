@@ -470,7 +470,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("rejects unknown, cross-run, and wrong-agent recovery descriptors", () => {
+	it("rejects unknown and cross-run recovery descriptors and takes the run's identity from the descriptor", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-descriptor-"));
 		try {
 			const asyncRoot = path.join(root, "runs");

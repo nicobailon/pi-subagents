@@ -4,10 +4,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { currentBootId } from "../../src/runs/background/boot-id.ts";
-import { workflowLaunchRecordDir, writeWorkflowLaunchRecord, type WorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
+import { runLaunchDir } from "../../src/runs/shared/run-launch-folder.ts";
+import { writeWorkflowLaunchRecord, type WorkflowLaunchRecord } from "../../src/workflows/workflow-launch-record.ts";
 import { readWorkflowResumeClaim } from "../../src/workflows/workflow-resume-claim.ts";
 import { prepareWorkflowResume } from "../../src/workflows/workflow-resume.ts";
 import { workflowScriptDigest } from "../../src/workflows/workflow-reuse.ts";
+import { writeFileCreatingDir } from "../support/helpers.ts";
 
 const SCRIPT = "return args;";
 const scriptLaunch: WorkflowLaunchRecord = { version: 2, sessionId: "session", source: "script", params: { workflowScript: SCRIPT, args: { n: 1 }, cwd: "/repo" }, scriptDigest: workflowScriptDigest(SCRIPT) };
@@ -29,8 +31,7 @@ describe("prepareWorkflowResume", () => {
 				}));
 				const launch = options.launch === undefined ? scriptLaunch : options.launch;
 				if (typeof launch === "string") {
-					fs.mkdirSync(workflowLaunchRecordDir(root, runId), { recursive: true });
-					fs.writeFileSync(path.join(workflowLaunchRecordDir(root, runId), "launch.json"), launch);
+					writeFileCreatingDir(path.join(runLaunchDir(root, runId), "launch.json"), launch);
 				} else if (launch) writeWorkflowLaunchRecord(root, runId, launch);
 			});
 		} finally {

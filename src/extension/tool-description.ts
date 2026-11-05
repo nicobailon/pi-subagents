@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { ExtensionConfig, ToolDescriptionMode } from "../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { resolveDisabledFeatureSurface, type DisabledFeatureSurface, type SubagentSurfaceFeature } from "../shared/disabled-features.ts";
+import { DEFAULT_WAIT_TOOL_NAME, waitToolName } from "../shared/wait-tool-name.ts";
 
 const CUSTOM_TOOL_DESCRIPTION_FILE = "subagent-tool-description.md";
 const CUSTOM_TOOL_DESCRIPTION_MAX_BYTES = 50 * 1024;
@@ -84,8 +85,6 @@ export interface ToolDescriptionOptions {
 	warn?: (message: string) => void;
 	/** Removes lines for disabled features from the default and full descriptions; custom descriptions are unchanged apart from the appended safety guidance. */
 	disabledFeatures?: DisabledFeatureSurface;
-	/** config.waitTool.name when it is not bg_wait; the description then names the wait tool by it. */
-	waitToolName?: string;
 }
 
 // No promptGuidelines: the description carries the authorization rule, so it is stated once.
@@ -183,7 +182,8 @@ function withMandatorySafetyGuidance(description: string): string {
 
 export function buildSubagentToolDescription(config: Pick<ExtensionConfig, "toolDescriptionMode"> = {}, options?: ToolDescriptionOptions): string {
 	const description = describeSubagentTool(config, options);
-	return options?.waitToolName ? description.replace(/\bbg_wait\b/g, options.waitToolName) : description;
+	const name = waitToolName();
+	return name === DEFAULT_WAIT_TOOL_NAME ? description : description.replace(/\bbg_wait\b/g, name);
 }
 
 function describeSubagentTool(config: Pick<ExtensionConfig, "toolDescriptionMode">, options?: ToolDescriptionOptions): string {

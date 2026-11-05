@@ -70,11 +70,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function boundedTaskLabel(value: unknown, maxChars = MAX_TASK_LABEL_CHARS): string | undefined {
+function boundedTaskLabel(value: unknown): string | undefined {
 	if (typeof value !== "string") return undefined;
 	const normalized = sanitizeDisplayText(value).trim();
 	if (!normalized) return undefined;
-	return previewDisplayText(normalized, maxChars);
+	return previewDisplayText(normalized, MAX_TASK_LABEL_CHARS);
 }
 
 function workflowTaskLabel(data: Record<string, unknown>): string | undefined {

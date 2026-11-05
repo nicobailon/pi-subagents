@@ -84,8 +84,8 @@ describe("requireLauncher", { skip: !available ? "pi packages not available" : u
 			maxSubagentDepth: 2,
 			acceptance: false,
 		});
-		assert.equal((launch as { isError?: boolean }).isError, true);
-		assert.match((launch as { content: Array<{ text: string }> }).content[0]?.text ?? "", /the agent definition changed after it was checked/);
+		assert.equal(launch.isError, true);
+		assert.match(launch.content[0]?.text ?? "", /the agent definition changed after it was checked/);
 		assert.equal(fs.existsSync(path.join(ASYNC_DIR, id)), false);
 	});
 
