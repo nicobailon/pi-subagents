@@ -131,7 +131,7 @@ describe("typed gate output", () => {
 					id: "gate",
 					command: printing(stdout),
 					output: "json",
-					env: { KDE_FULL_SESSION: "true", GATE_TOKEN: "gate-secret-value", GATE_PASSWORD: "48213907" },
+					env: { KDE_FULL_SESSION: "true", GATE_TOKEN: "gate-secret-value", GATE_PASSWORD: "48213907", GATE_API_KEY: "12345678901234567890" },
 				}] },
 				agentContract: { version: 1 },
 			}),
@@ -139,9 +139,9 @@ describe("typed gate output", () => {
 			cwd,
 			reportOptional: true,
 		});
-		const ledger = await run('{"output_exists":true,"note":"key gate-secret-value","pin":48213907}');
+		const ledger = await run('{"output_exists":true,"note":"key gate-secret-value","pin":48213907,"long":12345678901234567890,"n":1.5}');
 		assert.equal(ledger.status, "verified");
-		assert.deepEqual(typedVerifyOutput(ledger), { value: { output_exists: true, note: "key [REDACTED]", pin: "[REDACTED]" } });
+		assert.deepEqual(typedVerifyOutput(ledger), { value: { output_exists: true, note: "key [REDACTED]", pin: "[REDACTED]", long: "[REDACTED]", n: 1.5 } });
 		assert.doesNotMatch(ledger.verifyRuns[0]?.stdout ?? "", /gate-secret-value/);
 
 		const invalid = await run("token=gate-secret-value");

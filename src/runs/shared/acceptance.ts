@@ -1184,15 +1184,21 @@ function redactVerifyEnv(value: string, env: Record<string, string> | undefined)
 	return redactSecrets(value, verifySecrets(env));
 }
 
-/** Redacts a parsed JSON value's strings, keys and numbers, so booleans, null and the document's syntax survive redaction. */
-function redactVerifyValue(value: unknown, secrets: readonly string[]): unknown {
-	if (typeof value === "string") return redactSecrets(value, secrets);
-	if (typeof value === "number") return redactSecrets(String(value), secrets) === String(value) ? value : "[REDACTED]";
-	if (Array.isArray(value)) return value.map((item) => redactVerifyValue(item, secrets));
-	if (value && typeof value === "object") {
-		return Object.fromEntries(Object.entries(value).map(([key, item]) => [redactSecrets(key, secrets), redactVerifyValue(item, secrets)]));
-	}
-	return value;
+/** Parses JSON text with its strings, keys and numbers redacted, so booleans, null and the document's syntax survive redaction.
+ *  Numbers are matched on their source text: parsing rounds or respells them (12345678901234567890, 1.50), which would hide a secret. */
+function parseRedactedVerifyValue(text: string, secrets: readonly string[]): unknown {
+	return JSON.parse(text, (_key: string, value: unknown, context?: { source?: string }) => {
+		if (typeof value === "string") return redactSecrets(value, secrets);
+		if (typeof value === "number" && secrets.length > 0) {
+			// Node 22+ and Bun pass the source text; without it, fail closed.
+			const source = context?.source;
+			return source !== undefined && redactSecrets(source, secrets) === source ? value : "[REDACTED]";
+		}
+		if (value && typeof value === "object" && !Array.isArray(value)) {
+			return Object.fromEntries(Object.entries(value).map(([key, item]) => [redactSecrets(key, secrets), item]));
+		}
+		return value;
+	});
 }
 
 function uniqueStrings(items: Array<string | undefined>): string[] {
@@ -1306,7 +1312,7 @@ async function applyTypedVerifyOutput(command: AcceptanceVerifyCommand, run: Acc
 		}
 		return fail(`output: "json" stdout is not valid JSON: ${reason}`);
 	}
-	const redactedValue = redactVerifyValue(value, secrets);
+	const redactedValue = parseRedactedVerifyValue(stdout, secrets);
 	if (command.schema) {
 		const validation = await validateStructuredOutputValue(command.schema, value);
 		if (validation.status === "invalid") {
