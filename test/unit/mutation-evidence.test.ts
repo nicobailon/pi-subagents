@@ -31,7 +31,7 @@ describe("tracked mutation evidence", () => {
 	it("detects edits to a tracked file that was already dirty at child start", async () => {
 		await withRepo(async (repo) => {
 			fs.writeFileSync(path.join(repo, "tracked.txt"), "dirty before child\n", "utf-8");
-			const snapshot = await snapshotTrackedMutations(repo);
+			const snapshot = snapshotTrackedMutations(repo);
 
 			fs.writeFileSync(path.join(repo, "tracked.txt"), "dirty after child\n", "utf-8");
 			fs.writeFileSync(path.join(repo, "untracked.txt"), "ignored by evidence\n", "utf-8");
@@ -45,7 +45,7 @@ describe("tracked mutation evidence", () => {
 	it("detects a child reverting a tracked file that was dirty at child start", async () => {
 		await withRepo(async (repo) => {
 			fs.writeFileSync(path.join(repo, "tracked.txt"), "dirty before child\n", "utf-8");
-			const snapshot = await snapshotTrackedMutations(repo);
+			const snapshot = snapshotTrackedMutations(repo);
 
 			fs.writeFileSync(path.join(repo, "tracked.txt"), "base\n", "utf-8");
 			const evidence = await collectTrackedMutationEvidence(snapshot, repo);
@@ -59,7 +59,7 @@ describe("tracked mutation evidence", () => {
 		await withRepo(async (repo) => {
 			fs.writeFileSync(path.join(repo, "tracked.txt"), "staged before child\n", "utf-8");
 			git(repo, ["add", "tracked.txt"]);
-			const snapshot = await snapshotTrackedMutations(repo);
+			const snapshot = snapshotTrackedMutations(repo);
 
 			fs.writeFileSync(path.join(repo, "tracked.txt"), "staged after child\n", "utf-8");
 			git(repo, ["add", "tracked.txt"]);
@@ -75,7 +75,7 @@ describe("tracked mutation evidence", () => {
 			const largeBefore = `${"before\n".repeat(180_000)}before-tail\n`;
 			const largeAfter = `${"after\n".repeat(180_000)}after-tail\n`;
 			fs.writeFileSync(path.join(repo, "tracked.txt"), largeBefore, "utf-8");
-			const snapshot = await snapshotTrackedMutations(repo);
+			const snapshot = snapshotTrackedMutations(repo);
 			const unchangedEvidence = await collectTrackedMutationEvidence(snapshot, repo);
 
 			assert.equal(unchangedEvidence.attemptedMutation, false);
@@ -100,7 +100,7 @@ describe("tracked mutation evidence", () => {
 			fs.rmSync(marker);
 			fs.writeFileSync(path.join(repo, "tracked.txt"), "dirty before child\n", "utf-8");
 
-			const snapshot = await snapshotTrackedMutations(repo);
+			const snapshot = snapshotTrackedMutations(repo);
 			fs.writeFileSync(path.join(repo, "tracked.txt"), "dirty after child\n", "utf-8");
 			const evidence = await collectTrackedMutationEvidence(snapshot, repo);
 

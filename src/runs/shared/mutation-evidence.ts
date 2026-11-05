@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import type { ArtifactPaths, TimeoutRecoveryProjection, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationFingerprint, TrackedMutationSnapshot } from "../../shared/types.ts";
 
 const MAX_TRACKED_PATHS = 500;
@@ -18,47 +19,30 @@ function gitOutput(cwd: string, args: string[], maxBuffer = MAX_HASH_BYTES): str
 	return execFileSync("git", gitArguments(args), { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer, windowsHide: true });
 }
 
-/**
- * Async variant used on the collection path, where large diffs are hashed after the child has
- * finished. Spawning git via execFile instead of execFileSync lets the event loop serve steering,
- * status refreshes, and sibling children while evidence is being gathered; the error shape matches
- * execFileSync (err.stdout/stderr populated).
- */
-function gitOutputAsync(cwd: string, args: string[], maxBuffer = MAX_HASH_BYTES): Promise<string> {
-	return new Promise((resolve, reject) => {
-		execFile("git", gitArguments(args), { cwd, encoding: "utf-8", maxBuffer, windowsHide: true }, (error: Error | null, stdout: string | Buffer) => {
-			if (error) {
-				(error as Error & { stdout?: string }).stdout = typeof stdout === "string" ? stdout : "";
-				reject(error);
-			} else resolve(typeof stdout === "string" ? stdout : String(stdout ?? ""));
-		});
-	});
+const execFileAsync = promisify(execFile);
+
+/** The collection path runs while sibling children settle, so git runs off the event loop. */
+async function gitOutputAsync(cwd: string, args: string[]): Promise<string> {
+	return (await execFileAsync("git", gitArguments(args), { cwd, encoding: "utf-8", maxBuffer: MAX_HASH_BYTES, windowsHide: true })).stdout;
 }
 
-/**
- * Hash a large diff in chunks, yielding to the event loop periodically so hashing cannot
- * monopolize the loop for long stretches.
- */
-async function hashFileAsync(cwd: string, diffPath: string): Promise<string> {
+/** Yields to the event loop every 2 MiB so hashing a large diff does not stall other work. */
+async function hashFileAsync(diffPath: string): Promise<string> {
+	const hash = createHash("sha256");
+	const fd = fs.openSync(diffPath, "r");
 	try {
-		const hash = createHash("sha256");
-		const fd = fs.openSync(diffPath, "r");
-		try {
-			const buffer = Buffer.alloc(64 * 1024);
-			let chunks = 0;
-			for (;;) {
-				const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
-				if (bytesRead === 0) break;
-				hash.update(bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead));
-				if (++chunks % 32 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
-			}
-		} finally {
-			fs.closeSync(fd);
+		const buffer = Buffer.alloc(64 * 1024);
+		let chunks = 0;
+		for (;;) {
+			const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+			if (bytesRead === 0) break;
+			hash.update(bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead));
+			if (++chunks % 32 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
 		}
-		return hash.digest("hex");
 	} finally {
-		fs.rmSync(path.dirname(diffPath), { recursive: true, force: true });
+		fs.closeSync(fd);
 	}
+	return hash.digest("hex");
 }
 
 function splitNul(output: string): string[] {
@@ -88,8 +72,10 @@ function hashLargeDiff(cwd: string, relativePath: string): string {
 	}
 }
 
-function listChangedTrackedFiles(cwd: string): { paths: string[]; truncated: boolean } {
-	const paths = splitNul(gitOutput(cwd, ["diff", "--no-ext-diff", "--name-only", "-z", "HEAD", "--"], MAX_HASH_BYTES));
+const CHANGED_FILES_ARGS = ["diff", "--no-ext-diff", "--name-only", "-z", "HEAD", "--"];
+
+function changedTrackedFiles(nameOnlyOutput: string): { paths: string[]; truncated: boolean } {
+	const paths = splitNul(nameOnlyOutput);
 	return { paths: paths.slice(0, MAX_TRACKED_PATHS), truncated: paths.length > MAX_TRACKED_PATHS };
 }
 
@@ -109,7 +95,7 @@ function sameFingerprint(left: TrackedMutationFingerprint | undefined, right: Tr
 
 export function snapshotTrackedMutations(cwd: string): TrackedMutationSnapshot {
 	try {
-		const changed = listChangedTrackedFiles(cwd);
+		const changed = changedTrackedFiles(gitOutput(cwd, CHANGED_FILES_ARGS));
 		const fingerprints: Record<string, TrackedMutationFingerprint> = {};
 		for (const file of changed.paths) fingerprints[file] = fingerprintPath(cwd, file);
 		return { source: "tracked-files", trackedOnly: true, cwd, dirtyFiles: changed.paths, fingerprints, truncated: changed.truncated };
@@ -118,23 +104,16 @@ export function snapshotTrackedMutations(cwd: string): TrackedMutationSnapshot {
 	}
 }
 
-/**
- * Async fingerprint for the collection path: run the diff via execFile and hash large diffs in
- * chunks that yield to the event loop, so gathering evidence after a long child run cannot stall
- * the process. Error shape matches the sync variant.
- */
 async function fingerprintPathAsync(cwd: string, relativePath: string): Promise<TrackedMutationFingerprint> {
 	try {
-		const diff = await gitOutputAsync(cwd, ["diff", "--no-ext-diff", "--binary", "HEAD", "--", relativePath], MAX_HASH_BYTES);
+		const diff = await gitOutputAsync(cwd, ["diff", "--no-ext-diff", "--binary", "HEAD", "--", relativePath]);
 		return { kind: "diff", digest: createHash("sha256").update(diff).digest("hex") };
 	} catch {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-mutation-evidence-"));
 		try {
 			const diffPath = path.join(tempDir, "diff.bin");
-			await new Promise<void>((resolve, reject) => {
-				execFile("git", gitArguments(["diff", "--no-ext-diff", "--binary", `--output=${diffPath}`, "HEAD", "--", relativePath]), { cwd, windowsHide: true }, (error: Error | null) => (error ? reject(error) : resolve()));
-			});
-			return { kind: "diff", digest: await hashFileAsync(cwd, diffPath) };
+			await gitOutputAsync(cwd, ["diff", "--no-ext-diff", "--binary", `--output=${diffPath}`, "HEAD", "--", relativePath]);
+			return { kind: "diff", digest: await hashFileAsync(diffPath) };
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -146,8 +125,7 @@ export async function collectTrackedMutationEvidence(snapshot: TrackedMutationSn
 		return { source: "tracked-files", trackedOnly: true, changedFiles: [], attemptedMutation: false, unavailable: snapshot.unavailable };
 	}
 	try {
-		const currentPaths = splitNul(await gitOutputAsync(cwd, ["diff", "--no-ext-diff", "--name-only", "-z", "HEAD", "--"], MAX_HASH_BYTES));
-		const current = { paths: currentPaths.slice(0, MAX_TRACKED_PATHS), truncated: currentPaths.length > MAX_TRACKED_PATHS };
+		const current = changedTrackedFiles(await gitOutputAsync(cwd, CHANGED_FILES_ARGS));
 		const startDirty = new Set(snapshot.dirtyFiles);
 		const candidates = new Set([...snapshot.dirtyFiles, ...current.paths]);
 		const changedFiles: string[] = [];
