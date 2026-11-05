@@ -42,7 +42,6 @@ export function formatSubagentModelVerificationError(
 	return `model_verification_failed: native Pi child reported a different model than the launch candidate. Expected '${expectedModel}' but observed '${observedModel}'. If you have independently verified this response ID identifies the requested model, declare the exact mapping in modelResponseAliases in ~/.pi/agent/extensions/subagent/config.json (see docs/configuration.md#modelresponsealiases). Use the resolved provider/model ID without its thinking suffix as the key. This leaves the outgoing request unchanged. Configuration changes affect new independent native runs; resumed native runs retain their launch-time declaration. External CLI adapters do not use this setting.`;
 }
 
-/** Sentinel model value requesting that a subagent inherit the parent session's model. */
 export const INHERIT_MODEL = "inherit";
 
 /** Minimal shape of the parent session's in-memory model (`ctx.model`). */
@@ -441,7 +440,6 @@ export interface ResolveModelSelectionOptions {
 	onWarn?: (violation: ModelScopeViolation) => void;
 	/** The primary model came from the running parent session, not configuration. */
 	primaryModelFromParent?: boolean;
-	/** How the model was selected. */
 	origin?: ModelOrigin;
 }
 

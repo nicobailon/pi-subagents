@@ -1,7 +1,3 @@
-/**
- * Core execution logic for running subagents
- */
-
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
@@ -1712,9 +1708,6 @@ function writeStructuredOutputArtifacts(runtime: NonNullable<RunSyncOptions["str
 	}
 }
 
-/**
- * Run a subagent synchronously (blocking until complete)
- */
 async function runSyncCompletionInner(
 	runtimeCwd: string,
 	agents: AgentConfig[],

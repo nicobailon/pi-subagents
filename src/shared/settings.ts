@@ -1,7 +1,3 @@
-/**
- * Chain behavior, template resolution, and directory management
- */
-
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,7 +5,7 @@ import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext,
 import { normalizeSkillInput } from "../agents/skills.ts";
 import { normalizeOutputOverride, type OutputOverrideInput, type ResolvedStepBehavior } from "../runs/shared/child-launch-plan.ts";
 import { CHAIN_RUNS_DIR, type AcceptanceInput, type AgentContract, type ChainGateLayer, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "./types.ts";
-const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const INITIAL_PROGRESS_CONTENT = "# Progress\n\n## Status\nIn Progress\n\n## Tasks\n\n## Files Changed\n\n## Notes\n";
 
 export {
@@ -21,11 +17,6 @@ export {
 } from "../runs/shared/child-launch-plan.ts";
 export type { ChildLaunchPlan, ChildLaunchPlanInput, OutputOverrideInput, ResolvedStepBehavior, StepOverrides } from "../runs/shared/child-launch-plan.ts";
 
-// =============================================================================
-// Chain Step Types
-// =============================================================================
-
-/** Sequential step: single agent execution */
 export interface SequentialStep {
 	agent: string;
 	task?: string;
@@ -50,7 +41,6 @@ export interface SequentialStep {
 	worktree?: boolean;
 }
 
-/** Parallel task item within a parallel step */
 export interface ParallelTaskItem {
 	agent: string;
 	task?: string;
@@ -105,7 +95,6 @@ export interface DynamicParallelStep {
 	gateOn?: ChainGateLayer;
 }
 
-/** Parallel step: multiple agents running concurrently */
 export interface ParallelStep {
 	parallel: ParallelTaskItem[];
 	concurrency?: number;
@@ -117,12 +106,7 @@ export interface ParallelStep {
 	gateOn?: ChainGateLayer;
 }
 
-/** Union type for chain steps */
 export type ChainStep = SequentialStep | ParallelStep | DynamicParallelStep;
-
-// =============================================================================
-// Type Guards
-// =============================================================================
 
 export function isParallelStep(step: ChainStep): step is ParallelStep {
 	return "parallel" in step && Array.isArray((step as ParallelStep).parallel);
@@ -132,7 +116,6 @@ export function isDynamicParallelStep(step: ChainStep): step is DynamicParallelS
 	return "expand" in step && "collect" in step && "parallel" in step && !Array.isArray((step as { parallel?: unknown }).parallel);
 }
 
-/** Get all agent names in a step (single for sequential, multiple for parallel) */
 export function getStepAgents(step: ChainStep): string[] {
 	if (isParallelStep(step)) {
 		return step.parallel.map((t) => t.agent);
@@ -142,10 +125,6 @@ export function getStepAgents(step: ChainStep): string[] {
 	}
 	return [step.agent];
 }
-
-// =============================================================================
-// Chain Directory Management
-// =============================================================================
 
 export function createChainDir(runId: string, baseDir?: string): string {
 	const chainDir = path.join(baseDir ? path.resolve(baseDir) : CHAIN_RUNS_DIR, runId);
@@ -186,43 +165,27 @@ export function cleanupOldChainDirs(): void {
 	}
 }
 
-// =============================================================================
-// Template Resolution
-// =============================================================================
-
 /** Resolved templates for a chain - string for sequential, string[] for parallel */
 export type ResolvedTemplates = (string | string[])[];
 
-/**
- * Resolve templates for a chain with parallel step support.
- * Returns string for sequential steps, string[] for parallel steps.
- */
 export function resolveChainTemplates(
 	steps: ChainStep[],
 ): ResolvedTemplates {
 	return steps.map((step, i) => {
 		if (isParallelStep(step)) {
-			// Parallel step: resolve each task's template
 			return step.parallel.map((task) => {
 				if (task.task) return task.task;
-				// Default for parallel tasks is {previous}
 				return "{previous}";
 			});
 		}
 		if (isDynamicParallelStep(step)) {
 			return step.parallel.task ?? "{previous}";
 		}
-		// Sequential step: existing logic
 		const seq = step as SequentialStep;
 		if (seq.task) return seq.task;
-		// Default: first step uses {task}, others use {previous}
 		return i === 0 ? "{task}" : "{previous}";
 	});
 }
-
-// =============================================================================
-// Chain Instruction Injection
-// =============================================================================
 
 /**
  * Expand a leading `~`/`~/` to the user's home directory. Other forms (relative,
@@ -255,10 +218,6 @@ export function resolveExistingReadPaths(reads: readonly string[], cwd: string):
 	return resolveExistingReadInstructionPaths(reads, cwd);
 }
 
-/**
- * Build chain instructions from resolved behavior.
- * These are appended to the task to tell the agent what to read/write.
- */
 export function writeInitialProgressFile(progressDir: string): void {
 	fs.mkdirSync(progressDir, { recursive: true });
 	fs.writeFileSync(path.join(progressDir, "progress.md"), INITIAL_PROGRESS_CONTENT);
@@ -296,7 +255,6 @@ export function buildChainInstructions(
 		}
 	}
 
-	// Include previous step's summary in suffix if available
 	if (previousSummary && previousSummary.trim()) {
 		suffixParts.push(`Previous step output:\n${previousSummary.trim()}`);
 	}
@@ -312,14 +270,6 @@ export function buildChainInstructions(
 	return { prefix, suffix };
 }
 
-// =============================================================================
-// Parallel Step Support
-// =============================================================================
-
-/**
- * Resolve behaviors for all tasks in a parallel step.
- * Creates namespaced output paths to avoid collisions.
- */
 /** Exact discovery context, or explicit input for defensive fallback discovery. */
 export type ParallelBehaviorDiagnostics = UnknownAgentDiagnosticContext | { cwd: string; scope?: AgentScope };
 
@@ -340,7 +290,6 @@ export function resolveParallelBehaviors(
 			throw new Error(formatUnknownAgentError(task.agent, context));
 		}
 
-		// Build subdirectory path for this parallel task
 		const subdir = path.join(`parallel-${stepIndex}`, `${taskIndex}-${task.agent}`);
 
 		// Output: task override > agent default (namespaced) > false
@@ -352,20 +301,18 @@ export function resolveParallelBehaviors(
 			if (taskOutput === false) {
 				output = false;
 			} else if (path.isAbsolute(taskOutput)) {
-				output = taskOutput; // Absolute path: use as-is
+				output = taskOutput;
 			} else {
-				output = path.join(subdir, taskOutput); // Relative: namespace under subdir
+				output = path.join(subdir, taskOutput);
 			}
 		} else if (configOutput) {
 			// Agent defaults are always relative, so namespace them
 			output = path.join(subdir, configOutput);
 		}
 
-		// Reads: task override > agent default > false
 		const reads =
 			task.reads !== undefined ? task.reads : config.defaultReads ?? false;
 
-		// Progress: task override > agent default > false
 		const progress =
 			task.progress !== undefined
 				? task.progress
@@ -393,9 +340,6 @@ export function resolveParallelBehaviors(
 	});
 }
 
-/**
- * Create subdirectories for parallel step outputs
- */
 export function createParallelDirs(
 	chainDir: string,
 	stepIndex: number,

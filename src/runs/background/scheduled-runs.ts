@@ -552,25 +552,12 @@ function snapshotContext(ctx: ExtensionContext, cwd: string): ExtensionContext {
 	return { ...ctx, cwd, sessionManager };
 }
 
-/**
- * 规范化会话文件路径, 兼容 Windows 路径大小写差异.
- *
- * @param value 会话文件路径
- * @returns 规范化后的路径, 空值时返回 undefined
- */
 function normalizedSessionFile(value: string | undefined): string | undefined {
 	if (!value || !value.trim()) return undefined;
 	const normalized = path.normalize(path.resolve(value));
 	return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-/**
- * 判断 Schedule 是否属于当前 Pi 会话.
- *
- * @param schedule Schedule 记录
- * @param ctx 当前 Pi 会话上下文
- * @returns 是否允许当前会话执行该 Schedule
- */
 function scheduleBelongsToSession(schedule: ScheduleRecord, ctx: ExtensionContext): boolean {
 	if (schedule.sessionOnly !== true) return true;
 	const ownerSessionFile = normalizedSessionFile(schedule.ownerSessionFile);

@@ -1,7 +1,3 @@
-/**
- * Type definitions for the subagent extension
- */
-
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
@@ -21,10 +17,6 @@ import type { WatchdogWarningDetails } from "../watchdog/types.ts";
 import type { RequiredChildExtensionSnapshot } from "./required-child-extensions.ts";
 import type { RecordedPid } from "../runs/background/stale-run-reconciler.ts";
 import type { WorkflowStopCause } from "../workflows/workflow-stop-cause.ts";
-
-// ============================================================================
-// Basic Types
-// ============================================================================
 
 export interface MaxOutputConfig {
 	bytes?: number;
@@ -886,7 +878,6 @@ export interface SteeringRecoveryDescriptor {
 	structuredOutputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
 	controlConfig?: ResolvedControlConfig;
-	/** Resolved launch context for this async child. */
 	context?: "fresh" | "fork";
 	/** Raw per-run bridge override. Omitted descriptors continue to use global config. */
 	intercomBridge?: IntercomBridgeConfig;
@@ -961,10 +952,6 @@ export interface SubagentResultIntercomPayload {
 	sessionPath?: string;
 	parallelHandoff?: ParallelHandoffReference;
 }
-
-// ============================================================================
-// Progress Tracking
-// ============================================================================
 
 export interface ChildWatchdogWarningSummary extends Pick<WatchdogWarningDetails, "severity" | "importance" | "category" | "summary" | "evidence" | "recommendedAction" | "displayedAt"> {
 	/** True when a later assistant turn in the child followed the warning. */
@@ -1042,10 +1029,6 @@ interface ProgressSummary {
 	thinking?: string;
 	durationMs: number;
 }
-
-// ============================================================================
-// Results
-// ============================================================================
 
 export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified";
 
@@ -1305,7 +1288,6 @@ export interface SingleResult {
 	/** Human-readable display name for the child's own session (agent + task
 	 *  excerpt), when the launcher derived one. Display metadata only. */
 	sessionName?: string;
-	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	exitCode: number;
 	processSignal?: string | null;
@@ -1403,7 +1385,6 @@ export interface WaitCompletionChild {
 	runId?: string;
 	/** Bounded accounting projection used by /subagent-cost after async completion. */
 	usage?: Usage;
-	/** Persisted Pi child session when available. */
 	sessionFile?: string;
 	success?: boolean;
 	outputState?: SubagentOutputState;
@@ -1511,18 +1492,15 @@ export interface Details {
 		originalLines?: number;
 		artifactPath?: string;
 	};
-	// Chain metadata for observability
 	chainAgents?: string[];      // Agent names in order, e.g., ["scout", "planner"]
-	totalSteps?: number;         // Total steps in chain
+	totalSteps?: number;
 	currentStepIndex?: number;   // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
 	/** Validated, display-only fanout plan supplied with a workflow launch. */
 	preflight?: WorkflowPreflight;
 	preflightWarnings?: string[];
 	outputs?: ChainOutputMap;
-	// Aggregated child usage across all agents in the run
 	totalChildUsage?: Usage;
-	// Aggregated cost across all agents in the run
 	totalCost?: CostSummary;
 	spawnBudget?: SpawnBudgetSnapshot;
 	runFanoutBudget?: RunFanoutBudgetSnapshot;
@@ -1601,10 +1579,6 @@ export interface Details {
 	};
 }
 
-// ============================================================================
-// Artifacts
-// ============================================================================
-
 export interface ArtifactPaths {
 	inputPath: string;
 	outputPath: string;
@@ -1625,10 +1599,6 @@ export interface ArtifactConfig {
 	includeMetadata: boolean;
 	cleanupDays: number;
 }
-
-// ============================================================================
-// Async Execution
-// ============================================================================
 
 export interface AsyncParallelGroupStatus {
 	start: number;
@@ -2020,7 +1990,6 @@ export interface AsyncStatus {
 		runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
 		externalProcess?: ExternalProcessStatus;
 		externalJob?: ExternalJobStatus;
-		/** Resolved launch context for this child step. */
 		context?: "fresh" | "fork";
 		/** Short caller-facing task/goal shown in fleet surfaces when available. */
 		description?: string;
@@ -2458,17 +2427,9 @@ export interface HerdrProjectPaneSnapshot {
 	staleReason?: string;
 }
 
-// ============================================================================
-// Display
-// ============================================================================
-
 export type DisplayItem = 
 	| { type: "text"; text: string } 
 	| { type: "tool"; name: string; args: Record<string, unknown> };
-
-// ============================================================================
-// Error Handling
-// ============================================================================
 
 export interface ErrorInfo {
 	hasError: boolean;
@@ -2529,10 +2490,6 @@ export interface SubagentChildStatusEvent {
 	label?: string;
 }
 
-// ============================================================================
-// Execution Options
-// ============================================================================
-
 /** Live controls for one in-process foreground child session. */
 export interface ForegroundChildSessionControls {
 	steer: (text: string) => Promise<void>;
@@ -2560,7 +2517,6 @@ export interface RunSyncOptions {
 	parentSessionId?: string;
 	/** The parent session's file, recorded as a new child session's `parentSession` header. */
 	parentSessionFile?: string;
-	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	cwd?: string;
 	/** Resolved pane-native saved-machine placement. */
@@ -2640,7 +2596,6 @@ export interface RunSyncOptions {
 	preferredModelProvider?: string;
 	/** Parent Pi event host used to snapshot runtime-registered MCP servers before child launch. */
 	runtimeSnapshotHost?: import("../runs/shared/mcp-direct-tool-allowlist.ts").McpRuntimeSnapshotHost;
-	/** Optional subagent model-scope enforcement. */
 	modelScope?: ModelScopeRule | ModelScopeRule[];
 	/** Skills to make available (overrides agent default if provided) */
 	skills?: string[];
@@ -2873,10 +2828,6 @@ export interface ExtensionConfig {
 	authorityPolicy?: AuthorityPolicyConfig;
 }
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 export const DEFAULT_MAX_OUTPUT: Required<MaxOutputConfig> = {
 	bytes: 200 * 1024,
 	lines: 5000,
@@ -3017,10 +2968,6 @@ export function wrapForkTask(task: string, preamble?: string | false): string {
 	return `${wrappedPrefix}${task}`;
 }
 
-// ============================================================================
-// Recursion Depth Guard
-// ============================================================================
-
 function normalizeNonNegativeInteger(value: unknown): number | undefined {
 	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
 	if (!Number.isInteger(parsed) || parsed < 0) return undefined;
@@ -3096,10 +3043,6 @@ export function resolveMaxSubagentSpawnsPerRun(configMaxSpawns?: number): number
 		?? normalizeMaxSubagentSpawnsPerRun(configMaxSpawns)
 		?? DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN;
 }
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
 
 function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes}B`;

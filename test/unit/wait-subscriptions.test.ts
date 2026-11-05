@@ -533,9 +533,7 @@ describe("wait subscriptions armed by another session", () => {
 			assert.equal(subscriptionFiles(subscriptionsDir).length, 1);
 			armer.dispose();
 
-			// A different session starts well after the record expired. Before this
-			// swept, the file was never loaded, never reconciled and never timed
-			// out, so it stayed on disk forever.
+			// A different session starts well after the record expired.
 			now = 1_101 + 86400000;
 			const other = makeState("session-b");
 			const restarted = createWaitSubscriptionManager(pi as never, other, {

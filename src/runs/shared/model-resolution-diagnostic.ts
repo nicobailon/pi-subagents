@@ -2,7 +2,6 @@ export interface ChildModelResolutionDiagnostic {
 	agent?: string;
 	model?: string;
 	host?: "parent" | "runner";
-	/** The launch's resolved capability ceiling, when one is active. */
 	capabilityCeiling?: { denyExtensions: boolean; sources?: readonly string[] };
 }
 

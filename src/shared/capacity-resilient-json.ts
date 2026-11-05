@@ -12,7 +12,7 @@ const defaultTimerApi: TimerApi = {
 };
 
 export type CapacityResilientJsonWriterOptions = {
-	/** The underlying write operation. It must be atomic for each target path. */
+	/** It must be atomic for each target path. */
 	write?: (filePath: string, payload: object) => void;
 	/** Keep retry timers referenced by the event loop (needed by child runners). */
 	keepAlive?: boolean;

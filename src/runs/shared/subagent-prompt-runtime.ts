@@ -633,7 +633,6 @@ function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<
 	});
 }
 
-/** Register every child-side hook the prompt runtime owns for one child session. */
 export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?: ChildRuntimeConfig, drainObservation?: import("./readonly-drain-observation.ts").ReadonlyDrainObservation): void {
 	// A path-based load has no ChildRuntimeConfig. This can happen if an
 	// ambient-extension discovery path finds the runtime module in addition to

@@ -47,7 +47,6 @@ export function readHerdrInspectorBinding(asyncDir: string, index?: number): Her
 	}
 }
 
-/** Read a binding only when it belongs to the requested inspector target. */
 export function readHerdrInspectorBindingForTarget(target: InspectorTarget): HerdrInspectorBinding | undefined {
 	const binding = readHerdrInspectorBinding(target.asyncDir, target.index);
 	if (!binding || binding.runId !== target.runId || binding.childIndex !== target.index) return undefined;

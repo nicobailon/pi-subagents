@@ -1,7 +1,3 @@
-/**
- * TypeBox schemas for subagent tool parameters
- */
-
 import { Type } from "typebox";
 import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { RUNNER_LAUNCHER_NAME_PATTERN } from "../shared/types.ts";

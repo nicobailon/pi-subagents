@@ -1,7 +1,3 @@
-/**
- * Async execution logic for subagent tool
- */
-
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
@@ -467,9 +463,6 @@ function closeFd(fd: number | undefined): void {
 	}
 }
 
-/**
- * Spawn the async runner process
- */
 const RUNNER_STARTUP_TIMEOUT_MS = 10_000;
 type RunnerStartupState = "ready" | "acknowledged" | "confirmed" | "identified";
 
@@ -1509,9 +1502,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	}
 }
 
-/**
- * Execute a chain asynchronously
- */
 export function executeAsyncChain(
 	id: string,
 	params: AsyncChainParams,
@@ -1867,9 +1857,6 @@ export function executeAsyncChain(
 	return spawnResultOrPromise instanceof Promise ? spawnResultOrPromise.then(finishSpawnResult) : finishSpawnResult(spawnResultOrPromise);
 }
 
-/**
- * Execute a single agent asynchronously
- */
 export function workflowAwaitedAsyncResultPath(asyncDir: string): string {
 	return path.join(asyncDir, "workflow-result.json");
 }

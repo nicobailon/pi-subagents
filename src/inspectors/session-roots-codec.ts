@@ -19,7 +19,6 @@ function parseStringArray(value: unknown): string[] | undefined {
 	return value;
 }
 
-/** Decodes a `--session-roots` argument produced by {@link encodeSessionRoots}. */
 export function decodeSessionRoots(raw: string): string[] {
 	try {
 		const decoded = parseStringArray(JSON.parse(Buffer.from(raw, "base64").toString("utf-8")));

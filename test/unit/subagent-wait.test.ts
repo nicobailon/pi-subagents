@@ -1013,7 +1013,6 @@ describe("bg_wait tool", () => {
 			assert.match(text, /1 of 3 run\(s\) finished/);
 			assert.match(text, /1 complete/);
 			assert.match(text, /2 run\(s\) still in flight/);
-			// Must not have blocked on b and c: a bounded number of polls.
 			assert.ok(polls <= 2, `first-completion should return promptly, polled ${polls}`);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -1025,7 +1024,6 @@ describe("bg_wait tool", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const state = makeState("sess-1");
-			// A run from another session must be ignored.
 			writeStatus(asyncRoot, "run-other", "running", { sessionId: "sess-2", pid: 999999 });
 			const result = await waitForSubagents({}, undefined, baseDeps(root, state));
 			assert.equal(result.isError, undefined);

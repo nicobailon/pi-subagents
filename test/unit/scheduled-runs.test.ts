@@ -1657,7 +1657,7 @@ describe("a schedule record the store cannot read", () => {
 		writePausedRecord(h, "paused-watch");
 		const ctx = context(h.ctx.cwd, "session-b");
 		const bound = manager(h);
-		bound.bindSession(ctx); // used to throw: one unreadable record stopped the whole store loading
+		bound.bindSession(ctx);
 		assert.match(text(await bound.handleToolCall({ action: "schedule.list" }, ctx)), /paused-watch \| paused \| no next run/);
 		const resumed = await bound.handleToolCall({ action: "schedule.resume", id: "paused-watch" }, ctx);
 		assert.equal(resumed.isError, undefined, text(resumed));

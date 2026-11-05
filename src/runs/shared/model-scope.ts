@@ -8,9 +8,6 @@
  * inherited from agent frontmatter / `defaultModel` / the parent session only
  * emits a warning so existing configurations keep working. Optional strict
  * enforcement makes inherited models hard errors too.
- *
- * The decision logic ({@link checkModelScope}) is a pure function of its
- * inputs so it can be unit-tested without touching the filesystem or config.
  */
 
 import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
@@ -189,8 +186,7 @@ export function resolveModelScopesForAgent(
 
 /**
  * Validate and normalize a raw `subagents.modelScope` value from settings.
- * Throws a descriptive error for malformed configs (matching the surrounding
- * settings-parsing style). Returns `undefined` when the field is absent.
+ * Throws a descriptive error for malformed configs. Returns `undefined` when the field is absent.
  */
 export function parseModelScopeConfig(
 	value: unknown,

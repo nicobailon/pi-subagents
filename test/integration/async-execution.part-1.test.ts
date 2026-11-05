@@ -1,12 +1,3 @@
-/**
- * Integration tests for async (background) agent execution.
- *
- * Tests the async support utilities: jiti availability check,
- * status file reading/caching.
- *
- * Requires pi packages to be importable. Skips gracefully if unavailable.
- */
-
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fsDefault from "node:fs";
