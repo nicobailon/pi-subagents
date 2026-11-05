@@ -77,7 +77,16 @@ function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "
 	if (!Array.isArray(available) || !Array.isArray(pi.getActiveTools())) return true;
 	if (!available.some((tool) => tool.name === LOADER_NAME)) return true;
 	// SAFETY: The running Pi session manager exposes buildSessionContext, but its read-only extension type omits it.
-	const messages = (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: ToolSelectionMessage[] } }).buildSessionContext().messages;
+	let messages = (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: ToolSelectionMessage[] } }).buildSessionContext().messages;
+	// A compaction checkpoint (the system message before the summary) folds the branch's earlier system messages into
+	// one declaration, which hides an extension unload before the compaction. Replay those messages instead, as Pi
+	// restores the session's tools from them.
+	if (messages[0]?.role === "system" && messages[1]?.role === "compactionSummary") {
+		const branch = ctx.sessionManager.getBranch();
+		const history = branch.slice(0, branch.findLastIndex((entry) => entry.type === "compaction"))
+			.flatMap((entry) => entry.type === "message" && entry.message.role === "system" ? [entry.message as ToolSelectionMessage] : []);
+		messages = [...history, ...messages.slice(1)];
+	}
 	// A compaction without a checkpoint leaves its summary first, with no system message before it: the
 	// declarations from before it are lost, even when no tool selection was recorded after it.
 	const lost = messages.find((message) => message.role === "system" || message.role === "compactionSummary")?.role === "compactionSummary";
