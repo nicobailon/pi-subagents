@@ -57,7 +57,7 @@ When a session with a UI has queued or running async work, live nested children,
 
 - **Stay here** (default, also Escape): cancel the switch. The work keeps running.
 - **Switch and take the work**: the new session takes the work over, as after any switch without the prompt.
-- **Switch and leave the work here**: the new session inherits nothing from this one. Async single, parallel, and chain runs keep running under this session; reopen it to get their results. Async workflows and detached foreground runs stop on any switch, as before; a stopped workflow resumes automatically only if you reopen this session within 24 hours. A child's question can be answered only until it times out (10 minutes by default).
+- **Switch and leave the work here**: the new session inherits nothing from this one. Async single, parallel, and chain runs keep running under this session; reopen it to get their results. Async workflows and detached foreground runs stop on any switch; a stopped workflow resumes automatically only if you reopen this session within 24 hours. A child's question can be answered only until it times out (10 minutes by default).
 
 Without outstanding work, or without a UI (`pi -p`, SDK sessions), there is no prompt and the new session takes the work over. Over RPC the prompt is a select dialog that counts as **Stay here** if the host does not answer within one minute. The prompt never enters model history.
 
@@ -95,7 +95,7 @@ Workflow-level child controls default onto each `runs.run`/`runs.all` launch; ex
 
 Child results cross into the script as plain JSON data. Non-JSON host metadata is omitted, so use returned fields such as `runId`, `ok`, `output`, and `structuredOutput` for workflow control.
 
-On Node, each script runs in a new permission-restricted process that can read only its supervisor, worker and Acorn parser; Node denies file writes, other reads, child processes and nested workers. The process inherits no host startup flags, preloads or environment variables (except `SystemRoot` on Windows) and starts in Acorn's directory, because Node lets worker threads read their working directory. A small supervisor keeps IPC responsive, so a busy script is still killed when the parent disconnects. Each workflow gets its own process, terminated as soon as the workflow settles.
+On Node, each script runs in a new permission-restricted process that can read only its supervisor, worker and Acorn parser; Node denies file writes, other reads, child processes and nested workers. The process inherits no host startup flags, preloads or environment variables (except `SystemRoot` on Windows) and starts in Acorn's directory, because Node lets worker threads read their working directory. A small supervisor keeps IPC responsive, so a busy script is still killed when the parent disconnects. The process ends when the workflow settles.
 
 This is a permission layer around the VM, not an OS sandbox: network access stays open on Node 22 and 24, and child launches and `runs.host` commands still run in Pi under their own contracts. Bun has no permission model, so it keeps the in-process worker. If the Node process fails to start, the workflow fails; it never retries in an unrestricted worker.
 

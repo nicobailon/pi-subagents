@@ -1,4 +1,4 @@
-import type { ExtensionContext, ExtensionUIDialogOptions, SessionShutdownEvent } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, SessionShutdownEvent } from "@earendil-works/pi-coding-agent";
 import { isActiveAsyncState } from "../runs/background/active-run-index.ts";
 import { listAsyncRuns } from "../runs/background/async-status.ts";
 import { reconcileNestedAsyncDescendants } from "../runs/background/stale-run-reconciler.ts";
@@ -94,9 +94,7 @@ export function createSessionSwitchGuard(deps: SessionSwitchDeps) {
 					...(results ? ["  Undelivered results"] : []),
 					...(questions ? ["  Questions awaiting a reply"] : []),
 				].join("\n");
-				const dialogOptions: ExtensionUIDialogOptions = { signal: lifetime.signal };
-				if (ctx.mode === "rpc") dialogOptions.timeout = RPC_PROMPT_TIMEOUT_MS;
-				const choice = await ctx.ui.select(title, [STAY, TAKE, LEAVE], dialogOptions);
+				const choice = await ctx.ui.select(title, [STAY, TAKE, LEAVE], { signal: lifetime.signal, timeout: ctx.mode === "rpc" ? RPC_PROMPT_TIMEOUT_MS : undefined });
 				if (lifetime.signal.aborted || deps.state.currentSessionId !== sessionId) return { cancel: true };
 				if (choice === TAKE) return;
 				if (choice === LEAVE) {

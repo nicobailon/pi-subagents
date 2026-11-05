@@ -32,7 +32,7 @@ export function resolveAgentRunnerLauncher(agent: Pick<AgentConfig, "name" | "la
  * digest it checked, so the launch can record that digest instead of hashing the agent file again.
  */
 export function checkRequiredRunnerLauncher(agent: AgentConfig, launcherName: string | undefined, required: RequiredRunnerLauncher): { definitionDigest: string; error?: undefined } | { error: string } {
-	if (launcherName === undefined) return { error: `Agent '${agent.name}' has no launcher, but the call requires launcher '${required.name}'. Refusing instead of running it without a launcher.` };
+	if (launcherName === undefined) return { error: `Agent '${agent.name}' has no launcher, but the call requires launcher '${required.name}'.` };
 	if (launcherName !== required.name) return { error: `Agent '${agent.name}' uses launcher '${launcherName}', but the call requires launcher '${required.name}'.` };
 	const definitionDigest = agentDefinitionDigest(agent);
 	if (definitionDigest !== required.definitionDigest) return { error: `Agent '${agent.name}' definition digest is ${definitionDigest}, but the call requires ${required.definitionDigest}; the agent definition changed after it was checked.` };

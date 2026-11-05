@@ -1,13 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { waitToolName } from "../../shared/wait-tool-name.ts";
+import { DEFAULT_WAIT_TOOL_NAME, waitToolName } from "../../shared/wait-tool-name.ts";
 
 export type PermissionDecision = "allow" | "ask" | "deny";
 export type PermissionRules = Record<string, PermissionDecision>;
 export interface PermissionConfig { rules?: PermissionRules }
 
 const COORDINATION_TOOLS = new Set(["contact_supervisor", "intercom", "structured_output"]);
-// bg_wait stays reserved in rules even when config.waitTool.name renames the wait tool, as before the rename existed.
 const isInternalTool = (tool: string) => COORDINATION_TOOLS.has(tool) || tool === waitToolName();
 const DECISIONS = new Set<PermissionDecision>(["allow", "ask", "deny"]);
 const MAX_POLICY_BYTES = 16 * 1024;
@@ -26,7 +25,7 @@ export function validatePermissionRules(value: unknown, label: string): Permissi
 	for (const [tool, decision] of Object.entries(value)) {
 		if (!tool.trim()) throw new Error(`${label} contains an empty tool name.`);
 		if (tool === "bash") throw new Error(`${label}.bash is unsupported; pi-subagents leaves bash policy to pi-guard.`);
-		if (isInternalTool(tool) || tool === "bg_wait") throw new Error(`${label}.${tool} is reserved for child coordination and cannot be gated.`);
+		if (isInternalTool(tool) || tool === DEFAULT_WAIT_TOOL_NAME) throw new Error(`${label}.${tool} is reserved for child coordination and cannot be gated.`);
 		if (!DECISIONS.has(decision as PermissionDecision)) throw new Error(`${label}.${tool} must be allow, ask, or deny.`);
 		result[tool] = decision as PermissionDecision;
 	}

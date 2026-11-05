@@ -1,4 +1,3 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { listBackgroundWorkProviders } from "../../api/background-work.ts";
 import { ReadonlyDrainObservation } from "./readonly-drain-observation.ts";
 import registerFanoutChildSubagentExtension, { createChildSafeState } from "../../extension/fanout-child.ts";
@@ -7,15 +6,9 @@ import registerSubagentPromptRuntime, { registerSubagentPromptBoundary } from ".
 import { structuredOutputValidatorReady } from "./structured-output.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
-import type { ChildSessionLaunch } from "./child-session.ts";
+import type { ChildHookExtension, ChildSessionLaunch } from "./child-session.ts";
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { projectRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
-
-/** Inline extension shape accepted by pi's resource loader (`extensionFactories`). */
-export interface ChildHookExtension {
-	name: string;
-	factory: (pi: ExtensionAPI) => void | Promise<void>;
-}
 
 type OwnedCapture = Required<Pick<ChildRuntimeConfig, "toolDiagnostic" | "runtimeAcknowledgements">>;
 type PromptProof = { config: ChildRuntimeConfig; snapshot: string; factories?: ChildHookExtension["factory"][]; observeNext?: ReadonlyDrainObservation; observation?: ReadonlyDrainObservation; capture?: OwnedCapture; reporting?: { launch: ChildSessionLaunch; callback: ChildSessionLaunch["onExtensionError"] } };

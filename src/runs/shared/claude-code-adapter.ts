@@ -225,8 +225,7 @@ export function createClaudeCodeJsonlParser(): ExternalCliParser {
 		 * never skipped, because dropping it would discard the answer. The runner bounds the size.
 		 */
 		skipOversizedLine(prefix: string): ExternalCliParserProgress | undefined {
-			if (terminal) return undefined;
-			if (!/^\s*\{\s*"type"\s*:\s*"user"\s*,/.test(prefix)) return undefined;
+			if (terminal || !/^\s*\{\s*"type"\s*:\s*"user"\s*,/.test(prefix)) return undefined;
 			eventCount += 1;
 			return { phase: "streaming", eventCount };
 		},

@@ -25,7 +25,7 @@ const MAX_PARSER_STREAM_BYTES = 32 * 1024 * 1024;
 const MAX_PARSER_OUTPUT_BYTES = 1024 * 1024;
 const MAX_OVERSIZED_LINE_PREFIX_BYTES = 512;
 // A skipped line keeps only its prefix in memory, and the stream limit still bounds the run.
-// Claude Code puts a read image's base64 in its tool-result line twice, so 1 MiB was too small.
+// Claude Code puts a read image's base64 in its tool-result line twice.
 const MAX_SKIPPABLE_LINE_BYTES = 8 * 1024 * 1024;
 const PARSER_PROGRESS_INTERVAL_MS = 100;
 
@@ -249,8 +249,7 @@ export function runExternalCli(input: {
 		let processTree: OwnedProcessTreeController | undefined;
 		let processPid: number | undefined;
 		let termination: Promise<ProcessTreeTerminal> | undefined;
-		// A failed status callback (a non-capacity write error) fails the run, but the process it
-		// launched is still stopped and the temporary paths are still removed before rejecting.
+		// A throwing onProcess fails the run only after the process is stopped and temp paths are removed.
 		let callbackFailed = false;
 		let callbackError: unknown;
 		const notifyProcess = (status: ExternalProcessStatus) => {

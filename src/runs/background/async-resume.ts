@@ -470,12 +470,10 @@ export function readAsyncRecoveryDescriptor(runsRoot: string, runId: string): St
  * native path the parent computed, or a worktree git itself lists on the requested Worktrunk branch.
  */
 function assertLaunchedWorktreeCwd(runId: string, launchCwd: string, launched: NonNullable<SteeringRecoveryDescriptor["managedWorktree"]>, handoffCwd: string): string {
+	const listed = launched.provider === "native" ? undefined : findListedWorktreeOnBranch(launchCwd, launched.branch);
 	const matches = launched.provider === "native"
 		? isComparablePathInside(launched.cwd, handoffCwd) && isComparablePathInside(handoffCwd, launched.cwd)
-		: (() => {
-			const listed = findListedWorktreeOnBranch(launchCwd, launched.branch);
-			return listed !== undefined && isComparablePathInside(listed, handoffCwd);
-		})();
+		: listed !== undefined && isComparablePathInside(listed, handoffCwd);
 	if (!matches) throw new Error(`Async run '${runId}' managed worktree ${handoffCwd} is not the worktree its launch created.`);
 	return handoffCwd;
 }
@@ -483,12 +481,10 @@ function assertLaunchedWorktreeCwd(runId: string, launchCwd: string, launched: N
 /** A run launched in a worktree resumes in it, never in the source checkout, even when handoff.json is missing. */
 function launchedWorktreeCwdWithoutHandoff(runId: string, launchCwd: string, launched: NonNullable<SteeringRecoveryDescriptor["managedWorktree"]>): string {
 	const cwd = launched.provider === "native" ? launched.cwd : findListedWorktreeAgentCwd(launchCwd, launched.branch);
-	let isDirectory = false;
-	try { isDirectory = cwd !== undefined && fs.statSync(cwd).isDirectory(); } catch { /* reported below */ }
-	if (!isDirectory) {
+	if (cwd === undefined || !fs.statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) {
 		throw new Error(`Async run '${runId}' ran in a managed worktree (${launched.provider === "native" ? launched.cwd : `branch ${launched.branch}`}) that no longer exists; it cannot resume in the source checkout.`);
 	}
-	return cwd!;
+	return cwd;
 }
 
 function validateResumeSessionFile(runId: string, sessionFile: string): string {

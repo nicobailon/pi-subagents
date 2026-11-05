@@ -39,7 +39,6 @@ export function releaseSessionWork(sessionId: string): void {
 /** Records that sessionId replaced previousSessionId in this process, inheriting its chain unless its work was kept there. */
 export function recordSessionReplacement(sessionId: string, previousSessionId: string): void {
 	const inherited = keptWork().has(previousSessionId) ? [] : [previousSessionId, ...(successions().get(previousSessionId) ?? [])];
-	// Nobody took over a session whose work was kept, so on reopening it still owns what it inherited before.
 	const own = keptWork().has(sessionId) ? successions().get(sessionId) ?? [] : [];
 	// Resuming back and forth can revisit a session: keep the chain distinct and free of sessionId
 	// itself, so the bound holds real predecessors and discovery never scans one session twice.

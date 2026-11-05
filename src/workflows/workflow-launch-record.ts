@@ -27,12 +27,8 @@ type WorkflowLaunchRecordRead =
 	| { ok: true; record: WorkflowLaunchRecord }
 	| { ok: false; missing: boolean; error: string };
 
-export function workflowLaunchRecordDir(asyncDirRoot: string, runId: string): string {
-	return runLaunchDir(asyncDirRoot, runId);
-}
-
 function launchRecordPath(asyncDirRoot: string, runId: string): string {
-	return path.join(workflowLaunchRecordDir(asyncDirRoot, runId), WORKFLOW_LAUNCH_RECORD_FILE);
+	return path.join(runLaunchDir(asyncDirRoot, runId), WORKFLOW_LAUNCH_RECORD_FILE);
 }
 
 /** Throws on a write failure; the launch must fail rather than start a run it cannot relaunch. */

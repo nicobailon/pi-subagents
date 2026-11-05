@@ -16,20 +16,20 @@ export class WorkflowScriptProcess extends EventEmitter {
 
 	constructor(acornPath: string) {
 		super();
-		this.child = fork(WORKFLOW_PROCESS_URL, [realpathSync(acornPath)], {
+		const acorn = realpathSync(acornPath);
+		this.child = fork(WORKFLOW_PROCESS_URL, [acorn], {
 			// Under --permission, Node lets worker threads read everything under the process cwd, so the cwd must
 			// hold only public files: acorn's own directory. It also never holds a caller's cwd open on Windows.
-			cwd: dirname(realpathSync(acornPath)),
+			cwd: dirname(acorn),
 			// No inherited execArgv or NODE_OPTIONS. Only the supervisor may create a worker.
 			execArgv: [
 				"--permission", "--allow-worker",
 				`--allow-fs-read=${realpathSync(fileURLToPath(WORKFLOW_PROCESS_URL))}`,
 				`--allow-fs-read=${realpathSync(fileURLToPath(WORKFLOW_WORKER_URL))}`,
-				`--allow-fs-read=${realpathSync(acornPath)}`,
+				`--allow-fs-read=${acorn}`,
 			],
 			env: process.platform === "win32" && process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {},
 			stdio: ["ignore", "ignore", "pipe", "ipc"],
-			serialization: "json",
 		});
 		this.child.stderr!.on("data", (chunk: Buffer) => { this.stderr = (this.stderr + chunk.toString("utf8")).slice(-4096); });
 		this.child.on("error", (error) => this.emit("error", error));
@@ -44,7 +44,7 @@ export class WorkflowScriptProcess extends EventEmitter {
 		});
 		this.child.on("exit", (code) => {
 			this.exitCode = code ?? 1;
-			this.child.stderr?.destroy();
+			this.child.stderr!.destroy();
 			if (!this.stopping && code !== 0 && this.stderr.trim()) this.emit("error", new Error(this.stderr.trim()));
 			this.emit("exit", this.exitCode);
 		});
