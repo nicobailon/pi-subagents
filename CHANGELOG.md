@@ -5,6 +5,7 @@
 ### Fixed
 
 - A passing `output: "json"` gate no longer fails as "not valid JSON" when an environment variable with a secret-looking name holds a common value, such as `KDE_FULL_SESSION=true` or `XDG_SESSION_CLASS=user` on KDE. The gate's stdout is now parsed before secrets are redacted, and the redaction is applied to the parsed value's strings, keys and numbers instead, so `true`, `null` and the JSON syntax are left alone. Thanks to [@nhp](https://github.com/nhp) for the report. (#3191)
+- A child's `structured_output` call no longer fails with a bare `RangeError: Maximum call stack size exceeded` when the `outputSchema` refers to itself through `$ref` (for example `{"allOf": [{"$ref": "#"}]}`). The call is now rejected with "Structured output validation failed: outputSchema cannot be validated (cyclic or too deep)", and typed gates, dynamic fanout and saved structured output report the same error instead of throwing. Thanks to [@G0-0000](https://github.com/G0-0000) for the report. (#3190)
 
 ## [0.85.0] - 2026-11-04
 
