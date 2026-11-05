@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- When one background child is running, the expanded background-agents widget now shows its task as written, with its line breaks kept and wrapped to the terminal width, up to 8 lines. Before, it was squeezed onto one line and cut at 96 characters. With two or more children running, each keeps the one-line task so every running child stays on screen, and the collapsed widget is unchanged. The expanded result of a foreground call already shows the whole task. Thanks to [@marshamonkey25-hue](https://github.com/marshamonkey25-hue) for the report. (#3187)
+
 ### Fixed
 
 - A passing `output: "json"` gate no longer fails as "not valid JSON" when an environment variable with a secret-looking name holds a common value, such as `KDE_FULL_SESSION=true` or `XDG_SESSION_CLASS=user` on KDE. The gate's stdout is now parsed before secrets are redacted, and the redaction is applied to the parsed value's strings, keys and numbers instead, so `true`, `null` and the JSON syntax are left alone. Thanks to [@nhp](https://github.com/nhp) for the report. (#3191)

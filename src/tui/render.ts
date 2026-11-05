@@ -313,6 +313,33 @@ export function compactTaskText(task: string | undefined, label?: string): strin
 	return previewDisplayText(normalized, COMPACT_TASK_MAX_CHARS);
 }
 
+const EXPANDED_TASK_MAX_LINES = 8;
+
+/** The task as authored for expanded rows: line breaks, leading indentation (tabs as two spaces)
+ *  and single blank lines kept, wrapped to `width`, at most EXPANDED_TASK_MAX_LINES lines plus a
+ *  "…" line. This runs on every spinner frame, so the task is cut to what the cap can show
+ *  before any sanitizing or wrapping. */
+function expandedTaskLines(task: string | undefined, label: string | undefined, width: number): string[] | undefined {
+	const taskText = task?.trim();
+	if (!taskText || taskText === PROMPT_REDACTED || width <= 0) return undefined;
+	const shown = truncateDisplayText(taskText, EXPANDED_TASK_MAX_LINES * width);
+	const labelText = label?.trim() && label.trim() !== PROMPT_REDACTED ? sanitizeDisplayText(label) : "";
+	const head = labelText && labelText !== sanitizeDisplayText(shown) ? `${labelText} — ` : "";
+	const lines: string[] = [];
+	for (const rawLine of `task: ${head}${shown}`.split("\n")) {
+		const content = sanitizeDisplayText(rawLine);
+		if (!content) {
+			if (lines.length > 0 && lines[lines.length - 1] !== "") lines.push("");
+			continue;
+		}
+		const indent = rawLine.match(/^[ \t]*/)![0].replace(/\t/g, "  ").slice(0, Math.floor(width / 2));
+		for (const part of wrapPlainText(content, width - indent.length)) lines.push(`${indent}${part}`);
+		if (lines.length > EXPANDED_TASK_MAX_LINES) break;
+	}
+	if (lines.length <= EXPANDED_TASK_MAX_LINES && shown.length === taskText.length) return lines;
+	return [...lines.slice(0, EXPANDED_TASK_MAX_LINES), "…"];
+}
+
 export interface AsyncLaneProjection {
 	label?: string;
 	role: string;
@@ -1633,14 +1660,14 @@ function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number], s
 }
 
 
-function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, width = getTermWidth(), frame?: number): string[] {
+function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, width = getTermWidth(), frame?: number, fullTask = false): string[] {
 	if (!job.steps?.length) return [];
 	const total = job.chainStepCount ?? job.steps.length;
 	const lines: string[] = [];
 	for (const span of buildAsyncChainStepSpans(total, job.steps.length, job.parallelGroups)) {
 		const steps = job.steps.slice(span.start, span.start + span.count);
 		if (span.isParallel) {
-			lines.push(...parallelWidgetGroupDetails(job, theme, { steps, total: span.count, stepIndex: span.stepIndex, chainTotal: total }, expanded, width, frame, false));
+			lines.push(...parallelWidgetGroupDetails(job, theme, { steps, total: span.count, stepIndex: span.stepIndex, chainTotal: total }, expanded, width, frame, false, fullTask));
 			continue;
 		}
 		const step = steps[0];
@@ -1648,17 +1675,22 @@ function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, 
 			lines.push(`  ${theme.fg("dim", `◦ Step ${span.stepIndex + 1}/${total}: pending`)}`);
 			continue;
 		}
-		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, "Step", span.stepIndex + 1, total, expanded, width, frame));
+		lines.push(...foregroundStyleWidgetStepLines(job, theme, step, "Step", span.stepIndex + 1, total, expanded, width, frame, { fullTask }));
 	}
 	return lines;
 }
 
-function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded = false, width = getTermWidth(), frame?: number): string[] {
+function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded = false, width = getTermWidth(), frame?: number, fullTask = false): string[] {
 	if (!job.steps?.length) return [];
+	// Multi-job cards prefix every line with a 4-column tree continuation after this returns.
+	const taskLines = (step: AsyncJobStep, indent: string): string[] => expanded && fullTask && step.status === "running"
+		? (expandedTaskLines(step.description, step.label, width - indent.length - 4) ?? []).map((line) => `${indent}${theme.fg("dim", line)}`)
+		: [];
+	if (job.mode === "single") return job.steps.flatMap((step) => taskLines(step, "  "));
 	if (job.mode !== "parallel" && job.mode !== "chain") return [];
-	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
+	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame, fullTask);
 	const group = activeParallelWidgetGroup(job);
-	if (group) return parallelWidgetGroupDetails(job, theme, group, expanded, width, frame, Boolean(job.activeParallelGroup));
+	if (group) return parallelWidgetGroupDetails(job, theme, group, expanded, width, frame, Boolean(job.activeParallelGroup), fullTask);
 	const total = job.stepsTotal ?? job.steps.length;
 	const lines: string[] = [];
 	for (const [index, step] of job.steps.entries()) {
@@ -1670,6 +1702,7 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 		const display = step.sessionName?.trim() || (label ? `${label} (${step.agent})` : step.agent);
 		const thinking = childThinkingLevel(step);
 		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame, thinking)} ${itemTitle} ${index + 1}/${total}: ${display} · ${widgetStepStatus(step.status, theme, thinking)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
+		lines.push(...taskLines(step, "    "));
 		const lane = projectAsyncLane(job, step);
 		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "    "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 6)) lines.push(`    ${nestedLine}`);
@@ -1851,6 +1884,7 @@ function parallelWidgetGroupDetails(
 	width: number,
 	frame: number | undefined,
 	prioritizeActive: boolean,
+	fullTask = false,
 ): string[] {
 	const lines = [parallelWidgetGroupHeader(group, theme, frame)];
 	const rows = parallelWidgetStepRows(group.steps, group.total, prioritizeActive);
@@ -1862,6 +1896,7 @@ function parallelWidgetGroupDetails(
 			detailIndent: "      ",
 			rowMarker: marker,
 			includeCurrentPath: true,
+			fullTask,
 		}));
 	}
 	for (let index = rows.length; index < group.total; index++) {
@@ -2360,7 +2395,8 @@ function foregroundStyleWidgetStepLines(
 	expanded: boolean,
 	width: number,
 	frame?: number,
-	options?: { rowLabel?: string; rowIndent?: string; detailIndent?: string; rowMarker?: string; includeCurrentPath?: boolean },
+	/** `fullTask`: the widget has exactly one running child, so an expanded row may spend lines on its whole task. */
+	options?: { rowLabel?: string; rowIndent?: string; detailIndent?: string; rowMarker?: string; includeCurrentPath?: boolean; fullTask?: boolean },
 ): string[] {
 	const rowIndent = options?.rowIndent ?? "  ";
 	const detailIndent = options?.detailIndent ?? "    ";
@@ -2379,7 +2415,10 @@ function foregroundStyleWidgetStepLines(
 	const lines = [`${rowIndent}${rowMarker}${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame, thinking)} ${themeBold(theme, rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const lane = projectAsyncLane(job, step);
 	if (lane) lines.push(...formatLaneProjectionLines(lane, theme, detailIndent));
-	const task = collapseDetails ? stepTaskSummary(step, displayName) : compactTaskText(step.description, step.label);
+	// Multi-job cards prefix every line with a 4-column tree continuation after this returns.
+	const fullTask = expanded && options?.fullTask && step.status === "running" ? expandedTaskLines(step.description, step.label, width - detailIndent.length - 4) : undefined;
+	const task = fullTask ? undefined : collapseDetails ? stepTaskSummary(step, displayName) : compactTaskText(step.description, step.label);
+	for (const line of fullTask ?? []) lines.push(`${detailIndent}${theme.fg("dim", line)}`);
 	if (task) lines.push(`${detailIndent}${theme.fg("dim", `task: ${task}`)}`);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	const currentPath = options?.includeCurrentPath && step.currentPath ? shortenPath(step.currentPath) : undefined;
@@ -2437,7 +2476,7 @@ function hostStepWidgetLines(job: AsyncJobState, theme: Theme, indent: string): 
 	return lines;
 }
 
-function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number, frame?: number, projection = buildWorkflowWidgetProjection(job)): string[] {
+function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number, frame?: number, projection = buildWorkflowWidgetProjection(job), fullTask = false): string[] {
 	const steps = projection.steps.filter((step) => !projection.materializedKeys?.has(step.workflowKey ?? "") && !projection.materializedKeys?.has(step.runId ?? ""));
 	const checklist = widgetChecklistWithoutMaterializedChildren(projection);
 	if (!expanded && job.mode === "workflow") {
@@ -2454,14 +2493,14 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 			...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 6).map((line) => `  ${line}`),
 		];
 	}
-	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame);
+	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width, frame, fullTask);
 	const lines: string[] = [
 		...(expanded ? workflowPreflightLines(job) : []),
 		...workflowChecklistWidgetLines(checklist, theme, "  ", expanded, frame, { includeItemErrors: !expanded, liveWidget: true }),
 	];
 	const group = activeParallelWidgetGroup(job);
 	if (group) {
-		lines.push(...parallelWidgetGroupDetails(job, theme, group, expanded, width, frame, Boolean(job.activeParallelGroup)));
+		lines.push(...parallelWidgetGroupDetails(job, theme, group, expanded, width, frame, Boolean(job.activeParallelGroup), fullTask));
 	} else {
 		const { stageProgress, plannedKeys } = projection;
 		const total = job.mode === "chain"
@@ -2477,7 +2516,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 			const itemTitle = isPlannedStage ? "Stage" : "Step";
 			const displayIndex = isPlannedStage ? (step.index ?? index) + 1 : plannedKeys ? ++extraStepIndex : index + 1;
 			const displayTotal = isPlannedStage ? stageTotal : extraStepCount;
-			lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, displayIndex, displayTotal, expanded, width, frame));
+			lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, displayIndex, displayTotal, expanded, width, frame, { fullTask }));
 		}
 	}
 	lines.push(...hostStepWidgetLines(job, theme, "  "));
@@ -2490,7 +2529,7 @@ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded
 }
 
 /** `reservedLines` are lines the caller renders after these, such as materialized workflow children. */
-function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number, expanded: boolean, frame?: number, projection = buildWorkflowWidgetProjection(job), reservedLines = 0): string[] {
+function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number, expanded: boolean, frame?: number, projection = buildWorkflowWidgetProjection(job), reservedLines = 0, fullTask = false): string[] {
 	if ((!expanded || projection.inlineFleetCovered) && job.mode === "workflow") return [compactWorkflowHeaderLine(job, theme, width), ...compactWorkflowWidgetBodyLines(job, theme, frame, projection, widgetLineBudget(expanded) - 1 - reservedLines)].map((line) => truncLine(line, width));
 	const stats = widgetStats(job, theme, projection, !expanded);
 	const count = job.mode === "workflow"
@@ -2506,7 +2545,7 @@ function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number,
 	return [
 		`${theme.fg("toolTitle", themeBold(theme, title))} ${theme.fg("dim", "· background")}`,
 		...(collapseDetails ? [] : [summary]),
-		...foregroundStyleWidgetDetails(job, theme, expanded, width, frame, projection),
+		...foregroundStyleWidgetDetails(job, theme, expanded, width, frame, projection, fullTask),
 	].map((line) => truncLine(line, width));
 }
 
@@ -2951,7 +2990,7 @@ function widgetChecklistWithoutMaterializedChildren(projection: WorkflowWidgetPr
 	return { ...checklist, phases: checklist.phases.map((phase) => ({ ...phase, items: phase.items.filter((item) => !materializedKeys.has(item.key)) })) };
 }
 
-function materializedWidgetChildLines(job: AsyncJobState, theme: Theme, width: number, expanded: boolean, frame: number | undefined, projectionFor: WorkflowWidgetProjectionLookup): string[] {
+function materializedWidgetChildLines(job: AsyncJobState, theme: Theme, width: number, expanded: boolean, frame: number | undefined, projectionFor: WorkflowWidgetProjectionLookup, fullTask = false): string[] {
 	const { children, inlineFleetCovered } = projectionFor(job);
 	if (inlineFleetCovered || !children?.length) return [];
 	const lines: string[] = [];
@@ -2962,8 +3001,8 @@ function materializedWidgetChildLines(job: AsyncJobState, theme: Theme, width: n
 		const identity = child.workflowKey ?? child.asyncId;
 		const stats = widgetStats(child, theme, projection, !expanded);
 		lines.push(`  ${last ? "└─" : "├─"} ${theme.bold(identity)} ${widgetStatusGlyph(child, theme, frame)} ${themeBold(theme, widgetJobName(child))}${contextModeBadge(theme, child.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`);
-		for (const detail of foregroundStyleWidgetDetails(child, theme, expanded, Math.max(0, width - 6), frame, projection)) lines.push(`  ${last ? "  " : "│ "}${detail}`);
-		for (const detail of materializedWidgetChildLines(child, theme, Math.max(0, width - 4), expanded, frame, projectionFor)) lines.push(`    ${detail}`);
+		for (const detail of foregroundStyleWidgetDetails(child, theme, expanded, Math.max(0, width - 6), frame, projection, fullTask)) lines.push(`  ${last ? "  " : "│ "}${detail}`);
+		for (const detail of materializedWidgetChildLines(child, theme, Math.max(0, width - 4), expanded, frame, projectionFor, fullTask)) lines.push(`    ${detail}`);
 	}
 	if (shown.length < children.length) lines.push(`  +${children.length - shown.length} more workflow children`);
 	return lines;
@@ -3057,11 +3096,29 @@ function buildWidgetComponent(jobs: AsyncJobState[], ui: ExtensionContext["ui"],
 	};
 }
 
+/** Running children the widget shows, counted the way it renders them: a workflow step that has
+ *  its own child job is that job's row, so it counts once. */
+function runningWidgetChildCount(jobs: AsyncJobState[], projectionFor: WorkflowWidgetProjectionLookup): number {
+	let running = 0;
+	for (const job of jobs) {
+		const { steps, materializedKeys, children } = projectionFor(job);
+		if (!steps.length && job.status === "running") running++;
+		for (const step of steps) {
+			if (step.status === "running" && !materializedKeys?.has(step.workflowKey ?? "") && !materializedKeys?.has(step.runId ?? "")) running++;
+		}
+		if (children?.length) running += runningWidgetChildCount(children, projectionFor);
+	}
+	return running;
+}
+
 function buildWidgetLinesWithProjection(jobs: AsyncJobState[], theme: Theme, width = getTermWidth(), expanded = false, frame?: number, projectionFor: WorkflowWidgetProjectionLookup = workflowWidgetProjectionLookup()): string[] {
 	if (jobs.length === 0) return [];
+	// Expanded rows show a whole task only while exactly one child runs in the whole widget; with
+	// more, the extra lines would push other running children past the widget's line budget.
+	const fullTask = expanded && runningWidgetChildCount(jobs, projectionFor) === 1;
 	if (jobs.length === 1) {
-		const childLines = materializedWidgetChildLines(jobs[0]!, theme, width, expanded, frame, projectionFor).map((line) => truncLine(line, width));
-		return [...buildSingleWidgetLines(jobs[0]!, theme, width, expanded, frame, projectionFor(jobs[0]!), childLines.length), ...childLines];
+		const childLines = materializedWidgetChildLines(jobs[0]!, theme, width, expanded, frame, projectionFor, fullTask).map((line) => truncLine(line, width));
+		return [...buildSingleWidgetLines(jobs[0]!, theme, width, expanded, frame, projectionFor(jobs[0]!), childLines.length, fullTask), ...childLines];
 	}
 	const running = jobs.filter((job) => job.status === "running");
 	const queued = jobs.filter((job) => job.status === "queued");
@@ -3089,14 +3146,14 @@ function buildWidgetLinesWithProjection(jobs: AsyncJobState[], theme: Theme, wid
 				`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
 				...widgetLaneDetailLines(job, theme, projection),
 				...workflowChecklistWidgetLines(widgetChecklistWithoutMaterializedChildren(projection), theme, "  ", expanded, frame, { includeItemErrors: !expanded || !job.steps?.length, liveWidget: true }),
-				...widgetParallelAgentDetails(job, theme, expanded, width, frame),
+				...widgetParallelAgentDetails(job, theme, expanded, width, frame, fullTask),
 			];
 		const item = [
 			compactWorkflow
 				? compactWorkflowHeaderLine(job, theme, width)
 				: `${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
 			...details,
-			...materializedWidgetChildLines(job, theme, width, expanded, frame, projectionFor),
+			...materializedWidgetChildLines(job, theme, width, expanded, frame, projectionFor, fullTask),
 		];
 		items.push(item);
 		if (compactWorkflow) compactCards.push({ item, job, projection, bodyLength: details.length });
