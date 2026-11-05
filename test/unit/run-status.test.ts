@@ -403,11 +403,11 @@ describe("async run status inspection", () => {
 
 			const profile = textContent(inspectSubagentStatus({ id: "run-profile-safety" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }));
 			assert.match(profile, /\n  Safety: access=workspace-write, .*tools=Read,Write,Edit,Glob,Grep, mcp=empty-strict/);
-			assert.match(profile, /Safety source: claude-code-writer adapter profile; command 'claude'; not measured from the launched process/);
+			assert.match(profile, /Safety source: current claude-code-writer adapter profile; command 'claude'; not measured from the launched process/);
 
 			const declared = textContent(inspectSubagentStatus({ id: "run-declared-safety" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }));
 			assert.match(declared, /Safety \(declared tools, mcp\): access=workspace-write, .*tools=Read,Glob,Grep,Bash, mcp=wrapper-injected/);
-			assert.match(declared, /Safety source: tools, mcp declared by the agent profile, other fields from the claude-code-writer adapter profile; command 'claude-verify'; not measured/);
+			assert.match(declared, /Safety source: tools, mcp declared by the agent profile, other fields from the current claude-code-writer adapter profile; command 'claude-verify'; not measured/);
 			assert.doesNotMatch(declared, /\n  Safety: /);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

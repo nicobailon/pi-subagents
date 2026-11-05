@@ -220,7 +220,9 @@ runner:
 
 `declaredSafety` needs a code-owned `adapter`. Its keys must be fields the selected adapter already records, at least one is required, string fields take a non-empty trimmed string of at most 512 characters, and boolean fields take a boolean. A declaration is the agent author's statement, not something Pi enforces or checks; it changes the record, not the launch. Status prints a declared block as `Safety (declared tools, mcp): ...` and adds a `Safety source:` line naming the command.
 
-A workflow receipt still requires every undeclared field to equal the adapter profile, so a receipt that changes `tools` without listing it in `declaredFields` is rejected. Receipts and status written before `safetySource` existed are read as the adapter profile.
+A workflow receipt still requires every undeclared field to equal the adapter profile, so a receipt that changes `tools` without listing it in `declaredFields` is rejected. Receipts and status written before `safetySource` existed are read as the adapter profile. Status rebuilds undeclared fields from the current adapter profile, so its `Safety source:` line says "current".
+
+A run placed on a Herdr saved machine launches the adapter's own argv in a remote pane and never runs `runner.command`, so an agent with `declaredSafety` is refused there before launch.
 
 #### Native oracle compared with external advisors
 

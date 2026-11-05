@@ -278,6 +278,7 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 	runnerType?: string;
 	adapter?: string;
 	worktree?: boolean;
+	declaredSafety?: boolean;
 }): string | undefined {
 	if (input.machine === undefined) return undefined;
 	const name = input.machine.trim();
@@ -295,6 +296,8 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 	if (input.runnerType === "external-cli" && (input.adapter === undefined || !SUPPORTED_MACHINE_ADAPTERS.has(input.adapter))) {
 		return `Agent '${input.agentName}' requested machine '${input.machine}', but generic external-cli commands cannot be remote-wrapped safely. Use claude-code, claude-code-writer, codex-exec, codex-exec-writer, cursor-agent, or cursor-agent-writer.`;
 	}
+	// The pane launch builds the adapter's own argv and never runs runner.command, so a declared wrapper grant would be false.
+	if (input.declaredSafety === true) return `Agent '${input.agentName}' requested machine '${input.machine}', but declares runner.declaredSafety for a wrapper command. A Herdr saved machine launches the adapter's own argv without that command. Remove the machine or the declaration.`;
 	if (input.worktree === true) return `Agent '${input.agentName}' requested machine '${input.machine}', but managed worktrees are local git operations and cannot be combined with a Herdr saved machine.`;
 	if (process.platform === "win32") return "Herdr saved-machine pane transport requires hardened OpenSSH StreamLocal forwarding, which is not supported from a Windows host yet.";
 	return undefined;

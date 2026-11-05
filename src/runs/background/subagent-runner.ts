@@ -931,6 +931,7 @@ export async function runSingleStepInner(
 		}
 		if (step.machine) {
 			if (step.machine.provider !== "herdr") throw new Error("Rex supports native Pi children only.");
+			if (step.runner.declaredSafety) throw new Error("A Herdr saved machine launches the adapter's own argv, so runner.declaredSafety cannot describe it.");
 			const runner = resolveExternalCliRunnerStatus({ ...step.runner, machine: step.machine });
 			const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 			const placedRunId = `${ctx.id}-${ctx.flatIndex}`;

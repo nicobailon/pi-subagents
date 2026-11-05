@@ -669,8 +669,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 							else if ("authentication" in runner.safety) lines.push(`  ${safetyLabel}: access=${runner.safety.access}, auth=${runner.safety.authentication}, permission=${runner.safety.permissionMode}, tools=${runner.safety.tools}, mcp=${runner.safety.mcp}, settings=${runner.safety.settingSources}, settingsTrust=${runner.safety.userSettingsTrust}, persistence=${runner.safety.sessionPersistence}`);
 							else lines.push(`  ${safetyLabel}: access=read-only, permission=${runner.safety.permissionMode}, tools=${runner.safety.tools}, mcp=${runner.safety.mcp}, settings=${runner.safety.settingSources}, persistence=${runner.safety.sessionPersistence}`);
 							lines.push(declared.length > 0
-								? `  Safety source: ${declared.join(", ")} declared by the agent profile, other fields from the ${runner.adapter.id} adapter profile; command '${runner.command}'; not measured from the launched process`
-								: `  Safety source: ${runner.adapter.id} adapter profile; command '${runner.command}'; not measured from the launched process`);
+								? `  Safety source: ${declared.join(", ")} declared by the agent profile, other fields from the current ${runner.adapter.id} adapter profile; command '${runner.command}'; not measured from the launched process`
+								: `  Safety source: current ${runner.adapter.id} adapter profile; command '${runner.command}'; not measured from the launched process`);
 						}
 						lines.push(`  Capabilities: stop=${runner.capabilities.stop}, steer=false, resume=false, structuredOutput=false, toolEvents=false, supervisor=unsupported, forkContext=false, extensionBindings=false`);
 						lines.push(`  Unsupported steer: ${runner.unsupportedReasons.steer}`);

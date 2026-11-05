@@ -140,6 +140,11 @@ describe("Herdr machine placement", () => {
 	});
 
 	describe("launch gating", () => {
+		it("rejects declared wrapper safety, because the pane launch never runs the wrapper command", () => {
+			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "wrapped", runnerType: "external-cli", adapter: "claude-code-writer", declaredSafety: true }) ?? "", /declares runner\.declaredSafety for a wrapper command/u);
+			if (process.platform !== "win32") assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "writer", runnerType: "external-cli", adapter: "claude-code-writer", declaredSafety: false }), undefined);
+		});
+
 		it("allows native Pi but rejects generic adapters and worktrees with a pointer", () => {
 			if (process.platform !== "win32") assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "reviewer", runnerType: "pi" }), undefined);
 			assert.match(formatHerdrMachineRunnerUnsupported({ machine: "workmac", agentName: "generic", runnerType: "external-cli" }) ?? "", /generic external-cli commands cannot be remote-wrapped/u);
