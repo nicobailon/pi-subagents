@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { createAtomicJsonWriter } from "../shared/atomic-json.ts";
 import { resolveSettingsWriteTarget, withSettingsFileLease } from "../shared/settings-file-lease.ts";
 import { RUNNER_LAUNCHER_NAME_PATTERN, RUNNER_LAUNCHER_NAME_RULE, type AcceptanceInput, type AcceptanceRole, type AgentRunnerConfig, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "../shared/types.ts";
-import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
+import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, parseExternalCliDeclaredSafety, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { isClaudeCodeAdapterId } from "../runs/shared/claude-code-adapter.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { expandHomePath } from "../shared/settings.ts";
@@ -2109,7 +2109,8 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 		throw new Error(`Agent '${agentName}' external-cli runner promptDelivery must be 'stdin'.`);
 	}
 	const capabilities = parseExternalCliCapabilityNarrowing(runner.capabilities, `Agent '${agentName}' external-cli runner capabilities`);
-	const supported = new Set(["type", "adapter", "command", "args", "promptDelivery", "capabilities"]);
+	const declaredSafety = parseExternalCliDeclaredSafety(runner.declaredSafety, isCodeOwnedExternalCliAdapterId(runner.adapter) ? runner.adapter : undefined, `Agent '${agentName}' external-cli runner declaredSafety`);
+	const supported = new Set(["type", "adapter", "command", "args", "promptDelivery", "capabilities", "declaredSafety"]);
 	const unknown = Object.keys(runner).filter((key) => !supported.has(key));
 	if (unknown.length > 0) throw new Error(`Agent '${agentName}' external-cli runner has unsupported fields: ${unknown.join(", ")}.`);
 	const runnerArgs = Array.isArray(runner.args) ? runner.args.filter((arg): arg is string => typeof arg === "string") : undefined;
@@ -2120,6 +2121,7 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 		...(runnerArgs?.length ? { args: runnerArgs } : {}),
 		...(runner.promptDelivery ? { promptDelivery: "stdin" as const } : {}),
 		...(capabilities ? { capabilities } : {}),
+		...(declaredSafety ? { declaredSafety } : {}),
 	};
 }
 

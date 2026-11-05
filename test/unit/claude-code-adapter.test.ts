@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { discoverAgents, discoverAgentsAll, resolveAgentName } from "../../src/agents/agents.ts";
 import { CLAUDE_CODE_ADAPTER_ID, CLAUDE_CODE_ENV_ALLOWLIST, CLAUDE_CODE_WRITER_ADAPTER_ID, CLAUDE_CODE_WRITER_TOOLS, createClaudeCodeJsonlParser, resolveClaudeCodeLaunch, resolveClaudeCodeOverride } from "../../src/runs/shared/claude-code-adapter.ts";
-import { externalCliReceiptMetadata, resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
+import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus, resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import { clearExternalCliPreflightCacheForTests } from "../../src/runs/shared/external-cli-preflight.ts";
 import { runExternalCli } from "../../src/runs/shared/external-cli-runner.ts";
 import { buildWorkflowReceipt, readWorkflowReceipt, writeWorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
@@ -168,8 +168,97 @@ describe("Claude Code adapter", () => {
 			state: "complete",
 			children: [{ key: "claude", ok: true, output: "done", resumability: { state: "not-resumable", reason: writer.nonResumableReason }, continuation: { runIds: [] }, externalAdapter: externalCliReceiptMetadata({ runner: resolveExternalCliRunnerStatus({ adapter: "claude-code", command: "claude" }) }), results: [], artifactPaths: [] }],
 		});
-		fs.writeFileSync(path.join(runDir, "workflow-receipt.json"), JSON.stringify(legacy, (key, value) => key === "safety" ? { permissionMode: "plan", tools: "none", mcp: "empty-strict", settingSources: "none", sessionPersistence: false } : value), "utf-8");
+		fs.writeFileSync(path.join(runDir, "workflow-receipt.json"), JSON.stringify(legacy, (key, value) => key === "safetySource" ? undefined : key === "safety" ? { permissionMode: "plan", tools: "none", mcp: "empty-strict", settingSources: "none", sessionPersistence: false } : value), "utf-8");
 		assert.equal(readWorkflowReceipt(root, "legacy-claude").entries.claude?.externalAdapter?.adapter.id, "claude-code");
+	});
+
+	it("records the launch command and that the adapter profile is not measured", () => {
+		const runner = resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "claude" });
+		assert.deepEqual(runner.safetySource, { measured: false, command: "claude", declaredFields: [] });
+		assert.deepEqual(externalCliReceiptMetadata({ runner }).safetySource, runner.safetySource);
+		assert.equal(resolveExternalCliRunnerStatus({ command: "review-cli" }).safetySource, undefined);
+	});
+
+	it("merges declared wrapper safety over the writer profile through status and receipts", () => {
+		const declaredSafety = { permissionMode: "default", tools: "Read,Glob,Grep,Bash,WebFetch,WebSearch", mcp: "wrapper-injected" };
+		const runner = resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "/opt/wrappers/claude-verify", declaredSafety });
+		assert.deepEqual(runner.safety, { access: "workspace-write", authentication: "existing-cli-required", permissionMode: "default", tools: "Read,Glob,Grep,Bash,WebFetch,WebSearch", mcp: "wrapper-injected", settingSources: "user", userSettingsTrust: "required", sessionPersistence: false });
+		assert.deepEqual(runner.safetySource, { measured: false, command: "/opt/wrappers/claude-verify", declaredFields: ["permissionMode", "tools", "mcp"] });
+		assert.deepEqual(normalizeExternalCliRunnerStatus(JSON.parse(JSON.stringify(runner))), runner);
+
+		const root = tempDir();
+		const runDir = path.join(root, "declared");
+		fs.mkdirSync(runDir);
+		const metadata = externalCliReceiptMetadata({ runner });
+		const receipt = buildWorkflowReceipt({
+			workflowRunId: "declared",
+			state: "complete",
+			children: [{ key: "claude", ok: true, output: "done", resumability: { state: "not-resumable", reason: metadata.nonResumableReason }, continuation: { runIds: [] }, externalAdapter: metadata, results: [], artifactPaths: [] }],
+		});
+		writeWorkflowReceipt(runDir, receipt);
+		const persisted = readWorkflowReceipt(root, "declared").entries.claude?.externalAdapter;
+		assert.deepEqual(persisted?.safety, runner.safety);
+		assert.deepEqual(persisted?.safetySource, runner.safetySource);
+	});
+
+	it("rejects a receipt whose undeclared safety differs from the adapter profile", () => {
+		const root = tempDir();
+		const runDir = path.join(root, "drift");
+		fs.mkdirSync(runDir);
+		const runner = resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "/opt/wrappers/claude-verify", declaredSafety: { mcp: "wrapper-injected" } });
+		const metadata = externalCliReceiptMetadata({ runner });
+		const receipt = buildWorkflowReceipt({
+			workflowRunId: "drift",
+			state: "complete",
+			children: [{ key: "claude", ok: true, output: "done", resumability: { state: "not-resumable", reason: metadata.nonResumableReason }, continuation: { runIds: [] }, externalAdapter: metadata, results: [], artifactPaths: [] }],
+		});
+		const write = (replace: (key: string, value: unknown) => unknown): void => fs.writeFileSync(path.join(runDir, "workflow-receipt.json"), JSON.stringify(receipt, replace), "utf-8");
+
+		write((key, value) => key === "tools" ? "Read,Write,Edit,Glob,Grep,Bash" : value);
+		assert.throws(() => readWorkflowReceipt(root, "drift"), /externalAdapter\.safety is invalid/);
+		write((key, value) => key === "declaredFields" ? [] : value);
+		assert.throws(() => readWorkflowReceipt(root, "drift"), /externalAdapter\.safety is invalid/);
+		write((key, value) => key === "declaredFields" ? ["mcp", "network"] : value);
+		assert.throws(() => readWorkflowReceipt(root, "drift"), /externalAdapter\.safety has unsupported fields: network/);
+		write((key, value) => key === "mcp" ? "" : value);
+		assert.throws(() => readWorkflowReceipt(root, "drift"), /externalAdapter\.safety\.mcp must be a non-empty trimmed string/);
+		write((key, value) => key === "measured" ? true : value);
+		assert.throws(() => readWorkflowReceipt(root, "drift"), /externalAdapter\.safetySource is invalid/);
+		write((key, value) => key === "safety" ? undefined : value);
+		assert.throws(() => readWorkflowReceipt(root, "drift"), /externalAdapter\.safety is missing/);
+		write((key, value) => key === "declaredFields" ? ["mcp", "tools"] : key === "tools" ? "Read,Write,Edit,Glob,Grep,Bash" : value);
+		assert.equal(readWorkflowReceipt(root, "drift").entries.claude?.externalAdapter?.safety?.mcp, "wrapper-injected");
+	});
+
+	it("treats persisted status with an invalid declared safety field as invalid runner metadata", () => {
+		const runner = resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "claude-verify", declaredSafety: { tools: "Read,Bash" } });
+		const persisted = JSON.parse(JSON.stringify(runner));
+		persisted.safetySource.declaredFields = ["tools", "network"];
+		assert.equal(normalizeExternalCliRunnerStatus(persisted), undefined);
+		persisted.safetySource.declaredFields = ["tools"];
+		persisted.safety.tools = 7;
+		assert.equal(normalizeExternalCliRunnerStatus(persisted), undefined);
+		persisted.safetySource.declaredFields = [];
+		assert.equal(normalizeExternalCliRunnerStatus(persisted)?.safety?.tools, "Read,Write,Edit,Glob,Grep");
+	});
+
+	it("accepts declared safety frontmatter only for fields of the selected adapter", () => {
+		const dir = tempDir();
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		const agent = (name: string, runner: string): void => fs.writeFileSync(path.join(agentsDir, `${name}.md`), `---\nname: ${name}\ndescription: Wrapped writer\nrunner:\n  type: external-cli\n${runner}---\nWrite.\n`, "utf-8");
+		agent("wrapped", "  adapter: claude-code-writer\n  command: claude-verify\n  declaredSafety:\n    tools: Read,Write,Edit,Glob,Grep,Bash\n    sessionPersistence: false\n");
+		agent("unknown-field", "  adapter: claude-code-writer\n  command: claude-verify\n  declaredSafety:\n    network: open\n");
+		agent("wrong-kind", "  adapter: claude-code-writer\n  command: claude-verify\n  declaredSafety:\n    sessionPersistence: \"no\"\n");
+		agent("empty", "  adapter: claude-code-writer\n  command: claude-verify\n  declaredSafety: {}\n");
+		agent("generic", "  command: review-cli\n  declaredSafety:\n    tools: Bash\n");
+		const discovered = discoverAgentsAll(dir);
+		assert.deepEqual(discovered.project.find((candidate) => candidate.name === "wrapped")?.runner, { type: "external-cli", adapter: "claude-code-writer", command: "claude-verify", declaredSafety: { tools: "Read,Write,Edit,Glob,Grep,Bash", sessionPersistence: false } });
+		const error = (name: string): string => discovered.agentDiagnostics?.find((diagnostic) => diagnostic.name === name)?.error ?? "";
+		assert.match(error("unknown-field"), /declaredSafety has unsupported fields: network\. The 'claude-code-writer' adapter records: access, authentication/);
+		assert.match(error("wrong-kind"), /declaredSafety\.sessionPersistence must be a boolean/);
+		assert.match(error("empty"), /declaredSafety must declare at least one field/);
+		assert.match(error("generic"), /declaredSafety requires a code-owned adapter/);
 	});
 
 	it("discovers the built-in profile without probing Claude Code", () => {

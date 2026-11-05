@@ -8,6 +8,7 @@ import { updateActiveRunIndex } from "../../src/runs/background/active-run-index
 import { summarizeAsyncStatus } from "../../src/runs/background/async-status.ts";
 import { formatAsyncResultTranscript, formatAsyncRunTranscript } from "../../src/runs/background/fleet-view.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
+import { resolveExternalCliRunnerStatus } from "../../src/runs/shared/external-cli-contract.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { TEMP_ROOT_DIR, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
@@ -383,6 +384,31 @@ describe("async run status inspection", () => {
 			assert.equal(result.isError, undefined);
 			assert.match(text, /Adapter: external-cli v1 \(one-shot-stdin\)/);
 			assert.match(text, /Unsupported resume: The one-shot stdin adapter has no durable external session identity/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("labels external-cli safety as an unmeasured profile and names declared fields", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-declared-safety-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			for (const [runId, runner] of [
+				["run-profile-safety", resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "claude" })],
+				["run-declared-safety", resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "claude-verify", declaredSafety: { tools: "Read,Glob,Grep,Bash", mcp: "wrapper-injected" } })],
+			] as const) {
+				fs.mkdirSync(path.join(asyncRoot, runId), { recursive: true });
+				fs.writeFileSync(path.join(asyncRoot, runId, "status.json"), JSON.stringify({ runId, mode: "single", state: "complete", startedAt: 100, lastUpdate: 200, steps: [{ agent: "writer", status: "complete", runner }] }), "utf-8");
+			}
+
+			const profile = textContent(inspectSubagentStatus({ id: "run-profile-safety" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }));
+			assert.match(profile, /\n  Safety: access=workspace-write, .*tools=Read,Write,Edit,Glob,Grep, mcp=empty-strict/);
+			assert.match(profile, /Safety source: claude-code-writer adapter profile; command 'claude'; not measured from the launched process/);
+
+			const declared = textContent(inspectSubagentStatus({ id: "run-declared-safety" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }));
+			assert.match(declared, /Safety \(declared tools, mcp\): access=workspace-write, .*tools=Read,Glob,Grep,Bash, mcp=wrapper-injected/);
+			assert.match(declared, /Safety source: tools, mcp declared by the agent profile, other fields from the claude-code-writer adapter profile; command 'claude-verify'; not measured/);
+			assert.doesNotMatch(declared, /\n  Safety: /);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
