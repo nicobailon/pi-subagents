@@ -2,17 +2,26 @@
 
 ## [Unreleased]
 
+## [0.86.0] - 2026-11-05
+
+### Highlights
+
+- Sessions no longer lose their subagent tools after a compaction when pi-subagents had been reloaded or updated earlier in the session.
+- Typed JSON checks pass on KDE desktops again, where common environment values were mistaken for secrets and broke the JSON.
+- With one background agent running, the expanded widget shows its whole task instead of one line cut at 96 characters.
+- Status for Claude Code, Codex and Cursor agents now says plainly that its safety settings are the adapter's defaults, not something measured from the running process.
+
 ### Changed
 
-- When one background child is running, the expanded background-agents widget now shows its task as written, with its line breaks kept and wrapped to the terminal width, up to 8 lines. Before, it was squeezed onto one line and cut at 96 characters. With two or more children running, each keeps the one-line task so every running child stays on screen, and the collapsed widget is unchanged. The expanded result of a foreground call already shows the whole task. Thanks to [@marshamonkey25-hue](https://github.com/marshamonkey25-hue) for the report. (#3187)
+- When one background child is running, the expanded background-agents widget shows its task as written: line breaks kept, wrapped to the terminal width, up to 8 lines. Before, it was squeezed onto one line and cut at 96 characters. With two or more children running, each keeps a one-line task so every running child stays on screen. The collapsed widget is unchanged. Thanks to [@marshamonkey25-hue](https://github.com/marshamonkey25-hue) for the report. (#3187)
+- The safety settings shown for a Claude Code, Codex or Cursor agent are now labelled `Safety (adapter profile, not measured)`. They are what the adapter asks the CLI for, and a wrapper script set as `runner.command` can grant something different. Run status and workflow receipts also record `safetySource: { measured: false, command }`, naming the command that launched the run; runs on a Herdr saved machine record no command, because the remote machine runs its own CLI. See [Safety record and wrapper commands](docs/agents.md#safety-record-and-wrapper-commands). Thanks to [@drye](https://github.com/drye) for #3199.
 
 ### Fixed
 
-- The `safety` record of a code-owned external CLI run no longer reads as a measurement. It is the adapter's profile, and a `runner.command` wrapper that rewrites argv could grant different tools or MCP servers while status and receipts showed the profile as fact. Status now labels it `Safety (adapter profile, not measured)`, and runner status and workflow receipts carry `safetySource: { measured: false, command }` naming the launch command (none for a run on a Herdr saved machine, which runs the remote adapter binary). See [Safety record and wrapper commands](docs/agents.md#safety-record-and-wrapper-commands). Thanks to [@drye](https://github.com/drye) for #3199.
-- A session whose subagent tools were turned off by an extension unload (an update or reload) gets them back after a compaction. Before, if the unload came before the compaction, the session resumed with neither `subagent` nor `subagents_enable`, and restarting or forking it did not help. The tools from before the unload are now restored, as they already were without a compaction; tools you removed yourself stay removed. Thanks to [@chuducandev](https://github.com/chuducandev) for the report. (#3198)
-- A passing `output: "json"` gate no longer fails as "not valid JSON" when an environment variable with a secret-looking name holds a common value, such as `KDE_FULL_SESSION=true` or `XDG_SESSION_CLASS=user` on KDE. The gate's stdout is now parsed before secrets are redacted, and the redaction is applied to the parsed value's strings, keys and numbers instead, so `true`, `null` and the JSON syntax are left alone. Thanks to [@nhp](https://github.com/nhp) for the report. (#3191)
-- A custom `subagent` tool description that uses `{{compactDescription}}` or `{{fullDescription}}` no longer describes features turned off with `disabledFeatures`. Before, the placeholders always inserted the text for every feature, so with workflow scripts disabled the model was told how to write workflow scripts. Thanks to [@ohlulu](https://github.com/ohlulu) for the report. (#3192)
-- A child's `structured_output` call no longer fails with a bare `RangeError: Maximum call stack size exceeded` when the `outputSchema` refers to itself through `$ref` (for example `{"allOf": [{"$ref": "#"}]}`). The call is now rejected with "Structured output validation failed: outputSchema cannot be validated (cyclic or too deep)", and typed gates, dynamic fanout and saved structured output report the same error instead of throwing. Thanks to [@G0-0000](https://github.com/G0-0000) for the report. (#3190)
+- A session whose subagent tools were turned off when pi-subagents was reloaded or updated now gets them back after a compaction. Before, if the reload came before the compaction, the session resumed with neither `subagent` nor `subagents_enable`, and restarting or forking it did not help. Tools you removed yourself stay removed. Thanks to [@chuducandev](https://github.com/chuducandev) for the report. (#3198)
+- A passing `output: "json"` check no longer fails as "not valid JSON" when an environment variable with a secret-looking name holds a common value, such as `KDE_FULL_SESSION=true` or `XDG_SESSION_CLASS=user` on KDE. The output is now parsed first and secrets are hidden afterwards, in the parsed strings, keys and numbers, so values like `true` and `null` are left alone. Thanks to [@nhp](https://github.com/nhp) for the report. (#3191)
+- A child's `structured_output` call no longer crashes with `RangeError: Maximum call stack size exceeded` when the `outputSchema` refers to itself through `$ref` (for example `{"allOf": [{"$ref": "#"}]}`). It now fails with "Structured output validation failed: outputSchema cannot be validated (cyclic or too deep)", and typed checks, dynamic fanout and saved structured output report the same error. Thanks to [@G0-0000](https://github.com/G0-0000) for the report. (#3190)
+- A custom `subagent` tool description that uses `{{compactDescription}}` or `{{fullDescription}}` no longer describes features turned off with `disabledFeatures`. Before, with workflow scripts disabled, the model was still told how to write them. Thanks to [@ohlulu](https://github.com/ohlulu) for the report. (#3192)
 
 ## [0.85.0] - 2026-11-04
 
