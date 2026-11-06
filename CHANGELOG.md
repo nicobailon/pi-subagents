@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- When a `parallel` workflow, `tasks` or `chain` item has a field it does not accept, the error now says how to keep what that field asked for. For `output`, it explains that `output` on the outer call writes one file per child, and that exact per-child paths need a workflow script with `runs.all`. Fields such as `worktree` are pointed to the outer call, and unknown fields get no placement advice. The error also says that no child was launched. Thanks to [@cash-flow-king](https://github.com/cash-flow-king) for the report. (#3207)
 - `mcp:` selectors now resolve for pi-mcp-adapter servers that set `directTools: "search"` or use `${NAME:-default}` in their configuration. Before, pi-subagents dropped a `"search"` server from the configuration, and a `${NAME:-default}` value gave a server a different cache hash than the adapter computed. In both cases, every selector for the server was unresolved. A server URL that used a default also failed the launch. Thanks to [@acolomba](https://github.com/acolomba) for #3201.
 
 ## [0.86.0] - 2026-11-05

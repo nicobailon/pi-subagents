@@ -209,6 +209,9 @@ describe("structured workflow resources", () => {
 			[{ kind: "tasks", steps: [{ agent: "a", task: "t", cwd: " " }] }, /tasks\[0\]\.cwd must not be empty/],
 			[{ kind: "tasks", steps: [{ agent: "a", task: "t", model: 1 }] }, /tasks\[0\]\.model must be a non-empty string/],
 			[{ kind: "tasks", steps: [{ agent: "a", task: "t", count: 2 }] }, /unsupported fields: count/],
+			// Top-level tasks and chain exist only with workflow scripts disabled, so the advice must not offer workflow: true.
+			[{ kind: "tasks", steps: [{ agent: "a", task: "t", output: "a.md" }] }, /For exact or different per-child paths, you need workflow scripts, which disabledFeatures has turned off\./],
+			[{ kind: "chain", steps: [{ agent: "a", task: "t", label: "x" }] }, /For per-child label, you need workflow scripts, which disabledFeatures has turned off\. No child was launched\.$/],
 			[{ kind: "tasks", steps: [{ agent: "a" }] }, /tasks\[0\]\.task must be a non-empty string/],
 			[{ kind: "tasks", steps: [{ task: "t" }] }, /tasks\[0\]\.agent must be a non-empty string/],
 			[{ kind: "tasks", steps: [{ agent: "a", task: 3 }] }, /tasks\[0\]\.task must be a non-empty string/],
@@ -223,7 +226,7 @@ describe("structured workflow resources", () => {
 			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t" }], agent: "b" }] }, /unsupported fields: agent/],
 			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t" }], failFast: true }] }, /unsupported fields: failFast/],
 			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t", worktree: true }] }] }, /chain\[0\]\.parallel\[0\] contains unsupported fields: worktree/],
-			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t" }], cwd: "/x" }] }, /chain\[0\] contains unsupported fields: cwd\. A parallel step accepts only parallel/],
+			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t" }], cwd: "/x" }] }, /chain\[0\] contains unsupported fields: cwd\. A parallel step accepts only parallel.* Set cwd on each item, or on the subagent call itself/],
 			[{ kind: "chain", steps: [{ agent: "a", task: "t", model: 2 }] }, /chain\[0\]\.model must be a non-empty string/],
 			[{ kind: "chain", steps: [{ parallel: [{ agent: "a" }] }] }, /chain\[0\]\.parallel\[0\]\.task must be a non-empty string/],
 			[{ kind: "chain", steps: [{ parallel: [] }] }, /chain\[0\]\.parallel must be a non-empty array/],
