@@ -4,6 +4,7 @@
 
 ### Added
 
+- `stop` with `drain: true` winds an async workflow down: it starts no new children, lets the ones already running finish and report, then ends as stopped. Before, stopping a workflow also killed the children that were running. Thanks to [@nnayr](https://github.com/nnayr) for the report. (#3202)
 - `subagents.defaultInheritGlobalContext: true` gives every subagent your global `~/.pi/agent/AGENTS.md`, without listing each agent in `agentOverrides`. An agent that sets `inheritGlobalContext: false` still opts out. Thanks to [@imagebuilder1837](https://github.com/imagebuilder1837) for the report. (#3206)
 
 ### Fixed

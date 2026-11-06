@@ -19,7 +19,7 @@ type WorkflowResumeTrigger = "auto" | "manual";
 export type WorkflowResumeRefusalCode =
 	| "not-owned" | "not-interrupted" | "claim-busy" | "claim-resumed"
 	| "launch-missing" | "launch-invalid" | "structured" | "internal" | "digest" | "authority"
-	| "capacity" | "attempts" | "launch-failed";
+	| "capacity" | "attempts" | "launch-failed" | "drained";
 
 export interface WorkflowResumeRefusalReason {
 	code: WorkflowResumeRefusalCode;
@@ -42,7 +42,7 @@ export interface PreparedWorkflowResume {
 type WorkflowResumePreparation = { ok: true; prepared: PreparedWorkflowResume } | ({ ok: false } & WorkflowResumeRefusalReason);
 
 export function workflowResumeRefusal(code: WorkflowResumeRefusalCode, reason: string, runId: string): WorkflowResumeRefusalReason {
-	const byHand = code === "launch-missing" || code === "launch-invalid" || code === "structured" || code === "internal" || code === "digest" || code === "authority"
+	const byHand = code === "launch-missing" || code === "launch-invalid" || code === "structured" || code === "internal" || code === "digest" || code === "authority" || code === "drained"
 		? relaunchByHandText(runId)
 		: code === "capacity" || code === "attempts" || code === "launch-failed" ? resumeByHandText(runId) : "";
 	return { code, reason, byHand };
@@ -92,6 +92,7 @@ export function prepareWorkflowResume(input: { asyncDirRoot: string; sourceRunId
 	if (trigger === "manual") reconcileAsyncRun(sourceAsyncDir);
 	const status = readStatus(sourceAsyncDir);
 	if (!status || status.mode !== "workflow" || !isReusableWorkflowStopCause(status.workflow?.stopCause)) return refuse("not-interrupted", "not interrupted; pass message to revive one of its children");
+	if (status.workflow?.drainRequestedAt !== undefined) return refuse("drained", "it was being drained when it was interrupted");
 	// The attempt the resumed run records: only resumes that follow a Pi exit count.
 	const attempt = (status.workflow?.resumeOrigin?.attempt ?? 0) + (status.workflow?.stopCause === WORKFLOW_STOP_CAUSE_OWNER_EXITED ? 1 : 0);
 	if (trigger === "auto" && attempt > MAX_WORKFLOW_RESUME_ATTEMPTS) return refuse("attempts", `${MAX_WORKFLOW_RESUME_ATTEMPTS} resumes already followed Pi exits`);

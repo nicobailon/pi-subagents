@@ -2156,10 +2156,10 @@ Answer only from the supplied synthetic text.
 				workflowControllers.get(runId)!.abort(reason);
 				return await settled(runId);
 			};
-			const stopAction = (target: { id: string } | { dir: string }, sessionId?: string) => {
+			const stopAction = (target: { id: string } | { dir: string }, sessionId?: string, extra: Record<string, unknown> = {}) => {
 				const ctx = makeMinimalCtx(tempDir);
 				if (sessionId) ctx.sessionManager.getSessionId = () => sessionId;
-				return executor.execute(`workflow-stop-${Date.now()}`, { action: "stop", ...target }, new AbortController().signal, undefined, ctx);
+				return executor.execute(`workflow-stop-${Date.now()}`, { action: "stop", ...target, ...extra }, new AbortController().signal, undefined, ctx);
 			};
 			return { start, launch, waitFor, settled, stopWhenStage2Starts, stopAction };
 		};
@@ -2644,6 +2644,28 @@ Answer only from the supplied synthetic text.
 				const workflowStopRequests = path.join(DIRS.async, runId, "control", "stop-requests");
 				assert.deepEqual(fs.existsSync(workflowStopRequests) ? fs.readdirSync(workflowStopRequests) : [], [], `${form}: no unread stop request is left for the in-process workflow`);
 			}
+		});
+
+		it("drains a workflow: the started child finishes and the next one never launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `drain-${Date.now()}`;
+			const release = path.join(tempDir, `${nonce}.release`);
+			const { launch, waitFor, settled, stopAction } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, waitForPath: release, output: "stage one done" });
+			const callsBefore = mockPi.callCount();
+			const runId = await launch({ workflowScript: `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); await runs.run("stage2", { agent: "echo", task: "Stage two ${nonce}" });` });
+			await waitFor(runId, (status) => status.steps?.find((step) => step.workflowKey === "stage1")?.status === "running");
+			assert.equal((await stopAction({ id: runId }, undefined, { drain: true, childId: "stage1" })).isError, true);
+			const result = await stopAction({ id: runId }, undefined, { drain: true });
+			assert.equal(result.content[0]?.text, `Drain requested for async workflow ${runId}: no new children will start; 1 started child(ren) will finish.`);
+			assert.equal(typeof readStatusFile(runId).workflow?.drainRequestedAt, "number");
+			fs.writeFileSync(release, "go");
+			const drained = await settled(runId);
+			assert.equal(drained.state, "stopped");
+			assert.equal(drained.workflowChildren?.children.find((row) => row.childId === "stage1")?.state, "completed");
+			assert.equal(drained.workflowChildren?.children.some((row) => row.childId === "stage2"), false);
+			assert.equal(mockPi.callCount(), callsBefore + 1, "stage2 never launches");
+			assert.equal(typeof drained.workflow?.drainRequestedAt, "number");
+			assert.equal((await stopAction({ id: runId }, undefined, { drain: true })).isError, true, "a finished workflow cannot be drained");
 		});
 
 		it("stops a re-attached child when the user stops the relaunched workflow", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

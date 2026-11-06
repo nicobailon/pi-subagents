@@ -1539,6 +1539,8 @@ export interface Details {
 		ownerExitedAt?: number;
 		/** Set on a run that resumes an interrupted one; `attempt` counts resumes that followed Pi exits. */
 		resumeOrigin?: { sourceRunId: string; attempt: number };
+		/** When `stop` with `drain` was requested (epoch ms). A drained run is never resumed. */
+		drainRequestedAt?: number;
 		resource?: WorkflowResourceProvenance;
 		preflightWarnings?: string[];
 		trace: Array<{
@@ -2420,6 +2422,8 @@ export interface SubagentState {
 	workflowControllers?: Map<string, AbortController>;
 	/** Live in-process workflow child stoppers keyed by parent workflow run id. */
 	workflowChildStops?: Map<string, (childId: string, message?: string) => boolean>;
+	/** Live in-process workflow drains keyed by workflow run id; each returns the count of started children left to finish. */
+	workflowDrains?: Map<string, () => number>;
 	/** Background children awaited by a blocking workflow call: their parent cannot answer supervisor asks. */
 	blockingWorkflowChildren?: Set<string>;
 }

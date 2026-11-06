@@ -317,6 +317,7 @@ export interface SubagentParamsLike {
 	index?: number;
 	toolCallId?: string;
 	childId?: string;
+	drain?: boolean;
 	view?: "fleet" | "transcript";
 	lines?: number;
 	topic?: string;
@@ -5789,7 +5790,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const completionOwnerId = deps.state.completionOwnerId ?? currentCompletionOwnerId();
 				deps.state.completionOwnerId = completionOwnerId;
 				const workflowScriptSourceDigest = workflowScriptDigest(requestParams.workflowScript);
-				const workflowRunEvidence: Pick<NonNullable<AsyncStatus["workflow"]>, "args" | "argsDigest" | "scriptDigest" | "reusedFrom" | "stopCause" | "resumeOrigin"> = { ...workflowArgsEvidence, scriptDigest: workflowScriptSourceDigest };
+				const workflowRunEvidence: Pick<NonNullable<AsyncStatus["workflow"]>, "args" | "argsDigest" | "scriptDigest" | "reusedFrom" | "stopCause" | "resumeOrigin" | "drainRequestedAt"> = { ...workflowArgsEvidence, scriptDigest: workflowScriptSourceDigest };
 				if (workflowReuseSource) workflowRunEvidence.reusedFrom = workflowReuseSource.runId;
 				// In the first persisted status, before any child launches, so a later resume can count attempts.
 				if (workflowResumeLaunch) workflowRunEvidence.resumeOrigin = workflowResumeLaunch.resumeOrigin;
@@ -6394,6 +6395,21 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (stop) deps.state.workflowChildStops?.set(workflowRunId, stop);
 								else deps.state.workflowChildStops?.delete(workflowRunId);
 							},
+							registerDrain: (drain) => {
+								if (!drain) {
+									deps.state.workflowDrains?.delete(workflowRunId);
+									return;
+								}
+								(deps.state.workflowDrains ??= new Map()).set(workflowRunId, () => {
+									// Persisted before any child is stopped, so a reload during the drain cannot resume the run.
+									if (workflowRunEvidence.drainRequestedAt === undefined) {
+										workflowRunEvidence.drainRequestedAt = Date.now();
+										status.workflow = { ...(status.workflow ?? { trace: [], emits: [], console: [] }), drainRequestedAt: workflowRunEvidence.drainRequestedAt };
+										persist({ tolerateStatusWriteFailure: true });
+									}
+									return drain(() => controller.abort(new Error("Workflow drained: started children finished; no new children were started.")));
+								});
+							},
 							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
 							onChildSettled: (notification) => {
@@ -6689,6 +6705,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						persistClosed = true;
 						deps.state.workflowControllers?.delete(workflowRunId);
 						deps.state.workflowChildStops?.delete(workflowRunId);
+						deps.state.workflowDrains?.delete(workflowRunId);
 						deps.state.activeAsyncCapacity = workflowCapacity?.reconcile(new Set(deps.state.workflowControllers?.keys() ?? []))
 							?? deps.state.activeAsyncCapacity;
 					}
@@ -7526,6 +7543,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (action === "stop") {
 				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+				if (paramsWithResolvedCwd.drain && paramsWithResolvedCwd.childId !== undefined) return { content: [{ type: "text", text: "action='stop' drain applies to a whole workflow; omit childId." }], isError: true, details: { mode: "management", results: [] } };
 				// Whole-workflow stops reach stopAsyncRun below, which stops a live workflow in-process.
 				const workflowRunId = targetRunId && paramsWithResolvedCwd.childId !== undefined ? resolveLiveWorkflowRunId(deps, targetRunId) : undefined;
 				if (workflowRunId && paramsWithResolvedCwd.childId !== undefined) {
@@ -7565,7 +7583,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (paramsWithResolvedCwd.dir) {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, DIRS.async, DIRS.results);
-						const stopResult = stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location, paramsWithResolvedCwd.childId);
+						const stopResult = stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location, paramsWithResolvedCwd.childId, paramsWithResolvedCwd.drain);
 						return stopResult ?? { content: [{ type: "text", text: `No running or queued async run was found for '${targetRunId ?? paramsWithResolvedCwd.dir}'.` }], isError: true, details: { mode: "management", results: [] } };
 					} catch (error) {
 						const text = error instanceof Error ? error.message : String(error);
@@ -7587,6 +7605,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					deps.kill,
 					resolved?.kind === "async" ? resolved.location : undefined,
 					paramsWithResolvedCwd.childId,
+					paramsWithResolvedCwd.drain,
 				);
 				if (stopResult) return stopResult;
 				return {

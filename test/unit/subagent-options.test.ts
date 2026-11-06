@@ -16,7 +16,7 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 // One valid value per management/control field the model passes inside options.
 const OPTION_SAMPLES: Record<string, unknown> = {
 	extensionBindings: { "pkg/1": {} }, capabilities: true, name: "nightly", dir: "/tmp/run", handoffPath: "handoff.json",
-	repo: "/repo", planId: "plan-1", laneId: "lane-1", merge: {}, supersession: {}, index: 0, childId: "child-1",
+	repo: "/repo", planId: "plan-1", laneId: "lane-1", merge: {}, supersession: {}, index: 0, childId: "child-1", drain: true,
 	toolCallId: "call-1", view: "transcript", lines: 5, topic: "workflows", mode: "follow_up", steeringRecovery: false,
 	additional: 1, scope: "session", target: "children", focus: true, thinking: "low", at: "10m", every: "1h",
 	sessionOnly: true, quiet: true, on: ["mon"], timezone: "UTC", overlap: "skip", catchUp: "none", missionId: "mission-1",

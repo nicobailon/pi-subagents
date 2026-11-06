@@ -4055,3 +4055,97 @@ describe("scripted workflow runtime", () => {
 		}
 	});
 });
+
+describe("scripted workflow drain", () => {
+	const drainedError = (error: unknown) => error instanceof WorkflowScriptError && error.message === "drained";
+
+	it("lets the started child finish and launches nothing after a drain", async () => {
+		const controller = new AbortController();
+		let drain: ((onDrained: () => void) => number) | undefined;
+		let releaseA!: () => void;
+		let aStarted!: () => void;
+		const aRunning = new Promise<void>((resolve) => { aStarted = resolve; });
+		const launched: string[] = [];
+		let drainedCalls = 0;
+		const workflow = runWorkflowScript({
+			script: `for (const key of ["a", "b", "c"]) await runs.run(key, { agent: "worker", task: key });`,
+			signal: controller.signal,
+			registerDrain: (fn) => { if (fn) drain = fn; },
+			async launch(key) {
+				launched.push(key);
+				aStarted();
+				await new Promise<void>((resolve) => { releaseA = resolve; });
+				return { key, ok: true, output: `${key} done`, artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		await aRunning;
+		assert.equal(drain!(() => { drainedCalls += 1; controller.abort(new Error("drained")); }), 1);
+		assert.equal(drainedCalls, 0);
+		releaseA();
+		await assert.rejects(workflow, (error: unknown) => drainedError(error)
+			&& (error as WorkflowScriptError).partial.children.length === 1
+			&& (error as WorkflowScriptError).partial.children[0]!.ok
+			&& (error as WorkflowScriptError).partial.children[0]!.output === "a done");
+		assert.deepEqual(launched, ["a"]);
+		assert.equal(drainedCalls, 1);
+	});
+
+	it("stops a child queued behind the concurrency limit at once", async () => {
+		const controller = new AbortController();
+		let drain: ((onDrained: () => void) => number) | undefined;
+		let releaseA!: () => void;
+		let aStarted!: () => void;
+		const aRunning = new Promise<void>((resolve) => { aStarted = resolve; });
+		const launched: string[] = [];
+		let trace: Array<{ key: string; state: string }> = [];
+		let bQueued!: () => void;
+		const bWaiting = new Promise<void>((resolve) => { bQueued = resolve; });
+		const workflow = runWorkflowScript({
+			script: `return await runs.all([{ key: "a", agent: "worker", task: "a" }, { key: "b", agent: "worker", task: "b" }]);`,
+			signal: controller.signal,
+			globalConcurrencyLimit: 1,
+			registerDrain: (fn) => { if (fn) drain = fn; },
+			onTrace: (entries) => {
+				trace = entries.map((entry) => ({ key: entry.key, state: entry.state }));
+				if (trace.some((entry) => entry.key === "b" && entry.state === "started")) bQueued();
+			},
+			async launch(key) {
+				launched.push(key);
+				aStarted();
+				await new Promise<void>((resolve) => { releaseA = resolve; });
+				return { key, ok: true, output: `${key} done`, artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		await Promise.all([aRunning, bWaiting]);
+		assert.equal(drain!(() => controller.abort(new Error("drained"))), 1);
+		assert.ok(trace.some((entry) => entry.key === "b" && entry.state === "stopped"));
+		releaseA();
+		await assert.rejects(workflow, (error: unknown) => drainedError(error)
+			&& (error as WorkflowScriptError).partial.children.some((child) => child.key === "a" && child.ok)
+			&& (error as WorkflowScriptError).partial.children.some((child) => child.key === "b" && child.stopped === true));
+		assert.deepEqual(launched, ["a"]);
+	});
+
+	it("ends at once when no child has started", async () => {
+		const controller = new AbortController();
+		let drain: ((onDrained: () => void) => number) | undefined;
+		let launches = 0;
+		const workflow = runWorkflowScript({
+			script: `await runs.run("a", { agent: "worker", task: "a" });`,
+			signal: controller.signal,
+			registerDrain: (fn) => { if (fn) drain = fn; },
+			async launch(key) {
+				launches += 1;
+				return { key, ok: true, output: "unexpected", artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		let drained = false;
+		assert.equal(drain!(() => { drained = true; controller.abort(new Error("drained")); }), 0);
+		assert.equal(drained, true);
+		await assert.rejects(workflow, drainedError);
+		assert.equal(launches, 0);
+	});
+});
