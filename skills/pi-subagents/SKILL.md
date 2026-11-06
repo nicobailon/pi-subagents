@@ -68,9 +68,11 @@ return reviews.map((review) => review.output);
   and plain helpers. Nested async functions, arrows, and methods are rejected.
 - Every `runs.run` / `runs.all` item needs a stable `key`. Add a short
   verb + behavior `label` unless the user gave one.
-- Bind files with `output: "plans/x.md"` (relative paths land in run
-  artifacts) and return `outputReference` or `artifactPaths`. A filename in
-  task text does not route output. Never send reports to the repo root.
+- Bind files with `output: "plans/x.md"` and return `outputReference` or
+  `artifactPaths`; a filename in task text does not route output. Relative
+  paths land in run artifacts. Never send reports to the repo root. When the
+  task ends, delete scratch briefs, scripts and reports you wrote anywhere
+  else; keep final deliverables.
 - `runs.lanes([{ key, stages: [...] }])` runs a predeclared plan: first stages
   together, later stages in order per lane.
 
