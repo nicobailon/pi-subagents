@@ -227,6 +227,24 @@ Package skill content.
 		assert.equal(fs.existsSync(artifactPath), false);
 	});
 
+	it("cleans nested session artifacts but keeps worktree handoffs and patches", () => {
+		const artifactsDir = path.join(agentDir, "sessions", "session-2", "subagent-artifacts");
+		const oldOutput = path.join(artifactsDir, "outputs", "run-old", "report.md");
+		const newOutput = path.join(artifactsDir, "outputs", "run-new", "report.md");
+		const handoff = path.join(artifactsDir, "handoffs", "run-old.json");
+		const patch = path.join(artifactsDir, "worktree-diffs", "run-old", "worker.patch");
+		for (const file of [oldOutput, newOutput, handoff, patch]) writeFile(file, "x");
+		const oldTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+		for (const entry of [oldOutput, path.dirname(oldOutput), handoff, patch, path.dirname(patch)]) fs.utimesSync(entry, oldTime, oldTime);
+
+		cleanupAllArtifactDirs(1);
+
+		assert.equal(fs.existsSync(path.dirname(oldOutput)), false);
+		assert.equal(fs.existsSync(newOutput), true);
+		assert.equal(fs.existsSync(handoff), true);
+		assert.equal(fs.existsSync(patch), true);
+	});
+
 	it("resolves configured artifact directory preferences", () => {
 		const sessionFile = path.join(agentDir, "sessions", "session-1", "session.jsonl");
 
