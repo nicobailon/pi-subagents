@@ -1257,6 +1257,34 @@ describe("scripted workflow runtime", () => {
 		assert.equal(launches, 0);
 	});
 
+	it("reports a literal retained stage-0 resume in validate with the launch error", async () => {
+		const script = [
+			`return runs.lanes([`,
+			`  { key: "a", stages: [{ key: "write", agent: "worker", task: "w" }, { key: "fix", resume: "previous", task: "f" }] },`,
+			`  { key: "b", stages: [{ key: "fix", resume: "retained-run", task: "continue" }] },`,
+			`]);`,
+		].join("\n");
+		const launchError = await runWorkflowScript({
+			script,
+			timeoutMs: 2_000,
+			async launch(key) { return { key, ok: true, output: "unexpected", artifactPaths: [], results: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		}).then(() => undefined, (error: unknown) => error instanceof Error ? error.message.split("\n")[0]!.replace(/^Error: /, "") : String(error));
+		const validation = validateWorkflowScript(script);
+		assert.equal(validation.ok, false);
+		assert.deepEqual(validation.errors.map((error) => [error.message, error.line]), [[launchError, 3]]);
+		// An identifier lane holds one slot, so a later literal lane keeps its index.
+		assert.deepEqual(validateWorkflowScript(`return runs.lanes([existingLane, { key: "b", stages: [{ key: "fix", resume: "retained-run", task: "continue" }] }]);`).errors.map((error) => error.message), [launchError]);
+
+		// Values only the runtime can see stay unchecked.
+		for (const unknown of [
+			`return runs.lanes([{ key: "b", stages: [{ key: "fix", resume: retainedId, task: "continue" }] }]);`,
+			`return runs.lanes([{ key: "b", stages: [{ key: "fix", resume: "retained-run", ...extra, task: "continue" }] }]);`,
+			`return runs.lanes([...earlier, { key: "b", stages: [{ key: "fix", resume: "retained-run", task: "continue" }] }]);`,
+			`return runs.lanes(lanes);`,
+		]) assert.equal(validateWorkflowScript(unknown).ok, true, unknown);
+	});
+
 	it("validates all lane stages before launching any child", async () => {
 		const malformedScripts = [
 			`return runs.lanes([{ key: "bad lane", stages: [{ key: "writer", agent: "worker", task: "write" }] }]);`,
