@@ -517,15 +517,22 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 		},
 		async dispose() {
 			disposeCalls += 1;
-			for (const record of sessions) {
-				if (record.session?.detached) continue;
-				if (record.session) record.session.shutDown = true;
-				await record.session?.abort();
-				record.aborted = true;
-				record.disposed = true;
-			}
+			await disposeMatching(() => true);
+		},
+		async disposeForParent(parentSessionFile) {
+			disposeCalls += 1;
+			await disposeMatching((launch) => launch.parentSessionFile === parentSessionFile);
 		},
 	};
+	async function disposeMatching(matches: (launch: ChildSessionLaunch) => boolean): Promise<void> {
+		for (const record of sessions) {
+			if (record.session?.detached || !matches(record.launch)) continue;
+			if (record.session) record.session.shutDown = true;
+			await record.session?.abort();
+			record.aborted = true;
+			record.disposed = true;
+		}
+	}
 	return {
 		sessions,
 		factory,
