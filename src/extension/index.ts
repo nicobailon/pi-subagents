@@ -1264,7 +1264,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		parentWake.sessionShutdown(event?.reason);
 		runtimeEntry.cleanup(event?.reason);
 		try {
-			await disposeChildSessions();
+			// Only this session's children: a multi-session host (pi-web) shuts sessions down
+			// one at a time, and one session's shutdown must not abort another session's runs.
+			await disposeChildSessions(state.parentSessionFile ?? undefined);
 		} catch (error) {
 			console.error("Failed to dispose in-process child sessions:", error);
 		}

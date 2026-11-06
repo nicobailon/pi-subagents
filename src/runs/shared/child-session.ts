@@ -153,6 +153,13 @@ export interface ChildSessionFactory {
 	create(launch: ChildSessionLaunch): Promise<ChildSession>;
 	/** Abort and dispose every live attached child; detached children keep running and hold the shared runtime. */
 	dispose(): Promise<void>;
+	/**
+	 * Abort and dispose only the attached children that `parentSessionFile`'s session launched.
+	 * A multi-session host such as pi-web shuts sessions down one at a time; one session's
+	 * shutdown must not destroy another session's running children. Children of sessions
+	 * without a session file are disposed when `parentSessionFile` is undefined.
+	 */
+	disposeForParent(parentSessionFile: string | undefined): Promise<void>;
 }
 
 export type PiCodingAgentModule = typeof import("@earendil-works/pi-coding-agent");
@@ -489,11 +496,12 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	const loadPiCodingAgent = options.loadPiCodingAgent ?? loadHostPiCodingAgent;
 	const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
 	let runtime: ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]> | undefined;
-	const live = new Set<ChildSession>();
+	/** Live children keyed by the session file of the parent that launched them; undefined for a parent without one. */
+	const live = new Map<ChildSession, string | undefined>();
 	/** Extension shutdowns still running for disposed children; `dispose()` waits for them. */
 	const shutdowns = new Set<Promise<void>>();
 	/** Launches still waiting for their MCP tools; `dispose()` ends the wait and waits for their shutdown. */
-	const mcpWaits = new Map<AbortController, Promise<void>>();
+	const mcpWaits = new Map<AbortController, { ready: Promise<void>; parent: string | undefined }>();
 	let disposals = 0;
 	const sharedRuntime = async (pi: PiCodingAgentModule) => {
 		runtime ??= pi.ModelRuntime.create().catch((error: unknown) => {
@@ -501,6 +509,22 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			throw error;
 		});
 		return runtime;
+	};
+	/** Abort and dispose the attached children `matches` selects, waiting for their shutdowns. */
+	const disposeMatching = async (matches: (parent: string | undefined) => boolean) => {
+		disposals += 1;
+		for (const [cancel, wait] of mcpWaits) if (matches(wait.parent)) cancel.abort();
+		const children = [...live.keys()].filter((child) => !child.detached && matches(live.get(child)));
+		for (const child of children) child.shutDown = true;
+		await Promise.allSettled(children.map((child) => child.abort()));
+		for (const child of children) {
+			try { void child.dispose(); } catch { /* best effort */ }
+		}
+		await Promise.allSettled([
+			...shutdowns,
+			...[...mcpWaits.values()].filter((wait) => matches(wait.parent)).map((wait) => wait.ready),
+		]);
+		if (live.size === 0) runtime = undefined;
 	};
 	return {
 		async create(launch) {
@@ -701,7 +725,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 						throw error;
 					}
 				})();
-				mcpWaits.set(cancel, ready);
+				mcpWaits.set(cancel, { ready, parent: launch.parentSessionFile });
 				try { await ready; } finally { mcpWaits.delete(cancel); }
 			}
 			const child: ChildSession = {
@@ -731,20 +755,14 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				get virtualModelId() { return session.model?.api === "pi-virtual" ? `${session.model.provider}/${session.model.id}` : undefined; },
 				get contextWindow() { return session.model?.contextWindow; },
 			};
-			live.add(child);
+			live.set(child, launch.parentSessionFile);
 			return child;
 		},
 		async dispose() {
-			disposals += 1;
-			for (const cancel of mcpWaits.keys()) cancel.abort();
-			const children = [...live].filter((child) => !child.detached);
-			for (const child of children) child.shutDown = true;
-			await Promise.allSettled(children.map((child) => child.abort()));
-			for (const child of children) {
-				try { void child.dispose(); } catch { /* best effort */ }
-			}
-			await Promise.allSettled([...shutdowns, ...mcpWaits.values()]);
-			if (live.size === 0) runtime = undefined;
+			await disposeMatching(() => true);
+		},
+		async disposeForParent(parentSessionFile: string | undefined) {
+			await disposeMatching((parent) => parent === parentSessionFile);
 		},
 	};
 }
@@ -764,6 +782,7 @@ function createLazyPlacementFactory(local: ChildSessionFactory): ChildSessionFac
 	return {
 		async create(launch) { return launch.machine ? (await factory()).create(launch) : local.create(launch); },
 		async dispose() { if (placed) await placed.dispose(); else await local.dispose(); },
+		async disposeForParent(parentSessionFile: string | undefined) { if (placed) await placed.disposeForParent(parentSessionFile); else await local.disposeForParent(parentSessionFile); },
 	};
 }
 
@@ -793,9 +812,17 @@ export function setChildSessionFactoryModule(modulePath: string | undefined): vo
 	activeFactoryModule = modulePath;
 }
 
-/** Abort and dispose every live in-process child and release the shared runtime. */
-export async function disposeChildSessions(): Promise<void> {
+/**
+ * Abort and dispose live in-process children and release the shared runtime.
+ *
+ * Without `parentSessionFile`, every live attached child is disposed: the whole-process
+ * path the detached runner uses at exit. With it, only the children that session
+ * launched are disposed: a multi-session host such as pi-web shuts sessions down one
+ * at a time, and one session's shutdown must not destroy another session's children.
+ */
+export async function disposeChildSessions(parentSessionFile?: string): Promise<void> {
 	const factory = activeFactory;
 	if (!factory) return;
-	await factory.dispose();
+	if (parentSessionFile === undefined) await factory.dispose();
+	else await factory.disposeForParent(parentSessionFile);
 }
