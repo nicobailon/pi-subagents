@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -363,9 +364,52 @@ describe("non-blocking wait subscriptions", () => {
 			assert.equal(nextState.waitSubscriptions?.has(registration.token), false);
 			assert.equal(otherState.waitSubscriptions?.has(registration.token), false);
 			assert.equal(fs.existsSync(recordPath), false);
+			assert.deepEqual(fs.readdirSync(subscriptionsDir), [], "settling removes the record and its claim");
 		} finally {
 			next.dispose();
 			other.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not take a dead owner's subscription while another process holds the claim on it", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-claimed-"));
+		const asyncRoot = path.join(root, "runs");
+		const resultsDir = path.join(root, "results");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const armerState = makeState();
+		armerState.completionOwnerId = "owner-a";
+		const armer = createWaitSubscriptionManager({ events: new TestBus(), sendMessage() {} } as never, armerState, {
+			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000,
+		});
+		const nextState = makeState();
+		nextState.completionOwnerId = "owner-c";
+		const next = createWaitSubscriptionManager({ events: new TestBus(), sendMessage() {} } as never, nextState, {
+			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000,
+			kill: (pid: number) => {
+				if (pid === 999_999) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+				return true;
+			},
+		});
+		try {
+			writeStatus(asyncRoot, "run-claimed", "running", { sessionId: "session-a", pid: process.pid });
+			const registration = armer.arm({ targetKind: "async", runId: "run-claimed", requestedId: "run-claimed", timeoutMs: 30_000 });
+			armer.dispose();
+			const recordPath = path.join(subscriptionsDir, `${registration.token}.json`);
+			const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
+			const deadOwnerRecord = JSON.stringify({ ...record, completionOwnerProcess: { pid: 999_999 } });
+			fs.writeFileSync(recordPath, deadOwnerRecord, "utf-8");
+			// Another process ("owner-b") has claimed the takeover from owner-a and not yet rewritten the record.
+			const claimPath = path.join(subscriptionsDir, `${registration.token}.claim-${createHash("sha256").update("owner-a").digest("hex").slice(0, 16)}`);
+			fs.writeFileSync(claimPath, "owner-b", "utf-8");
+
+			next.restore();
+
+			assert.equal(nextState.waitSubscriptions?.has(registration.token) ?? false, false);
+			assert.equal(fs.readFileSync(recordPath, "utf-8"), deadOwnerRecord);
+			assert.equal(fs.readFileSync(claimPath, "utf-8"), "owner-b");
+		} finally {
+			next.dispose();
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

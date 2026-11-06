@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { formatResumeFirstFailedRunDetail } from "./resume-guidance.ts";
@@ -95,6 +95,30 @@ function subscriptionFile(dir: string, token: string): string {
 	return path.join(dir, `${token}.json`);
 }
 
+/** Not `.json`, so record scans skip it. One file per replaced owner, so exactly one process takes over from each dead owner. */
+function claimFile(dir: string, token: string, replacedOwnerId: string): string {
+	return path.join(dir, `${token}.claim-${createHash("sha256").update(replacedOwnerId).digest("hex").slice(0, 16)}`);
+}
+
+/** Call only after the record file is gone, so a late claimer that wins a freed claim finds no record to bring back. */
+function removeClaimFiles(dir: string, token: string): void {
+	let files: string[];
+	try {
+		files = fs.readdirSync(dir);
+	} catch (error) {
+		if (isNotFound(error)) return;
+		throw error;
+	}
+	for (const file of files) {
+		if (!file.startsWith(`${token}.claim-`)) continue;
+		try {
+			fs.unlinkSync(path.join(dir, file));
+		} catch (error) {
+			if (!isNotFound(error)) throw error;
+		}
+	}
+}
+
 export function formatWaitSubscriptions(state: Pick<SubagentState, "waitSubscriptions">, now = Date.now()): string | undefined {
 	const subscriptions = [...(state.waitSubscriptions?.values() ?? [])].sort((left, right) => left.createdAt - right.createdAt);
 	if (subscriptions.length === 0) return undefined;
@@ -123,7 +147,7 @@ export function createWaitSubscriptionManager(
 	// Two Pi processes can share one session (two tree branches).
 	// The arming process owns the wake while it lives.
 	// Only its death hands the record to whichever process opens the session next,
-	// which writes itself in as the new owner so a third process sees a live owner.
+	// which wins an exclusive claim on the dead owner and writes itself in as the new owner.
 	const readRecordFile = (filePath: string): WaitSubscriptionRecord | undefined => {
 		try {
 			return parseRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
@@ -142,12 +166,21 @@ export function createWaitSubscriptionManager(
 		}) === "dead";
 		if (!ownerDead) return undefined;
 		if (!state.completionOwnerId) return record;
-		// Re-read right before the write so a record another process already settled or claimed is not brought back.
-		if (readRecordFile(filePath)?.completionOwnerId !== record.completionOwnerId) return undefined;
-		writeAtomicJson(filePath, { ...record, completionOwnerId: state.completionOwnerId, completionOwnerProcess: currentRecordedPid() });
-		// Two processes claiming in the same instant can both keep it; settle() still lets only the one that unlinks the file deliver.
-		const claimed = readRecordFile(filePath);
-		return claimed?.completionOwnerId === state.completionOwnerId ? claimed : undefined;
+		const claimPath = claimFile(subscriptionsDir, record.token, record.completionOwnerId);
+		try {
+			fs.writeFileSync(claimPath, state.completionOwnerId, { flag: "wx", mode: 0o600 });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "EEXIST") return undefined;
+			throw error;
+		}
+		// The record may have been settled (and its claims removed) after this process first read it.
+		if (readRecordFile(filePath)?.completionOwnerId !== record.completionOwnerId) {
+			fs.rmSync(claimPath, { force: true });
+			return undefined;
+		}
+		const claimed = { ...record, completionOwnerId: state.completionOwnerId, completionOwnerProcess: currentRecordedPid() };
+		writeAtomicJson(filePath, claimed);
+		return claimed;
 	};
 
 	/**
@@ -201,7 +234,15 @@ export function createWaitSubscriptionManager(
 				// Losing this race is harmless: another session may have swept the
 				// same expired record. Anything else is reported and retried on the
 				// next sweep rather than interrupting the caller.
-				if (!isNotFound(error)) console.error(`Failed to remove expired wait subscription '${filePath}':`, error);
+				if (!isNotFound(error)) {
+					console.error(`Failed to remove expired wait subscription '${filePath}':`, error);
+					continue;
+				}
+			}
+			try {
+				removeClaimFiles(subscriptionsDir, record.token);
+			} catch (error) {
+				console.error(`Failed to remove claims of expired wait subscription '${filePath}':`, error);
 			}
 		}
 	};
@@ -216,6 +257,12 @@ export function createWaitSubscriptionManager(
 		}
 		subscriptions.delete(record.token);
 		unresolvedRestoredForegroundTokens.delete(record.token);
+		try {
+			removeClaimFiles(subscriptionsDir, record.token);
+		} catch (error) {
+			// The record is already gone, so a leftover claim can no longer bring it back.
+			console.error(`Failed to remove claims of wait subscription '${record.token}':`, error);
+		}
 		return removed;
 	};
 
