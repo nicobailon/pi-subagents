@@ -891,7 +891,8 @@ function validateStaticLaneResumes(call: AstNode): WorkflowScriptValidationError
 	for (let laneIndex = 0; laneIndex < lanes.length; laneIndex++) {
 		const lane = lanes[laneIndex];
 		// A spread shifts every later lane index the runtime reports.
-		if (!astNode(lane) || lane.type !== "ObjectExpression") break;
+		if (astNode(lane) && lane.type === "SpreadElement") break;
+		if (!astNode(lane) || lane.type !== "ObjectExpression") continue;
 		if (!Array.isArray(lane.properties) || !lane.properties.every((property) => astNode(property) && property.type === "Property" && staticPropertyKey(property) !== undefined)) continue;
 		const stages = directObjectPropertyValue(lane, "stages");
 		const first = stages?.type === "ArrayExpression" && Array.isArray(stages.elements) ? stages.elements[0] : undefined;

@@ -1273,11 +1273,14 @@ describe("scripted workflow runtime", () => {
 		const validation = validateWorkflowScript(script);
 		assert.equal(validation.ok, false);
 		assert.deepEqual(validation.errors.map((error) => [error.message, error.line]), [[launchError, 3]]);
+		// An identifier lane holds one slot, so a later literal lane keeps its index.
+		assert.deepEqual(validateWorkflowScript(`return runs.lanes([existingLane, { key: "b", stages: [{ key: "fix", resume: "retained-run", task: "continue" }] }]);`).errors.map((error) => error.message), [launchError]);
 
 		// Values only the runtime can see stay unchecked.
 		for (const unknown of [
 			`return runs.lanes([{ key: "b", stages: [{ key: "fix", resume: retainedId, task: "continue" }] }]);`,
 			`return runs.lanes([{ key: "b", stages: [{ key: "fix", resume: "retained-run", ...extra, task: "continue" }] }]);`,
+			`return runs.lanes([...earlier, { key: "b", stages: [{ key: "fix", resume: "retained-run", task: "continue" }] }]);`,
 			`return runs.lanes(lanes);`,
 		]) assert.equal(validateWorkflowScript(unknown).ok, true, unknown);
 	});
