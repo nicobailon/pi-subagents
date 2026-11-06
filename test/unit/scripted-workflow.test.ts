@@ -4128,6 +4128,35 @@ describe("scripted workflow drain", () => {
 		assert.deepEqual(launched, ["a"]);
 	});
 
+	it("keeps a started child running when the script would throw on a refused call during the drain", async () => {
+		const controller = new AbortController();
+		let drain: ((onDrained: () => void) => number) | undefined;
+		const release = new Map<string, () => void>();
+		const started = new Map<string, () => void>();
+		const up = (key: string) => new Promise<void>((resolve) => started.set(key, resolve));
+		const bothUp = Promise.all([up("slow"), up("fast")]);
+		const workflow = runWorkflowScript({
+			script: `const slow = runs.run("slow", { agent: "worker", task: "slow" }); await runs.run("fast", { agent: "worker", task: "fast" }); await runs.host("lint", { kind: "command", command: "true", timeoutMs: 1000 }); await slow;`,
+			signal: controller.signal,
+			registerDrain: (fn) => { if (fn) drain = fn; },
+			async host(key) { return { key, kind: "command" as const, ok: true, state: "passed" as const, exitCode: 0, stdout: "", stderr: "", outputPath: "out.log", durationMs: 1 }; },
+			async launch(key, _params, signal) {
+				started.get(key)!();
+				await new Promise<void>((resolve) => { release.set(key, resolve); signal.addEventListener("abort", () => resolve()); });
+				return { key, ok: !signal.aborted, output: `${key} ${signal.aborted ? "killed" : "done"}`, artifactPaths: [] };
+			},
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		await bothUp;
+		drain!(() => controller.abort(new Error("drained")));
+		release.get("fast")!();
+		// Without the drain holding answers, the refused runs.host throws here and aborts "slow".
+		await Promise.race([workflow.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 200))]);
+		release.get("slow")!();
+		await assert.rejects(workflow, (error: unknown) => drainedError(error)
+			&& (error as WorkflowScriptError).partial.children.find((child) => child.key === "slow")?.output === "slow done");
+	});
+
 	it("ends at once when no child has started", async () => {
 		const controller = new AbortController();
 		let drain: ((onDrained: () => void) => number) | undefined;

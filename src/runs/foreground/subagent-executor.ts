@@ -6407,7 +6407,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										status.workflow = { ...(status.workflow ?? { trace: [], emits: [], console: [] }), drainRequestedAt: workflowRunEvidence.drainRequestedAt };
 										persist({ tolerateStatusWriteFailure: true });
 									}
-									return drain(() => controller.abort(new Error("Workflow drained: started children finished; no new children were started.")));
+									// Deferred so a full stop that stops the last running child aborts with its own reason first.
+									return drain(() => queueMicrotask(() => controller.abort(new Error("Workflow drained: started children finished; no new children were started."))));
 								});
 							},
 							...(workflowState ? { state: workflowState } : {}),
