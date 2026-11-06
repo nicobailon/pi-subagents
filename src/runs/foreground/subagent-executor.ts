@@ -6401,11 +6401,25 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									return;
 								}
 								(deps.state.workflowDrains ??= new Map()).set(workflowRunId, () => {
-									// Persisted before any child is stopped, so a reload during the drain cannot resume the run.
 									if (workflowRunEvidence.drainRequestedAt === undefined) {
+										// The marker must be on disk before anything is stopped: without it a reload during the drain would resume the run.
+										const previousWorkflow = status.workflow;
 										workflowRunEvidence.drainRequestedAt = Date.now();
-										status.workflow = { ...(status.workflow ?? { trace: [], emits: [], console: [] }), drainRequestedAt: workflowRunEvidence.drainRequestedAt };
-										persist({ tolerateStatusWriteFailure: true });
+										status.workflow = { ...(previousWorkflow ?? { trace: [], emits: [], console: [] }), drainRequestedAt: workflowRunEvidence.drainRequestedAt };
+										let saved = false;
+										try {
+											persist();
+											saved = runPersistence.pendingCount() === 0;
+										} catch (error) {
+											console.error(`Failed to save the drain request for async workflow '${workflowRunId}':`, error);
+										}
+										if (!saved) {
+											delete workflowRunEvidence.drainRequestedAt;
+											status.workflow = previousWorkflow;
+											// Replaces a queued write that still carries the marker.
+											persist({ tolerateStatusWriteFailure: true });
+											return undefined;
+										}
 									}
 									// Deferred so a full stop that stops the last running child aborts with its own reason first.
 									return drain(() => queueMicrotask(() => controller.abort(new Error("Workflow drained: started children finished; no new children were started."))));

@@ -2679,6 +2679,35 @@ Answer only from the supplied synthetic text.
 			assert.match(stopped.error ?? "", /^Workflow stopped\./);
 		});
 
+		it("stops nothing when the drain request cannot be saved", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async (t) => {
+			const nonce = `drain-unsaved-${Date.now()}`;
+			const release = path.join(tempDir, `${nonce}.release`);
+			const { launch, waitFor, settled, stopAction } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, waitForPath: release, output: "stage one done" });
+			const runId = await launch({ workflowScript: `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" });` });
+			await waitFor(runId, (status) => status.steps?.find((step) => step.workflowKey === "stage1")?.status === "running");
+			const statusPath = path.join(DIRS.async, runId, "status.json");
+			const originalRenameSync = fsDefault.renameSync;
+			t.mock.method(fsDefault, "renameSync", ((from: fs.PathLike, to: fs.PathLike) => {
+				if (String(to) === statusPath) throw Object.assign(new Error("no space left"), { code: "ENOSPC" });
+				return originalRenameSync(from, to);
+			}) as typeof fsDefault.renameSync);
+			syncBuiltinESMExports();
+			let result: Awaited<ReturnType<typeof stopAction>>;
+			try {
+				result = await stopAction({ id: runId }, undefined, { drain: true });
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+			}
+			assert.equal(result.isError, true);
+			assert.equal(result.content[0]?.text, `Could not save the drain request for '${runId}'; nothing was stopped. Retry, or use stop without drain.`);
+			fs.writeFileSync(release, "go");
+			const finished = await settled(runId);
+			assert.equal(finished.state, "complete", finished.error);
+			assert.equal(finished.workflow?.drainRequestedAt, undefined);
+		});
+
 		it("stops a re-attached child when the user stops the relaunched workflow", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 			const nonce = `reattach-user-stop-${Date.now()}`;
 			const script = `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); await runs.run("stage2", { agent: "bg", task: "Stage two ${nonce}" });`;

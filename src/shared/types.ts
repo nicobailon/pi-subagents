@@ -2422,8 +2422,8 @@ export interface SubagentState {
 	workflowControllers?: Map<string, AbortController>;
 	/** Live in-process workflow child stoppers keyed by parent workflow run id. */
 	workflowChildStops?: Map<string, (childId: string, message?: string) => boolean>;
-	/** Live in-process workflow drains keyed by workflow run id; each returns the count of started children left to finish. */
-	workflowDrains?: Map<string, () => number>;
+	/** Live in-process workflow drains keyed by workflow run id; each returns the count of started children left to finish, or undefined when the drain request could not be saved and nothing was stopped. */
+	workflowDrains?: Map<string, () => number | undefined>;
 	/** Background children awaited by a blocking workflow call: their parent cannot answer supervisor asks. */
 	blockingWorkflowChildren?: Set<string>;
 }
