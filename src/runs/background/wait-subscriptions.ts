@@ -229,7 +229,7 @@ export function createWaitSubscriptionManager(
 	};
 
 	const reconcileRecord = (record: WaitSubscriptionRecord) => {
-		if (record.sessionId !== state.currentSessionId || !ownsRecord(record)) return;
+		if (record.sessionId !== state.currentSessionId) return;
 		if (now() >= record.expiresAt) {
 			settle(record, "timed out", "The targeted run may still be active; inspect its status before taking follow-up action.");
 			return;

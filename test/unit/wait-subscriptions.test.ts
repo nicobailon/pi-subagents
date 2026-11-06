@@ -369,6 +369,56 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
+	it("still times out a subscription taken from a dead owner after that pid is reused", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-pid-reuse-"));
+		const asyncRoot = path.join(root, "runs");
+		const resultsDir = path.join(root, "results");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const sent: string[] = [];
+		let clock = Date.now();
+		const armerState = makeState();
+		armerState.completionOwnerId = "owner-a";
+		const armer = createWaitSubscriptionManager({ events: new TestBus(), sendMessage() {} } as never, armerState, {
+			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now: () => clock,
+		});
+		let ownerPidAlive = false;
+		const nextState = makeState();
+		nextState.completionOwnerId = "owner-b";
+		const next = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		} as never, nextState, {
+			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now: () => clock,
+			kill: (pid: number) => {
+				if (pid === 999_999 && !ownerPidAlive) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+				return true;
+			},
+		});
+		try {
+			writeStatus(asyncRoot, "run-reused", "running", { sessionId: "session-a", pid: process.pid });
+			const registration = armer.arm({ targetKind: "async", runId: "run-reused", requestedId: "run-reused", timeoutMs: 30_000 });
+			armer.dispose();
+			const recordPath = path.join(subscriptionsDir, `${registration.token}.json`);
+			const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
+			fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: 999_999 } }), "utf-8");
+
+			next.restore();
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), true);
+
+			// The OS hands the dead owner's pid to an unrelated process.
+			ownerPidAlive = true;
+			clock += 60_000;
+			next.reconcile();
+
+			assert.match(sent[0] ?? "", /timed out/);
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), false);
+			assert.equal(fs.existsSync(recordPath), false);
+		} finally {
+			next.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("tells the parent to revive the failed child before replacing resumable async runs", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-revive-first-"));
 		const asyncRoot = path.join(root, "runs");

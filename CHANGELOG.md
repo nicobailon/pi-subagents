@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- When two Pi windows have the same session open, a background wait notice now reaches the window that asked for it, instead of whichever window checked first. If that window has closed, the next window that opens the session takes the notice over. Thanks to [@mdrkrg](https://github.com/mdrkrg) for #3205.
+
 ## [0.86.0] - 2026-11-05
 
 ### Highlights
