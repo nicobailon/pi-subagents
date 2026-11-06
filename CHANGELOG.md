@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `subagents.defaultInheritGlobalContext: true` gives every subagent your global `~/.pi/agent/AGENTS.md`, without listing each agent in `agentOverrides`. An agent that sets `inheritGlobalContext: false` still opts out. Thanks to [@imagebuilder1837](https://github.com/imagebuilder1837) for the report. (#3206)
+
 ### Fixed
 
 - When a `parallel` workflow, `tasks` or `chain` item has a field it does not accept, the error now says how to keep what that field asked for. For `output`, it explains that `output` on the outer call writes one file per child, and that exact per-child paths need a workflow script with `runs.all`. Fields such as `worktree` are pointed to the outer call, and unknown fields get no placement advice. The error also says that no child was launched. Thanks to [@cash-flow-king](https://github.com/cash-flow-king) for the report. (#3207)

@@ -262,6 +262,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		const next = { ...config };
 		if (!hasDeclaredField("model")) delete next.model;
 		if (!hasDeclaredField("thinking")) delete next.thinking;
+		if (!hasDeclaredField("inheritGlobalContext")) next.inheritGlobalContext = false;
 		return next;
 	};
 	const {
@@ -311,7 +312,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		...(base.thinking !== undefined && hasDeclaredField("thinking") ? { thinking: base.thinking } : {}),
 		systemPromptMode: base.systemPromptMode,
 		inheritProjectContext: base.inheritProjectContext,
-		inheritGlobalContext: base.inheritGlobalContext,
+		inheritGlobalContext: hasDeclaredField("inheritGlobalContext") && base.inheritGlobalContext,
 		inheritSkills: base.inheritSkills,
 		...(base.defaultContext !== undefined ? { defaultContext: base.defaultContext } : {}),
 		...(base.acceptanceRole !== undefined ? { acceptanceRole: base.acceptanceRole } : {}),
