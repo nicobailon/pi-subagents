@@ -16,6 +16,7 @@
 - In a host that runs several Pi sessions in one process, such as pi-web, closing one session no longer stops subagents that another session started. Thanks to [@Jarcis-cy](https://github.com/Jarcis-cy) for #3204.
 - When two Pi windows have the same session open, a background wait notice now reaches the window that asked for it, instead of whichever window checked first. If that window has closed, the next window that opens the session takes the notice over. Thanks to [@mdrkrg](https://github.com/mdrkrg) for #3205.
 - Old subagent artifacts in nested folders, such as workflow child outputs under `outputs/`, are now removed after `artifactConfig.cleanupDays` like top-level ones. Before, cleanup only looked at the top level, so session artifact folders kept growing. Worktree handoff records and their patches are kept. (#3217)
+- The configuration docs now explain how to turn on delegation in a session that was recorded before pi-subagents was installed. They also no longer say that `"toolActivation": "eager"` makes `subagent` active in every resumed session. Thanks to [@dapp-whisperer](https://github.com/dapp-whisperer) for #3218.
 
 ## [0.86.0] - 2026-11-05
 
