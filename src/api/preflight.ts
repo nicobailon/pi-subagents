@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { discoverAgentSnapshot, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryAllResult, type AgentScope, type AgentSource } from "../agents/agents.ts";
 import { projectScopeRequiresTrustMessage, resolveExecutionAgentScope } from "../agents/agent-scope.ts";
 import { normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
-import { inheritsParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, resolveModelSelection, type AvailableModelInfo, type ParentModel } from "../runs/shared/model-resolution.ts";
+import { inheritsParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, resolveModelSelection, type AvailableModelInfo, type KnownProviders, type ParentModel } from "../runs/shared/model-resolution.ts";
 import { resolveModelScopesForAgent } from "../runs/shared/model-scope.ts";
 import { assertClaudeCodeModelScope, isClaudeCodeAdapterId, resolveClaudeCodeOverride } from "../runs/shared/claude-code-adapter.ts";
 import { applyThinkingSuffix, resolvePiLaunchToolPlan, type PiLaunchToolPlan } from "../runs/shared/child-tool-plan.ts";
@@ -75,6 +75,8 @@ export interface SubagentLaunchContractInput {
 	/** Scoped-model snapshot (`provider/id` strings); drives the `scoped` allow token. Omitting it degrades `scoped` to `inherit`, so callers comparing preflight with execution must pass the session snapshot. */
 	scopedModelIds?: readonly string[];
 	availableModels?: ReadonlyArray<AvailableModelInfo | { provider: string; id: string; fullId?: string; reasoning?: boolean }>;
+	/** Every provider in Pi's full catalog (`ctx.modelRegistry.getAll()`), signed in or not, so a `provider/id` never resolves under another provider. */
+	knownProviders?: KnownProviders;
 	preferredProvider?: string;
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
@@ -404,6 +406,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		: resolveEffectiveSubagentModel(input.model, agent.model, input.parentModel, availableModels, preferredProvider, {
 			scope: modelScopes,
 			source: modelOrigin === "explicit" ? "explicit" : "inherited",
+			knownProviders: input.knownProviders,
 		});
 	const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : agent.thinking;
 	const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(
@@ -415,6 +418,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			scope: modelScopes,
 			primaryModelFromParent: modelOrigin === "inherited" || inheritsParentModel(input.model, agent.model, input.parentModel),
 			origin: modelOrigin,
+			knownProviders: input.knownProviders,
 		}).model, effectiveThinkingConfig, input.thinking !== undefined);
 	if (!externalRunner) {
 		try {

@@ -275,6 +275,8 @@ const result = await resolveSubagentLaunchContract({
   cwd: ctx.cwd,
   sessionRoot: "/tmp/my-extension-preflight-session-root",
   availableModels: ctx.modelRegistry.getAvailable(),
+  // Every provider Pi knows, so `anthropic/...` never resolves to another provider's copy.
+  knownProviders: () => ctx.modelRegistry.getAll().map((model) => model.provider),
 });
 
 if (!result.ok) {

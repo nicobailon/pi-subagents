@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- A subagent model written as `provider/id` now always runs on that provider. Before, if you were not signed in to that provider, a similar model from another provider (for example OpenRouter's copy of an Anthropic model) could run instead and bill that account. The launch now fails with an error that names the other provider's model, so you can choose it on purpose. The bundled skill also tells the parent to leave `model` out unless you or your settings name one. Thanks to [@crusaderky](https://github.com/crusaderky) for the report. (#3203)
 - `mcp:` selectors now resolve for pi-mcp-adapter servers that set `directTools: "search"` or use `${NAME:-default}` in their configuration. Before, pi-subagents dropped a `"search"` server from the configuration, and a `${NAME:-default}` value gave a server a different cache hash than the adapter computed. In both cases, every selector for the server was unresolved. A server URL that used a default also failed the launch. Thanks to [@acolomba](https://github.com/acolomba) for #3201.
 
 ## [0.86.0] - 2026-11-05

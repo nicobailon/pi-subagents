@@ -74,6 +74,25 @@ describe("single model resolution", () => {
 		assert.equal(resolveModelCandidate("openai/claude-sonnet-4", models), "openai/claude-sonnet-4");
 	});
 
+	it("never resolves a provider the user is not signed in to under another provider", () => {
+		// Pi knows anthropic but has no auth for it; OpenRouter re-lists the same model as `anthropic/...`.
+		const registry = [
+			{ provider: "llama-cpp", id: "qwen", fullId: "llama-cpp/qwen" },
+			{ provider: "openrouter", id: "anthropic/claude-opus-4.8", fullId: "openrouter/anthropic/claude-opus-4.8" },
+		];
+		const knownProviders = () => ["anthropic", "llama-cpp", "openrouter"];
+		const parent = { provider: "llama-cpp", id: "qwen" };
+		for (const requested of ["anthropic/claude-opus-4-8", "anthropic/claude-opus-4.8"]) {
+			assert.throws(
+				() => resolveSubagentModelOverride(requested, parent, registry, undefined, { source: "explicit", knownProviders }),
+				new RegExp(`Unknown subagent model '${requested.replace(/[./]/g, "\\$&")}'.*Did you mean 'openrouter/anthropic/claude-opus-4\\.8'`),
+			);
+			assert.throws(() => resolveModelSelection(requested, registry, undefined, { knownProviders }), /Unknown subagent model/);
+		}
+		assert.equal(resolveSubagentModelOverride("openrouter/anthropic/claude-opus-4.8", parent, registry, undefined, { source: "explicit", knownProviders }), "openrouter/anthropic/claude-opus-4.8");
+		assert.equal(resolveModelCandidate("org/model-v1", models, undefined, () => ["openai", "anthropic", "huggingface"]), "huggingface/org/model-v1");
+	});
+
 	it("resolves ids that already carry their provider prefix within that provider", () => {
 		const registry = [
 			{ provider: "openrouter", id: "openrouter/auto-beta", fullId: "openrouter/openrouter/auto-beta" },

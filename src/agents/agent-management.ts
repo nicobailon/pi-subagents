@@ -29,7 +29,7 @@ import {
 } from "./proactive-skills.ts";
 import { parseFrontmatter, parseUnquotedList } from "./frontmatter.ts";
 import { resolveEffectiveThinking, THINKING_LEVELS, toModelInfo } from "../shared/model-info.ts";
-import { isUnavailableSubagentModel, resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-resolution.ts";
+import { isUnavailableSubagentModel, knownModelProviders, resolveSubagentModelOverride, type ParentModel } from "../runs/shared/model-resolution.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { formatReviewGateLabel, validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, resolveExternalCliRunnerStatus, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
@@ -994,8 +994,9 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	const capabilityMode = params.capabilities === true;
 	const externalCliAvailability = capabilityMode ? externalCliAvailabilityForAgents([...agents, ...restrictedAgents]) : undefined;
 	const availableModels = capabilityMode ? ctx.modelRegistry.getAvailable().map(toModelInfo) : [];
+	const knownProviders = knownModelProviders(ctx.modelRegistry);
 	const unavailableModels = new Set([...agents, ...restrictedAgents].filter((agent) => (agent.runner?.type ?? "pi") === "pi"
-		&& isUnavailableSubagentModel(agent.model, availableModels, agent.modelProvider ?? ctx.model?.provider)));
+		&& isUnavailableSubagentModel(agent.model, availableModels, agent.modelProvider ?? ctx.model?.provider, knownProviders)));
 	const formatLine = capabilityMode
 		? (agent: AgentConfig, names: Set<string> | undefined) => formatAgentCapabilitiesLine(agent, names, externalCliAvailability, unavailableModels)
 		: formatAgentListLine;
@@ -1046,6 +1047,7 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 	const effectiveAgents = effectiveAgentsForScope(scope, discovered, ctx.runtimeAgentOwner, ctx.model?.provider)
 		.sort((a, b) => a.name.localeCompare(b.name));
 	const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+	const knownProviders = knownModelProviders(ctx.modelRegistry);
 	const currentModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
 	const preferredProvider = ctx.model?.provider;
 	const capabilityCeiling = resolveCurrentSubagentCapabilityCeiling(ctx.piSessionId);
@@ -1080,9 +1082,9 @@ function handleModels(params: ManagementParams, ctx: ManagementContext): AgentTo
 		? [{ agent, name: requestedAgent }]
 		: [{ agent, name: agent.name }, ...(agent.aliases ?? []).map((name) => ({ agent, name }))]);
 	for (const { agent, name } of modelEntries) {
-		const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, agent.modelProvider ?? preferredProvider);
+		const resolvedModel = resolveSubagentModelOverride(agent.model, currentModel, availableModels, agent.modelProvider ?? preferredProvider, { knownProviders });
 		const shownModel = resolvedModel === undefined ? "(unresolved)"
-			: (agent.runner?.type ?? "pi") === "pi" && isUnavailableSubagentModel(agent.model, availableModels, agent.modelProvider ?? preferredProvider) ? `${resolvedModel} ${UNAVAILABLE_MODEL_MARKER}` : resolvedModel;
+			: (agent.runner?.type ?? "pi") === "pi" && isUnavailableSubagentModel(agent.model, availableModels, agent.modelProvider ?? preferredProvider, knownProviders) ? `${resolvedModel} ${UNAVAILABLE_MODEL_MARKER}` : resolvedModel;
 		const effectiveThinking = resolveEffectiveThinking(resolvedModel, agent.thinking)
 			?? (agent.thinking === false ? "off" : undefined);
 		const source = `${formatModelSource(agent, currentModel)}${agent.disabled ? "; disabled" : ""}${isAgentAllowedByCapabilityCeiling(agent.name, capabilityCeiling) ? "" : "; restricted"}`;

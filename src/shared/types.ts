@@ -2602,6 +2602,8 @@ export interface RunSyncOptions {
 	workflowChildPermitLaunch?: WorkflowChildPermitContext;
 	/** Registry models available for heuristic bare-model resolution */
 	availableModels?: Array<{ provider: string; id: string; fullId: string; contextWindow?: number }>;
+	/** Every provider in Pi's full catalog, so a `provider/id` never resolves under another provider. */
+	knownModelProviders?: import("../runs/shared/model-resolution.ts").KnownProviders;
 	modelResponseAliases?: Record<string, string[]>;
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;

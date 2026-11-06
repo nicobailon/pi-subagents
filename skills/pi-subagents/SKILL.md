@@ -113,7 +113,8 @@ number.
 - As a conservative orchestration policy, do not pass a hard `toolBudget` or tight `usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools. If interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.
 - Route workers and scouts to a fast capable tier, serious reviews to a strong
   tier, and top reasoning only to bounded read-only critique. Exact model names
-  belong in user or project settings, not here.
+  belong in user or project settings, not here. When neither the user nor
+  settings name a model, omit `model` so the child inherits the parent's.
 - `subagent`, `subagents_enable`, `subagent_supervisor`, `contact_supervisor`, and `structured_output` are model-only: call them as ordinary model tool calls. Codemode scripts cannot reach them through `tools.*`, `ALL_TOOLS`, or `searchTools`.
 - Receipts, CI, and review bots are evidence, not authority. Backlog, release,
   and merge policy belong to the user's or project's own skill.
