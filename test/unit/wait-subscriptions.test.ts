@@ -119,7 +119,6 @@ function deadOwnerFixture(prefix: string) {
 	const recordPath = path.join(subscriptionsDir, `${token}.json`);
 	const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
 	assert.equal((record.completionOwnerProcess as { pid?: number } | undefined)?.pid, process.pid);
-	// The arming process is gone: its recorded pid no longer exists.
 	fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: DEAD_PID } }), "utf-8");
 	return {
 		subscriptionsDir, token, recordPath, sent, open,
@@ -844,7 +843,7 @@ describe("wait subscriptions armed by another session", () => {
 			armer.dispose();
 			// A takeover claim and the temp file of a claim create that crashed.
 			const claim = path.join(subscriptionsDir, claimName(token, "owner-x", 1));
-			fs.writeFileSync(claim, JSON.stringify({ ownerId: "owner-y", process: { pid: 999_999 } }), "utf-8");
+			fs.writeFileSync(claim, JSON.stringify({ ownerId: "owner-y", process: { pid: DEAD_PID } }), "utf-8");
 			fs.writeFileSync(`${claim}.123.abc.tmp`, "", "utf-8");
 
 			// A different session starts well after the record expired.

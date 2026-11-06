@@ -159,10 +159,8 @@ export function createWaitSubscriptionManager(
 	let disposed = false;
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let lastForeignSweepAt = 0;
-	// Two Pi processes can share one session (two tree branches).
-	// The arming process owns the wake while it lives.
-	// Only its death hands the record to whichever process opens the session next,
-	// which wins an exclusive claim on the dead owner and writes itself in as the new owner.
+	// Two Pi processes can share one session. The arming process owns the wake while it lives;
+	// after it dies, the next process to open the session claims the record and becomes its owner.
 	const readRecordFile = (filePath: string): WaitSubscriptionRecord | undefined => {
 		try {
 			return parseRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
@@ -176,15 +174,13 @@ export function createWaitSubscriptionManager(
 		observedBootId: currentBootId(),
 		kill: options.kill,
 	}) === "dead";
-	// A live or unknown claimant holds its generation; a dead claimant, or a body that is not a claim, does not.
 	const latestClaimantHolds = (claimPath: string): boolean => {
 		let body: unknown;
 		try {
 			body = JSON.parse(fs.readFileSync(claimPath, "utf-8"));
 		} catch (error) {
-			// Claims are created whole, so a body that does not parse is damage, not a claimant mid-write.
-			if (error instanceof SyntaxError) return false;
-			return true;
+			// Claims are created whole, so a body that does not parse is damage; a claim that cannot be read counts as held.
+			return !(error instanceof SyntaxError);
 		}
 		const claimant = body as { ownerId?: unknown; process?: unknown } | null;
 		if (!claimant || typeof claimant !== "object" || typeof claimant.ownerId !== "string" || !isRecordedPid(claimant.process)) return false;
@@ -199,7 +195,6 @@ export function createWaitSubscriptionManager(
 		if (latest > 0 && latestClaimantHolds(path.join(subscriptionsDir, `${prefix}${latest}`))) return undefined;
 		const claimPath = path.join(subscriptionsDir, `${prefix}${latest + 1}`);
 		if (!createClaimFile(claimPath, { ownerId: state.completionOwnerId, process: currentRecordedPid() })) return undefined;
-		// Any failure from here on releases the claim, so it cannot block the next process.
 		try {
 			// The record may have been settled (and its claims removed) after this process first read it.
 			if (readRecordFile(filePath)?.completionOwnerId !== record.completionOwnerId) {

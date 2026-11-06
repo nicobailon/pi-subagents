@@ -1258,8 +1258,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (event) => {
-		// Captured first: runtimeEntry.cleanup() below clears state.parentSessionFile, and the
-		// disposal must stay scoped to this session even while its own state is being torn down.
+		// Captured first: runtimeEntry.cleanup() below clears state.parentSessionFile.
 		const parentSessionFile = state.parentSessionFile ?? undefined;
 		sessionSwitchGuard.sessionShutdown(event);
 		cancelCompactionResume();
