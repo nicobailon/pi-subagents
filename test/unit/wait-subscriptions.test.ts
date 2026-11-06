@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
+import fsDefault from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -76,6 +79,56 @@ class TestBus implements IntercomEventBus {
 	emit(channel: string, data: unknown): void {
 		for (const handler of this.handlers.get(channel) ?? []) handler(data);
 	}
+}
+
+const DEAD_PID = 999_999;
+
+/** The persisted takeover-claim name: `<token>.claim-<sha256(replaced owner)[0:16]>.<generation>`. */
+function claimName(token: string, replacedOwnerId: string, generation: number): string {
+	return `${token}.claim-${createHash("sha256").update(replacedOwnerId).digest("hex").slice(0, 16)}.${generation}`;
+}
+
+/** A session-a wait armed by "owner-a", whose process is dead; `open` starts another Pi process on the session. */
+function deadOwnerFixture(prefix: string) {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	const asyncRoot = path.join(root, "runs");
+	const resultsDir = path.join(root, "results");
+	const subscriptionsDir = path.join(root, "subscriptions");
+	const sent: string[] = [];
+	const managers: Array<{ dispose(): void }> = [];
+	const open = (ownerId: string) => {
+		const state = makeState();
+		state.completionOwnerId = ownerId;
+		const manager = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(`${ownerId}: ${String(message.content)}`); },
+		} as never, state, {
+			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000,
+			kill: (pid: number) => {
+				if (pid === DEAD_PID) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+				return true;
+			},
+		});
+		managers.push(manager);
+		return { manager, state };
+	};
+	writeStatus(asyncRoot, "run-takeover", "running", { sessionId: "session-a", pid: process.pid });
+	const armer = open("owner-a");
+	const { token } = armer.manager.arm({ targetKind: "async", runId: "run-takeover", requestedId: "run-takeover", timeoutMs: 30_000 });
+	armer.manager.dispose();
+	const recordPath = path.join(subscriptionsDir, `${token}.json`);
+	const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
+	fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: DEAD_PID } }), "utf-8");
+	return {
+		subscriptionsDir, token, recordPath, sent, open,
+		claimPath: (replacedOwnerId: string, generation: number) => path.join(subscriptionsDir, claimName(token, replacedOwnerId, generation)),
+		recordOwner: () => (JSON.parse(fs.readFileSync(recordPath, "utf-8")) as { completionOwnerId?: string }).completionOwnerId,
+		complete: () => writeStatus(asyncRoot, "run-takeover", "complete", { sessionId: "session-a" }),
+		dispose: () => {
+			for (const manager of managers) manager.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		},
+	};
 }
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -267,6 +320,292 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
+	it("leaves a same-session subscription to the process that armed it", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-shared-session-"));
+		const asyncRoot = path.join(root, "runs");
+		const resultsDir = path.join(root, "results");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const armed: string[] = [];
+		const foreign: string[] = [];
+		const armerState = makeState();
+		armerState.completionOwnerId = "owner-a";
+		const foreignState = makeState();
+		foreignState.completionOwnerId = "owner-b";
+		const armer = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { armed.push(String(message.content)); },
+		} as never, armerState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000 });
+		const other = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { foreign.push(String(message.content)); },
+		} as never, foreignState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000 });
+		try {
+			writeStatus(asyncRoot, "run-shared", "running", { sessionId: "session-a", pid: 999_999 });
+			const registration = armer.arm({ targetKind: "async", runId: "run-shared", requestedId: "run-shared", timeoutMs: 30_000 });
+
+			// A second Pi process opens the same session on another branch while the armer is alive.
+			other.restore();
+			assert.equal(foreignState.waitSubscriptions?.size ?? 0, 0, "a live owner keeps its subscription private to its process");
+
+			writeStatus(asyncRoot, "run-shared", "complete", { sessionId: "session-a" });
+			other.restore();
+			other.reconcile();
+			assert.deepEqual(foreign, [], "the other process must not deliver the owner's completion wake");
+			assert.equal(fs.existsSync(path.join(subscriptionsDir, `${registration.token}.json`)), true);
+
+			armer.reconcile();
+			assert.match(armed[0] ?? "", /run run-shared: completed/);
+			assert.equal(foreignState.waitSubscriptions?.size ?? 0, 0);
+		} finally {
+			armer.dispose();
+			other.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("hands a dead owner's subscription to the first process that restores it, not to a later one", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-shared-session-exit-"));
+		const asyncRoot = path.join(root, "runs");
+		const resultsDir = path.join(root, "results");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const sent: string[] = [];
+		const armerState = makeState();
+		armerState.completionOwnerId = "owner-a";
+		const armer = createWaitSubscriptionManager({ events: new TestBus(), sendMessage() {} } as never, armerState, {
+			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000,
+		});
+		const nextState = makeState();
+		nextState.completionOwnerId = "owner-b";
+		const kill = (pid: number) => {
+			if (pid === 999_999) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+			return true;
+		};
+		const next = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		} as never, nextState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, kill });
+		const otherState = makeState();
+		otherState.completionOwnerId = "owner-c";
+		const other = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		} as never, otherState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, kill });
+		try {
+			writeStatus(asyncRoot, "run-handoff", "running", { sessionId: "session-a", pid: process.pid });
+			const registration = armer.arm({ targetKind: "async", runId: "run-handoff", requestedId: "run-handoff", timeoutMs: 30_000 });
+			armer.dispose();
+			// The arming process is gone: its recorded pid no longer exists.
+			const recordPath = path.join(subscriptionsDir, `${registration.token}.json`);
+			const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as { completionOwnerProcess?: { pid: number } };
+			assert.equal(record.completionOwnerProcess?.pid, process.pid);
+			fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: 999_999 } }), "utf-8");
+
+			next.restore();
+			other.restore();
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), true);
+			assert.equal(otherState.waitSubscriptions?.has(registration.token) ?? false, false, "the live adopter keeps the subscription");
+			assert.equal((JSON.parse(fs.readFileSync(recordPath, "utf-8")) as { completionOwnerId?: string }).completionOwnerId, "owner-b");
+			assert.deepEqual(sent, []);
+
+			writeStatus(asyncRoot, "run-handoff", "complete", { sessionId: "session-a" });
+			other.reconcile();
+			assert.deepEqual(sent, []);
+			next.reconcile();
+
+			assert.equal(sent.length, 1);
+			assert.match(sent[0] ?? "", /run run-handoff: completed/);
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), false);
+			assert.equal(otherState.waitSubscriptions?.has(registration.token), false);
+			assert.equal(fs.existsSync(recordPath), false);
+			assert.deepEqual(fs.readdirSync(subscriptionsDir), [], "settling removes the record and its claim");
+		} finally {
+			next.dispose();
+			other.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not take a dead owner's subscription while its latest claimant is alive", () => {
+		const fixture = deadOwnerFixture("pi-wait-subscribe-claimed-");
+		try {
+			const recordBytes = fs.readFileSync(fixture.recordPath, "utf-8");
+			// "owner-b" is alive and has claimed the takeover from owner-a, but has not rewritten the record yet.
+			const claimPath = fixture.claimPath("owner-a", 1);
+			const claimBytes = JSON.stringify({ ownerId: "owner-b", process: { pid: process.pid } });
+			fs.writeFileSync(claimPath, claimBytes, "utf-8");
+
+			const later = fixture.open("owner-c");
+			later.manager.restore();
+
+			assert.equal(later.state.waitSubscriptions?.has(fixture.token), false);
+			assert.equal(fs.readFileSync(fixture.recordPath, "utf-8"), recordBytes);
+			assert.equal(fs.readFileSync(claimPath, "utf-8"), claimBytes);
+			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir).sort(), [path.basename(claimPath), `${fixture.token}.json`].sort());
+		} finally {
+			fixture.dispose();
+		}
+	});
+
+	it("takes over a dead owner's subscription when its latest claimant died before rewriting it", () => {
+		const fixture = deadOwnerFixture("pi-wait-subscribe-dead-claimant-");
+		try {
+			fs.writeFileSync(fixture.claimPath("owner-a", 1), JSON.stringify({ ownerId: "owner-b", process: { pid: DEAD_PID } }), "utf-8");
+
+			const later = fixture.open("owner-c");
+			later.manager.restore();
+			assert.equal(later.state.waitSubscriptions?.has(fixture.token), true);
+			assert.equal(fixture.recordOwner(), "owner-c");
+
+			fixture.complete();
+			later.manager.reconcile();
+			assert.equal(fixture.sent.length, 1);
+			assert.match(fixture.sent[0] ?? "", /^owner-c: [\s\S]*run run-takeover: completed/);
+			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), []);
+		} finally {
+			fixture.dispose();
+		}
+	});
+
+	it("releases the claim when a takeover cannot rewrite the record, so the next process takes over", (t) => {
+		const fixture = deadOwnerFixture("pi-wait-subscribe-claim-write-failure-");
+		try {
+			const recordBytes = fs.readFileSync(fixture.recordPath, "utf-8");
+			const failing = fixture.open("owner-b");
+			const rename = fsDefault.renameSync;
+			t.mock.method(fsDefault, "renameSync", (from: fs.PathLike, to: fs.PathLike) => {
+				if (to === fixture.recordPath) throw Object.assign(new Error("injected write failure"), { code: "EIO" });
+				return rename(from, to);
+			});
+			syncBuiltinESMExports();
+			try {
+				failing.manager.restore();
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+			}
+			assert.equal(failing.state.waitSubscriptions?.has(fixture.token), false);
+			assert.equal(fs.readFileSync(fixture.recordPath, "utf-8"), recordBytes);
+			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), [`${fixture.token}.json`], "no claim is left behind");
+
+			// owner-b is still alive; owner-c takes over.
+			const later = fixture.open("owner-c");
+			later.manager.restore();
+			assert.equal(later.state.waitSubscriptions?.has(fixture.token), true);
+
+			fixture.complete();
+			failing.manager.reconcile();
+			later.manager.reconcile();
+			assert.equal(fixture.sent.length, 1);
+			assert.match(fixture.sent[0] ?? "", /^owner-c: [\s\S]*run run-takeover: completed/);
+			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), []);
+		} finally {
+			fixture.dispose();
+		}
+	});
+
+	it("does not recreate a settled subscription for a process that read it before the settle", (t) => {
+		const fixture = deadOwnerFixture("pi-wait-subscribe-stale-claimer-");
+		try {
+			const staleBytes = fs.readFileSync(fixture.recordPath, "utf-8");
+			const first = fixture.open("owner-b");
+			first.manager.restore();
+			fixture.complete();
+			first.manager.reconcile();
+			assert.equal(fixture.sent.length, 1);
+			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), []);
+
+			// owner-c listed the directory and read the record before owner-b settled it:
+			// it sees the old owner-a record until it has created a claim, then real reads.
+			const readdir = fsDefault.readdirSync;
+			const readFile = fsDefault.readFileSync;
+			const recordFile = `${fixture.token}.json`;
+			const claimed = () => readdir(fixture.subscriptionsDir).some((file) => file.startsWith(`${fixture.token}.claim-`));
+			t.mock.method(fsDefault, "readdirSync", (dir: fs.PathLike, ...rest: unknown[]) => {
+				const files = (readdir as (...args: unknown[]) => string[])(dir, ...rest);
+				return dir === fixture.subscriptionsDir && !files.includes(recordFile) ? [...files, recordFile] : files;
+			});
+			t.mock.method(fsDefault, "readFileSync", (file: fs.PathOrFileDescriptor, ...rest: unknown[]) => (
+				file === fixture.recordPath && !claimed() ? staleBytes : (readFile as (...args: unknown[]) => unknown)(file, ...rest)
+			));
+			syncBuiltinESMExports();
+			const later = fixture.open("owner-c");
+			try {
+				later.manager.restore();
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+			}
+
+			assert.equal(later.state.waitSubscriptions?.has(fixture.token), false);
+			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), [], "no record or claim reappears");
+			later.manager.reconcile();
+			assert.equal(fixture.sent.length, 1);
+		} finally {
+			fixture.dispose();
+		}
+	});
+
+	it("keeps a subscription taken from a dead owner across a reload after that pid is reused", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-pid-reuse-"));
+		const asyncRoot = path.join(root, "runs");
+		const resultsDir = path.join(root, "results");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const sent: string[] = [];
+		let clock = Date.now();
+		const armerState = makeState();
+		armerState.completionOwnerId = "owner-a";
+		const armer = createWaitSubscriptionManager({ events: new TestBus(), sendMessage() {} } as never, armerState, {
+			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now: () => clock,
+		});
+		let ownerPidAlive = false;
+		// One Pi process ("owner-b"); /reload builds a new manager with the same completion owner.
+		const loadManager = () => {
+			const managerState = makeState();
+			managerState.completionOwnerId = "owner-b";
+			const manager = createWaitSubscriptionManager({
+				events: new TestBus(),
+				sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+			} as never, managerState, {
+				asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now: () => clock,
+				kill: (pid: number) => {
+					if (pid === 999_999 && !ownerPidAlive) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+					return true;
+				},
+			});
+			return { manager, managerState };
+		};
+		const first = loadManager();
+		let next = first.manager;
+		let nextState = first.managerState;
+		try {
+			writeStatus(asyncRoot, "run-reused", "running", { sessionId: "session-a", pid: process.pid });
+			const registration = armer.arm({ targetKind: "async", runId: "run-reused", requestedId: "run-reused", timeoutMs: 30_000 });
+			armer.dispose();
+			const recordPath = path.join(subscriptionsDir, `${registration.token}.json`);
+			const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
+			fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: 999_999 } }), "utf-8");
+
+			next.restore();
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), true);
+
+			// The OS hands the dead owner's pid to an unrelated process, then this process reloads.
+			ownerPidAlive = true;
+			next.dispose();
+			({ manager: next, managerState: nextState } = loadManager());
+			next.restore();
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), true, "the reloaded process still owns the subscription");
+			clock += 60_000;
+			next.reconcile();
+
+			assert.match(sent[0] ?? "", /timed out/);
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), false);
+			assert.equal(fs.existsSync(recordPath), false);
+		} finally {
+			next.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("tells the parent to revive the failed child before replacing resumable async runs", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-revive-first-"));
 		const asyncRoot = path.join(root, "runs");
@@ -430,7 +769,10 @@ describe("non-blocking wait subscriptions", () => {
 			assert.equal(sent.length, 0);
 			assert.equal(state.waitSubscriptions?.has(registration.token), true);
 
+			// settle() only delivers from the process that removes the record, so put the record
+			// back before the retry. Losing the race means another process already delivered it.
 			fs.rmdirSync(file);
+			fs.writeFileSync(file, JSON.stringify(registration), "utf-8");
 			manager.reconcile();
 			assert.match(sent[0] ?? "", /could not be reconciled/);
 			assert.equal(sent.length, 1);
@@ -529,9 +871,13 @@ describe("wait subscriptions armed by another session", () => {
 			now: () => now,
 		});
 		try {
-			armer.arm({ targetKind: "async", runId: "run-orphan", requestedId: "run-orphan", timeoutMs: 100 });
+			const { token } = armer.arm({ targetKind: "async", runId: "run-orphan", requestedId: "run-orphan", timeoutMs: 100 });
 			assert.equal(subscriptionFiles(subscriptionsDir).length, 1);
 			armer.dispose();
+			// A takeover claim and the temp file of a claim create that crashed.
+			const claim = path.join(subscriptionsDir, claimName(token, "owner-x", 1));
+			fs.writeFileSync(claim, JSON.stringify({ ownerId: "owner-y", process: { pid: 999_999 } }), "utf-8");
+			fs.writeFileSync(`${claim}.123.abc.tmp`, "", "utf-8");
 
 			// A different session starts well after the record expired.
 			now = 1_101 + 86400000;
@@ -543,7 +889,7 @@ describe("wait subscriptions armed by another session", () => {
 			});
 			try {
 				restarted.restore();
-				assert.deepEqual(subscriptionFiles(subscriptionsDir), [], "expired foreign record is removed");
+				assert.deepEqual(fs.readdirSync(subscriptionsDir), [], "expired foreign record and its claims are removed");
 				assert.equal(sent.length, 0, "no wake is delivered to the wrong session");
 			} finally {
 				restarted.dispose();

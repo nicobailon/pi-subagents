@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { formatResumeFirstFailedRunDetail } from "./resume-guidance.ts";
@@ -19,6 +19,10 @@ import {
 	type WaitCompletion,
 	type WaitSubscriptionRecord,
 } from "../../shared/types.ts";
+import { currentBootId, currentRecordedPid } from "./boot-id.ts";
+import { currentPidNamespaceScope } from "./pid-namespace.ts";
+import { checkRecordedPidLiveness, isRecordedPid } from "./stale-run-reconciler.ts";
+import { createClaimFile } from "../../workflows/workflow-resume-claim.ts";
 
 const SUBSCRIPTION_VERSION = 1;
 // Outcomes that report no saved results, so the notice points the parent at the run status instead.
@@ -74,6 +78,8 @@ function parseRecord(value: unknown): WaitSubscriptionRecord | undefined {
 		|| typeof record.token !== "string"
 		|| !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.token)
 		|| typeof record.sessionId !== "string"
+		|| (record.completionOwnerId !== undefined && typeof record.completionOwnerId !== "string")
+		|| (record.completionOwnerProcess !== undefined && !isRecordedPid(record.completionOwnerProcess))
 		|| (record.targetKind !== "async" && record.targetKind !== "foreground")
 		|| typeof record.runId !== "string"
 		|| typeof record.requestedId !== "string"
@@ -88,6 +94,44 @@ function needsAttention(run: AsyncRunSummary): boolean {
 
 function subscriptionFile(dir: string, token: string): string {
 	return path.join(dir, `${token}.json`);
+}
+
+/**
+ * Takeover claims are `<token>.claim-<owner hash>.<generation>`, not `.json`, so record scans skip them.
+ * Each generation is created exclusively, so one process takes over from a dead owner per generation;
+ * a dead claimant's generation is superseded by the next one.
+ */
+function claimPrefix(token: string, replacedOwnerId: string): string {
+	return `${token}.claim-${createHash("sha256").update(replacedOwnerId).digest("hex").slice(0, 16)}.`;
+}
+
+function latestClaimGeneration(files: readonly string[], prefix: string): number {
+	let latest = 0;
+	for (const file of files) {
+		const generation = file.startsWith(prefix) ? file.slice(prefix.length) : "";
+		// Exact digits only: leftover `<claim>.<pid>.<uuid>.tmp` files from a crashed create are not generations.
+		if (/^[1-9][0-9]*$/.test(generation)) latest = Math.max(latest, Number(generation));
+	}
+	return latest;
+}
+
+/** Call only after the record file is gone, so a late claimer that wins a freed claim finds no record to bring back. */
+function removeClaimFiles(dir: string, token: string): void {
+	let files: string[];
+	try {
+		files = fs.readdirSync(dir);
+	} catch (error) {
+		if (isNotFound(error)) return;
+		throw error;
+	}
+	for (const file of files) {
+		if (!file.startsWith(`${token}.claim-`)) continue;
+		try {
+			fs.unlinkSync(path.join(dir, file));
+		} catch (error) {
+			if (!isNotFound(error)) throw error;
+		}
+	}
 }
 
 export function formatWaitSubscriptions(state: Pick<SubagentState, "waitSubscriptions">, now = Date.now()): string | undefined {
@@ -115,6 +159,61 @@ export function createWaitSubscriptionManager(
 	let disposed = false;
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let lastForeignSweepAt = 0;
+	// Two Pi processes can share one session (two tree branches).
+	// The arming process owns the wake while it lives.
+	// Only its death hands the record to whichever process opens the session next,
+	// which wins an exclusive claim on the dead owner and writes itself in as the new owner.
+	const readRecordFile = (filePath: string): WaitSubscriptionRecord | undefined => {
+		try {
+			return parseRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
+		} catch (error) {
+			if (isNotFound(error)) return undefined;
+			throw error;
+		}
+	};
+	const isDead = (recorded: unknown): boolean => isRecordedPid(recorded) && checkRecordedPidLiveness(recorded, {
+		observedScope: currentPidNamespaceScope(),
+		observedBootId: currentBootId(),
+		...(options.kill ? { kill: options.kill } : {}),
+	}) === "dead";
+	// A live or unknown claimant holds its generation; a dead claimant, or a body that is not a claim, does not.
+	const latestClaimantHolds = (claimPath: string): boolean => {
+		let body: unknown;
+		try {
+			body = JSON.parse(fs.readFileSync(claimPath, "utf-8"));
+		} catch (error) {
+			// Claims are created whole, so a body that does not parse is damage, not a claimant mid-write.
+			if (error instanceof SyntaxError) return false;
+			return true;
+		}
+		const claimant = body as { ownerId?: unknown; process?: unknown } | null;
+		if (!claimant || typeof claimant !== "object" || typeof claimant.ownerId !== "string" || !isRecordedPid(claimant.process)) return false;
+		return !isDead(claimant.process);
+	};
+	const claimRecord = (filePath: string, record: WaitSubscriptionRecord): WaitSubscriptionRecord | undefined => {
+		if (!record.completionOwnerId || record.completionOwnerId === state.completionOwnerId) return record;
+		if (!isDead(record.completionOwnerProcess)) return undefined;
+		if (!state.completionOwnerId) return record;
+		const prefix = claimPrefix(record.token, record.completionOwnerId);
+		const latest = latestClaimGeneration(fs.readdirSync(subscriptionsDir), prefix);
+		if (latest > 0 && latestClaimantHolds(path.join(subscriptionsDir, `${prefix}${latest}`))) return undefined;
+		const claimPath = path.join(subscriptionsDir, `${prefix}${latest + 1}`);
+		if (!createClaimFile(claimPath, { ownerId: state.completionOwnerId, process: currentRecordedPid() })) return undefined;
+		// Any failure from here on releases the claim, so it cannot block the next process.
+		try {
+			// The record may have been settled (and its claims removed) after this process first read it.
+			if (readRecordFile(filePath)?.completionOwnerId !== record.completionOwnerId) {
+				fs.rmSync(claimPath, { force: true });
+				return undefined;
+			}
+			const claimed = { ...record, completionOwnerId: state.completionOwnerId, completionOwnerProcess: currentRecordedPid() };
+			writeAtomicJson(filePath, claimed);
+			return claimed;
+		} catch (error) {
+			fs.rmSync(claimPath, { force: true });
+			throw error;
+		}
+	};
 
 	/**
 	 * Remove expired records armed by another session.
@@ -167,25 +266,43 @@ export function createWaitSubscriptionManager(
 				// Losing this race is harmless: another session may have swept the
 				// same expired record. Anything else is reported and retried on the
 				// next sweep rather than interrupting the caller.
-				if (!isNotFound(error)) console.error(`Failed to remove expired wait subscription '${filePath}':`, error);
+				if (!isNotFound(error)) {
+					console.error(`Failed to remove expired wait subscription '${filePath}':`, error);
+					continue;
+				}
+			}
+			try {
+				removeClaimFiles(subscriptionsDir, record.token);
+			} catch (error) {
+				console.error(`Failed to remove claims of expired wait subscription '${filePath}':`, error);
 			}
 		}
 	};
 
-	const remove = (record: WaitSubscriptionRecord) => {
+	const remove = (record: WaitSubscriptionRecord): boolean => {
+		let removed = true;
 		try {
 			fs.unlinkSync(subscriptionFile(subscriptionsDir, record.token));
 		} catch (error) {
 			if (!isNotFound(error)) throw error;
+			removed = false;
 		}
 		subscriptions.delete(record.token);
 		unresolvedRestoredForegroundTokens.delete(record.token);
+		try {
+			removeClaimFiles(subscriptionsDir, record.token);
+		} catch (error) {
+			// The record is already gone, so a leftover claim can no longer bring it back.
+			console.error(`Failed to remove claims of wait subscription '${record.token}':`, error);
+		}
+		return removed;
 	};
 
 	const settle = (record: WaitSubscriptionRecord, outcome: string, detail: string, completion?: WaitCompletion) => {
 		if (disposed || state.currentSessionId !== record.sessionId) return;
 		try {
-			remove(record);
+			// Only the process that removes the record may deliver its wake.
+			if (!remove(record)) return;
 		} catch (error) {
 			console.error(`Failed to clear wait subscription '${record.token}'; it remains armed:`, error);
 			return;
@@ -303,6 +420,7 @@ export function createWaitSubscriptionManager(
 				version: SUBSCRIPTION_VERSION,
 				token: randomUUID(),
 				sessionId,
+				...(state.completionOwnerId ? { completionOwnerId: state.completionOwnerId, completionOwnerProcess: currentRecordedPid() } : {}),
 				targetKind: input.targetKind,
 				runId: input.runId,
 				requestedId: input.requestedId,
@@ -330,9 +448,11 @@ export function createWaitSubscriptionManager(
 			}
 			for (const file of files) {
 				try {
-					const record = parseRecord(JSON.parse(fs.readFileSync(path.join(subscriptionsDir, file), "utf-8")));
-					if (!record || file !== `${record.token}.json`) continue;
-					if (record.sessionId === state.currentSessionId) {
+					const filePath = path.join(subscriptionsDir, file);
+					const found = readRecordFile(filePath);
+					if (!found || file !== `${found.token}.json` || found.sessionId !== state.currentSessionId) continue;
+					const record = claimRecord(filePath, found);
+					if (record) {
 						subscriptions.set(record.token, record);
 						if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);
 					}
