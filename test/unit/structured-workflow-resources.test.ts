@@ -209,6 +209,9 @@ describe("structured workflow resources", () => {
 			[{ kind: "tasks", steps: [{ agent: "a", task: "t", cwd: " " }] }, /tasks\[0\]\.cwd must not be empty/],
 			[{ kind: "tasks", steps: [{ agent: "a", task: "t", model: 1 }] }, /tasks\[0\]\.model must be a non-empty string/],
 			[{ kind: "tasks", steps: [{ agent: "a", task: "t", count: 2 }] }, /unsupported fields: count/],
+			// Top-level tasks and chain exist only with workflow scripts disabled, so the advice must not offer workflow: true.
+			[{ kind: "tasks", steps: [{ agent: "a", task: "t", output: "a.md" }] }, /For exact or different per-child paths, you need workflow scripts, which disabledFeatures has turned off\./],
+			[{ kind: "chain", steps: [{ agent: "a", task: "t", label: "x" }] }, /For per-child label, you need workflow scripts, which disabledFeatures has turned off\. No child was launched\.$/],
 			[{ kind: "tasks", steps: [{ agent: "a" }] }, /tasks\[0\]\.task must be a non-empty string/],
 			[{ kind: "tasks", steps: [{ task: "t" }] }, /tasks\[0\]\.agent must be a non-empty string/],
 			[{ kind: "tasks", steps: [{ agent: "a", task: 3 }] }, /tasks\[0\]\.task must be a non-empty string/],

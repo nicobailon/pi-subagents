@@ -28,15 +28,16 @@ const SHARED_CHILD_CONTROLS = new Set(["worktree", "baseRef", "context", "skill"
 const SCRIPT_CHILD_FIELDS = new Set(["key", "label", "phase", "resume", "async", "timeoutMs"]);
 
 /** Recovery advice per rejected field, so a retry keeps the caller's intent instead of dropping the field. Unknown fields get none. */
-export function unsupportedChildFieldAdvice(fields: readonly string[]): string {
+export function unsupportedChildFieldAdvice(fields: readonly string[], scripts: boolean): string {
+	const perChild = scripts ? "use workflow: true with runs.all items" : "you need workflow scripts, which disabledFeatures has turned off";
 	const advice: string[] = [];
 	const itemFields = fields.filter((field) => (CHILD_FIELDS as readonly string[]).includes(field));
 	if (itemFields.length > 0) advice.push(`Set ${itemFields.join(", ")} on each item, or on the subagent call itself to give every child the same value.`);
-	if (fields.includes("output")) advice.push("For one shared output, set output on the subagent call itself: the workflow result is written there and each child gets its own file beside it. For exact or different per-child paths, use workflow: true with runs.all items that set output. Do not drop output if you need durable child files.");
+	if (fields.includes("output")) advice.push(`For one shared output, set output on the subagent call itself: the workflow result is written there and each child gets its own file beside it. For exact or different per-child paths, ${scripts ? "use workflow: true with runs.all items that set output" : perChild}. Do not drop output if you need durable child files.`);
 	const shared = fields.filter((field) => SHARED_CHILD_CONTROLS.has(field));
-	if (shared.length > 0) advice.push(`Set ${shared.join(", ")} on the subagent call itself to give every child the same value; for different values per child, use workflow: true with runs.all items.`);
+	if (shared.length > 0) advice.push(`Set ${shared.join(", ")} on the subagent call itself to give every child the same value; for different values per child, ${perChild}.`);
 	const scriptOnly = fields.filter((field) => SCRIPT_CHILD_FIELDS.has(field));
-	if (scriptOnly.length > 0) advice.push(`Per-child ${scriptOnly.join(", ")} needs workflow: true with runs.all items.`);
+	if (scriptOnly.length > 0) advice.push(`For per-child ${scriptOnly.join(", ")}, ${perChild}.`);
 	advice.push("No child was launched.");
 	return advice.join(" ");
 }
@@ -59,10 +60,10 @@ function nonEmptyString(value: unknown, path: string): string {
 	return value;
 }
 
-function exactFields(value: unknown, path: string, allowed: readonly string[], hint: string): Record<string, unknown> {
+function exactFields(value: unknown, path: string, allowed: readonly string[], hint: string, scripts: boolean): Record<string, unknown> {
 	if (!isPlainRecord(value)) throw new Error(`${path} must be an object.`);
 	const unsupported = Object.keys(value).filter((key) => !allowed.includes(key));
-	if (unsupported.length > 0) throw new Error(`${path} contains unsupported fields: ${unsupported.join(", ")}. ${hint} ${unsupportedChildFieldAdvice(unsupported)}`);
+	if (unsupported.length > 0) throw new Error(`${path} contains unsupported fields: ${unsupported.join(", ")}. ${hint} ${unsupportedChildFieldAdvice(unsupported, scripts)}`);
 	return value;
 }
 
@@ -128,11 +129,11 @@ const SETTLE_HELPER = [
 	"}",
 ].join("\n");
 
-function buildTasksScript(steps: unknown, originalTask: string | undefined): string {
+function buildTasksScript(steps: unknown, originalTask: string | undefined, scripts: boolean): string {
 	if (!Array.isArray(steps) || steps.length === 0) throw new Error("tasks must be a non-empty array of { agent, task } items.");
 	const children = steps.map((item, index): StepChild => {
 		const path = `tasks[${index}]`;
-		const record = exactFields(item, path, ["agent", "task", ...CHILD_FIELDS], "Each tasks item accepts agent and task, plus optional cwd and model.");
+		const record = exactFields(item, path, ["agent", "task", ...CHILD_FIELDS], "Each tasks item accepts agent and task, plus optional cwd and model.", scripts);
 		const agent = nonEmptyString(record.agent, `${path}.agent`);
 		const task = nonEmptyString(record.task, `${path}.task`);
 		const taskExpression = compileTemplate(task, {
@@ -166,18 +167,18 @@ function buildChainScript(steps: unknown, originalTask: string | undefined): str
 		let stepChildren: StepChild[];
 		let outputName: string | undefined;
 		if (isPlainRecord(step) && Object.hasOwn(step, "parallel")) {
-			const record = exactFields(step, path, ["parallel"], "A parallel step accepts only parallel; as is supported on sequential steps only.");
+			const record = exactFields(step, path, ["parallel"], "A parallel step accepts only parallel; as is supported on sequential steps only.", false);
 			const items = record.parallel;
 			if (!Array.isArray(items) || items.length === 0) throw new Error(`${path}.parallel must be a non-empty array of { agent, task } items.`);
 			stepChildren = items.map((item, itemIndex): StepChild => {
 				const itemPath = `${path}.parallel[${itemIndex}]`;
-				const itemRecord = exactFields(item, itemPath, ["agent", "task", ...CHILD_FIELDS], "Each parallel item accepts agent and task, plus optional cwd and model.");
+				const itemRecord = exactFields(item, itemPath, ["agent", "task", ...CHILD_FIELDS], "Each parallel item accepts agent and task, plus optional cwd and model.", false);
 				const agent = nonEmptyString(itemRecord.agent, `${itemPath}.agent`);
 				const task = nonEmptyString(itemRecord.task, `${itemPath}.task`);
 				return { key: `step-${number}-${itemIndex + 1}`, agent, fields: childFields(itemRecord, itemPath), taskExpression: compileTemplate(task, { path: `${itemPath}.task`, hasOriginalTask, previous, outputs }) };
 			});
 		} else {
-			const record = exactFields(step, path, ["agent", "task", "as", ...CHILD_FIELDS], "A sequential step accepts agent, task, as, cwd and model; a parallel step accepts only parallel.");
+			const record = exactFields(step, path, ["agent", "task", "as", ...CHILD_FIELDS], "A sequential step accepts agent, task, as, cwd and model; a parallel step accepts only parallel.", false);
 			const agent = nonEmptyString(record.agent, `${path}.agent`);
 			let task: string;
 			if (record.task === undefined) {
@@ -205,6 +206,7 @@ function buildChainScript(steps: unknown, originalTask: string | undefined): str
 }
 
 /** Validate exact data shapes and expand them into a package-owned workflow script. */
-export function buildStructuredWorkflowScript(kind: StructuredWorkflowKind, steps: unknown, originalTask: string | undefined): string {
-	return kind === "tasks" ? buildTasksScript(steps, originalTask) : buildChainScript(steps, originalTask);
+/** `scripts` is true only for the named `parallel` workflow; top-level tasks and chain exist only when workflow scripts are disabled. */
+export function buildStructuredWorkflowScript(kind: StructuredWorkflowKind, steps: unknown, originalTask: string | undefined, scripts: boolean): string {
+	return kind === "tasks" ? buildTasksScript(steps, originalTask, scripts) : buildChainScript(steps, originalTask);
 }

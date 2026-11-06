@@ -163,9 +163,9 @@ function resolveRunCi(args: Readonly<Record<string, unknown>>): ReturnType<Workf
 
 function resolveParallel(args: Readonly<Record<string, unknown>>): ReturnType<WorkflowResourceDefinition["resolve"]> {
 	const unsupported = Object.keys(args).filter((key) => key !== "tasks");
-	if (unsupported.length > 0) return { error: `workflow 'parallel' args contain unsupported fields: ${unsupported.join(", ")}. Pass args.tasks: [{ agent, task, cwd?, model? }, ...]. ${unsupportedChildFieldAdvice(unsupported)}` };
+	if (unsupported.length > 0) return { error: `workflow 'parallel' args contain unsupported fields: ${unsupported.join(", ")}. Pass args.tasks: [{ agent, task, cwd?, model? }, ...]. ${unsupportedChildFieldAdvice(unsupported, true)}` };
 	try {
-		return { script: buildStructuredWorkflowScript("tasks", args.tasks, undefined) };
+		return { script: buildStructuredWorkflowScript("tasks", args.tasks, undefined, true) };
 	} catch (error) {
 		return { error: `workflow 'parallel' args.${error instanceof Error ? error.message : String(error)}` };
 	}
@@ -214,7 +214,7 @@ export function resolveStructuredWorkflowResource(input: { kind: "tasks" | "chai
 			validatePlainJson(task, "task");
 		}
 		if (jsonByteLength({ [kind]: steps, task }) > MAX_ARGS_BYTES) return { ok: false, error: `${kind} input exceeds ${MAX_ARGS_BYTES} bytes.` };
-		const script = buildStructuredWorkflowScript(kind, JSON.parse(JSON.stringify(steps)), task);
+		const script = buildStructuredWorkflowScript(kind, JSON.parse(JSON.stringify(steps)), task, false);
 		return { ok: true, resource: issueWorkflowResource(kind, STRUCTURED_WORKFLOW_RESOURCE_VERSION, script) };
 	} catch (error) {
 		return { ok: false, error: error instanceof Error ? error.message.slice(0, 4096) : "Structured workflow resolution failed." };
