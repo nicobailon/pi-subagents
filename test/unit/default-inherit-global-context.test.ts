@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { handleUpdate } from "../../src/agents/agent-management.ts";
+import { handleCreate, handleUpdate } from "../../src/agents/agent-management.ts";
 
 let tempHome = "";
 let tempProject = "";
@@ -99,5 +99,13 @@ describe("subagents.defaultInheritGlobalContext", () => {
 			assert.match(content, new RegExp(`^description: Updated ${agent}$`, "m"));
 			assert.doesNotMatch(content, /^inheritGlobalContext:/m);
 		}
+	});
+
+	it("keeps an explicit false from create", () => {
+		writeJson(path.join(tempProject, ".pi", "settings.json"), { subagents: { defaultInheritGlobalContext: true } });
+		const ctx = { cwd: tempProject, modelRegistry: { getAvailable: () => [] } } as unknown as Parameters<typeof handleCreate>[1];
+		const created = handleCreate({ scope: "project", config: { name: "created-optout", description: "Created", inheritGlobalContext: false } }, ctx);
+		assert.equal((created as typeof created & { isError?: boolean }).isError, false);
+		assert.equal(inheritsGlobal("created-optout"), false);
 	});
 });
