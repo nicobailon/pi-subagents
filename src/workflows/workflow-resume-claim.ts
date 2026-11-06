@@ -141,7 +141,7 @@ export function workflowResumeClaimState(asyncDir: string, options: { liveness?:
 }
 
 /** Creates the claim file only if none exists, with its whole body in place at once. */
-function createClaimFile(filePath: string, claim: WorkflowResumeClaim): boolean {
+export function createClaimFile(filePath: string, claim: object): boolean {
 	const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
 	try {
 		fs.writeFileSync(tempPath, JSON.stringify(claim, null, 2), "utf-8");

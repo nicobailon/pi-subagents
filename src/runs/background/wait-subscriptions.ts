@@ -22,6 +22,7 @@ import {
 import { currentBootId, currentRecordedPid } from "./boot-id.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { checkRecordedPidLiveness, isRecordedPid } from "./stale-run-reconciler.ts";
+import { createClaimFile } from "../../workflows/workflow-resume-claim.ts";
 
 const SUBSCRIPTION_VERSION = 1;
 // Outcomes that report no saved results, so the notice points the parent at the run status instead.
@@ -95,9 +96,23 @@ function subscriptionFile(dir: string, token: string): string {
 	return path.join(dir, `${token}.json`);
 }
 
-/** Not `.json`, so record scans skip it. One file per replaced owner, so exactly one process takes over from each dead owner. */
-function claimFile(dir: string, token: string, replacedOwnerId: string): string {
-	return path.join(dir, `${token}.claim-${createHash("sha256").update(replacedOwnerId).digest("hex").slice(0, 16)}`);
+/**
+ * Takeover claims are `<token>.claim-<owner hash>.<generation>`, not `.json`, so record scans skip them.
+ * Each generation is created exclusively, so one process takes over from a dead owner per generation;
+ * a dead claimant's generation is superseded by the next one.
+ */
+function claimPrefix(token: string, replacedOwnerId: string): string {
+	return `${token}.claim-${createHash("sha256").update(replacedOwnerId).digest("hex").slice(0, 16)}.`;
+}
+
+function latestClaimGeneration(files: readonly string[], prefix: string): number {
+	let latest = 0;
+	for (const file of files) {
+		const generation = file.startsWith(prefix) ? file.slice(prefix.length) : "";
+		// Exact digits only: leftover `<claim>.<pid>.<uuid>.tmp` files from a crashed create are not generations.
+		if (/^[1-9][0-9]*$/.test(generation)) latest = Math.max(latest, Number(generation));
+	}
+	return latest;
 }
 
 /** Call only after the record file is gone, so a late claimer that wins a freed claim finds no record to bring back. */
@@ -156,31 +171,48 @@ export function createWaitSubscriptionManager(
 			throw error;
 		}
 	};
+	const isDead = (recorded: unknown): boolean => isRecordedPid(recorded) && checkRecordedPidLiveness(recorded, {
+		observedScope: currentPidNamespaceScope(),
+		observedBootId: currentBootId(),
+		...(options.kill ? { kill: options.kill } : {}),
+	}) === "dead";
+	// A live or unknown claimant holds its generation; a dead claimant, or a body that is not a claim, does not.
+	const latestClaimantHolds = (claimPath: string): boolean => {
+		let body: unknown;
+		try {
+			body = JSON.parse(fs.readFileSync(claimPath, "utf-8"));
+		} catch (error) {
+			// Claims are created whole, so a body that does not parse is damage, not a claimant mid-write.
+			if (error instanceof SyntaxError) return false;
+			return true;
+		}
+		const claimant = body as { ownerId?: unknown; process?: unknown } | null;
+		if (!claimant || typeof claimant !== "object" || typeof claimant.ownerId !== "string" || !isRecordedPid(claimant.process)) return false;
+		return !isDead(claimant.process);
+	};
 	const claimRecord = (filePath: string, record: WaitSubscriptionRecord): WaitSubscriptionRecord | undefined => {
 		if (!record.completionOwnerId || record.completionOwnerId === state.completionOwnerId) return record;
-		if (!isRecordedPid(record.completionOwnerProcess)) return undefined;
-		const ownerDead = checkRecordedPidLiveness(record.completionOwnerProcess, {
-			observedScope: currentPidNamespaceScope(),
-			observedBootId: currentBootId(),
-			...(options.kill ? { kill: options.kill } : {}),
-		}) === "dead";
-		if (!ownerDead) return undefined;
+		if (!isDead(record.completionOwnerProcess)) return undefined;
 		if (!state.completionOwnerId) return record;
-		const claimPath = claimFile(subscriptionsDir, record.token, record.completionOwnerId);
+		const prefix = claimPrefix(record.token, record.completionOwnerId);
+		const latest = latestClaimGeneration(fs.readdirSync(subscriptionsDir), prefix);
+		if (latest > 0 && latestClaimantHolds(path.join(subscriptionsDir, `${prefix}${latest}`))) return undefined;
+		const claimPath = path.join(subscriptionsDir, `${prefix}${latest + 1}`);
+		if (!createClaimFile(claimPath, { ownerId: state.completionOwnerId, process: currentRecordedPid() })) return undefined;
+		// Any failure from here on releases the claim, so it cannot block the next process.
 		try {
-			fs.writeFileSync(claimPath, state.completionOwnerId, { flag: "wx", mode: 0o600 });
+			// The record may have been settled (and its claims removed) after this process first read it.
+			if (readRecordFile(filePath)?.completionOwnerId !== record.completionOwnerId) {
+				fs.rmSync(claimPath, { force: true });
+				return undefined;
+			}
+			const claimed = { ...record, completionOwnerId: state.completionOwnerId, completionOwnerProcess: currentRecordedPid() };
+			writeAtomicJson(filePath, claimed);
+			return claimed;
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "EEXIST") return undefined;
+			fs.rmSync(claimPath, { force: true });
 			throw error;
 		}
-		// The record may have been settled (and its claims removed) after this process first read it.
-		if (readRecordFile(filePath)?.completionOwnerId !== record.completionOwnerId) {
-			fs.rmSync(claimPath, { force: true });
-			return undefined;
-		}
-		const claimed = { ...record, completionOwnerId: state.completionOwnerId, completionOwnerProcess: currentRecordedPid() };
-		writeAtomicJson(filePath, claimed);
-		return claimed;
 	};
 
 	/**
