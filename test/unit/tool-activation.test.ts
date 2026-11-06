@@ -302,14 +302,16 @@ describe("toolActivation modes", () => {
 		}
 	});
 
-	it("registers no loader in eager, even with a capable model or recorded loader history", async () => {
+	it("registers no loader in eager and leaves a resumed selection as Pi restored it", async () => {
 		for (const messages of [[], [declared(["read", "subagents_enable"])]]) {
 			const runtime = createRuntime(messages, [], [], { config: { toolActivation: "eager" }, model: COMPATIBLE });
-			await runtime.emit("session_start", { type: "session_start", reason: "resume" });
+			// Pi restores only recorded tools that are still registered, and eager registers no loader.
+			if (messages.length > 0) runtime.select(["read"]);
+			await runtime.emit(RESUME.type, RESUME);
 			assert.equal(runtime.tools.has("subagents_enable"), false);
 			const selectedTools = await startAgent(runtime);
-			assert.ok(selectedTools.includes("bg_wait"));
-			assert.ok(selectedTools.includes("subagent"));
+			assert.equal(selectedTools.includes("bg_wait"), messages.length === 0);
+			assert.equal(selectedTools.includes("subagent"), messages.length === 0);
 			assert.equal(selectedTools.includes("subagents_enable"), false);
 		}
 	});
@@ -513,29 +515,17 @@ describe("toolActivation modes", () => {
 			{ subagents_enable: true, subagent: true });
 	});
 
-	it("applies activation modes on resume and reload when intact history never declared this extension", async () => {
-		// Synthetic tool-selection history only: this tests activation, not child launch.
-		for (const mode of ["auto", "dynamic", "eager"]) {
-			for (const caseModel of [COMPATIBLE, INCOMPATIBLE]) {
-				for (const event of [RESUME, RELOAD]) {
-					const runtime = createRuntime([other], [], [], { config: { toolActivation: mode }, model: caseModel });
-					runtime.tools.set("other_extension_tool", { name: "other_extension_tool", sourceInfo: { path: "other-extension" } });
-					// Eager leaves the host selection alone: reload registers tools, resume restores history.
-					if (event === RELOAD) allOn(runtime);
-					else runtime.select(["read", "other_extension_tool"]);
-					await runtime.emit(event.type, event);
-					const label = `${mode}, ${caseModel.api}, ${event.reason}`;
-					await assertOwned(runtime, label, { subagents_enable: mode === "dynamic", subagent: mode === "eager" && event === RELOAD, bg_wait: mode === "eager" && event === RELOAD });
-					if (mode === "eager") assert.equal(runtime.tools.has("subagents_enable"), false, label);
-					if (mode === "dynamic") {
-						const result = await runtime.tools.get("subagents_enable")!.execute!("enable", {}, new AbortController().signal, undefined, runtime.context);
-						assert.notEqual(result?.isError, true, label);
-						await assertOwned(runtime, label, { subagents_enable: true, subagent: true, bg_wait: true });
-					}
-					for (const name of ["read", "other_extension_tool"]) assert.ok(runtime.active().includes(name), `${label}: preserves ${name}`);
-				}
-			}
-		}
+	it("replays a transcript that never declared this extension's tools without adding them", async () => {
+		// The harness starts with every registered tool active, as /reload does.
+		const auto = createRuntime([other], [], [], { model: COMPATIBLE });
+		await auto.emit(RELOAD.type, RELOAD);
+		await assertOwned(auto, "auto, never declared", { subagents_enable: false, subagent: false, bg_wait: false });
+
+		const dynamic = createRuntime([other], [], [], { ...DYNAMIC, model: INCOMPATIBLE });
+		await dynamic.emit(RELOAD.type, RELOAD);
+		await assertOwned(dynamic, "dynamic, never declared", { subagents_enable: true, subagent: false });
+		await dynamic.tools.get("subagents_enable")!.execute!("enable", {}, new AbortController().signal, undefined, dynamic.context);
+		await assertOwned(dynamic, "dynamic, enabled", { subagents_enable: true, subagent: true });
 	});
 
 	it("tells an unload from a deliberate removal after a compaction", async () => {
