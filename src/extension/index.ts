@@ -60,7 +60,7 @@ import registerSubagentNotify from "../runs/background/notify.ts";
 import { createParentWake } from "../shared/parent-wake.ts";
 import { handleSubagentSteeringNotice, type SubagentSteeringMessageDetails } from "./steering-notices.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/child-runtime-config.ts";
-import { disposeChildSessions } from "../runs/shared/child-session.ts";
+import { disposeChildSessionsForParent } from "../runs/shared/child-session.ts";
 import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
 import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./config.ts";
 import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
@@ -1258,6 +1258,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (event) => {
+		// Captured first: runtimeEntry.cleanup() below clears state.parentSessionFile, and the
+		// disposal must stay scoped to this session even while its own state is being torn down.
+		const parentSessionFile = state.parentSessionFile ?? undefined;
 		sessionSwitchGuard.sessionShutdown(event);
 		cancelCompactionResume();
 		completionNotifier.sessionShutdown(event?.reason);
@@ -1266,7 +1269,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		try {
 			// Only this session's children: a multi-session host (pi-web) shuts sessions down
 			// one at a time, and one session's shutdown must not abort another session's runs.
-			await disposeChildSessions(state.parentSessionFile ?? undefined);
+			await disposeChildSessionsForParent(parentSessionFile);
 		} catch (error) {
 			console.error("Failed to dispose in-process child sessions:", error);
 		}

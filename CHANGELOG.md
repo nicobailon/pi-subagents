@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- A session's `session_shutdown` now disposes only the children that session launched. Before, the extension's shutdown handler disposed every live in-process child through the process-wide factory, so in a multi-session host such as pi-web, one idle session being reaped aborted another session's running subagents mid-flight: the child died with `Request was aborted` while its parent session kept running. The detached runner's whole-process exit path still disposes everything.
+- A session's `session_shutdown` now disposes only the children that session launched. Before, the extension's shutdown handler disposed every live in-process child through the process-wide factory, so in a multi-session host such as pi-web, one idle session being reaped aborted another session's running subagents mid-flight: the child died with `Request was aborted` while its parent session kept running. The detached runner's whole-process exit path still disposes everything. Thanks to [@Jarcis-cy](https://github.com/Jarcis-cy) for [#3204](https://github.com/nicobailon/pi-subagents/pull/3204).
 
 ## [0.86.0] - 2026-11-05
 
