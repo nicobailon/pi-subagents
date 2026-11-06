@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { normalizeModelSegment, resolveModelCandidate } from "../runs/shared/model-resolution.ts";
+import { knownModelProviders, normalizeModelSegment, resolveModelCandidate } from "../runs/shared/model-resolution.ts";
 import type { WatchdogEndpointConfig } from "./types.ts";
 import {
 	getSupportedThinkingLevels,
@@ -83,7 +83,7 @@ export function resolveWatchdogModelInput(ctx: ExtensionContext, rawModel: strin
 	if (!trimmed) throw new Error("Watchdog model must be a non-empty provider/model value.");
 	const availableModels = modelRegistryEntries(ctx);
 	const preferredProvider = typeof ctx.model?.provider === "string" ? ctx.model.provider : undefined;
-	const resolved = resolveModelCandidate(trimmed, availableModels, preferredProvider) ?? trimmed;
+	const resolved = resolveModelCandidate(trimmed, availableModels, preferredProvider, knownModelProviders(ctx.modelRegistry)) ?? trimmed;
 	const { baseModel, thinkingSuffix } = splitKnownThinkingSuffix(resolved);
 	const named = splitProviderModel(baseModel);
 	if (!named) throw new Error(`Watchdog model '${rawModel}' did not resolve to provider/model. Use a provider-qualified model such as openai-codex/gpt-5.5:high or anthropic/claude-opus-4-8:high.`);

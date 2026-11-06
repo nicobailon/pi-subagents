@@ -33,7 +33,7 @@ import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { applyWatchdogLaunchRules } from "../../watchdog/rules.ts";
 import { childWatchdogProgressForModel } from "../../watchdog/child-status.ts";
-import { normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, resolveModelSelection, scopedModelIdsFromContext, type ModelOrigin, type ParentModel } from "../shared/model-resolution.ts";
+import { knownModelProviders, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelOrigin, resolveModelSelection, scopedModelIdsFromContext, type KnownProviders, type ModelOrigin, type ParentModel } from "../shared/model-resolution.ts";
 import { projectChainOutputSchemas, resolveEffectiveOutputSchema } from "../shared/child-launch-plan.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
@@ -1445,6 +1445,7 @@ function appendStepToAsyncChain(input: {
 		parentProviderRegistry: input.ctx.modelRegistry,
 		currentModel: parentModel,
 		scopedModelIds: scopedModelIdsFromContext(input.ctx),
+		knownModelProviders: knownModelProviders(input.ctx.modelRegistry),
 		modelScope: discoveredForAppend.modelScope,
 		modelResponseAliases: input.deps.config.modelResponseAliases,
 		interactive: input.ctx.hasUI,
@@ -1914,6 +1915,7 @@ async function resumeExternalJobFollowUp(input: {
 			parentProviderRegistry: input.ctx.modelRegistry,
 			currentModel: parentModel,
 			scopedModelIds: scopedModelIdsFromContext(input.ctx),
+			knownModelProviders: knownModelProviders(input.ctx.modelRegistry),
 			modelScope: input.modelScope,
 			modelResponseAliases: input.deps.config.modelResponseAliases,
 			interactive: input.ctx.hasUI,
@@ -2219,6 +2221,7 @@ async function resumeAsyncRun(input: {
 				parentProviderRegistry: input.ctx.modelRegistry,
 				currentModel: parentModel,
 				scopedModelIds: scopedModelIdsFromContext(input.ctx),
+				knownModelProviders: knownModelProviders(input.ctx.modelRegistry),
 				modelScope,
 				modelResponseAliases: input.deps.config.modelResponseAliases,
 				runnerLaunchers: input.deps.config.runnerLaunchers,
@@ -2361,6 +2364,7 @@ async function resumeAsyncRun(input: {
 			parentProviderRegistry: input.ctx.modelRegistry,
 			currentModel: parentModel,
 			scopedModelIds: scopedModelIdsFromContext(input.ctx),
+			knownModelProviders: knownModelProviders(input.ctx.modelRegistry),
 			modelScope,
 			// Absence in the retained contract is meaningful; never acquire current aliases.
 			modelResponseAliases: recoveryDescriptor ? recoveryDescriptor.modelResponseAliases : foregroundContract?.modelResponseAliases,
@@ -3293,6 +3297,7 @@ function resolveStaticLaunchSummary(input: {
 	parentModel?: ParentModel;
 	scopedModelIds?: string[];
 	availableModels: ModelInfo[];
+	knownProviders: KnownProviders;
 	currentProvider?: string;
 	modelScope?: ModelScopeConfig;
 	thinkingOverrideForTask: ThinkingOverrideForTask;
@@ -3308,7 +3313,7 @@ function resolveStaticLaunchSummary(input: {
 			input.parentModel,
 			input.availableModels,
 			agentConfig?.modelProvider ?? input.currentProvider,
-			modelScopes.length === 0 ? {} : { scope: modelScopes },
+			{ ...(modelScopes.length === 0 ? {} : { scope: modelScopes }), knownProviders: input.knownProviders },
 		);
 	const thinkingOverride = externalRunner ? undefined : input.thinkingOverrideForTask();
 	const thinking = externalRunner ? undefined : resolveEffectiveThinking(model, thinkingOverride ?? agentConfig?.thinking);
@@ -3325,6 +3330,7 @@ function collectStaticLaunchSummaries(input: {
 	parentModel?: ParentModel;
 	scopedModelIds?: string[];
 	availableModels: ModelInfo[];
+	knownProviders: KnownProviders;
 	currentProvider?: string;
 	modelScope?: ModelScopeConfig;
 	thinkingOverrideForTask: ThinkingOverrideForTask;
@@ -3338,6 +3344,7 @@ function collectStaticLaunchSummaries(input: {
 		parentModel: input.parentModel,
 		scopedModelIds: input.scopedModelIds,
 		availableModels: input.availableModels,
+		knownProviders: input.knownProviders,
 		currentProvider: input.currentProvider,
 		modelScope: input.modelScope,
 		thinkingOverrideForTask: input.thinkingOverrideForTask,
@@ -3650,6 +3657,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		parentProviderRegistry: ctx.modelRegistry,
 		currentModel: parentModel,
 		scopedModelIds: data.scopedModelIds,
+		knownModelProviders: knownModelProviders(ctx.modelRegistry),
 		modelScope: data.modelScope,
 		modelResponseAliases: deps.config.modelResponseAliases,
 		runnerLaunchers: deps.config.runnerLaunchers,
@@ -3698,6 +3706,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, a.modelProvider ?? currentProvider, {
 				...(modelScopes.length === 0 ? {} : { scope: modelScopes }),
 				source: modelOrigin === "explicit" ? "explicit" : "inherited",
+				knownProviders: asyncCtx.knownModelProviders,
 			});
 		const modelOverrideFromParent = modelOrigin === "inherited";
 		const launchRuleError = applyWatchdogLaunchRules({ cwd: effectiveCwd, agent: a.name, model: modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`), warn: (violation) => deps.watchdog?.displayRuleWarning(violation) });
@@ -4220,6 +4229,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const parentModel = data.parentModel;
 	const currentProvider = parentModel?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
+	const knownProviders = knownModelProviders(ctx.modelRegistry);
 	const modelScopes = resolveModelScopesForAgent(data.modelScope, agentConfig.name, parentModel, data.scopedModelIds);
 	let task = typeof params.task === "string" ? params.task : "";
 	const modelOrigin = resolveModelOrigin({
@@ -4237,6 +4247,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		{
 			...(modelScopes.length === 0 ? {} : { scope: modelScopes }),
 			source: modelOrigin === "explicit" ? "explicit" : "inherited",
+			knownProviders,
 		},
 	);
 	const modelOverrideFromParent = modelOrigin === "inherited";
@@ -4488,6 +4499,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			thinkingCeiling: agentConfig.maxThinking,
 			extensionBindings: params.extensionBindings,
 			availableModels,
+			knownModelProviders: knownProviders,
 			modelResponseAliases,
 			preferredModelProvider: currentProvider,
 			modelScope: modelScopes,
@@ -8150,6 +8162,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					parentModel: requestParentModel,
 					scopedModelIds: scopedModelIdsFromContext(ctx),
 					availableModels: ctx.modelRegistry.getAvailable().map(toModelInfo),
+					knownProviders: knownModelProviders(ctx.modelRegistry),
 					currentProvider: requestParentModel?.provider,
 					modelScope,
 					thinkingOverrideForTask,

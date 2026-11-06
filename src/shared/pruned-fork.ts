@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { resolveModelCandidate } from "../runs/shared/model-resolution.ts";
+import { knownModelProviders, resolveModelCandidate } from "../runs/shared/model-resolution.ts";
 import { splitKnownThinkingSuffix, toModelInfo } from "./model-info.ts";
 import { opencodeSessionHeaders } from "./opencode-session-headers.ts";
 import type { ForkContextConfig } from "./types.ts";
@@ -429,7 +429,7 @@ export async function createPrunedForkSessionWriter(
 	if (config?.mode !== "pruned") return async () => {};
 	if (!config.model?.trim()) throw new Error("Pruned fork context requires config.forkContext.model.");
 	const available = ctx.modelRegistry.getAvailable();
-	const resolved = resolveModelCandidate(config.model.trim(), available.map(toModelInfo), ctx.model?.provider);
+	const resolved = resolveModelCandidate(config.model.trim(), available.map(toModelInfo), ctx.model?.provider, knownModelProviders(ctx.modelRegistry));
 	if (!resolved) throw new Error(`Pruned fork model '${config.model}' did not match exactly one available model.`);
 	const { baseModel } = splitKnownThinkingSuffix(resolved);
 	const named = splitProviderModel(baseModel);

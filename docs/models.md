@@ -184,9 +184,9 @@ You do not have to spell a model exactly. Model ids are matched fuzzily against 
 - Case differences: `Claude-Sonnet-4` vs `claude-sonnet-4`
 - Optional trailing date stamps: `claude-haiku-4-5-20251001` or `claude-haiku-4-5-2025-10-01` vs `claude-haiku-4-5`
 
-Exact `provider/id` matches still win, and a qualified provider query never silently switches providers — it only matches within the named provider. Ambiguous bare ids that exist under multiple providers still require a provider prefix or the current session's provider to disambiguate.
+Exact `provider/id` matches still win, and a qualified provider query never silently switches providers — it only matches within the named provider. This holds for providers you are not signed in to: without Anthropic credentials, `anthropic/claude-opus-4-8` fails with an error that names the OpenRouter copy (`openrouter/anthropic/claude-opus-4.8`) instead of running it. Ambiguous bare ids that exist under multiple providers still require a provider prefix or the current session's provider to disambiguate.
 
-Registry ids that themselves contain `/` (Hugging Face `owner/name`) resolve the same way as Pi's main agent: `thinkingmachines/Inkling` becomes `huggingface/thinkingmachines/Inkling` when that id is unique or offered by the current session provider. A first path segment that matches a registered provider still means `provider/id`.
+Registry ids that themselves contain `/` (Hugging Face `owner/name`) resolve the same way as Pi's main agent: `thinkingmachines/Inkling` becomes `huggingface/thinkingmachines/Inkling` when that id is unique or offered by the current session provider. A first path segment that names any provider Pi knows, signed in or not, still means `provider/id`.
 
 ## Model scope enforcement
 

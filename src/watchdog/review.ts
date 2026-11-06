@@ -2,7 +2,7 @@ import { Agent, type AgentTool, type StreamFn, type ThinkingLevel } from "@earen
 import { createReadOnlyTools, convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
-import { resolveModelCandidate } from "../runs/shared/model-resolution.ts";
+import { knownModelProviders, resolveModelCandidate } from "../runs/shared/model-resolution.ts";
 import { agentStreamOptions } from "../shared/agent-stream-options.ts";
 import { opencodeSessionHeaders } from "../shared/opencode-session-headers.ts";
 import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, toModelInfo } from "../shared/model-info.ts";
@@ -98,7 +98,7 @@ function resolveReviewThinking(input: {
 function resolveConfiguredModel(ctx: ExtensionContext, rawModel: string): { model: RegistryModel; modelString: string } {
 	const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const preferredProvider = typeof ctx.model?.provider === "string" ? ctx.model.provider : undefined;
-	const resolved = resolveModelCandidate(rawModel, availableModels, preferredProvider);
+	const resolved = resolveModelCandidate(rawModel, availableModels, preferredProvider, knownModelProviders(ctx.modelRegistry));
 	if (!resolved) {
 		throw new Error(`Configured watchdog model '${rawModel}' did not match exactly one authenticated available model. Use provider/model or configure credentials for the intended provider.`);
 	}

@@ -871,7 +871,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		const ctx = {
 			...makeCtx(manager),
 			model: { provider: "gateway", id: "parent-model" },
-			modelRegistry: { getAvailable: () => [{ provider: "openai", id: "gpt-5-mini" }] },
+			modelRegistry: { getAvailable: () => [{ provider: "openai", id: "gpt-5-mini" }], getAll: () => [{ provider: "openai", id: "gpt-5-mini" }] },
 		};
 
 		const inherited = await executor.execute(
@@ -894,6 +894,31 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 		assert.equal(explicit.isError, true);
 		assert.match(explicit.content[0]?.text ?? "", /Unknown subagent model 'gateway\/unknown'/);
+	});
+
+	it("does not run a model named for a signed-out provider under another provider", async () => {
+		const { manager } = makeForkingSessionManagerRecorder({ sessionFile: path.join(tempDir, "parent.jsonl"), leafId: "leaf-123" });
+		const executor = makeExecutorWithDiscoverAgents(() => ({ agents: [{ name: "worker", description: "Worker" }], projectAgentsDir: null }));
+		const openrouterCopy = { provider: "openrouter", id: "anthropic/claude-opus-4.8" };
+		const ctx = {
+			...makeCtx(manager),
+			model: { provider: "llama-cpp", id: "qwen" },
+			modelRegistry: {
+				getAvailable: () => [{ provider: "llama-cpp", id: "qwen" }, openrouterCopy],
+				getAll: () => [{ provider: "llama-cpp", id: "qwen" }, { provider: "anthropic", id: "claude-opus-4-8" }, openrouterCopy],
+			},
+		};
+
+		const result = await executor.execute(
+			"signed-out-provider",
+			{ agent: "worker", task: "test", context: "fresh", model: "anthropic/claude-opus-4-8" },
+			new AbortController().signal,
+			undefined,
+			ctx,
+		);
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Unknown subagent model 'anthropic\/claude-opus-4-8'.*Did you mean 'openrouter\/anthropic\/claude-opus-4\.8'/);
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 

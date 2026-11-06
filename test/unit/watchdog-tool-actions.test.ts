@@ -22,6 +22,7 @@ function createCtx(current: { provider: string; id: string }) {
 		model: current,
 		modelRegistry: {
 			getAvailable: () => models,
+			getAll: () => models,
 			find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
 			hasConfiguredAuth: (model: { provider: string; id: string }) => Boolean(model),
 		},
