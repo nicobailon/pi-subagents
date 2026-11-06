@@ -513,15 +513,29 @@ describe("toolActivation modes", () => {
 			{ subagents_enable: true, subagent: true });
 	});
 
-	it("replays a transcript that never declared this extension's tools without adding them", async () => {
-		// The harness starts with every registered tool active, as /reload does.
-		const auto = createRuntime([other], [], [], { model: COMPATIBLE });
-		await auto.emit(RELOAD.type, RELOAD);
-		await assertOwned(auto, "intact, never declared", { subagents_enable: false, subagent: false, bg_wait: false });
-
-		const dynamic = createRuntime([other], [], [], { ...DYNAMIC, model: INCOMPATIBLE });
-		await dynamic.emit(RELOAD.type, RELOAD);
-		await assertOwned(dynamic, "dynamic, never declared", { subagents_enable: true, subagent: false });
+	it("applies activation modes on resume and reload when intact history never declared this extension", async () => {
+		// Synthetic tool-selection history only: this tests activation, not child launch.
+		for (const mode of ["auto", "dynamic", "eager"]) {
+			for (const caseModel of [COMPATIBLE, INCOMPATIBLE]) {
+				for (const event of [RESUME, RELOAD]) {
+					const runtime = createRuntime([other], [], [], { config: { toolActivation: mode }, model: caseModel });
+					runtime.tools.set("other_extension_tool", { name: "other_extension_tool", sourceInfo: { path: "other-extension" } });
+					// Eager leaves the host selection alone: reload registers tools, resume restores history.
+					if (event === RELOAD) allOn(runtime);
+					else runtime.select(["read", "other_extension_tool"]);
+					await runtime.emit(event.type, event);
+					const label = `${mode}, ${caseModel.api}, ${event.reason}`;
+					await assertOwned(runtime, label, { subagents_enable: mode === "dynamic", subagent: mode === "eager" && event === RELOAD, bg_wait: mode === "eager" && event === RELOAD });
+					if (mode === "eager") assert.equal(runtime.tools.has("subagents_enable"), false, label);
+					if (mode === "dynamic") {
+						const result = await runtime.tools.get("subagents_enable")!.execute!("enable", {}, new AbortController().signal, undefined, runtime.context);
+						assert.notEqual(result?.isError, true, label);
+						await assertOwned(runtime, label, { subagents_enable: true, subagent: true, bg_wait: true });
+					}
+					for (const name of ["read", "other_extension_tool"]) assert.ok(runtime.active().includes(name), `${label}: preserves ${name}`);
+				}
+			}
+		}
 	});
 
 	it("tells an unload from a deliberate removal after a compaction", async () => {
