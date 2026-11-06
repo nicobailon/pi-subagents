@@ -880,6 +880,37 @@ function validateStaticBaseRef(params: AstNode, owner: string): WorkflowScriptVa
 	return [];
 }
 
+// Same text as validateLaneSpecs in workflow-script-worker.cjs; a test compares the two.
+const LANE_RETAINED_RESUME_ERROR = "cannot resume a retained run id in runs.lanes; use runs.run(key, { resume: id }) outside lanes, or start the lane with an agent stage and use resume: \"previous\" later.";
+
+/** The launch-time first-stage resume rule, for lanes written out as literals. Anything a spread or computed key could change is left to launch. */
+function validateStaticLaneResumes(call: AstNode): WorkflowScriptValidationError[] {
+	const args = Array.isArray(call.arguments) ? call.arguments : [];
+	const lanes = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0].elements : [];
+	const errors: WorkflowScriptValidationError[] = [];
+	for (let laneIndex = 0; laneIndex < lanes.length; laneIndex++) {
+		const lane = lanes[laneIndex];
+		// A spread shifts every later lane index the runtime reports.
+		if (!astNode(lane) || lane.type !== "ObjectExpression") break;
+		if (!Array.isArray(lane.properties) || !lane.properties.every((property) => astNode(property) && property.type === "Property" && staticPropertyKey(property) !== undefined)) continue;
+		const stages = directObjectPropertyValue(lane, "stages");
+		const first = stages?.type === "ArrayExpression" && Array.isArray(stages.elements) ? stages.elements[0] : undefined;
+		if (!astNode(first) || first.type !== "ObjectExpression" || !Array.isArray(first.properties)) continue;
+		// Only the final definition counts, and a later spread or unknown key may overwrite it.
+		for (let index = first.properties.length - 1; index >= 0; index--) {
+			const property = first.properties[index];
+			if (!astNode(property) || property.type !== "Property") break;
+			const key = staticPropertyKey(property);
+			if (key === undefined) break;
+			if (key !== "resume") continue;
+			const resume = property.kind === "init" ? literalString(property.value) : undefined;
+			if (resume !== undefined && resume !== "previous") errors.push({ message: `runs.lanes lane ${laneIndex} stage 0 ${LANE_RETAINED_RESUME_ERROR}`, ...nodeLocation(first) });
+			break;
+		}
+	}
+	return errors;
+}
+
 // Children with their own cwd, agentScope, or resume resolve agents elsewhere, and a
 // spread or computed key can replace `agent`; leave those to launch-time resolution.
 function staticChildAgentNode(params: unknown): AstNode | undefined {
@@ -1136,6 +1167,7 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 			}
 		}
 		if (directRunsCall(node, "host")) errors.push(...validateStaticHostCall(node));
+		if (directRunsCall(node, "lanes") && !runsRebound) errors.push(...validateStaticLaneResumes(node));
 		if (agentNameError) errors.push(...validateStaticChildAgents(node, agentNameError));
 		const boundaryValue = node.type === "CallExpression" && astNode(node.callee) && node.callee.type === "Identifier" && node.callee.name === "emit" && Array.isArray(node.arguments) && astNode(node.arguments[0])
 			? node.arguments[0]
