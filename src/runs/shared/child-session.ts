@@ -514,7 +514,6 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 		});
 		return runtime;
 	};
-	/** Abort and dispose the attached children `matches` selects, waiting for their shutdowns. */
 	const disposeMatching = async (matches: (parent: string | undefined) => boolean, bump: () => void) => {
 		bump();
 		for (const [cancel, wait] of mcpWaits) if (matches(wait.parent)) cancel.abort();
@@ -818,25 +817,14 @@ export function setChildSessionFactoryModule(modulePath: string | undefined): vo
 	activeFactoryModule = modulePath;
 }
 
-/**
- * Abort and dispose live in-process children and release the shared runtime.
- *
- * Without `parentSessionFile`, every live attached child is disposed: the whole-process
- * path the detached runner uses at exit. With it, only the children that session
- * launched are disposed: a multi-session host such as pi-web shuts sessions down one
- * at a time, and one session's shutdown must not destroy another session's children.
- */
+/** Abort and dispose every live in-process child and release the shared runtime. */
 export async function disposeChildSessions(): Promise<void> {
 	const factory = activeFactory;
 	if (!factory) return;
 	await factory.dispose();
 }
 
-/**
- * Abort and dispose only the children `parentSessionFile`'s session launched.
- * `undefined` names the children of a parent without a session file; it stays scoped,
- * unlike disposeChildSessions(), which is the detached runner's whole-process exit path.
- */
+/** Abort and dispose only the children `parentSessionFile`'s session launched; see ChildSessionFactory.disposeForParent. */
 export async function disposeChildSessionsForParent(parentSessionFile: string | undefined): Promise<void> {
 	const factory = activeFactory;
 	if (!factory) return;

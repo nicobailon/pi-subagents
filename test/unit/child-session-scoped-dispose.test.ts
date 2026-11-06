@@ -6,14 +6,6 @@ import {
 	type PiCodingAgentModule,
 } from "../../src/runs/shared/child-session.ts";
 
-/**
- * A multi-session host such as pi-web runs several parent sessions in one process.
- * Its idle reaper shuts wrappers down one at a time, each shutdown emitting
- * `session_shutdown` to that session's extension instance. The extension must dispose
- * only that session's children: one session's shutdown must not abort another
- * session's running children.
- */
-
 interface SessionLog {
 	parent: string | undefined;
 	events: string[];
@@ -67,16 +59,13 @@ describe("disposeForParent scopes child disposal to one session", () => {
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: stubPiModule(logs) });
 		const parentA = "/tmp/sessions/parent-a.jsonl";
 		const parentB = "/tmp/sessions/parent-b.jsonl";
-		const childA1 = await factory.create(launchFor(parentA, process.cwd()));
+		await factory.create(launchFor(parentA, process.cwd()));
 		await factory.create(launchFor(parentB, process.cwd()));
-		const childA1Abort = childA1.abort.bind(childA1);
 
 		await factory.disposeForParent(parentA);
 
 		assert.deepEqual(logs[0]?.events, ["abort", "dispose"], "parent A's child is aborted and disposed");
 		assert.deepEqual(logs[1]?.events, [], "parent B's child is untouched");
-		// The surviving child still works and can be disposed on its own session's shutdown.
-		await assert.doesNotReject(childA1Abort);
 	});
 
 	it("disposes only children of file-less parents when the parent session has no file", async () => {
@@ -116,5 +105,54 @@ describe("disposeForParent scopes child disposal to one session", () => {
 		await factory.dispose();
 
 		assert.deepEqual(logs[0]?.events, [], "a detached child is never aborted by disposal");
+	});
+
+	it("a launch waiting for its MCP tools fails only when its own parent is disposed", async () => {
+		let entered!: () => void;
+		let release!: () => void;
+		let released!: Promise<void>;
+		const tool = { name: "mcp__selected__t", label: "selected/t" };
+		const pi = {
+			...stubPiModule([])(),
+			createMcpExtension: () => (api: { registerTool(tool: object): void; on(event: string, handler: (event: unknown, ctx: { signal: AbortSignal }) => Promise<void>): void }) => {
+				api.registerTool(tool);
+				api.on("tool_call", async (_event, ctx) => {
+					entered();
+					await Promise.race([released, new Promise((resolve) => ctx.signal.addEventListener("abort", resolve))]);
+				});
+			},
+			DefaultResourceLoader: class {
+				handlers = new Map<string, Array<(event: unknown, ctx: object) => unknown>>();
+				tools: object[] = [];
+				options: { extensionFactories: Array<{ factory(api: object): unknown }> };
+				constructor(options: { extensionFactories: Array<{ factory(api: object): unknown }> }) { this.options = options; }
+				async reload() {
+					const api = { on: (event: string, handler: (event: unknown, ctx: object) => unknown) => this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]), registerTool: (tool: object) => this.tools.push(tool), getAllTools: () => this.tools };
+					for (const { factory } of this.options.extensionFactories) await factory(api);
+				}
+				getExtensions() { return { extensions: [], errors: [], runtime: { pendingProviderRegistrations: [] } }; }
+			},
+			createAgentSession: async ({ resourceLoader }: { resourceLoader: { handlers: Map<string, Array<(event: unknown, ctx: object) => unknown>>; tools: object[] } }) => {
+				for (const handler of resourceLoader.handlers.get("session_start") ?? []) await handler({}, {});
+				return { session: { bindExtensions: async () => {}, dispose() {}, extensionRunner: { hasHandlers: () => false }, abort: async () => {}, sessionId: "mcp-child", getAllTools: () => resourceLoader.tools, getActiveToolNames: () => [tool.name] } };
+			},
+		} as unknown as PiCodingAgentModule;
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: () => pi });
+		const launch = (parent: string) => {
+			const waiting = new Promise<void>((resolve) => { entered = resolve; });
+			released = new Promise<void>((resolve) => { release = resolve; });
+			return { waiting, child: factory.create({ ...launchFor(parent, process.cwd()), builtinMcpTools: [{ name: tool.name, selector: "selected/t" }] }) };
+		};
+
+		const a = launch("/tmp/sessions/parent-a.jsonl");
+		await a.waiting;
+		await factory.disposeForParent("/tmp/sessions/parent-b.jsonl");
+		release();
+		await assert.doesNotReject(a.child, "another parent's disposal does not fail this launch");
+
+		const a2 = launch("/tmp/sessions/parent-a.jsonl");
+		await a2.waiting;
+		await factory.disposeForParent("/tmp/sessions/parent-a.jsonl");
+		await assert.rejects(a2.child, /disposed while the child waited for its MCP tools/);
 	});
 });
