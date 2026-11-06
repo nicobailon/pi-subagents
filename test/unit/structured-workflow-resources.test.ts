@@ -223,7 +223,7 @@ describe("structured workflow resources", () => {
 			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t" }], agent: "b" }] }, /unsupported fields: agent/],
 			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t" }], failFast: true }] }, /unsupported fields: failFast/],
 			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t", worktree: true }] }] }, /chain\[0\]\.parallel\[0\] contains unsupported fields: worktree/],
-			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t" }], cwd: "/x" }] }, /chain\[0\] contains unsupported fields: cwd\. A parallel step accepts only parallel/],
+			[{ kind: "chain", steps: [{ parallel: [{ agent: "a", task: "t" }], cwd: "/x" }] }, /chain\[0\] contains unsupported fields: cwd\. A parallel step accepts only parallel.* Set cwd on each item, or on the subagent call itself/],
 			[{ kind: "chain", steps: [{ agent: "a", task: "t", model: 2 }] }, /chain\[0\]\.model must be a non-empty string/],
 			[{ kind: "chain", steps: [{ parallel: [{ agent: "a" }] }] }, /chain\[0\]\.parallel\[0\]\.task must be a non-empty string/],
 			[{ kind: "chain", steps: [{ parallel: [] }] }, /chain\[0\]\.parallel must be a non-empty array/],

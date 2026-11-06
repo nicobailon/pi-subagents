@@ -179,8 +179,15 @@ describe("named workflow resources", () => {
 		assert.deepEqual(resolveWorkflowResource("parallel", {}), { ok: false, error: "workflow 'parallel' args.tasks must be a non-empty array of { agent, task } items." });
 		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "reviewer" }] }) as { error: string }).error, /args\.tasks\[0\]\.task must be a non-empty string/);
 		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b" }], concurrency: 2 }) as { error: string }).error, /unsupported fields: concurrency/);
-		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b", worktree: true }] }) as { error: string }).error, /unsupported fields: worktree\. .*Put worktree and other child controls on the subagent call itself; they apply to every child\./);
-		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b" }], worktree: true }) as { error: string }).error, /args contain unsupported fields: worktree\. .*Put worktree and other child controls on the subagent call itself/);
+		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b" }], worktree: true }) as { error: string }).error, /args contain unsupported fields: worktree\. .*Set worktree on the subagent call itself to give every child the same value/);
+	});
+
+	it("gives field-specific recovery advice for rejected parallel task fields", () => {
+		const errorFor = (item: Record<string, unknown>) => (resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b", ...item }] }) as { error: string }).error;
+		assert.equal(errorFor({ output: "reviews/a.md" }), "workflow 'parallel' args.tasks[0] contains unsupported fields: output. Each tasks item accepts agent and task, plus optional cwd and model. For one shared output, set output on the subagent call itself: the workflow result is written there and each child gets its own file beside it. For exact or different per-child paths, use workflow: true with runs.all items that set output. Do not drop output if you need durable child files. No child was launched.");
+		assert.equal(errorFor({ worktree: true }), "workflow 'parallel' args.tasks[0] contains unsupported fields: worktree. Each tasks item accepts agent and task, plus optional cwd and model. Set worktree on the subagent call itself to give every child the same value; for different values per child, use workflow: true with runs.all items. No child was launched.");
+		assert.equal(errorFor({ label: "x" }), "workflow 'parallel' args.tasks[0] contains unsupported fields: label. Each tasks item accepts agent and task, plus optional cwd and model. Per-child label needs workflow: true with runs.all items. No child was launched.");
+		assert.equal(errorFor({ count: 2 }), "workflow 'parallel' args.tasks[0] contains unsupported fields: count. Each tasks item accepts agent and task, plus optional cwd and model. No child was launched.");
 	});
 
 	it("passes optional per-child cwd and model from parallel args.tasks to each launch as data", async () => {
