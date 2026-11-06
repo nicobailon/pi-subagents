@@ -122,15 +122,32 @@ export function createWaitSubscriptionManager(
 	let lastForeignSweepAt = 0;
 	// Two Pi processes can share one session (two tree branches).
 	// The arming process owns the wake while it lives.
-	// Only its death hands the record to whichever process opens the session next.
-	const ownsRecord = (record: WaitSubscriptionRecord): boolean => {
-		if (!record.completionOwnerId || record.completionOwnerId === state.completionOwnerId) return true;
-		if (!isRecordedPid(record.completionOwnerProcess)) return false;
-		return checkRecordedPidLiveness(record.completionOwnerProcess, {
+	// Only its death hands the record to whichever process opens the session next,
+	// which writes itself in as the new owner so a third process sees a live owner.
+	const readRecordFile = (filePath: string): WaitSubscriptionRecord | undefined => {
+		try {
+			return parseRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
+		} catch (error) {
+			if (isNotFound(error)) return undefined;
+			throw error;
+		}
+	};
+	const claimRecord = (filePath: string, record: WaitSubscriptionRecord): WaitSubscriptionRecord | undefined => {
+		if (!record.completionOwnerId || record.completionOwnerId === state.completionOwnerId) return record;
+		if (!isRecordedPid(record.completionOwnerProcess)) return undefined;
+		const ownerDead = checkRecordedPidLiveness(record.completionOwnerProcess, {
 			observedScope: currentPidNamespaceScope(),
 			observedBootId: currentBootId(),
 			...(options.kill ? { kill: options.kill } : {}),
 		}) === "dead";
+		if (!ownerDead) return undefined;
+		if (!state.completionOwnerId) return record;
+		// Re-read right before the write so a record another process already settled or claimed is not brought back.
+		if (readRecordFile(filePath)?.completionOwnerId !== record.completionOwnerId) return undefined;
+		writeAtomicJson(filePath, { ...record, completionOwnerId: state.completionOwnerId, completionOwnerProcess: currentRecordedPid() });
+		// Two processes claiming in the same instant can both keep it; settle() still lets only the one that unlinks the file deliver.
+		const claimed = readRecordFile(filePath);
+		return claimed?.completionOwnerId === state.completionOwnerId ? claimed : undefined;
 	};
 
 	/**
@@ -352,9 +369,11 @@ export function createWaitSubscriptionManager(
 			}
 			for (const file of files) {
 				try {
-					const record = parseRecord(JSON.parse(fs.readFileSync(path.join(subscriptionsDir, file), "utf-8")));
-					if (!record || file !== `${record.token}.json`) continue;
-					if (record.sessionId === state.currentSessionId && ownsRecord(record)) {
+					const filePath = path.join(subscriptionsDir, file);
+					const found = readRecordFile(filePath);
+					if (!found || file !== `${found.token}.json` || found.sessionId !== state.currentSessionId) continue;
+					const record = claimRecord(filePath, found);
+					if (record) {
 						subscriptions.set(record.token, record);
 						if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);
 					}

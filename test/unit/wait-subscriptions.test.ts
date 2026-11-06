@@ -310,7 +310,7 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
-	it("delivers a subscription only once when multiple processes restore it after the owner exits", () => {
+	it("hands a dead owner's subscription to the first process that restores it, not to a later one", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-shared-session-exit-"));
 		const asyncRoot = path.join(root, "runs");
 		const resultsDir = path.join(root, "results");
@@ -350,12 +350,13 @@ describe("non-blocking wait subscriptions", () => {
 			next.restore();
 			other.restore();
 			assert.equal(nextState.waitSubscriptions?.has(registration.token), true);
-			assert.equal(otherState.waitSubscriptions?.has(registration.token), true);
+			assert.equal(otherState.waitSubscriptions?.has(registration.token) ?? false, false, "the live adopter keeps the subscription");
 			assert.deepEqual(sent, []);
 
 			writeStatus(asyncRoot, "run-handoff", "complete", { sessionId: "session-a" });
-			next.reconcile();
 			other.reconcile();
+			assert.deepEqual(sent, []);
+			next.reconcile();
 
 			assert.equal(sent.length, 1);
 			assert.match(sent[0] ?? "", /run run-handoff: completed/);
@@ -369,7 +370,7 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
-	it("still times out a subscription taken from a dead owner after that pid is reused", () => {
+	it("keeps a subscription taken from a dead owner across a reload after that pid is reused", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-pid-reuse-"));
 		const asyncRoot = path.join(root, "runs");
 		const resultsDir = path.join(root, "results");
@@ -382,18 +383,25 @@ describe("non-blocking wait subscriptions", () => {
 			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now: () => clock,
 		});
 		let ownerPidAlive = false;
-		const nextState = makeState();
-		nextState.completionOwnerId = "owner-b";
-		const next = createWaitSubscriptionManager({
-			events: new TestBus(),
-			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
-		} as never, nextState, {
-			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now: () => clock,
-			kill: (pid: number) => {
-				if (pid === 999_999 && !ownerPidAlive) throw Object.assign(new Error("gone"), { code: "ESRCH" });
-				return true;
-			},
-		});
+		// One Pi process ("owner-b"); /reload builds a new manager with the same completion owner.
+		const loadManager = () => {
+			const managerState = makeState();
+			managerState.completionOwnerId = "owner-b";
+			const manager = createWaitSubscriptionManager({
+				events: new TestBus(),
+				sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+			} as never, managerState, {
+				asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now: () => clock,
+				kill: (pid: number) => {
+					if (pid === 999_999 && !ownerPidAlive) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+					return true;
+				},
+			});
+			return { manager, managerState };
+		};
+		const first = loadManager();
+		let next = first.manager;
+		let nextState = first.managerState;
 		try {
 			writeStatus(asyncRoot, "run-reused", "running", { sessionId: "session-a", pid: process.pid });
 			const registration = armer.arm({ targetKind: "async", runId: "run-reused", requestedId: "run-reused", timeoutMs: 30_000 });
@@ -405,8 +413,12 @@ describe("non-blocking wait subscriptions", () => {
 			next.restore();
 			assert.equal(nextState.waitSubscriptions?.has(registration.token), true);
 
-			// The OS hands the dead owner's pid to an unrelated process.
+			// The OS hands the dead owner's pid to an unrelated process, then this process reloads.
 			ownerPidAlive = true;
+			next.dispose();
+			({ manager: next, managerState: nextState } = loadManager());
+			next.restore();
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), true, "the reloaded process still owns the subscription");
 			clock += 60_000;
 			next.reconcile();
 
