@@ -15,6 +15,7 @@
 - `mcp:` selectors now resolve for pi-mcp-adapter servers that set `directTools: "search"` or use `${NAME:-default}` in their configuration. Before, pi-subagents dropped a `"search"` server from the configuration, and a `${NAME:-default}` value gave a server a different cache hash than the adapter computed. In both cases, every selector for the server was unresolved. A server URL that used a default also failed the launch. Thanks to [@acolomba](https://github.com/acolomba) for #3201.
 - In a host that runs several Pi sessions in one process, such as pi-web, closing one session no longer stops subagents that another session started. Thanks to [@Jarcis-cy](https://github.com/Jarcis-cy) for #3204.
 - When two Pi windows have the same session open, a background wait notice now reaches the window that asked for it, instead of whichever window checked first. If that window has closed, the next window that opens the session takes the notice over. Thanks to [@mdrkrg](https://github.com/mdrkrg) for #3205.
+- The configuration docs now explain how to turn on delegation in a session that was recorded before pi-subagents was installed. They also no longer say that `"toolActivation": "eager"` makes `subagent` active in every resumed session. Thanks to [@dapp-whisperer](https://github.com/dapp-whisperer) for #3218.
 
 ## [0.86.0] - 2026-11-05
 
