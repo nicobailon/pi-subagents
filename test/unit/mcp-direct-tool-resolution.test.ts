@@ -84,7 +84,6 @@ describe("MCP direct-tool resolution config sources", () => {
 	});
 
 	it("resolves direct tools from a server whose directTools is \"search\"", () => {
-		// pi-mcp-adapter accepts "search", so such a server must load and resolve its selectors like any other.
 		const definition: McpServerDefinition = { ...CURRENT_DEFINITION, directTools: "search" };
 		writeServerConfig(path.join(agentDir, "mcp-adapter.json"), definition);
 		writeMetadataCache(definition);

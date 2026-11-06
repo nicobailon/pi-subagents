@@ -5,13 +5,8 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 
-/**
- * A session's session_shutdown must dispose only that session's children, and it must
- * still know its own parent session file when it does: runtimeEntry.cleanup() clears
- * state.parentSessionFile inside the same handler, so the file has to be captured
- * before cleanup runs. Drives the real extension's session_start and session_shutdown
- * handlers against a scripted factory and asserts the scoped call.
- */
+// session_shutdown must dispose only this session's children, using the parent session file
+// captured before runtimeEntry.cleanup() clears it in the same handler.
 
 const script = String.raw`
 	const handlers = new Map();

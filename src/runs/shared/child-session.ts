@@ -153,12 +153,7 @@ export interface ChildSessionFactory {
 	create(launch: ChildSessionLaunch): Promise<ChildSession>;
 	/** Abort and dispose every live attached child; detached children keep running and hold the shared runtime. */
 	dispose(): Promise<void>;
-	/**
-	 * Abort and dispose only the attached children that `parentSessionFile`'s session launched.
-	 * A multi-session host such as pi-web shuts sessions down one at a time; one session's
-	 * shutdown must not destroy another session's running children. Children of sessions
-	 * without a session file are disposed when `parentSessionFile` is undefined.
-	 */
+	/** `dispose()` for only the children `parentSessionFile`'s session launched (undefined: sessions without a file); pi-web shuts sessions down one at a time. */
 	disposeForParent(parentSessionFile: string | undefined): Promise<void>;
 }
 
@@ -496,7 +491,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	const loadPiCodingAgent = options.loadPiCodingAgent ?? loadHostPiCodingAgent;
 	const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
 	let runtime: ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]> | undefined;
-	/** Live children keyed by the session file of the parent that launched them; undefined for a parent without one. */
+	/** Each live child's parent session file. */
 	const live = new Map<ChildSession, string | undefined>();
 	/** Extension shutdowns still running for disposed children; `dispose()` waits for them. */
 	const shutdowns = new Set<Promise<void>>();
@@ -786,8 +781,8 @@ function createLazyPlacementFactory(local: ChildSessionFactory): ChildSessionFac
 	const factory = async () => placed ??= (await import("./herdr-placed-run.ts")).createPlacementAwareChildSessionFactory(local);
 	return {
 		async create(launch) { return launch.machine ? (await factory()).create(launch) : local.create(launch); },
-		async dispose() { if (placed) await placed.dispose(); else await local.dispose(); },
-		async disposeForParent(parentSessionFile) { if (placed) await placed.disposeForParent(parentSessionFile); else await local.disposeForParent(parentSessionFile); },
+		async dispose() { await (placed ?? local).dispose(); },
+		async disposeForParent(parentSessionFile) { await (placed ?? local).disposeForParent(parentSessionFile); },
 	};
 }
 
@@ -817,9 +812,6 @@ export function setChildSessionFactoryModule(modulePath: string | undefined): vo
 	activeFactoryModule = modulePath;
 }
 
-/** Abort and dispose only the children `parentSessionFile`'s session launched; see ChildSessionFactory.disposeForParent. */
 export async function disposeChildSessionsForParent(parentSessionFile: string | undefined): Promise<void> {
-	const factory = activeFactory;
-	if (!factory) return;
-	await factory.disposeForParent(parentSessionFile);
+	await activeFactory?.disposeForParent(parentSessionFile);
 }

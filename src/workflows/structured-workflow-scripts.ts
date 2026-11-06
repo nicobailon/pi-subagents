@@ -27,7 +27,7 @@ const SHARED_CHILD_CONTROLS = new Set(["worktree", "baseRef", "context", "skill"
 // runs.run/runs.all child fields whose outer-call form is missing or means something else (async and timeoutMs apply to the workflow).
 const SCRIPT_CHILD_FIELDS = new Set(["key", "label", "phase", "resume", "async", "timeoutMs"]);
 
-/** Recovery advice per rejected field, so a retry keeps the caller's intent instead of dropping the field. Unknown fields get none. */
+/** Recovery advice per rejected field, so a retry keeps the caller's intent instead of dropping the field. */
 export function unsupportedChildFieldAdvice(fields: readonly string[], scripts: boolean): string {
 	const perChild = scripts ? "use workflow: true with runs.all items" : "you need workflow scripts, which disabledFeatures has turned off";
 	const advice: string[] = [];
