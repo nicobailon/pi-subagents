@@ -6734,8 +6734,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 			const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, foregroundWorkflowRunId));
-			// A top-level artifact file: outside outputs/, where children save their reports, and
-			// within artifact retention, which only removes top-level files.
+			// A top-level artifact file, outside outputs/ so it cannot overwrite a child's report.
 			const workflowFullResultPath = path.join(workflowArtifactsDir, `${sanitizeRunPathSegment(foregroundWorkflowRunId)}_workflow-result.md`);
 			const claimedOutputPaths = new Map<string, string>();
 			const childOutputOverrides = new Map<string, string>();

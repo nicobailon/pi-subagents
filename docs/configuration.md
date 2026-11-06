@@ -724,7 +724,7 @@ Controls where subagent artifact files (inputs, outputs, transcripts, metadata) 
 
 This preference also controls the default workflow artifact directory used by scripted chaining. `"project"` uses `<cwd>/.pi/subagents/chain-runs/`; the directory keeps its legacy name for compatibility. The default `"session"` and `"temp"` use the user-scoped temp workflow artifact directory.
 
-The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary workflow artifact directories are cleaned up separately after 24 hours.
+The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically: files older than `artifactConfig.cleanupDays` (default 7, `0` turns cleanup off) are removed, including those in nested folders such as workflow `outputs/`. `handoffs/` and `worktree-diffs/` are kept, because they record worktrees that can be kept longer than that. Temporary workflow artifact directories are cleaned up separately after 24 hours.
 
 When a project-scoped launch runs from an npm package directory, pi-subagents warns if package settings can include `.pi/subagents/` in the published package. Add `.pi/subagents/` to `.npmignore` (or `.gitignore` when no `.npmignore` exists), use a `files` allowlist that does not include `.pi/subagents/`, or select `"session"` or `"temp"`.
 
