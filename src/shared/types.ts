@@ -2335,6 +2335,10 @@ export interface WaitSubscriptionRecord {
 	version: 1;
 	token: string;
 	sessionId: string;
+	/** Completion owner of the process that armed the record. A record without it stays scoped to the session. */
+	completionOwnerId?: string;
+	/** The Pi process behind `completionOwnerId`. Once it is dead, the next process on the session takes the wake. */
+	completionOwnerProcess?: RecordedPid;
 	targetKind: "async" | "foreground";
 	runId: string;
 	requestedId: string;

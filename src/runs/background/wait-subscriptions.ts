@@ -19,6 +19,9 @@ import {
 	type WaitCompletion,
 	type WaitSubscriptionRecord,
 } from "../../shared/types.ts";
+import { currentBootId, currentRecordedPid } from "./boot-id.ts";
+import { currentPidNamespaceScope } from "./pid-namespace.ts";
+import { checkRecordedPidLiveness, isRecordedPid } from "./stale-run-reconciler.ts";
 
 const SUBSCRIPTION_VERSION = 1;
 // Outcomes that report no saved results, so the notice points the parent at the run status instead.
@@ -74,6 +77,8 @@ function parseRecord(value: unknown): WaitSubscriptionRecord | undefined {
 		|| typeof record.token !== "string"
 		|| !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.token)
 		|| typeof record.sessionId !== "string"
+		|| (record.completionOwnerId !== undefined && typeof record.completionOwnerId !== "string")
+		|| (record.completionOwnerProcess !== undefined && !isRecordedPid(record.completionOwnerProcess))
 		|| (record.targetKind !== "async" && record.targetKind !== "foreground")
 		|| typeof record.runId !== "string"
 		|| typeof record.requestedId !== "string"
@@ -115,6 +120,18 @@ export function createWaitSubscriptionManager(
 	let disposed = false;
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let lastForeignSweepAt = 0;
+	// Two Pi processes can share one session (two tree branches).
+	// The arming process owns the wake while it lives.
+	// Only its death hands the record to whichever process opens the session next.
+	const ownsRecord = (record: WaitSubscriptionRecord): boolean => {
+		if (!record.completionOwnerId || record.completionOwnerId === state.completionOwnerId) return true;
+		if (!isRecordedPid(record.completionOwnerProcess)) return false;
+		return checkRecordedPidLiveness(record.completionOwnerProcess, {
+			observedScope: currentPidNamespaceScope(),
+			observedBootId: currentBootId(),
+			...(options.kill ? { kill: options.kill } : {}),
+		}) === "dead";
+	};
 
 	/**
 	 * Remove expired records armed by another session.
@@ -172,20 +189,24 @@ export function createWaitSubscriptionManager(
 		}
 	};
 
-	const remove = (record: WaitSubscriptionRecord) => {
+	const remove = (record: WaitSubscriptionRecord): boolean => {
+		let removed = true;
 		try {
 			fs.unlinkSync(subscriptionFile(subscriptionsDir, record.token));
 		} catch (error) {
 			if (!isNotFound(error)) throw error;
+			removed = false;
 		}
 		subscriptions.delete(record.token);
 		unresolvedRestoredForegroundTokens.delete(record.token);
+		return removed;
 	};
 
 	const settle = (record: WaitSubscriptionRecord, outcome: string, detail: string, completion?: WaitCompletion) => {
 		if (disposed || state.currentSessionId !== record.sessionId) return;
 		try {
-			remove(record);
+			// Only the process that removes the record may deliver its wake.
+			if (!remove(record)) return;
 		} catch (error) {
 			console.error(`Failed to clear wait subscription '${record.token}'; it remains armed:`, error);
 			return;
@@ -208,7 +229,7 @@ export function createWaitSubscriptionManager(
 	};
 
 	const reconcileRecord = (record: WaitSubscriptionRecord) => {
-		if (record.sessionId !== state.currentSessionId) return;
+		if (record.sessionId !== state.currentSessionId || !ownsRecord(record)) return;
 		if (now() >= record.expiresAt) {
 			settle(record, "timed out", "The targeted run may still be active; inspect its status before taking follow-up action.");
 			return;
@@ -303,6 +324,7 @@ export function createWaitSubscriptionManager(
 				version: SUBSCRIPTION_VERSION,
 				token: randomUUID(),
 				sessionId,
+				...(state.completionOwnerId ? { completionOwnerId: state.completionOwnerId, completionOwnerProcess: currentRecordedPid() } : {}),
 				targetKind: input.targetKind,
 				runId: input.runId,
 				requestedId: input.requestedId,
@@ -332,7 +354,7 @@ export function createWaitSubscriptionManager(
 				try {
 					const record = parseRecord(JSON.parse(fs.readFileSync(path.join(subscriptionsDir, file), "utf-8")));
 					if (!record || file !== `${record.token}.json`) continue;
-					if (record.sessionId === state.currentSessionId) {
+					if (record.sessionId === state.currentSessionId && ownsRecord(record)) {
 						subscriptions.set(record.token, record);
 						if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);
 					}

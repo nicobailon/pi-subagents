@@ -267,6 +267,108 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
+	it("leaves a same-session subscription to the process that armed it", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-shared-session-"));
+		const asyncRoot = path.join(root, "runs");
+		const resultsDir = path.join(root, "results");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const armed: string[] = [];
+		const foreign: string[] = [];
+		const armerState = makeState();
+		armerState.completionOwnerId = "owner-a";
+		const foreignState = makeState();
+		foreignState.completionOwnerId = "owner-b";
+		const armer = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { armed.push(String(message.content)); },
+		} as never, armerState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000 });
+		const other = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { foreign.push(String(message.content)); },
+		} as never, foreignState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000 });
+		try {
+			writeStatus(asyncRoot, "run-shared", "running", { sessionId: "session-a", pid: 999_999 });
+			const registration = armer.arm({ targetKind: "async", runId: "run-shared", requestedId: "run-shared", timeoutMs: 30_000 });
+
+			// A second Pi process opens the same session on another branch while the armer is alive.
+			other.restore();
+			assert.equal(foreignState.waitSubscriptions?.size ?? 0, 0, "a live owner keeps its subscription private to its process");
+
+			writeStatus(asyncRoot, "run-shared", "complete", { sessionId: "session-a" });
+			other.restore();
+			other.reconcile();
+			assert.deepEqual(foreign, [], "the other process must not deliver the owner's completion wake");
+			assert.equal(fs.existsSync(path.join(subscriptionsDir, `${registration.token}.json`)), true);
+
+			armer.reconcile();
+			assert.match(armed[0] ?? "", /run run-shared: completed/);
+			assert.equal(foreignState.waitSubscriptions?.size ?? 0, 0);
+		} finally {
+			armer.dispose();
+			other.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("delivers a subscription only once when multiple processes restore it after the owner exits", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-shared-session-exit-"));
+		const asyncRoot = path.join(root, "runs");
+		const resultsDir = path.join(root, "results");
+		const subscriptionsDir = path.join(root, "subscriptions");
+		const sent: string[] = [];
+		const armerState = makeState();
+		armerState.completionOwnerId = "owner-a";
+		const armer = createWaitSubscriptionManager({ events: new TestBus(), sendMessage() {} } as never, armerState, {
+			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000,
+		});
+		const nextState = makeState();
+		nextState.completionOwnerId = "owner-b";
+		const kill = (pid: number) => {
+			if (pid === 999_999) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+			return true;
+		};
+		const next = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		} as never, nextState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, kill });
+		const otherState = makeState();
+		otherState.completionOwnerId = "owner-c";
+		const other = createWaitSubscriptionManager({
+			events: new TestBus(),
+			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
+		} as never, otherState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, kill });
+		try {
+			writeStatus(asyncRoot, "run-handoff", "running", { sessionId: "session-a", pid: process.pid });
+			const registration = armer.arm({ targetKind: "async", runId: "run-handoff", requestedId: "run-handoff", timeoutMs: 30_000 });
+			armer.dispose();
+			// The arming process is gone: its recorded pid no longer exists.
+			const recordPath = path.join(subscriptionsDir, `${registration.token}.json`);
+			const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as { completionOwnerProcess?: { pid: number } };
+			assert.equal(record.completionOwnerProcess?.pid, process.pid);
+			fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: 999_999 } }), "utf-8");
+
+			next.restore();
+			other.restore();
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), true);
+			assert.equal(otherState.waitSubscriptions?.has(registration.token), true);
+			assert.deepEqual(sent, []);
+
+			writeStatus(asyncRoot, "run-handoff", "complete", { sessionId: "session-a" });
+			next.reconcile();
+			other.reconcile();
+
+			assert.equal(sent.length, 1);
+			assert.match(sent[0] ?? "", /run run-handoff: completed/);
+			assert.equal(nextState.waitSubscriptions?.has(registration.token), false);
+			assert.equal(otherState.waitSubscriptions?.has(registration.token), false);
+			assert.equal(fs.existsSync(recordPath), false);
+		} finally {
+			next.dispose();
+			other.dispose();
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("tells the parent to revive the failed child before replacing resumable async runs", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-revive-first-"));
 		const asyncRoot = path.join(root, "runs");
@@ -430,7 +532,10 @@ describe("non-blocking wait subscriptions", () => {
 			assert.equal(sent.length, 0);
 			assert.equal(state.waitSubscriptions?.has(registration.token), true);
 
+			// settle() only delivers from the process that removes the record, so put the record
+			// back before the retry. Losing the race means another process already delivered it.
 			fs.rmdirSync(file);
+			fs.writeFileSync(file, JSON.stringify(registration), "utf-8");
 			manager.reconcile();
 			assert.match(sent[0] ?? "", /could not be reconciled/);
 			assert.equal(sent.length, 1);
