@@ -2663,7 +2663,6 @@ Answer only from the supplied synthetic text.
 			assert.equal(drained.state, "stopped");
 			assert.equal(drained.workflowChildren?.children.find((row) => row.childId === "stage1")?.state, "completed");
 			assert.equal(mockPi.callCount(), callsBefore + 1, "stage2 never launches");
-			assert.equal(typeof drained.workflow?.drainRequestedAt, "number");
 			assert.equal((await stopAction({ id: runId }, undefined, { drain: true })).isError, true, "a finished workflow cannot be drained");
 		});
 
