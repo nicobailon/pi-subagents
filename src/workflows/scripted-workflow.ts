@@ -19,6 +19,7 @@ function validGitRef(ref: unknown): ref is string {
 }
 const requireFromPackage = createRequire(import.meta.url);
 const WORKFLOW_ASSEMBLY_FLUSH_TIMEOUT_MS = 5_000;
+const WORKFLOW_DRAIN_CHILD_MESSAGE = "Workflow draining; child not started.";
 
 export interface WorkflowScriptValidationError {
 	message: string;
@@ -209,6 +210,8 @@ export interface RunWorkflowScriptOptions {
 		set: (key: string, value: unknown) => void | Promise<void>;
 	};
 	registerStopChild?: (stop: ((key: string, message?: string) => boolean) | undefined) => void;
+	/** Drain: stop children that have not started, refuse new launches, and call `onDrained` once every started child has a result. Returns the started-child count. */
+	registerDrain?: (drain: ((onDrained: () => void) => number) | undefined) => void;
 	onTrace?: (trace: WorkflowScriptTraceEntry[]) => void;
 	onLanePlan?: (lanes: WorkflowLanePlan[]) => void;
 	onEmit?: (emits: unknown[]) => void;
@@ -1360,6 +1363,10 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	let acceptanceRecoveryBarrier: { key: string } | undefined;
 	let settled = false;
 	let finishing = false;
+	let draining = false;
+	let onDrained: (() => void) | undefined;
+	// Keys past the concurrency semaphore: a drain lets these finish and stops the rest.
+	const acquiredLaunches = new Set<string>();
 	let assemblyAbortRequested = false;
 	let assemblyFlushTimer: ReturnType<typeof setTimeout> | undefined;
 	let abortError: Error | undefined;
@@ -1406,6 +1413,12 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	const recordAcceptanceRecoveryBarrier = (key: string, result: WorkflowScriptChildResult): void => {
 		if (isAcceptanceMetadataRecovery(result)) acceptanceRecoveryBarrier = { key };
 	};
+	const drainIfIdle = (): void => {
+		if (!onDrained || [...launches.keys()].some((key) => !children.has(key))) return;
+		const done = onDrained;
+		onDrained = undefined;
+		done();
+	};
 	const stopChild = (key: string, message = `Workflow child '${key}' stopped.`): boolean => {
 		if (!launches.has(key) || children.has(key)) return false;
 		stoppedLaunches.add(key);
@@ -1423,7 +1436,18 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			error: message,
 		});
 		traceChanged();
+		drainIfIdle();
 		return true;
+	};
+	const drain = (done: () => void): number => {
+		if (!draining) {
+			draining = true;
+			onDrained = done;
+		}
+		for (const key of launches.keys()) if (!acquiredLaunches.has(key)) stopChild(key, WORKFLOW_DRAIN_CHILD_MESSAGE);
+		const started = [...launches.keys()].filter((key) => !children.has(key)).length;
+		drainIfIdle();
+		return started;
 	};
 	const notifyChildSettled = (key: string, result: WorkflowScriptChildResult): void => {
 		if (result.state === "running" || !options.onChildSettled || !options.workflowRunId) return;
@@ -1451,6 +1475,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		}
 	};
 	options.registerStopChild?.(stopChild);
+	options.registerDrain?.(drain);
 
 	return await new Promise<WorkflowScriptResult>((resolve, reject) => {
 		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {
@@ -1465,6 +1490,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				if (settled) return;
 				settled = true;
 				options.registerStopChild?.(undefined);
+				options.registerDrain?.(undefined);
 				if (timer) clearTimeout(timer);
 				options.signal?.removeEventListener("abort", onAbort);
 				void worker.terminate();
@@ -1605,7 +1631,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			const respond = (promise: Promise<unknown>, responsePath?: string, onBoundaryError?: (error: unknown) => void) => {
 				void promise.then(
 					(value) => {
-						if (settled) return;
+						// While draining, the script gets no answers: a refusal it throws on would abort the started children.
+						if (settled || draining) return;
 						const normalized = responsePath ? omitNonJsonWorkflowResultMetadata(value) : omitUndefinedWorkflowValues(value);
 						if (!responsePath) {
 							worker.postMessage({ type: "response", callId: message.callId, ok: true, value: normalized });
@@ -1620,7 +1647,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 						}
 					},
 					(error: unknown) => {
-						if (!settled) {
+						if (!settled && !draining) {
 							const errorKind = error instanceof Error ? (error as { workflowErrorKind?: unknown }).workflowErrorKind : undefined;
 							worker.postMessage({ type: "response", callId: message.callId, ok: false, error: error instanceof Error ? error.message : String(error), ...(isWorkflowScriptFailureKind(errorKind) ? { errorKind } : {}) });
 						}
@@ -1705,6 +1732,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					return respond(Promise.reject(error));
 				}
 				if (acceptanceRecoveryBarrier) return respond(Promise.reject(new Error(recoveryBarrierMessage(acceptanceRecoveryBarrier.key, `runs.host('${key}')`))));
+				if (draining) return respond(Promise.reject(new Error(`runs.host('${key}') refused: the workflow is draining.`)));
 				if (!options.host) return respond(Promise.reject(new Error("runs.host is unavailable in this host context.")));
 				if (hostCalls.size >= HOST_STEP_MAX_COUNT) return respond(Promise.reject(new Error(`workflowScript supports at most ${HOST_STEP_MAX_COUNT} runs.host calls.`)));
 				const startedAt = Date.now();
@@ -1834,7 +1862,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					return true;
 				});
 				admission = Promise.resolve().then(() => {
-					if (settled || finishing) return;
+					if (settled || finishing || draining) return;
 					for (const call of calls) assertRecoveryBarrierAllowsRun(call.key, call.params);
 					return options.admit?.(calls, childController.signal);
 				});
@@ -1842,6 +1870,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			}
 			let resolvedResumeLineage: string[] | undefined;
 			const promise = admission.then(async () => {
+				if (draining) stopChild(key, WORKFLOW_DRAIN_CHILD_MESSAGE);
 				if (settled || finishing || stoppedLaunches.has(key)) {
 					const reason = childController.signal.reason;
 					const text = children.get(key)?.error ?? (reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Workflow script aborted.");
@@ -1883,6 +1912,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 						const text = children.get(key)?.error ?? (reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Workflow script aborted.");
 						return stoppedChildResult(key, text);
 					}
+					acquiredLaunches.add(key);
 					const result = await options.launch(key, launchParams, childSignal, { admitted: true, batch: batch !== undefined });
 					const autoResumeParams = setupAbortResumeParams(params, result, childSignal);
 					if (!autoResumeParams) return result;
@@ -1912,6 +1942,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				trace.push(settledEntry);
 				traceChanged();
 				notifyChildSettled(key, normalized);
+				drainIfIdle();
 				return normalized;
 			}, (error: unknown) => {
 				const text = error instanceof Error ? error.message : String(error);
@@ -1922,6 +1953,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				trace.push({ operation: "run", key, state: "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), error: text });
 				traceChanged();
 				notifyChildSettled(key, failure);
+				drainIfIdle();
 				return failure;
 			});
 			launches.set(key, { fingerprint, promise, observed: callObserved, ...(generatedLaneKey ? { generatedLaneKey } : {}) });
