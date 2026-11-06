@@ -40,7 +40,7 @@ export interface McpConfig {
 	imports?: ImportKind[];
 	settings?: {
 		toolPrefix?: McpToolPrefix;
-		directTools?: boolean;
+		directTools?: boolean | "search";
 		agentPluginPaths?: unknown;
 	};
 }
@@ -392,7 +392,7 @@ function parseServerEntries(value: unknown): Record<string, ServerEntry> {
 function parseSettings(value: unknown): McpConfig["settings"] | undefined {
 	if (!isRecord(value)) return undefined;
 	const toolPrefix = value.toolPrefix === "server" || value.toolPrefix === "short" || value.toolPrefix === "none" || value.toolPrefix === "mcp" ? value.toolPrefix : undefined;
-	const directTools = typeof value.directTools === "boolean" ? value.directTools : undefined;
+	const directTools = typeof value.directTools === "boolean" || value.directTools === "search" ? value.directTools : undefined;
 	const settings: NonNullable<McpConfig["settings"]> = {
 		...(toolPrefix ? { toolPrefix } : {}),
 		...(directTools !== undefined ? { directTools } : {}),
@@ -518,7 +518,8 @@ function interpolateEnvRecord(values: Record<string, string> | undefined): Recor
 
 function interpolateEnvVars(value: string): string {
 	return value
-		.replace(/\$\{(\w+)\}/g, (_, name: string) => process.env[name] ?? "")
+		// `${NAME:-default}` uses the default only when NAME is unset, as pi-mcp-adapter and Claude Code do.
+		.replace(/\$\{(\w+)(?::-([^}]*))?\}/g, (_, name: string, fallback: string | undefined) => process.env[name] ?? fallback ?? "")
 		.replace(/\$env:(\w+)/g, (_, name: string) => process.env[name] ?? "")
 		.replace(/\{env:(\w+)\}/g, (_, name: string) => process.env[name] ?? "");
 }
@@ -530,9 +531,9 @@ function interpolateSecretExpression(value: string): string {
 
 function getMissingEnvVars(value: string): string[] {
 	const missing = new Set<string>();
-	for (const match of value.matchAll(/\$\{(\w+)\}|\$env:(\w+)|\{env:(\w+)\}/g)) {
-		const name = match[1] ?? match[2] ?? match[3];
-		if (name && process.env[name] === undefined) missing.add(name);
+	for (const match of value.matchAll(/\$\{(\w+)(:-[^}]*)?\}|\$env:(\w+)|\{env:(\w+)\}/g)) {
+		const name = match[1] ?? match[3] ?? match[4];
+		if (name && match[2] === undefined && process.env[name] === undefined) missing.add(name);
 	}
 	return [...missing];
 }
