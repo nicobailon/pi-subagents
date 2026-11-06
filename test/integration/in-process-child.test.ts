@@ -14,7 +14,7 @@ import type { MockPi } from "../support/helpers.ts";
 import { createMockPi, createTempDir, events, makeAgent, makeAgentConfigs, removeTempDir } from "../support/helpers.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
-import { childSessionFactory, createDefaultChildSessionFactory, disposeChildSessions, type ChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
+import { childSessionFactory, createDefaultChildSessionFactory, disposeChildSessionsForParent, type ChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
 import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
 import type { ForegroundChildSessionControls, PlacementMachineReference, SingleResult } from "../../src/shared/types.ts";
@@ -360,7 +360,7 @@ describe("in-process foreground child", () => {
 		assert.equal(receipt.detached, true);
 		assert.equal(receipt.detachedReason, "user request");
 		assert.equal(mockPi.sessions[0]?.aborted, false, "detach must not abort the session");
-		await disposeChildSessions();
+		await disposeChildSessionsForParent(undefined);
 		assert.equal(mockPi.sessions[0]?.aborted, false, "parent session shutdown must not abort a detached child");
 		fs.writeFileSync(release, "go");
 		await waitFor(() => terminal !== undefined);
@@ -374,7 +374,7 @@ describe("in-process foreground child", () => {
 		mockPi.onCall({ hangUntilAbort: true });
 		const run = runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "shutdown-attached" });
 		await waitFor(() => mockPi.sessions[0]?.task !== undefined);
-		await disposeChildSessions();
+		await disposeChildSessionsForParent(undefined);
 		const result = await run;
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.error, "Subagent stopped because the parent session shut down.");

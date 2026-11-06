@@ -118,6 +118,8 @@ function deadOwnerFixture(prefix: string) {
 	armer.manager.dispose();
 	const recordPath = path.join(subscriptionsDir, `${token}.json`);
 	const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
+	assert.equal((record.completionOwnerProcess as { pid?: number } | undefined)?.pid, process.pid);
+	// The arming process is gone: its recorded pid no longer exists.
 	fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: DEAD_PID } }), "utf-8");
 	return {
 		subscriptionsDir, token, recordPath, sent, open,
@@ -364,64 +366,30 @@ describe("non-blocking wait subscriptions", () => {
 	});
 
 	it("hands a dead owner's subscription to the first process that restores it, not to a later one", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-shared-session-exit-"));
-		const asyncRoot = path.join(root, "runs");
-		const resultsDir = path.join(root, "results");
-		const subscriptionsDir = path.join(root, "subscriptions");
-		const sent: string[] = [];
-		const armerState = makeState();
-		armerState.completionOwnerId = "owner-a";
-		const armer = createWaitSubscriptionManager({ events: new TestBus(), sendMessage() {} } as never, armerState, {
-			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000,
-		});
-		const nextState = makeState();
-		nextState.completionOwnerId = "owner-b";
-		const kill = (pid: number) => {
-			if (pid === 999_999) throw Object.assign(new Error("gone"), { code: "ESRCH" });
-			return true;
-		};
-		const next = createWaitSubscriptionManager({
-			events: new TestBus(),
-			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
-		} as never, nextState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, kill });
-		const otherState = makeState();
-		otherState.completionOwnerId = "owner-c";
-		const other = createWaitSubscriptionManager({
-			events: new TestBus(),
-			sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
-		} as never, otherState, { asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, kill });
+		const fixture = deadOwnerFixture("pi-wait-subscribe-shared-session-exit-");
 		try {
-			writeStatus(asyncRoot, "run-handoff", "running", { sessionId: "session-a", pid: process.pid });
-			const registration = armer.arm({ targetKind: "async", runId: "run-handoff", requestedId: "run-handoff", timeoutMs: 30_000 });
-			armer.dispose();
-			// The arming process is gone: its recorded pid no longer exists.
-			const recordPath = path.join(subscriptionsDir, `${registration.token}.json`);
-			const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as { completionOwnerProcess?: { pid: number } };
-			assert.equal(record.completionOwnerProcess?.pid, process.pid);
-			fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: 999_999 } }), "utf-8");
+			const next = fixture.open("owner-b");
+			const other = fixture.open("owner-c");
+			next.manager.restore();
+			other.manager.restore();
+			assert.equal(next.state.waitSubscriptions?.has(fixture.token), true);
+			assert.equal(other.state.waitSubscriptions?.has(fixture.token) ?? false, false, "the live adopter keeps the subscription");
+			assert.equal(fixture.recordOwner(), "owner-b");
+			assert.deepEqual(fixture.sent, []);
 
-			next.restore();
-			other.restore();
-			assert.equal(nextState.waitSubscriptions?.has(registration.token), true);
-			assert.equal(otherState.waitSubscriptions?.has(registration.token) ?? false, false, "the live adopter keeps the subscription");
-			assert.equal((JSON.parse(fs.readFileSync(recordPath, "utf-8")) as { completionOwnerId?: string }).completionOwnerId, "owner-b");
-			assert.deepEqual(sent, []);
+			fixture.complete();
+			other.manager.reconcile();
+			assert.deepEqual(fixture.sent, []);
+			next.manager.reconcile();
 
-			writeStatus(asyncRoot, "run-handoff", "complete", { sessionId: "session-a" });
-			other.reconcile();
-			assert.deepEqual(sent, []);
-			next.reconcile();
-
-			assert.equal(sent.length, 1);
-			assert.match(sent[0] ?? "", /run run-handoff: completed/);
-			assert.equal(nextState.waitSubscriptions?.has(registration.token), false);
-			assert.equal(otherState.waitSubscriptions?.has(registration.token), false);
-			assert.equal(fs.existsSync(recordPath), false);
-			assert.deepEqual(fs.readdirSync(subscriptionsDir), [], "settling removes the record and its claim");
+			assert.equal(fixture.sent.length, 1);
+			assert.match(fixture.sent[0] ?? "", /^owner-b: .*run run-takeover: completed/s);
+			assert.equal(next.state.waitSubscriptions?.has(fixture.token), false);
+			assert.equal(other.state.waitSubscriptions?.has(fixture.token), false);
+			assert.equal(fs.existsSync(fixture.recordPath), false);
+			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), [], "settling removes the record and its claim");
 		} finally {
-			next.dispose();
-			other.dispose();
-			fs.rmSync(root, { recursive: true, force: true });
+			fixture.dispose();
 		}
 	});
 

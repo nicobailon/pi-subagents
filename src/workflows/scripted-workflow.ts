@@ -886,6 +886,12 @@ function validateStaticBaseRef(params: AstNode, owner: string): WorkflowScriptVa
 // Same text as validateLaneSpecs in workflow-script-worker.cjs; a test compares the two.
 const LANE_RETAINED_RESUME_ERROR = "cannot resume a retained run id in runs.lanes; use runs.run(key, { resume: id }) outside lanes, or start the lane with an agent stage and use resume: \"previous\" later.";
 
+// A spread or unknown computed key on the lane can replace `stages`.
+function staticLane(lane: unknown): lane is AstNode {
+	return astNode(lane) && lane.type === "ObjectExpression" && Array.isArray(lane.properties)
+		&& lane.properties.every((property) => astNode(property) && property.type === "Property" && staticPropertyKey(property) !== undefined);
+}
+
 /** The launch-time first-stage resume rule, for lanes written out as literals. Anything a spread or computed key could change is left to launch. */
 function validateStaticLaneResumes(call: AstNode): WorkflowScriptValidationError[] {
 	const args = Array.isArray(call.arguments) ? call.arguments : [];
@@ -895,8 +901,7 @@ function validateStaticLaneResumes(call: AstNode): WorkflowScriptValidationError
 		const lane = lanes[laneIndex];
 		// A spread shifts every later lane index the runtime reports.
 		if (astNode(lane) && lane.type === "SpreadElement") break;
-		if (!astNode(lane) || lane.type !== "ObjectExpression") continue;
-		if (!Array.isArray(lane.properties) || !lane.properties.every((property) => astNode(property) && property.type === "Property" && staticPropertyKey(property) !== undefined)) continue;
+		if (!staticLane(lane)) continue;
 		const stages = directObjectPropertyValue(lane, "stages");
 		const first = stages?.type === "ArrayExpression" && Array.isArray(stages.elements) ? stages.elements[0] : undefined;
 		if (!astNode(first) || first.type !== "ObjectExpression" || !Array.isArray(first.properties)) continue;
@@ -932,9 +937,6 @@ function staticChildAgentNode(params: unknown): AstNode | undefined {
 function validateStaticChildAgents(call: AstNode, agentNameError: (name: string) => string | undefined): WorkflowScriptValidationError[] {
 	const args = Array.isArray(call.arguments) ? call.arguments : [];
 	const elements = (node: unknown): unknown[] => astNode(node) && node.type === "ArrayExpression" && Array.isArray(node.elements) ? node.elements : [];
-	// A spread or unknown computed key on the lane can replace `stages`.
-	const staticLane = (lane: unknown): lane is AstNode => astNode(lane) && lane.type === "ObjectExpression" && Array.isArray(lane.properties)
-		&& lane.properties.every((property) => astNode(property) && property.type === "Property" && staticPropertyKey(property) !== undefined);
 	const children: Array<{ owner: string; params: unknown }> = directRunsCall(call, "run")
 		? [{ owner: "runs.run", params: args[1] }]
 		: directRunsCall(call, "all")

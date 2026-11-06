@@ -1446,7 +1446,7 @@ function appendStepToAsyncChain(input: {
 		parentProviderRegistry: input.ctx.modelRegistry,
 		currentModel: parentModel,
 		scopedModelIds: scopedModelIdsFromContext(input.ctx),
-		knownModelProviders: knownModelProviders(input.ctx.modelRegistry),
+		knownProviders: knownModelProviders(input.ctx.modelRegistry),
 		modelScope: discoveredForAppend.modelScope,
 		modelResponseAliases: input.deps.config.modelResponseAliases,
 		interactive: input.ctx.hasUI,
@@ -1916,7 +1916,7 @@ async function resumeExternalJobFollowUp(input: {
 			parentProviderRegistry: input.ctx.modelRegistry,
 			currentModel: parentModel,
 			scopedModelIds: scopedModelIdsFromContext(input.ctx),
-			knownModelProviders: knownModelProviders(input.ctx.modelRegistry),
+			knownProviders: knownModelProviders(input.ctx.modelRegistry),
 			modelScope: input.modelScope,
 			modelResponseAliases: input.deps.config.modelResponseAliases,
 			interactive: input.ctx.hasUI,
@@ -2222,7 +2222,7 @@ async function resumeAsyncRun(input: {
 				parentProviderRegistry: input.ctx.modelRegistry,
 				currentModel: parentModel,
 				scopedModelIds: scopedModelIdsFromContext(input.ctx),
-				knownModelProviders: knownModelProviders(input.ctx.modelRegistry),
+				knownProviders: knownModelProviders(input.ctx.modelRegistry),
 				modelScope,
 				modelResponseAliases: input.deps.config.modelResponseAliases,
 				runnerLaunchers: input.deps.config.runnerLaunchers,
@@ -2365,7 +2365,7 @@ async function resumeAsyncRun(input: {
 			parentProviderRegistry: input.ctx.modelRegistry,
 			currentModel: parentModel,
 			scopedModelIds: scopedModelIdsFromContext(input.ctx),
-			knownModelProviders: knownModelProviders(input.ctx.modelRegistry),
+			knownProviders: knownModelProviders(input.ctx.modelRegistry),
 			modelScope,
 			// Absence in the retained contract is meaningful; never acquire current aliases.
 			modelResponseAliases: recoveryDescriptor ? recoveryDescriptor.modelResponseAliases : foregroundContract?.modelResponseAliases,
@@ -3658,7 +3658,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		parentProviderRegistry: ctx.modelRegistry,
 		currentModel: parentModel,
 		scopedModelIds: data.scopedModelIds,
-		knownModelProviders: knownModelProviders(ctx.modelRegistry),
+		knownProviders: knownModelProviders(ctx.modelRegistry),
 		modelScope: data.modelScope,
 		modelResponseAliases: deps.config.modelResponseAliases,
 		runnerLaunchers: deps.config.runnerLaunchers,
@@ -3707,7 +3707,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, a.modelProvider ?? currentProvider, {
 				...(modelScopes.length === 0 ? {} : { scope: modelScopes }),
 				source: modelOrigin === "explicit" ? "explicit" : "inherited",
-				knownProviders: asyncCtx.knownModelProviders,
+				knownProviders: asyncCtx.knownProviders,
 			});
 		const modelOverrideFromParent = modelOrigin === "inherited";
 		const launchRuleError = applyWatchdogLaunchRules({ cwd: effectiveCwd, agent: a.name, model: modelOverride ?? (parentModel && `${parentModel.provider}/${parentModel.id}`), warn: (violation) => deps.watchdog?.displayRuleWarning(violation) });
@@ -4500,7 +4500,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			thinkingCeiling: agentConfig.maxThinking,
 			extensionBindings: params.extensionBindings,
 			availableModels,
-			knownModelProviders: knownProviders,
+			knownProviders,
 			modelResponseAliases,
 			preferredModelProvider: currentProvider,
 			modelScope: modelScopes,
@@ -5825,6 +5825,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const controller = new AbortController();
 				deps.state.workflowControllers ??= new Map();
 				deps.state.workflowChildStops ??= new Map();
+				deps.state.workflowDrains ??= new Map();
 				deps.state.workflowControllers.set(workflowRunId, controller);
 				workflowCapacity?.markWorkflowStarted();
 				if (workflowCapacity) deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers.keys()), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) });
@@ -6400,7 +6401,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									deps.state.workflowDrains?.delete(workflowRunId);
 									return;
 								}
-								(deps.state.workflowDrains ??= new Map()).set(workflowRunId, () => {
+								deps.state.workflowDrains?.set(workflowRunId, () => {
 									if (workflowRunEvidence.drainRequestedAt === undefined) {
 										// The marker must be on disk before anything is stopped: without it a reload during the drain would resume the run.
 										const previousWorkflow = status.workflow;
@@ -6418,11 +6419,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 											status.workflow = previousWorkflow;
 											// Replaces a queued write that still carries the marker.
 											persist({ tolerateStatusWriteFailure: true });
-											return undefined;
+											return { ok: false };
 										}
 									}
 									// Deferred so a full stop that stops the last running child aborts with its own reason first.
-									return drain(() => queueMicrotask(() => controller.abort(new Error("Workflow drained: started children finished; no new children were started."))));
+									return { ok: true, started: drain(() => queueMicrotask(() => controller.abort(new Error("Workflow drained: started children finished; no new children were started.")))) };
 								});
 							},
 							...(workflowState ? { state: workflowState } : {}),

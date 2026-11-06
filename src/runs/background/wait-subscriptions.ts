@@ -21,7 +21,7 @@ import {
 } from "../../shared/types.ts";
 import { currentBootId, currentRecordedPid } from "./boot-id.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
-import { checkRecordedPidLiveness, isRecordedPid } from "./stale-run-reconciler.ts";
+import { checkRecordedPidLiveness, isRecordedPid, type RecordedPid } from "./stale-run-reconciler.ts";
 import { createClaimFile } from "../../workflows/workflow-resume-claim.ts";
 
 const SUBSCRIPTION_VERSION = 1;
@@ -171,10 +171,10 @@ export function createWaitSubscriptionManager(
 			throw error;
 		}
 	};
-	const isDead = (recorded: unknown): boolean => isRecordedPid(recorded) && checkRecordedPidLiveness(recorded, {
+	const isDead = (recorded: RecordedPid | undefined): boolean => recorded !== undefined && checkRecordedPidLiveness(recorded, {
 		observedScope: currentPidNamespaceScope(),
 		observedBootId: currentBootId(),
-		...(options.kill ? { kill: options.kill } : {}),
+		kill: options.kill,
 	}) === "dead";
 	// A live or unknown claimant holds its generation; a dead claimant, or a body that is not a claim, does not.
 	const latestClaimantHolds = (claimPath: string): boolean => {
@@ -451,7 +451,13 @@ export function createWaitSubscriptionManager(
 					const filePath = path.join(subscriptionsDir, file);
 					const found = readRecordFile(filePath);
 					if (!found || file !== `${found.token}.json` || found.sessionId !== state.currentSessionId) continue;
-					const record = claimRecord(filePath, found);
+					let record: WaitSubscriptionRecord | undefined;
+					try {
+						record = claimRecord(filePath, found);
+					} catch (error) {
+						console.error(`Failed to take over wait subscription '${filePath}':`, error);
+						continue;
+					}
 					if (record) {
 						subscriptions.set(record.token, record);
 						if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);

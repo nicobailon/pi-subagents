@@ -205,8 +205,7 @@ function buildChainScript(steps: unknown, originalTask: string | undefined): str
 	return lines.join("\n");
 }
 
-/** Validate exact data shapes and expand them into a package-owned workflow script. */
-/** `scripts` is true only for the named `parallel` workflow; top-level tasks and chain exist only when workflow scripts are disabled. */
+/** Validate exact data shapes and expand them into a package-owned workflow script. `scripts` is true only for the named `parallel` workflow; top-level tasks and chain exist only when workflow scripts are disabled. */
 export function buildStructuredWorkflowScript(kind: StructuredWorkflowKind, steps: unknown, originalTask: string | undefined, scripts: boolean): string {
 	return kind === "tasks" ? buildTasksScript(steps, originalTask, scripts) : buildChainScript(steps, originalTask);
 }

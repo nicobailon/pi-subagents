@@ -4057,7 +4057,7 @@ describe("scripted workflow runtime", () => {
 });
 
 describe("scripted workflow drain", () => {
-	const drainedError = (error: unknown) => error instanceof WorkflowScriptError && error.message === "drained";
+	const drainedError = (error: unknown): error is WorkflowScriptError => error instanceof WorkflowScriptError && error.message === "drained";
 
 	it("lets the started child finish and launches nothing after a drain", async () => {
 		const controller = new AbortController();
@@ -4084,9 +4084,9 @@ describe("scripted workflow drain", () => {
 		assert.equal(drainedCalls, 0);
 		releaseA();
 		await assert.rejects(workflow, (error: unknown) => drainedError(error)
-			&& (error as WorkflowScriptError).partial.children.length === 1
-			&& (error as WorkflowScriptError).partial.children[0]!.ok
-			&& (error as WorkflowScriptError).partial.children[0]!.output === "a done");
+			&& error.partial.children.length === 1
+			&& error.partial.children[0]!.ok
+			&& error.partial.children[0]!.output === "a done");
 		assert.deepEqual(launched, ["a"]);
 		assert.equal(drainedCalls, 1);
 	});
@@ -4123,8 +4123,8 @@ describe("scripted workflow drain", () => {
 		assert.ok(trace.some((entry) => entry.key === "b" && entry.state === "stopped"));
 		releaseA();
 		await assert.rejects(workflow, (error: unknown) => drainedError(error)
-			&& (error as WorkflowScriptError).partial.children.some((child) => child.key === "a" && child.ok)
-			&& (error as WorkflowScriptError).partial.children.some((child) => child.key === "b" && child.stopped === true));
+			&& error.partial.children.some((child) => child.key === "a" && child.ok)
+			&& error.partial.children.some((child) => child.key === "b" && child.stopped === true));
 		assert.deepEqual(launched, ["a"]);
 	});
 
@@ -4154,7 +4154,7 @@ describe("scripted workflow drain", () => {
 		await Promise.race([workflow.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 200))]);
 		release.get("slow")!();
 		await assert.rejects(workflow, (error: unknown) => drainedError(error)
-			&& (error as WorkflowScriptError).partial.children.find((child) => child.key === "slow")?.output === "slow done");
+			&& error.partial.children.find((child) => child.key === "slow")?.output === "slow done");
 	});
 
 	it("ends at once when no child has started", async () => {
