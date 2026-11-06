@@ -262,6 +262,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		const next = { ...config };
 		if (!hasDeclaredField("model")) delete next.model;
 		if (!hasDeclaredField("thinking")) delete next.thinking;
+		if (!hasDeclaredField("inheritGlobalContext")) next.inheritGlobalContext = false;
 		return next;
 	};
 	const {
@@ -311,7 +312,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		...(base.thinking !== undefined && hasDeclaredField("thinking") ? { thinking: base.thinking } : {}),
 		systemPromptMode: base.systemPromptMode,
 		inheritProjectContext: base.inheritProjectContext,
-		inheritGlobalContext: base.inheritGlobalContext,
+		inheritGlobalContext: hasDeclaredField("inheritGlobalContext") && base.inheritGlobalContext,
 		inheritSkills: base.inheritSkills,
 		...(base.defaultContext !== undefined ? { defaultContext: base.defaultContext } : {}),
 		...(base.acceptanceRole !== undefined ? { acceptanceRole: base.acceptanceRole } : {}),
@@ -1204,7 +1205,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	if (mw) warnings.push(mw);
 	const sw = skillsWarning(ctx.cwd, agent);
 	if (sw) warnings.push(sw);
-	fs.writeFileSync(targetPath, serializeAgent(agent), "utf-8");
+	fs.writeFileSync(targetPath, serializeAgent(agent, hasKey(cfg, "inheritGlobalContext") ? { explicitFields: new Set(["inheritGlobalContext"]) } : {}), "utf-8");
 	ctx.onAgentsChanged?.();
 	return result([`Created agent '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
 }

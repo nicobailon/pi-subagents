@@ -164,6 +164,10 @@ Set `subagents.defaultSubagentOnlyExtensions` to give agents without a `subagent
 
 The two defaults resolve independently, with an explicitly present project value winning over the user value. If both are set, `defaultExtensions` still disables ambient discovery and the child-only paths are loaded alongside its allowlist. Both reject non-arrays, non-string or blank entries with an error naming the setting and source file. Extension paths execute trusted code, so use project defaults only for trusted repositories and extensions.
 
+## Global context default
+
+Set `subagents.defaultInheritGlobalContext: true` to give every builtin, package, user and project agent your global context file (such as `~/.pi/agent/AGENTS.md`), including agents added later. An agent that declares `inheritGlobalContext` in its frontmatter keeps its own value, and `agentOverrides.<name>.inheritGlobalContext` still wins over both, so `false` in either place opts that agent out. A project value wins over the user value. The setting only matters for agents with `inheritProjectContext: true` (every builtin agent has it); without project context a child gets no context files at all. Runtime-registered agents keep their extension's value. A non-boolean value is rejected with an error naming the settings file.
+
 ## Inspecting the live mapping
 
 To see what `pi-subagents` has actually loaded right now:

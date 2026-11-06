@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `subagents.defaultInheritGlobalContext: true` gives every subagent your global `~/.pi/agent/AGENTS.md`, without listing each agent in `agentOverrides`. An agent that sets `inheritGlobalContext: false` still opts out. Thanks to [@imagebuilder1837](https://github.com/imagebuilder1837) for the report. (#3206)
+
 ### Fixed
 
 - A subagent model written as `provider/id` now always runs on that provider. Before, if you were not signed in to that provider, a similar model from another provider (for example OpenRouter's copy of an Anthropic model) could run instead and bill that account. The launch now fails with an error that names the other provider's model, so you can choose it on purpose. The bundled skill also tells the parent to leave `model` out unless you or your settings name one. Thanks to [@crusaderky](https://github.com/crusaderky) for the report. (#3203)
