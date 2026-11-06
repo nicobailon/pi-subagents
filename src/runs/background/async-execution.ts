@@ -179,7 +179,7 @@ interface AsyncExecutionContext {
 	currentModelProvider?: string;
 	currentModel?: ParentModel;
 	scopedModelIds?: string[];
-	knownModelProviders?: KnownProviders;
+	knownProviders?: KnownProviders;
 	/** Optional model-scope enforcement resolved from subagent settings. */
 	modelScope?: ModelScopeConfig;
 	modelResponseAliases?: Record<string, string[]>;
@@ -1209,7 +1209,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			ctx.currentModel,
 			availableModels,
 			a.modelProvider ?? ctx.currentModelProvider,
-			{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownModelProviders },
+			{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownProviders },
 		);
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
 		let claudeCodeOverride: ClaudeCodeOverride | undefined;
@@ -1254,7 +1254,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					scope: modelScopes,
 					primaryModelFromParent,
 					origin: modelOrigin,
-					knownProviders: ctx.knownModelProviders,
+					knownProviders: ctx.knownProviders,
 				});
 				requestedModel = modelEvidence.requestedModel;
 				selectedModel = applyThinkingSuffix(modelEvidence.model, effectiveThinking, thinkingOverride !== undefined);
@@ -2049,7 +2049,7 @@ export function executeAsyncSingle(
 				ctx.currentModel,
 				availableModels,
 				ctx.currentModelProvider,
-				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownModelProviders },
+				{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited", knownProviders: ctx.knownProviders },
 			);
 	} catch (error) {
 		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
@@ -2115,7 +2115,7 @@ export function executeAsyncSingle(
 				scope: modelScopes,
 				primaryModelFromParent: modelOrigin === "inherited",
 				origin: modelOrigin,
-				knownProviders: ctx.knownModelProviders,
+				knownProviders: ctx.knownProviders,
 			});
 			requestedModel = modelEvidence.requestedModel;
 			selectedModel = applyThinkingSuffix(modelEvidence.model, effectiveThinking, params.thinkingOverride !== undefined);

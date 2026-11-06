@@ -506,7 +506,6 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	/** Per-parent disposal epochs: a child's launch aborts only when its own parent's scope (or the whole process) was disposed while it started. */
 	const parentDisposals = new Map<string | undefined, number>();
 	const parentDisposalEpoch = (parent: string | undefined) => parentDisposals.get(parent) ?? 0;
-	const bumpParentDisposal = (parent: string | undefined) => parentDisposals.set(parent, parentDisposalEpoch(parent) + 1);
 	const sharedRuntime = async (pi: PiCodingAgentModule) => {
 		runtime ??= pi.ModelRuntime.create().catch((error: unknown) => {
 			runtime = undefined;
@@ -514,8 +513,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 		});
 		return runtime;
 	};
-	const disposeMatching = async (matches: (parent: string | undefined) => boolean, bump: () => void) => {
-		bump();
+	const disposeMatching = async (matches: (parent: string | undefined) => boolean) => {
 		for (const [cancel, wait] of mcpWaits) if (matches(wait.parent)) cancel.abort();
 		const children = [...live.keys()].filter((child) => !child.detached && matches(live.get(child)));
 		for (const child of children) child.shutDown = true;
@@ -764,10 +762,12 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			return child;
 		},
 		async dispose() {
-			await disposeMatching(() => true, () => { globalDisposals += 1; });
+			globalDisposals += 1;
+			await disposeMatching(() => true);
 		},
-		async disposeForParent(parentSessionFile: string | undefined) {
-			await disposeMatching((parent) => parent === parentSessionFile, () => bumpParentDisposal(parentSessionFile));
+		async disposeForParent(parentSessionFile) {
+			parentDisposals.set(parentSessionFile, parentDisposalEpoch(parentSessionFile) + 1);
+			await disposeMatching((parent) => parent === parentSessionFile);
 		},
 	};
 }
@@ -787,7 +787,7 @@ function createLazyPlacementFactory(local: ChildSessionFactory): ChildSessionFac
 	return {
 		async create(launch) { return launch.machine ? (await factory()).create(launch) : local.create(launch); },
 		async dispose() { if (placed) await placed.dispose(); else await local.dispose(); },
-		async disposeForParent(parentSessionFile: string | undefined) { if (placed) await placed.disposeForParent(parentSessionFile); else await local.disposeForParent(parentSessionFile); },
+		async disposeForParent(parentSessionFile) { if (placed) await placed.disposeForParent(parentSessionFile); else await local.disposeForParent(parentSessionFile); },
 	};
 }
 
@@ -815,13 +815,6 @@ export function childSessionFactoryModule(): string | undefined {
 
 export function setChildSessionFactoryModule(modulePath: string | undefined): void {
 	activeFactoryModule = modulePath;
-}
-
-/** Abort and dispose every live in-process child and release the shared runtime. */
-export async function disposeChildSessions(): Promise<void> {
-	const factory = activeFactory;
-	if (!factory) return;
-	await factory.dispose();
 }
 
 /** Abort and dispose only the children `parentSessionFile`'s session launched; see ChildSessionFactory.disposeForParent. */

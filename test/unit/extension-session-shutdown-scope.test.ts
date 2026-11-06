@@ -80,10 +80,7 @@ describe("session_shutdown disposal scope", () => {
 	it("calls disposeForParent with this session's file, not the whole-process dispose", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-shutdown-scope-fixture-"));
 		const calls = runScript(root);
-		const scoped = calls.filter(([name]) => name === "disposeForParent");
-		const global = calls.filter(([name]) => name === "dispose");
-		assert.equal(scoped.length, 1, `exactly one scoped dispose, got: ${JSON.stringify(calls)}`);
-		assert.ok(String(scoped[0]?.[1]).endsWith("parent-session.jsonl"), `scoped to this session's file, got: ${scoped[0]?.[1]}`);
-		assert.equal(global.length, 0, "the whole-process dispose must not run on session_shutdown");
+		assert.deepEqual(calls.map(([name]) => name), ["disposeForParent"]);
+		assert.match(String(calls[0]?.[1]), /parent-session\.jsonl$/);
 	});
 });
