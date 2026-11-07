@@ -326,11 +326,19 @@ export function modelBefore(messages: readonly { role: string }[], forkedAt: num
  */
 const LOADOUT_SECTIONS = new Set(["tools", "rules", "docs", "skills", "advertised_subagents", "mcp_servers", "project_context"]);
 
+/** The `<project_instructions path="…">` blocks Pi writes into a `project_context` section, by path. */
+function projectInstructionBlocks(section: string | null | undefined): Map<string, string> {
+	const blocks = new Map<string, string>();
+	for (const match of (section ?? "").matchAll(/<project_instructions\s+path=(["'])(.*?)\1\s*>[\s\S]*?<\/project_instructions>/gi)) blocks.set(match[2]!, match[0]);
+	return blocks;
+}
+
 /**
  * The child's own instructions, which a fork sends in its task message instead of its system
  * prompt: the text its own system messages (`own`) add, the sections it changed except the loadout
- * ones, the tools it can call, and its boundary. `parent` is the inherited system messages and
- * `child` the whole request.
+ * ones, the project instruction files the parent's prompt lacks (a child that works in another
+ * folder has that folder's AGENTS.md), the tools it can call, and its boundary. `parent` is the
+ * inherited system messages and `child` the whole request.
  */
 function forkInstructions(input: { parent: TranscriptMessages; child: TranscriptMessages; own: TranscriptMessages; boundary?: string }): string {
 	const parent = getCurrentSystemMessage(input.parent);
@@ -344,6 +352,9 @@ function forkInstructions(input: { parent: TranscriptMessages; child: Transcript
 	for (const [name, value] of Object.entries(child?.sections ?? {})) {
 		if (!LOADOUT_SECTIONS.has(name) && value && parent?.sections?.[name] !== value) parts.push(value);
 	}
+	const parentFiles = projectInstructionBlocks(parent?.sections?.project_context);
+	const missingFiles = [...projectInstructionBlocks(child?.sections?.project_context)].filter(([filePath]) => !parentFiles.has(filePath)).map(([, block]) => block);
+	if (missingFiles.length > 0) parts.push(["Project instructions for your working folder, which the parent's prompt does not include:", ...missingFiles].join("\n\n"));
 	if (input.boundary) parts.push(input.boundary);
 	return `<subagent_instructions>\n${parts.join("\n\n")}\n</subagent_instructions>`;
 }
