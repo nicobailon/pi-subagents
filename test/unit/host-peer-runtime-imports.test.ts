@@ -295,6 +295,57 @@ test("chord is required only when the host declares it, and aliased host-first w
 	}
 });
 
+test("aliases pi-schema, and fails closed only when the host's pi-ai declares it ", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pi-schema-alias-"));
+	const host = path.join(root, "host");
+	const schema = "@earendil-works/pi-schema";
+	const schemaDir = path.join(host, "node_modules", schema);
+	function writePackage(dir: string, name: string, version: string, exports: Record<string, string>, extra: Record<string, unknown> = {}) {
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version, exports, ...extra }));
+		for (const target of Object.values(exports)) {
+			fs.mkdirSync(path.dirname(path.join(dir, target)), { recursive: true });
+			fs.writeFileSync(path.join(dir, target), "export {};\n");
+		}
+	}
+	try {
+		writePackage(host, "@earendil-works/pi-coding-agent", "1.5.0", { ".": "./index.mjs" });
+		// pi-ai 1.5+ imports pi-schema from its schema modules; a host that omits it cannot boot a child.
+		writePackage(path.join(host, "node_modules", "@earendil-works/pi-ai"), "@earendil-works/pi-ai", "1.5.0", { ".": "./index.mjs", "./compat": "./compat.mjs" }, { dependencies: { [schema]: "1.5.0" } });
+		let result = resolveHostPeerAliases(host);
+		assert.ok(result.missing.includes(schema), result.missing.join(","));
+		assert.ok(result.missing.includes(`${schema}/formats`), result.missing.join(","));
+
+		// Both specifiers ride the host copy when the host provides it.
+		writePackage(schemaDir, schema, "1.5.0", { ".": "./dist/index.js", "./formats": "./dist/formats/index.js" });
+		result = resolveHostPeerAliases(host);
+		assert.equal(result.aliases[schema], fs.realpathSync(path.join(schemaDir, "dist", "index.js")));
+		assert.equal(result.aliases[`${schema}/formats`], fs.realpathSync(path.join(schemaDir, "dist", "formats", "index.js")));
+		assert.equal(result.missing.includes(schema), false);
+
+		// A nested install is what pi-ai itself would resolve, so it must alias too.
+		const piAiDir = path.join(host, "node_modules", "@earendil-works", "pi-ai");
+		const nestedSchemaDir = path.join(piAiDir, "node_modules", schema);
+		fs.rmSync(schemaDir, { recursive: true, force: true });
+		writePackage(nestedSchemaDir, schema, "1.5.0", { ".": "./dist/index.js", "./formats": "./dist/formats/index.js" });
+		result = resolveHostPeerAliases(host);
+		assert.equal(result.aliases[schema], fs.realpathSync(path.join(nestedSchemaDir, "dist", "index.js")));
+		assert.equal(result.aliases[`${schema}/formats`], fs.realpathSync(path.join(nestedSchemaDir, "dist", "formats", "index.js")));
+		assert.equal(result.missing.includes(schema), false);
+		fs.rmSync(nestedSchemaDir, { recursive: true, force: true });
+
+		// Pre-1.5 pi-ai never imports it: an absent package is not a launch failure.
+		writePackage(path.join(host, "node_modules", "@earendil-works/pi-ai"), "@earendil-works/pi-ai", "1.2.0", { ".": "./index.mjs", "./compat": "./compat.mjs" });
+		fs.rmSync(schemaDir, { recursive: true, force: true });
+		result = resolveHostPeerAliases(host);
+		assert.equal(result.aliases[schema], undefined);
+		assert.equal(result.aliases[`${schema}/formats`], undefined);
+		assert.equal(result.missing.includes(schema), false);
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("skips the pi-agent-core/node alias when the host package declares no ./node export", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-core-no-node-"));
 	const packageDir = path.join(root, "node_modules", "@earendil-works", "pi-agent-core");

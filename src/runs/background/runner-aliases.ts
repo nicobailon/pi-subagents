@@ -3,7 +3,7 @@
  *
  * The runner is a plain Node process started through jiti. The child hooks it
  * loads import pi's host packages (`@earendil-works/pi-coding-agent`,
- * `pi-agent-core`, `pi-ai`, `pi-tui`, `typebox`), which are peer packages of
+ * `pi-agent-core`, `pi-ai`, `pi-schema`, `pi-tui`, `typebox`), which are peer packages of
  * this extension and are not installed next to it. pi's own extension loader
  * aliases those specifiers to the copies shipped inside the installed pi
  * package; the parent computes the same map and hands it to the runner
@@ -14,8 +14,18 @@ import * as path from "node:path";
 
 export const JITI_ALIAS_ENV = "JITI_ALIAS";
 
+interface PeerAlias {
+	specifier: string;
+	pkg: string;
+	subpath: string;
+	/** An absent subpath of a present package is unreachable, so it is skipped instead of failing. */
+	optional?: boolean;
+	/** Package root to resolve from; defaults to the host root, matching a hoisted install. */
+	from?: string;
+}
+
 /** Specifiers the runner's import graph may use, with the package and export subpath each resolves to. */
-export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; subpath: string; optional?: boolean }> = [
+export const HOST_PEER_ALIASES: ReadonlyArray<PeerAlias> = [
 	{ specifier: "@earendil-works/pi-coding-agent", pkg: "@earendil-works/pi-coding-agent", subpath: "." },
 	{ specifier: "@earendil-works/pi-agent-core", pkg: "@earendil-works/pi-agent-core", subpath: "." },
 	// Optional: hosts whose pi-agent-core declares no "./node" export cannot import it, so no alias is needed.
@@ -28,6 +38,17 @@ export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; 
 	{ specifier: "typebox", pkg: "typebox", subpath: "." },
 	{ specifier: "typebox/compile", pkg: "typebox", subpath: "./compile" },
 	{ specifier: "typebox/value", pkg: "typebox", subpath: "./value" },
+];
+
+/**
+ * Pi 1.5.0+ `pi-ai` imports `@earendil-works/pi-schema` and `@earendil-works/pi-schema/formats`
+ * from its schema modules. Hosts before 1.5 do not depend on it, so it is required only when the
+ * resolved pi-ai manifest declares it (see resolveHostPeerAliases).
+ */
+const SCHEMA_PACKAGE = "@earendil-works/pi-schema";
+const SCHEMA_PEER_ALIASES: ReadonlyArray<PeerAlias> = [
+	{ specifier: SCHEMA_PACKAGE, pkg: SCHEMA_PACKAGE, subpath: "." },
+	{ specifier: `${SCHEMA_PACKAGE}/formats`, pkg: SCHEMA_PACKAGE, subpath: "./formats" },
 ];
 
 /** Pi manifests declare chord from 0.85.0 through 1.1.x; earlier hosts and 1.2.0+ do not ship it. */
@@ -148,8 +169,19 @@ export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record
 	// manifest declares it (Pi 0.85 through 1.1), so a declared-but-missing chord still
 	// fails closed. An unreadable host manifest keeps it required rather than hiding a broken install.
 	const chordRequired = !hostManifest || declaresDependency(hostManifest, CHORD_PACKAGE);
-	for (const { specifier, pkg, subpath, optional } of [...HOST_PEER_ALIASES, ...CHORD_PEER_ALIASES]) {
-		const packageDir = findPeerPackageDir(piPackageRoot, pkg, hostManifest?.name);
+	// A host that ships pi-ai 1.5+ without pi-schema cannot boot a child runner at all: the failure
+	// surfaces as a bare module-resolution error inside the spawned process, long after launch is
+	// accepted. Name it as a missing host peer instead, so the launch fails closed with the
+	// actionable message. Older pi-ai releases do not import it, so they stay unaffected.
+	const piAiDir = findPeerPackageDir(piPackageRoot, "@earendil-works/pi-ai", hostManifest?.name);
+	const piAiManifest = piAiDir ? readManifest(piAiDir) : undefined;
+	// pi-ai owns the import, so resolve from its own dependency scope: a nested
+	// pi-ai/node_modules copy counts, and the walk upward still finds a hoisted one.
+	const schemaAliases: PeerAlias[] = piAiDir && piAiManifest && declaresDependency(piAiManifest, SCHEMA_PACKAGE)
+		? SCHEMA_PEER_ALIASES.map((entry) => ({ ...entry, from: piAiDir }))
+		: [];
+	for (const { specifier, pkg, subpath, optional, from } of [...HOST_PEER_ALIASES, ...CHORD_PEER_ALIASES, ...schemaAliases]) {
+		const packageDir = findPeerPackageDir(from ?? piPackageRoot, pkg, hostManifest?.name);
 		const target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
 		// An optional subpath the package does not declare is unreachable, so skip it; a declared but missing file still fails.
 		if (optional && packageDir && target === undefined) continue;
