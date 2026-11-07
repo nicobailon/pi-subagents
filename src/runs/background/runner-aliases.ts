@@ -169,14 +169,12 @@ export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record
 	// manifest declares it (Pi 0.85 through 1.1), so a declared-but-missing chord still
 	// fails closed. An unreadable host manifest keeps it required rather than hiding a broken install.
 	const chordRequired = !hostManifest || declaresDependency(hostManifest, CHORD_PACKAGE);
-	// A host that ships pi-ai 1.5+ without pi-schema cannot boot a child runner at all: the failure
-	// surfaces as a bare module-resolution error inside the spawned process, long after launch is
-	// accepted. Name it as a missing host peer instead, so the launch fails closed with the
-	// actionable message. Older pi-ai releases do not import it, so they stay unaffected.
-	const piAiDir = findPeerPackageDir(piPackageRoot, "@earendil-works/pi-ai", hostManifest?.name);
+	// Without pi-schema a child dies on its first import of pi-ai, after the launch was accepted,
+	// so a pi-ai that declares it makes it required. pi-ai owns the import, so resolve from pi-ai's
+	// real path: nested, hoisted, and pnpm-sibling copies are all what pi-ai itself would load.
+	const foundPiAiDir = findPeerPackageDir(piPackageRoot, "@earendil-works/pi-ai", hostManifest?.name);
+	const piAiDir = foundPiAiDir ? fs.realpathSync(foundPiAiDir) : undefined;
 	const piAiManifest = piAiDir ? readManifest(piAiDir) : undefined;
-	// pi-ai owns the import, so resolve from its own dependency scope: a nested
-	// pi-ai/node_modules copy counts, and the walk upward still finds a hoisted one.
 	const schemaAliases: PeerAlias[] = piAiDir && piAiManifest && declaresDependency(piAiManifest, SCHEMA_PACKAGE)
 		? SCHEMA_PEER_ALIASES.map((entry) => ({ ...entry, from: piAiDir }))
 		: [];

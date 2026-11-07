@@ -295,7 +295,7 @@ test("chord is required only when the host declares it, and aliased host-first w
 	}
 });
 
-test("aliases pi-schema, and fails closed only when the host's pi-ai declares it ", () => {
+test("aliases pi-schema, and fails closed only when the host's pi-ai declares it", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pi-schema-alias-"));
 	const host = path.join(root, "host");
 	const schema = "@earendil-works/pi-schema";
@@ -333,6 +333,17 @@ test("aliases pi-schema, and fails closed only when the host's pi-ai declares it
 		assert.equal(result.aliases[`${schema}/formats`], fs.realpathSync(path.join(nestedSchemaDir, "dist", "formats", "index.js")));
 		assert.equal(result.missing.includes(schema), false);
 		fs.rmSync(nestedSchemaDir, { recursive: true, force: true });
+		// pnpm: the host's pi-ai is a symlink, and pi-schema sits beside pi-ai's real path, not under the host.
+		const store = path.join(root, ".pnpm", "pi-ai@1.5.0", "node_modules", "@earendil-works");
+		fs.mkdirSync(store, { recursive: true });
+		fs.renameSync(piAiDir, path.join(store, "pi-ai"));
+		fs.symlinkSync(path.join(store, "pi-ai"), piAiDir, "dir");
+		writePackage(path.join(store, "pi-schema"), schema, "1.5.0", { ".": "./dist/index.js", "./formats": "./dist/formats/index.js" });
+		result = resolveHostPeerAliases(host);
+		assert.equal(result.aliases[schema], fs.realpathSync(path.join(store, "pi-schema", "dist", "index.js")));
+		assert.equal(result.missing.includes(schema), false);
+		fs.rmSync(piAiDir);
+
 
 		// Pre-1.5 pi-ai never imports it: an absent package is not a launch failure.
 		writePackage(path.join(host, "node_modules", "@earendil-works/pi-ai"), "@earendil-works/pi-ai", "1.2.0", { ".": "./index.mjs", "./compat": "./compat.mjs" });
