@@ -3314,7 +3314,7 @@ function resolveStaticLaunchSummary(input: {
 			input.parentModel,
 			input.availableModels,
 			agentConfig?.modelProvider ?? input.currentProvider,
-			{ ...(modelScopes.length === 0 ? {} : { scope: modelScopes }), knownProviders: input.knownProviders },
+			{ scope: modelScopes, knownProviders: input.knownProviders },
 		);
 	const thinkingOverride = externalRunner ? undefined : input.thinkingOverrideForTask();
 	const thinking = externalRunner ? undefined : resolveEffectiveThinking(model, thinkingOverride ?? agentConfig?.thinking);
@@ -3705,7 +3705,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
 			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, a.modelProvider ?? currentProvider, {
-				...(modelScopes.length === 0 ? {} : { scope: modelScopes }),
+				scope: modelScopes,
 				source: modelOrigin === "explicit" ? "explicit" : "inherited",
 				knownProviders: asyncCtx.knownProviders,
 			});
@@ -4246,7 +4246,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		availableModels,
 		agentConfig.modelProvider ?? currentProvider,
 		{
-			...(modelScopes.length === 0 ? {} : { scope: modelScopes }),
+			scope: modelScopes,
 			source: modelOrigin === "explicit" ? "explicit" : "inherited",
 			knownProviders,
 		},
@@ -6397,11 +6397,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								else deps.state.workflowChildStops?.delete(workflowRunId);
 							},
 							registerDrain: (drain) => {
-								if (!drain) {
-									deps.state.workflowDrains?.delete(workflowRunId);
-									return;
-								}
-								deps.state.workflowDrains?.set(workflowRunId, () => {
+								if (!drain) deps.state.workflowDrains?.delete(workflowRunId);
+								else deps.state.workflowDrains?.set(workflowRunId, () => {
 									if (workflowRunEvidence.drainRequestedAt === undefined) {
 										// The marker must be on disk before anything is stopped: without it a reload during the drain would resume the run.
 										const previousWorkflow = status.workflow;
@@ -6734,7 +6731,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 			const workflowAggregateOutputPath = resolveSingleOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, foregroundWorkflowRunId));
-			// A top-level artifact file, outside outputs/ so it cannot overwrite a child's report.
+			// Outside outputs/ so it cannot overwrite a child's report.
 			const workflowFullResultPath = path.join(workflowArtifactsDir, `${sanitizeRunPathSegment(foregroundWorkflowRunId)}_workflow-result.md`);
 			const claimedOutputPaths = new Map<string, string>();
 			const childOutputOverrides = new Map<string, string>();

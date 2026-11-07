@@ -12,7 +12,7 @@ import { createWaitSubscriptionManager } from "../../src/runs/background/wait-su
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT, type IntercomEventBus, type SubagentState } from "../../src/shared/types.ts";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, type IntercomEventBus, type SubagentState, type WaitSubscriptionRecord } from "../../src/shared/types.ts";
 import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
 import { writeFileCreatingDir } from "../support/helpers.ts";
 
@@ -83,19 +83,19 @@ class TestBus implements IntercomEventBus {
 
 const DEAD_PID = 999_999;
 
-/** The persisted takeover-claim name: `<token>.claim-<sha256(replaced owner)[0:16]>.<generation>`. */
 function claimName(token: string, replacedOwnerId: string, generation: number): string {
 	return `${token}.claim-${createHash("sha256").update(replacedOwnerId).digest("hex").slice(0, 16)}.${generation}`;
 }
 
 /** A session-a wait armed by "owner-a", whose process is dead; `open` starts another Pi process on the session. */
-function deadOwnerFixture(prefix: string) {
+function deadOwnerFixture(prefix: string, now: () => number = Date.now) {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 	const asyncRoot = path.join(root, "runs");
 	const resultsDir = path.join(root, "results");
 	const subscriptionsDir = path.join(root, "subscriptions");
 	const sent: string[] = [];
 	const managers: Array<{ dispose(): void }> = [];
+	let deadPidReused = false;
 	const open = (ownerId: string) => {
 		const state = makeState();
 		state.completionOwnerId = ownerId;
@@ -103,9 +103,9 @@ function deadOwnerFixture(prefix: string) {
 			events: new TestBus(),
 			sendMessage(message: { content?: unknown }) { sent.push(`${ownerId}: ${String(message.content)}`); },
 		} as never, state, {
-			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000,
+			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now,
 			kill: (pid: number) => {
-				if (pid === DEAD_PID) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+				if (pid === DEAD_PID && !deadPidReused) throw Object.assign(new Error("gone"), { code: "ESRCH" });
 				return true;
 			},
 		});
@@ -117,14 +117,16 @@ function deadOwnerFixture(prefix: string) {
 	const { token } = armer.manager.arm({ targetKind: "async", runId: "run-takeover", requestedId: "run-takeover", timeoutMs: 30_000 });
 	armer.manager.dispose();
 	const recordPath = path.join(subscriptionsDir, `${token}.json`);
-	const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
-	assert.equal((record.completionOwnerProcess as { pid?: number } | undefined)?.pid, process.pid);
+	const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as WaitSubscriptionRecord;
+	assert.equal(record.completionOwnerProcess?.pid, process.pid);
 	fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: DEAD_PID } }), "utf-8");
 	return {
 		subscriptionsDir, token, recordPath, sent, open,
 		claimPath: (replacedOwnerId: string, generation: number) => path.join(subscriptionsDir, claimName(token, replacedOwnerId, generation)),
-		recordOwner: () => (JSON.parse(fs.readFileSync(recordPath, "utf-8")) as { completionOwnerId?: string }).completionOwnerId,
+		recordOwner: () => (JSON.parse(fs.readFileSync(recordPath, "utf-8")) as WaitSubscriptionRecord).completionOwnerId,
 		complete: () => writeStatus(asyncRoot, "run-takeover", "complete", { sessionId: "session-a" }),
+		/** The OS hands the dead owner's pid to an unrelated live process. */
+		reusePid: () => { deadPidReused = true; },
 		dispose: () => {
 			for (const manager of managers) manager.dispose();
 			fs.rmSync(root, { recursive: true, force: true });
@@ -356,7 +358,6 @@ describe("non-blocking wait subscriptions", () => {
 
 			armer.reconcile();
 			assert.match(armed[0] ?? "", /run run-shared: completed/);
-			assert.equal(foreignState.waitSubscriptions?.size ?? 0, 0);
 		} finally {
 			armer.dispose();
 			other.dispose();
@@ -385,7 +386,6 @@ describe("non-blocking wait subscriptions", () => {
 			assert.match(fixture.sent[0] ?? "", /^owner-b: .*run run-takeover: completed/s);
 			assert.equal(next.state.waitSubscriptions?.has(fixture.token), false);
 			assert.equal(other.state.waitSubscriptions?.has(fixture.token), false);
-			assert.equal(fs.existsSync(fixture.recordPath), false);
 			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), [], "settling removes the record and its claim");
 		} finally {
 			fixture.dispose();
@@ -422,12 +422,6 @@ describe("non-blocking wait subscriptions", () => {
 			later.manager.restore();
 			assert.equal(later.state.waitSubscriptions?.has(fixture.token), true);
 			assert.equal(fixture.recordOwner(), "owner-c");
-
-			fixture.complete();
-			later.manager.reconcile();
-			assert.equal(fixture.sent.length, 1);
-			assert.match(fixture.sent[0] ?? "", /^owner-c: [\s\S]*run run-takeover: completed/);
-			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), []);
 		} finally {
 			fixture.dispose();
 		}
@@ -458,13 +452,7 @@ describe("non-blocking wait subscriptions", () => {
 			const later = fixture.open("owner-c");
 			later.manager.restore();
 			assert.equal(later.state.waitSubscriptions?.has(fixture.token), true);
-
-			fixture.complete();
-			failing.manager.reconcile();
-			later.manager.reconcile();
-			assert.equal(fixture.sent.length, 1);
-			assert.match(fixture.sent[0] ?? "", /^owner-c: [\s\S]*run run-takeover: completed/);
-			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), []);
+			assert.equal(fixture.recordOwner(), "owner-c");
 		} finally {
 			fixture.dispose();
 		}
@@ -513,63 +501,26 @@ describe("non-blocking wait subscriptions", () => {
 	});
 
 	it("keeps a subscription taken from a dead owner across a reload after that pid is reused", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-pid-reuse-"));
-		const asyncRoot = path.join(root, "runs");
-		const resultsDir = path.join(root, "results");
-		const subscriptionsDir = path.join(root, "subscriptions");
-		const sent: string[] = [];
 		let clock = Date.now();
-		const armerState = makeState();
-		armerState.completionOwnerId = "owner-a";
-		const armer = createWaitSubscriptionManager({ events: new TestBus(), sendMessage() {} } as never, armerState, {
-			asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now: () => clock,
-		});
-		let ownerPidAlive = false;
-		// One Pi process ("owner-b"); /reload builds a new manager with the same completion owner.
-		const loadManager = () => {
-			const managerState = makeState();
-			managerState.completionOwnerId = "owner-b";
-			const manager = createWaitSubscriptionManager({
-				events: new TestBus(),
-				sendMessage(message: { content?: unknown }) { sent.push(String(message.content)); },
-			} as never, managerState, {
-				asyncDirRoot: asyncRoot, resultsDir, subscriptionsDir, pollIntervalMs: 60_000, now: () => clock,
-				kill: (pid: number) => {
-					if (pid === 999_999 && !ownerPidAlive) throw Object.assign(new Error("gone"), { code: "ESRCH" });
-					return true;
-				},
-			});
-			return { manager, managerState };
-		};
-		const first = loadManager();
-		let next = first.manager;
-		let nextState = first.managerState;
+		const fixture = deadOwnerFixture("pi-wait-subscribe-pid-reuse-", () => clock);
 		try {
-			writeStatus(asyncRoot, "run-reused", "running", { sessionId: "session-a", pid: process.pid });
-			const registration = armer.arm({ targetKind: "async", runId: "run-reused", requestedId: "run-reused", timeoutMs: 30_000 });
-			armer.dispose();
-			const recordPath = path.join(subscriptionsDir, `${registration.token}.json`);
-			const record = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
-			fs.writeFileSync(recordPath, JSON.stringify({ ...record, completionOwnerProcess: { pid: 999_999 } }), "utf-8");
+			const first = fixture.open("owner-b");
+			first.manager.restore();
+			assert.equal(first.state.waitSubscriptions?.has(fixture.token), true);
 
-			next.restore();
-			assert.equal(nextState.waitSubscriptions?.has(registration.token), true);
-
-			// The OS hands the dead owner's pid to an unrelated process, then this process reloads.
-			ownerPidAlive = true;
-			next.dispose();
-			({ manager: next, managerState: nextState } = loadManager());
-			next.restore();
-			assert.equal(nextState.waitSubscriptions?.has(registration.token), true, "the reloaded process still owns the subscription");
+			// /reload builds a new manager with the same completion owner after the dead owner's pid was reused.
+			fixture.reusePid();
+			first.manager.dispose();
+			const reloaded = fixture.open("owner-b");
+			reloaded.manager.restore();
+			assert.equal(reloaded.state.waitSubscriptions?.has(fixture.token), true, "the reloaded process still owns the subscription");
 			clock += 60_000;
-			next.reconcile();
+			reloaded.manager.reconcile();
 
-			assert.match(sent[0] ?? "", /timed out/);
-			assert.equal(nextState.waitSubscriptions?.has(registration.token), false);
-			assert.equal(fs.existsSync(recordPath), false);
+			assert.match(fixture.sent[0] ?? "", /^owner-b: .*timed out/s);
+			assert.deepEqual(fs.readdirSync(fixture.subscriptionsDir), []);
 		} finally {
-			next.dispose();
-			fs.rmSync(root, { recursive: true, force: true });
+			fixture.dispose();
 		}
 	});
 

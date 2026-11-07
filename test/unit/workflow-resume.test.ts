@@ -27,7 +27,7 @@ describe("prepareWorkflowResume", () => {
 				fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 					runId, sessionId: "session", mode: "workflow", state: options.state ?? "failed", startedAt: 1, endedAt: 2, cwd: "/repo",
 					...(options.ceiling ? { admissionCapabilityCeiling: options.ceiling } : {}),
-					workflow: { trace: [], emits: [], console: [], scriptDigest: workflowScriptDigest(SCRIPT), ...(stopCause ? { stopCause } : {}), ...(options.attempt !== undefined ? { resumeOrigin: { sourceRunId: "older", attempt: options.attempt } } : {}), ...(options.drainRequestedAt !== undefined ? { drainRequestedAt: options.drainRequestedAt } : {}) },
+					workflow: { trace: [], emits: [], console: [], scriptDigest: workflowScriptDigest(SCRIPT), ...(stopCause ? { stopCause } : {}), ...(options.attempt !== undefined ? { resumeOrigin: { sourceRunId: "older", attempt: options.attempt } } : {}), drainRequestedAt: options.drainRequestedAt },
 				}));
 				const launch = options.launch === undefined ? scriptLaunch : options.launch;
 				if (typeof launch === "string") {

@@ -148,13 +148,12 @@ export function stopAsyncRun(
 	const workflowStatus = workflowAsyncDir ? readStatus(workflowAsyncDir) : undefined;
 	// Controllers outlive a session switch; a workflow owned by another session falls through to the ownership check below.
 	const foreignWorkflow = Boolean(state.currentSessionId && workflowStatus && workflowStatus.sessionId !== state.currentSessionId);
-	const drainWorkflow = drain && workflowController && workflowRunId && !foreignWorkflow && !workflowController.signal.aborted ? state.workflowDrains?.get(workflowRunId) : undefined;
-	if (drainWorkflow) {
-		const drained = drainWorkflow();
+	if (drain) {
+		const drained = workflowController && workflowRunId && !foreignWorkflow && !workflowController.signal.aborted ? state.workflowDrains?.get(workflowRunId)?.() : undefined;
+		if (!drained) return { content: [{ type: "text", text: `drain applies only to live async workflows in this session; '${runId ?? "current"}' is not one.` }], isError: true, details: { mode: "management", results: [] } };
 		if (!drained.ok) return { content: [{ type: "text", text: `Could not save the drain request for '${workflowRunId}'; nothing was stopped. Retry, or use stop without drain.` }], isError: true, details: { mode: "management", results: [] } };
 		return { content: [{ type: "text", text: `Drain requested for async workflow ${workflowRunId}: no new children will start; ${drained.started} started child(ren) will finish.` }], details: { mode: "management", results: [] } };
 	}
-	if (drain) return { content: [{ type: "text", text: `drain applies only to live async workflows in this session; '${runId ?? "current"}' is not one.` }], isError: true, details: { mode: "management", results: [] } };
 	if (workflowController && workflowRunId && !foreignWorkflow) {
 		if (workflowStatus) stopStoppableAsyncStatusChildren(workflowStatus, state.workflowChildStops?.get(workflowRunId), "Workflow stopped.");
 		workflowController.abort(new Error("Workflow stopped."));

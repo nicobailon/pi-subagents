@@ -135,9 +135,9 @@ export interface ChildSession {
 	readonly machineEvidence?: { provider: PlacementMachineReference["provider"]; machineId: string; initial?: HerdrRemoteGitStatus; final?: HerdrRemoteGitStatus };
 	/** Event-updated pane-native status; reading it performs no network work. */
 	readonly placementSnapshot?: unknown;
-	/** Set by the foreground host once the run detached; `factory.dispose()` leaves such children running. */
+	/** Set by the foreground host once the run detached; factory disposal leaves such children running. */
 	detached?: boolean;
-	/** Set by `factory.dispose()` before it aborts the child, so the host can report the stop truthfully. */
+	/** Set by factory disposal before it aborts the child, so the host can report the stop truthfully. */
 	shutDown?: boolean;
 }
 
@@ -491,7 +491,6 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	const loadPiCodingAgent = options.loadPiCodingAgent ?? loadHostPiCodingAgent;
 	const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 5_000;
 	let runtime: ReturnType<PiCodingAgentModule["ModelRuntime"]["create"]> | undefined;
-	/** Each live child's parent session file. */
 	const live = new Map<ChildSession, string | undefined>();
 	/** Extension shutdowns still running for disposed children; `dispose()` waits for them. */
 	const shutdowns = new Set<Promise<void>>();

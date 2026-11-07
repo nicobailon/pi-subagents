@@ -2156,7 +2156,7 @@ Answer only from the supplied synthetic text.
 				workflowControllers.get(runId)!.abort(reason);
 				return await settled(runId);
 			};
-			const stopAction = (target: { id: string } | { dir: string }, sessionId?: string, extra: Record<string, unknown> = {}) => {
+			const stopAction = (target: { id: string } | { dir: string }, sessionId?: string, extra: { drain?: boolean; childId?: string } = {}) => {
 				const ctx = makeMinimalCtx(tempDir);
 				if (sessionId) ctx.sessionManager.getSessionId = () => sessionId;
 				return executor.execute(`workflow-stop-${Date.now()}`, { action: "stop", ...target, ...extra }, new AbortController().signal, undefined, ctx);

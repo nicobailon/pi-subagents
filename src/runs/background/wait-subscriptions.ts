@@ -115,22 +115,17 @@ function latestClaimGeneration(files: readonly string[], prefix: string): number
 	return latest;
 }
 
-/** Call only after the record file is gone, so a late claimer that wins a freed claim finds no record to bring back. */
+/**
+ * Call only after the record file is gone, so a late claimer that wins a freed claim finds no record to bring back.
+ * Never throws: a leftover claim cannot bring a removed record back.
+ */
 function removeClaimFiles(dir: string, token: string): void {
-	let files: string[];
 	try {
-		files = fs.readdirSync(dir);
-	} catch (error) {
-		if (isNotFound(error)) return;
-		throw error;
-	}
-	for (const file of files) {
-		if (!file.startsWith(`${token}.claim-`)) continue;
-		try {
-			fs.unlinkSync(path.join(dir, file));
-		} catch (error) {
-			if (!isNotFound(error)) throw error;
+		for (const file of fs.readdirSync(dir)) {
+			if (file.startsWith(`${token}.claim-`)) fs.rmSync(path.join(dir, file), { force: true });
 		}
+	} catch (error) {
+		if (!isNotFound(error)) console.error(`Failed to remove claims of wait subscription '${token}':`, error);
 	}
 }
 
@@ -159,8 +154,6 @@ export function createWaitSubscriptionManager(
 	let disposed = false;
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let lastForeignSweepAt = 0;
-	// Two Pi processes can share one session. The arming process owns the wake while it lives;
-	// after it dies, the next process to open the session claims the record and becomes its owner.
 	const readRecordFile = (filePath: string): WaitSubscriptionRecord | undefined => {
 		try {
 			return parseRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
@@ -182,10 +175,11 @@ export function createWaitSubscriptionManager(
 			// Claims are created whole, so a body that does not parse is damage; a claim that cannot be read counts as held.
 			return !(error instanceof SyntaxError);
 		}
-		const claimant = body as { ownerId?: unknown; process?: unknown } | null;
-		if (!claimant || typeof claimant !== "object" || typeof claimant.ownerId !== "string" || !isRecordedPid(claimant.process)) return false;
-		return !isDead(claimant.process);
+		const claimant = (body as { process?: unknown } | null)?.process;
+		return isRecordedPid(claimant) && !isDead(claimant);
 	};
+	// Two Pi processes can share one session. The arming process owns the wake while it lives;
+	// after it dies, the next process to open the session claims the record and becomes its owner.
 	const claimRecord = (filePath: string, record: WaitSubscriptionRecord): WaitSubscriptionRecord | undefined => {
 		if (!record.completionOwnerId || record.completionOwnerId === state.completionOwnerId) return record;
 		if (!isDead(record.completionOwnerProcess)) return undefined;
@@ -245,7 +239,7 @@ export function createWaitSubscriptionManager(
 			const filePath = path.join(subscriptionsDir, file);
 			let record: WaitSubscriptionRecord | undefined;
 			try {
-				record = parseRecord(JSON.parse(fs.readFileSync(filePath, "utf-8")));
+				record = readRecordFile(filePath);
 			} catch (error) {
 				console.error(`Ignoring invalid wait subscription '${filePath}':`, error);
 				continue;
@@ -266,11 +260,7 @@ export function createWaitSubscriptionManager(
 					continue;
 				}
 			}
-			try {
-				removeClaimFiles(subscriptionsDir, record.token);
-			} catch (error) {
-				console.error(`Failed to remove claims of expired wait subscription '${filePath}':`, error);
-			}
+			removeClaimFiles(subscriptionsDir, record.token);
 		}
 	};
 
@@ -284,12 +274,7 @@ export function createWaitSubscriptionManager(
 		}
 		subscriptions.delete(record.token);
 		unresolvedRestoredForegroundTokens.delete(record.token);
-		try {
-			removeClaimFiles(subscriptionsDir, record.token);
-		} catch (error) {
-			// The record is already gone, so a leftover claim can no longer bring it back.
-			console.error(`Failed to remove claims of wait subscription '${record.token}':`, error);
-		}
+		removeClaimFiles(subscriptionsDir, record.token);
 		return removed;
 	};
 
@@ -442,24 +427,19 @@ export function createWaitSubscriptionManager(
 				throw error;
 			}
 			for (const file of files) {
+				const filePath = path.join(subscriptionsDir, file);
+				let record: WaitSubscriptionRecord | undefined;
 				try {
-					const filePath = path.join(subscriptionsDir, file);
 					const found = readRecordFile(filePath);
 					if (!found || file !== `${found.token}.json` || found.sessionId !== state.currentSessionId) continue;
-					let record: WaitSubscriptionRecord | undefined;
-					try {
-						record = claimRecord(filePath, found);
-					} catch (error) {
-						console.error(`Failed to take over wait subscription '${filePath}':`, error);
-						continue;
-					}
-					if (record) {
-						subscriptions.set(record.token, record);
-						if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);
-					}
+					record = claimRecord(filePath, found);
 				} catch (error) {
-					console.error(`Ignoring invalid wait subscription '${path.join(subscriptionsDir, file)}':`, error);
+					console.error(`Failed to restore wait subscription '${filePath}':`, error);
+					continue;
 				}
+				if (!record) continue;
+				subscriptions.set(record.token, record);
+				if (record.targetKind === "foreground" && !state.foregroundRuns?.has(record.runId)) unresolvedRestoredForegroundTokens.add(record.token);
 			}
 			reconcile();
 		},

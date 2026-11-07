@@ -863,24 +863,31 @@ function directObjectPropertyValue(node: AstNode, name: string): AstNode | undef
 	return value;
 }
 
-function validateStaticBaseRef(params: AstNode, owner: string): WorkflowScriptValidationError[] {
-	if (params.type !== "ObjectExpression" || !Array.isArray(params.properties)) return [];
-	// Inspect the final definition only. A later spread or unknown key may overwrite it.
-	for (let index = params.properties.length - 1; index >= 0; index--) {
-		const property = params.properties[index];
-		if (!astNode(property) || property.type !== "Property") return [];
+function arrayElements(node: unknown): unknown[] {
+	return astNode(node) && node.type === "ArrayExpression" && Array.isArray(node.elements) ? node.elements : [];
+}
+
+/** The final definition of `name` in an object literal; undefined when a later spread or unknown key may overwrite it. */
+function finalStaticProperty(node: AstNode, name: string): AstNode | undefined {
+	if (node.type !== "ObjectExpression" || !Array.isArray(node.properties)) return undefined;
+	for (let index = node.properties.length - 1; index >= 0; index--) {
+		const property = node.properties[index];
+		if (!astNode(property) || property.type !== "Property") return undefined;
 		const key = staticPropertyKey(property);
-		if (key === undefined) return [];
-		if (key !== "baseRef") continue;
-		if (property.kind !== "init" || !astNode(property.value)) return [];
-		const valueNode = property.value;
-		const value = literalString(valueNode);
-		if ((value !== undefined || valueNode.type === "Literal") && !validGitRef(value)) {
-			return [{ message: `${owner} ${BASE_REF_VALIDATION_ERROR}`, ...nodeLocation(valueNode) }];
-		}
-		return [];
+		if (key === undefined) return undefined;
+		if (key === name) return property;
 	}
-	return [];
+	return undefined;
+}
+
+function validateStaticBaseRef(params: AstNode, owner: string): WorkflowScriptValidationError[] {
+	const property = finalStaticProperty(params, "baseRef");
+	if (property?.kind !== "init" || !astNode(property.value)) return [];
+	const valueNode = property.value;
+	const value = literalString(valueNode);
+	return (value !== undefined || valueNode.type === "Literal") && !validGitRef(value)
+		? [{ message: `${owner} ${BASE_REF_VALIDATION_ERROR}`, ...nodeLocation(valueNode) }]
+		: [];
 }
 
 // Same text as validateLaneSpecs in workflow-script-worker.cjs; a test compares the two.
@@ -892,30 +899,21 @@ function staticLane(lane: unknown): lane is AstNode {
 		&& lane.properties.every((property) => astNode(property) && property.type === "Property" && staticPropertyKey(property) !== undefined);
 }
 
-/** The launch-time first-stage resume rule, for lanes written out as literals. Anything a spread or computed key could change is left to launch. */
+/** The launch-time first-stage resume rule, for lanes written out as literals. */
 function validateStaticLaneResumes(call: AstNode): WorkflowScriptValidationError[] {
 	const args = Array.isArray(call.arguments) ? call.arguments : [];
-	const lanes = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0].elements : [];
+	const lanes = arrayElements(args[0]);
 	const errors: WorkflowScriptValidationError[] = [];
 	for (let laneIndex = 0; laneIndex < lanes.length; laneIndex++) {
 		const lane = lanes[laneIndex];
 		// A spread shifts every later lane index the runtime reports.
 		if (astNode(lane) && lane.type === "SpreadElement") break;
 		if (!staticLane(lane)) continue;
-		const stages = directObjectPropertyValue(lane, "stages");
-		const first = stages?.type === "ArrayExpression" && Array.isArray(stages.elements) ? stages.elements[0] : undefined;
-		if (!astNode(first) || first.type !== "ObjectExpression" || !Array.isArray(first.properties)) continue;
-		// Only the final definition counts, and a later spread or unknown key may overwrite it.
-		for (let index = first.properties.length - 1; index >= 0; index--) {
-			const property = first.properties[index];
-			if (!astNode(property) || property.type !== "Property") break;
-			const key = staticPropertyKey(property);
-			if (key === undefined) break;
-			if (key !== "resume") continue;
-			const resume = property.kind === "init" ? literalString(property.value) : undefined;
-			if (resume !== undefined && resume !== "previous") errors.push({ message: `runs.lanes lane ${laneIndex} stage 0 ${LANE_RETAINED_RESUME_ERROR}`, ...nodeLocation(first) });
-			break;
-		}
+		const first = arrayElements(directObjectPropertyValue(lane, "stages"))[0];
+		if (!astNode(first)) continue;
+		const property = finalStaticProperty(first, "resume");
+		const resume = property?.kind === "init" ? literalString(property.value) : undefined;
+		if (resume !== undefined && resume !== "previous") errors.push({ message: `runs.lanes lane ${laneIndex} stage 0 ${LANE_RETAINED_RESUME_ERROR}`, ...nodeLocation(first) });
 	}
 	return errors;
 }
@@ -936,13 +934,12 @@ function staticChildAgentNode(params: unknown): AstNode | undefined {
 
 function validateStaticChildAgents(call: AstNode, agentNameError: (name: string) => string | undefined): WorkflowScriptValidationError[] {
 	const args = Array.isArray(call.arguments) ? call.arguments : [];
-	const elements = (node: unknown): unknown[] => astNode(node) && node.type === "ArrayExpression" && Array.isArray(node.elements) ? node.elements : [];
 	const children: Array<{ owner: string; params: unknown }> = directRunsCall(call, "run")
 		? [{ owner: "runs.run", params: args[1] }]
 		: directRunsCall(call, "all")
-			? elements(args[0]).map((params) => ({ owner: "runs.all item", params }))
+			? arrayElements(args[0]).map((params) => ({ owner: "runs.all item", params }))
 			: directRunsCall(call, "lanes")
-				? elements(args[0]).flatMap((lane) => staticLane(lane) ? elements(directObjectPropertyValue(lane, "stages")).map((params) => ({ owner: "runs.lanes stage", params })) : [])
+				? arrayElements(args[0]).flatMap((lane) => staticLane(lane) ? arrayElements(directObjectPropertyValue(lane, "stages")).map((params) => ({ owner: "runs.lanes stage", params })) : [])
 				: [];
 	const errors: WorkflowScriptValidationError[] = [];
 	for (const child of children) {
@@ -956,8 +953,7 @@ function validateStaticChildAgents(call: AstNode, agentNameError: (name: string)
 
 function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }> {
 	const args = Array.isArray(call.arguments) ? call.arguments : [];
-	const items = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0].elements : [];
-	return items.flatMap((item) => {
+	return arrayElements(args[0]).flatMap((item) => {
 		if (!astNode(item)) return [];
 		const keyNode = directObjectPropertyValue(item, "key");
 		const key = literalString(keyNode);
@@ -1164,12 +1160,10 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 				errors.push({ message: `${subject}; every runs.all item needs a stable key, for example runs.all([{ key: "review", agent, task }]).`, ...nodeLocation(item.node) });
 			}
 			const args = Array.isArray(node.arguments) ? node.arguments : [];
-			if (astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements)) {
-				for (const item of args[0].elements) if (astNode(item)) {
-					errors.push(...validateStaticBaseRef(item, "runs.all item"));
-					const message = definitelyNonJson(item);
-					if (message) errors.push({ message: `runs.all item params are invalid: ${message}.`, ...nodeLocation(item) });
-				}
+			for (const item of arrayElements(args[0])) if (astNode(item)) {
+				errors.push(...validateStaticBaseRef(item, "runs.all item"));
+				const message = definitelyNonJson(item);
+				if (message) errors.push({ message: `runs.all item params are invalid: ${message}.`, ...nodeLocation(item) });
 			}
 		}
 		if (directRunsCall(node, "host")) errors.push(...validateStaticHostCall(node));
@@ -1203,7 +1197,7 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 				const keys = new Set(directRunsAllKeys(declaration.init.argument).map((entry) => entry.key));
 				if (keys.size === 0) continue;
 				const args = Array.isArray(declaration.init.argument.arguments) ? declaration.init.argument.arguments : [];
-				const itemCount = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0].elements.length : 0;
+				const itemCount = arrayElements(args[0]).length;
 				const arrayResultShape = Array.from({ length: itemCount });
 				for (const later of laterStatements) {
 					walkAstWithoutShadowedIdentifier(later, name, (node) => {

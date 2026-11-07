@@ -8,9 +8,8 @@ import { handleCreate, handleUpdate } from "../../src/agents/agent-management.ts
 
 let tempHome = "";
 let tempProject = "";
-const originalHome = process.env.HOME;
-const originalUserProfile = process.env.USERPROFILE;
-const originalPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
+const managedEnv = ["HOME", "USERPROFILE", "PI_CODING_AGENT_DIR"] as const;
+const savedEnv = managedEnv.map((name) => process.env[name]);
 
 function writeJson(filePath: string, value: unknown): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -46,12 +45,10 @@ describe("subagents.defaultInheritGlobalContext", () => {
 	});
 
 	afterEach(() => {
-		if (originalHome === undefined) delete process.env.HOME;
-		else process.env.HOME = originalHome;
-		if (originalUserProfile === undefined) delete process.env.USERPROFILE;
-		else process.env.USERPROFILE = originalUserProfile;
-		if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
+		managedEnv.forEach((name, index) => {
+			if (savedEnv[index] === undefined) delete process.env[name];
+			else process.env[name] = savedEnv[index];
+		});
 		fs.rmSync(tempHome, { recursive: true, force: true });
 		fs.rmSync(tempProject, { recursive: true, force: true });
 	});
@@ -94,7 +91,7 @@ describe("subagents.defaultInheritGlobalContext", () => {
 		const ctx = { cwd: tempProject, modelRegistry: { getAvailable: () => [] } } as unknown as Parameters<typeof handleUpdate>[1];
 		for (const agent of ["plain", "overridden"]) {
 			const updated = handleUpdate({ agent, config: { description: `Updated ${agent}` } }, ctx);
-			assert.equal((updated as typeof updated & { isError?: boolean }).isError, false);
+			assert.equal(updated.isError, false);
 			const content = fs.readFileSync(path.join(projectAgents, `${agent}.md`), "utf-8");
 			assert.match(content, new RegExp(`^description: Updated ${agent}$`, "m"));
 			assert.doesNotMatch(content, /^inheritGlobalContext:/m);
@@ -104,8 +101,8 @@ describe("subagents.defaultInheritGlobalContext", () => {
 	it("keeps an explicit false from create", () => {
 		writeJson(path.join(tempProject, ".pi", "settings.json"), { subagents: { defaultInheritGlobalContext: true } });
 		const ctx = { cwd: tempProject, modelRegistry: { getAvailable: () => [] } } as unknown as Parameters<typeof handleCreate>[1];
-		const created = handleCreate({ scope: "project", config: { name: "created-optout", description: "Created", inheritGlobalContext: false } }, ctx);
-		assert.equal((created as typeof created & { isError?: boolean }).isError, false);
+		const created = handleCreate({ config: { name: "created-optout", description: "Created", scope: "project", inheritGlobalContext: false } }, ctx);
+		assert.equal(created.isError, false);
 		assert.equal(inheritsGlobal("created-optout"), false);
 	});
 });
