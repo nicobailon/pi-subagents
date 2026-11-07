@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.87.0] - 2026-11-07
+
+### Highlights
+
+- You can stop a long workflow without losing the work already in progress: `stop` with `drain: true` starts nothing new, lets running children finish and keeps their results.
+- A model written as `provider/id` now always runs on that provider, so a subagent can no longer quietly run on, and bill, another provider's copy of the model.
+- One setting, `subagents.defaultInheritGlobalContext: true`, gives every subagent your global `AGENTS.md`.
+- Old artifacts in nested folders are now cleaned up too, so session artifact folders stop growing.
+- Several multi-window and multi-session fixes: wait notices reach the right window, and closing one session in a host like pi-web no longer stops another session's subagents.
+
 ### Added
 
 - `stop` with `drain: true` ends an async workflow without killing the children already running: it starts no new children, lets the running ones finish and report, then ends as stopped. Before, stopping a workflow killed them too. Thanks to [@nnayr](https://github.com/nnayr) for the report. (#3202)
