@@ -112,6 +112,38 @@ describe("a forked child's requests", () => {
 		assert.deepEqual(project(forkSession(), { boundary: "B" }), project(forkSession(), { boundary: "B" }));
 	});
 
+	describe("in another folder than the parent", () => {
+		/** A `project_context` section as Pi's system prompt builder writes it. */
+		const projectContext = (files: Array<[string, string]>) => `<project_context>\n${["Project-specific instructions and guidelines:", ...files.map(([filePath, content]) => `<project_instructions path="${filePath}">\n${content}\n</project_instructions>`)].join("\n\n")}\n</project_context>`;
+		const parentFiles: Array<[string, string]> = [["/home/me/.pi/agent/AGENTS.md", "Global rules."], ["/work/AGENTS.md", "Workspace rules."]];
+		const session = (childFiles: Array<[string, string]>): Message[] => [
+			system(10, { content: "Parent base prompt.", sections: { preamble: "<preamble>parent</preamble>", project_context: projectContext(parentFiles) }, added: [tool("a")] }),
+			user(20, "parent question"),
+			system(FORKED_AT + 1, { sections: { project_context: projectContext(childFiles) } }),
+			user(FORKED_AT + 2, "child task"),
+		];
+
+		it("carry the project instruction files the parent's prompt lacks in the task message", () => {
+			const task = text(project(session([...parentFiles, ["/work/repo/AGENTS.md", "Repo rules."], ["/work/repo/pkg/CLAUDE.md", "Package rules."]]), { boundary: "B" }).at(-1));
+
+			assert.ok(task.includes([
+				"Project instructions for your working folder, which the parent's prompt does not include:",
+				"<project_instructions path=\"/work/repo/AGENTS.md\">\nRepo rules.\n</project_instructions>",
+				"<project_instructions path=\"/work/repo/pkg/CLAUDE.md\">\nPackage rules.\n</project_instructions>",
+			].join("\n\n")), task);
+			assert.match(task, /<\/project_instructions>\n\nB\n<\/subagent_instructions>\n\nchild task$/);
+			assert.doesNotMatch(task, /Global rules|Workspace rules|Project-specific instructions/, "the parent's own files are not repeated");
+		});
+
+		it("add nothing when the child has the parent's project instruction files", () => {
+			const sameFiles = project(session(parentFiles), { boundary: "B" });
+			const noFiles = project(session([]).filter((message) => message.timestamp !== FORKED_AT + 1), { boundary: "B" });
+
+			assert.deepEqual(sameFiles.map(text), noFiles.map(text));
+			assert.doesNotMatch(text(sameFiles.at(-1)), /project_instructions|Project instructions/);
+		});
+	});
+
 	it("keep the instructions as a system section when the child has not written a user message", () => {
 		const messages = [parentHead, user(20), system(FORKED_AT + 1, { sections: { addendum: "<addendum>CHILD ROLE</addendum>" } })];
 
