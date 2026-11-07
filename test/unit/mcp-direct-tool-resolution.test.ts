@@ -73,25 +73,14 @@ describe("MCP direct-tool resolution config sources", () => {
 		}
 	});
 
-	it("resolves direct tools declared in the Pi-global mcp-adapter.json", () => {
-		writeServerConfig(path.join(agentDir, "mcp-adapter.json"), CURRENT_DEFINITION);
-		writeMetadataCache(CURRENT_DEFINITION);
-
-		const resolution = resolveMcpDirectToolResolution(SELECTORS, projectDir);
-
-		assert.deepEqual(resolution.selections.map((selection) => selection.name), SELECTED_NAMES);
-		assert.deepEqual(resolution.unresolvedSelectors, []);
-	});
-
-	it("resolves direct tools from a server whose directTools is \"search\"", () => {
-		const definition: McpServerDefinition = { ...CURRENT_DEFINITION, directTools: "search" };
-		writeServerConfig(path.join(agentDir, "mcp-adapter.json"), definition);
-		writeMetadataCache(definition);
-
-		const resolution = resolveMcpDirectToolResolution(SELECTORS, projectDir);
-
-		assert.deepEqual(resolution.selections.map((selection) => selection.name), SELECTED_NAMES);
-		assert.deepEqual(resolution.unresolvedSelectors, []);
+	it("resolves direct tools declared in the Pi-global mcp-adapter.json, including a server whose directTools is \"search\"", () => {
+		for (const definition of [CURRENT_DEFINITION, { ...CURRENT_DEFINITION, directTools: "search" } as McpServerDefinition]) {
+			writeServerConfig(path.join(agentDir, "mcp-adapter.json"), definition);
+			writeMetadataCache(definition);
+			const resolution = resolveMcpDirectToolResolution(SELECTORS, projectDir);
+			assert.deepEqual(resolution.selections.map((selection) => selection.name), SELECTED_NAMES);
+			assert.deepEqual(resolution.unresolvedSelectors, []);
+		}
 	});
 
 	it("computes config hashes identical to pi-mcp-adapter 3.1.0 for stdio servers", () => {
@@ -103,7 +92,6 @@ describe("MCP direct-tool resolution config sources", () => {
 	it("expands ${NAME:-default} like pi-mcp-adapter when hashing", () => {
 		// Values computed by pi-mcp-adapter's computeServerHash with the same environment.
 		const names = ["PI_SUBAGENTS_TEST_SET", "PI_SUBAGENTS_TEST_EMPTY", "PI_SUBAGENTS_TEST_UNSET"] as const;
-		const saved = names.map((name) => process.env[name]);
 		process.env.PI_SUBAGENTS_TEST_SET = "set-value";
 		process.env.PI_SUBAGENTS_TEST_EMPTY = "";
 		delete process.env.PI_SUBAGENTS_TEST_UNSET;
@@ -114,11 +102,7 @@ describe("MCP direct-tool resolution config sources", () => {
 			assert.equal(computeMcpServerHash({ url: "http://localhost/mcp", headers: { A: "${PI_SUBAGENTS_TEST_UNSET:-token}" } }), "dfe2954daf368fe0b2d99c360398ee02573a8ad8ba802540322ef4f9393e41b2");
 			assert.equal(computeMcpServerHash({ url: "${PI_SUBAGENTS_TEST_UNSET:-http://localhost:3000}/mcp" }), "8f950f5b7a4a5627a3facf5775dc18519ff6f66642e245f0f4c0285adaab8a4d");
 		} finally {
-			names.forEach((name, index) => {
-				const value = saved[index];
-				if (value === undefined) delete process.env[name];
-				else process.env[name] = value;
-			});
+			for (const name of names) delete process.env[name];
 		}
 	});
 

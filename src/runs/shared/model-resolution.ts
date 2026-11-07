@@ -410,22 +410,16 @@ export function resolveSubagentModelOverride(
 	const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
 	if (!parentModel) throwForUnresolvedEnforcedReservedScope(options?.scope, explicit === undefined || options?.source === "inherited");
 	let resolved: string | undefined;
-	let resolvedFromRegistry = explicit === undefined;
 	if (explicit === undefined) {
 		resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
+	} else if (options?.source === "explicit") {
+		resolved = resolveRequiredSubagentModelCandidate(explicit, availableModels, preferredProvider, options.knownProviders);
 	} else {
-		const candidate = resolveSubagentModelCandidate(explicit, availableModels, preferredProvider, options?.knownProviders);
-		if (options?.source === "explicit") {
-			resolved = candidate ?? resolveRequiredSubagentModelCandidate(explicit, availableModels, preferredProvider, options?.knownProviders);
-			resolvedFromRegistry = true;
-		} else if (candidate) {
-			resolved = candidate;
-			resolvedFromRegistry = true;
-		} else {
-			resolved = explicit;
-		}
+		resolved = resolveSubagentModelCandidate(explicit, availableModels, preferredProvider, options?.knownProviders);
+		// An inherited model the registry does not know passes through unchecked.
+		if (!resolved) return explicit;
 	}
-	if (resolved && options?.scope && resolvedFromRegistry) {
+	if (resolved && options?.scope) {
 		const source: ModelSource = explicit === undefined ? "inherited" : (options.source ?? "inherited");
 		enforceModelScopes(resolved, options.scope, source, options.onWarn);
 	}
@@ -503,14 +497,11 @@ export function resolveModelSelection(
 	const origin = options?.origin ?? (options?.primaryModelFromParent ? "inherited" : "configured");
 	const requestedModel = origin === "inherited" ? undefined : model;
 	const scopes = configuredScopes(options?.scope);
-	if (origin === "explicit" && model) {
-		const normalized = resolveRequiredSubagentModelCandidate(model.trim(), availableModels, preferredProvider, options?.knownProviders);
-		enforceModelScopes(normalized, scopes, "explicit", options?.onWarn);
-		model = normalized;
+	let resolved = model?.trim();
+	if (model && (origin === "explicit" || (origin !== "inherited" && !options?.primaryModelFromParent))) {
+		resolved = resolveRequiredSubagentModelCandidate(model.trim(), availableModels, preferredProvider, options?.knownProviders);
+		if (origin === "explicit") enforceModelScopes(resolved, scopes, "explicit", options?.onWarn);
 	}
-	const resolved = model && (origin === "inherited" || origin === "explicit" || options?.primaryModelFromParent)
-		? model.trim()
-		: model ? resolveRequiredSubagentModelCandidate(model.trim(), availableModels, preferredProvider, options?.knownProviders) : undefined;
 	if (resolved && scopes.some((scope) => scope.enforce === true && scope.strict === true)) {
 		enforceModelScopes(resolved, scopes, "inherited", options?.onWarn);
 	}

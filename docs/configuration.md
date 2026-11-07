@@ -90,9 +90,9 @@ Some providers fix the tool list for a whole prompt, for example bridges that ha
 
 If intact tool-selection history never declared this extension, `"auto"` keeps both `subagents_enable` and `subagent` absent. Installing the extension and running `/reload` alone does not add them.
 
-To enable delegation in that session, merge `"toolActivation": "dynamic"` into the existing `~/.pi/agent/extensions/subagent/config.json` object. Preserve its other keys; do not replace the file with the one-key example below. Restart Pi and resume the session, then ask the model to call the `subagents_enable({})` tool. This is a model tool, not a slash command. It activates delegation without launching a child.
+To enable delegation in that session, merge `"toolActivation": "dynamic"` into the existing `~/.pi/agent/extensions/subagent/config.json` object; do not replace the file with the one-key example below. Restart Pi and resume the session, then ask the model to call the `subagents_enable({})` tool. This is a model tool, not a slash command.
 
-Alternatively, merge `"toolActivation": "eager"` into the same config and restart Pi to remove the loader. A new session or `/reload` then has `subagent` active, but a resumed session whose recorded tools lack `subagent` stays without it; run `/reload`, or use the dynamic recovery above.
+Alternatively, merge `"toolActivation": "eager"` into the same config, restart Pi to remove the loader, then run `/reload` in the resumed session (see `"eager"` below).
 
 ## `toolActivation`
 

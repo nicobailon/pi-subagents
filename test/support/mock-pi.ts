@@ -20,8 +20,6 @@ export interface MockPi {
 	readonly dir: string;
 	/** In-process foreground child sessions created since the last reset, in launch order. */
 	readonly sessions: FakeChildSessionRecord[];
-	/** Number of times the foreground child session factory was disposed. */
-	readonly disposeCalls: number;
 	install(): void;
 	uninstall(): void;
 	onCall(response: MockPiResponse): void;
@@ -65,9 +63,6 @@ export function createMockPi(): MockPi {
 		},
 		get sessions() {
 			return fakeSessions.sessions;
-		},
-		get disposeCalls() {
-			return fakeSessions.disposeCalls;
 		},
 		install() {
 			if (installed) return;

@@ -36,7 +36,7 @@ export interface McpServerDefinition {
 	/** Per-server override of the global `settings.toolPrefix`, matching the adapter. */
 	toolPrefix?: McpToolPrefix;
 	protocolVersion?: string;
-	/** pi-mcp-adapter's `"search"` registers the tools inactive until searched; `mcp:` selectors do not read this field. */
+	/** Validated so adapter configs load; `mcp:` selectors do not read it. */
 	directTools?: boolean | string[] | "search";
 	httpTransport?: string;
 	pluginDataDir?: string;

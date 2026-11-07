@@ -241,23 +241,22 @@ export function cleanupOldArtifacts(dir: string, maxAgeDays: number): void {
 
 	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
 		if (entry.name === CLEANUP_MARKER_FILE || (entry.isDirectory() && RETAINED_ARTIFACT_DIRS.has(entry.name))) continue;
-		removeOldEntry(path.join(dir, entry.name), entry.isDirectory(), cutoff);
+		removeOldEntry(path.join(dir, entry.name), cutoff);
 	}
 
 	fs.writeFileSync(markerPath, String(now));
 }
 
-function removeOldEntry(entryPath: string, isDirectory: boolean, cutoff: number): void {
+function removeOldEntry(entryPath: string, cutoff: number): void {
 	try {
+		const stat = fs.lstatSync(entryPath);
 		// Read the folder's age before emptying it: removing its files makes it look new.
-		const old = fs.lstatSync(entryPath).mtimeMs < cutoff;
-		if (!isDirectory) {
+		const old = stat.mtimeMs < cutoff;
+		if (!stat.isDirectory()) {
 			if (old) fs.unlinkSync(entryPath);
 			return;
 		}
-		for (const entry of fs.readdirSync(entryPath, { withFileTypes: true })) {
-			removeOldEntry(path.join(entryPath, entry.name), entry.isDirectory(), cutoff);
-		}
+		for (const name of fs.readdirSync(entryPath)) removeOldEntry(path.join(entryPath, name), cutoff);
 		if (old && fs.readdirSync(entryPath).length === 0) fs.rmdirSync(entryPath);
 	} catch {
 		// Artifact cleanup is best-effort housekeeping. Skip entries that disappear

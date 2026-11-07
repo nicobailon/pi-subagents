@@ -1242,27 +1242,18 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 	const subagentsObject = subagents as Record<string, unknown>;
 	let disableBuiltins: boolean | undefined;
 	if ("disableBuiltins" in subagentsObject) {
-		if (typeof subagentsObject.disableBuiltins === "boolean") {
-			disableBuiltins = subagentsObject.disableBuiltins;
-		} else {
-			throw new Error(`Subagent settings in '${filePath}' have invalid 'disableBuiltins'; expected a boolean.`);
-		}
+		if (typeof subagentsObject.disableBuiltins === "boolean") disableBuiltins = subagentsObject.disableBuiltins;
+		else throw new Error(`Subagent settings in '${filePath}' have invalid 'disableBuiltins'; expected a boolean.`);
 	}
 	let disableThinking: boolean | undefined;
 	if ("disableThinking" in subagentsObject) {
-		if (typeof subagentsObject.disableThinking === "boolean") {
-			disableThinking = subagentsObject.disableThinking;
-		} else {
-			throw new Error(`Subagent settings in '${filePath}' have invalid 'disableThinking'; expected a boolean.`);
-		}
+		if (typeof subagentsObject.disableThinking === "boolean") disableThinking = subagentsObject.disableThinking;
+		else throw new Error(`Subagent settings in '${filePath}' have invalid 'disableThinking'; expected a boolean.`);
 	}
 	let defaultInheritGlobalContext: boolean | undefined;
 	if ("defaultInheritGlobalContext" in subagentsObject) {
-		if (typeof subagentsObject.defaultInheritGlobalContext === "boolean") {
-			defaultInheritGlobalContext = subagentsObject.defaultInheritGlobalContext;
-		} else {
-			throw new Error(`Subagent settings in '${filePath}' have invalid 'defaultInheritGlobalContext'; expected a boolean.`);
-		}
+		if (typeof subagentsObject.defaultInheritGlobalContext === "boolean") defaultInheritGlobalContext = subagentsObject.defaultInheritGlobalContext;
+		else throw new Error(`Subagent settings in '${filePath}' have invalid 'defaultInheritGlobalContext'; expected a boolean.`);
 	}
 	let defaultModel: string | undefined;
 	if ("defaultModel" in subagentsObject) {

@@ -1205,7 +1205,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	if (mw) warnings.push(mw);
 	const sw = skillsWarning(ctx.cwd, agent);
 	if (sw) warnings.push(sw);
-	fs.writeFileSync(targetPath, serializeAgent(agent, hasKey(cfg, "inheritGlobalContext") ? { explicitFields: new Set(["inheritGlobalContext"]) } : {}), "utf-8");
+	fs.writeFileSync(targetPath, serializeAgent(agent, { explicitInheritGlobalContext: hasKey(cfg, "inheritGlobalContext") }), "utf-8");
 	ctx.onAgentsChanged?.();
 	return result([`Created agent '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
 }

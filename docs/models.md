@@ -166,7 +166,7 @@ The two defaults resolve independently, with an explicitly present project value
 
 ## Global context default
 
-Set `subagents.defaultInheritGlobalContext: true` to give every builtin, package, user and project agent your global context file (such as `~/.pi/agent/AGENTS.md`), including agents added later. An agent that declares `inheritGlobalContext` in its frontmatter keeps its own value, and `agentOverrides.<name>.inheritGlobalContext` still wins over both, so `false` in either place opts that agent out. A project value wins over the user value. The setting only matters for agents with `inheritProjectContext: true` (every builtin agent has it); without project context a child gets no context files at all. Runtime-registered agents keep their extension's value. A non-boolean value is rejected with an error naming the settings file.
+Set `subagents.defaultInheritGlobalContext: true` to give every builtin, package, user and project agent your global context file (such as `~/.pi/agent/AGENTS.md`). An agent that declares `inheritGlobalContext` in its frontmatter keeps its own value, and `agentOverrides.<name>.inheritGlobalContext` still wins over both, so `false` in either place opts that agent out. A project value wins over the user value. The setting only matters for agents with `inheritProjectContext: true` (every builtin agent has it); without project context a child gets no context files at all. Runtime-registered agents keep their extension's value. A non-boolean value is rejected with an error naming the settings file.
 
 ## Inspecting the live mapping
 

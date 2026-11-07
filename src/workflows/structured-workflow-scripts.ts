@@ -33,7 +33,7 @@ export function unsupportedChildFieldAdvice(fields: readonly string[], scripts: 
 	const advice: string[] = [];
 	const itemFields = fields.filter((field) => (CHILD_FIELDS as readonly string[]).includes(field));
 	if (itemFields.length > 0) advice.push(`Set ${itemFields.join(", ")} on each item, or on the subagent call itself to give every child the same value.`);
-	if (fields.includes("output")) advice.push(`For one shared output, set output on the subagent call itself: the workflow result is written there and each child gets its own file beside it. For exact or different per-child paths, ${scripts ? "use workflow: true with runs.all items that set output" : perChild}. Do not drop output if you need durable child files.`);
+	if (fields.includes("output")) advice.push(`For one shared output, set output on the subagent call itself: the workflow result is written there and each child gets its own file beside it. For exact or different per-child paths, ${perChild}. Do not drop output if you need durable child files.`);
 	const shared = fields.filter((field) => SHARED_CHILD_CONTROLS.has(field));
 	if (shared.length > 0) advice.push(`Set ${shared.join(", ")} on the subagent call itself to give every child the same value; for different values per child, ${perChild}.`);
 	const scriptOnly = fields.filter((field) => SCRIPT_CHILD_FIELDS.has(field));

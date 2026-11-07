@@ -5,9 +5,6 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 
-// session_shutdown must dispose only this session's children, using the parent session file
-// captured before runtimeEntry.cleanup() clears it in the same handler.
-
 const script = String.raw`
 	const handlers = new Map();
 	const calls = [];
@@ -27,55 +24,52 @@ const script = String.raw`
 		async disposeForParent(parent) { calls.push(["disposeForParent", parent]); },
 	};
 	setChildSessionFactory(scripted);
-	try {
-		const pi = new Proxy({
-			events,
-			on(name, handler) { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); },
-			registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, getSessionName() {},
-			sendMessage() {},
-		}, { get(target, property) { return property in target ? target[property] : () => undefined; } });
-		const ctx = {
-			cwd: projectRoot, hasUI: false, model: undefined, isIdle() { return false; },
-			ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
-			sessionManager: {
-				getSessionId() { return "shutdown-scope-session"; },
-				getSessionFile() { return parentSessionFile; },
-				getEntries() { return []; },
-			},
-			modelRegistry: { getAvailable() { return []; } },
-		};
-		registerSubagentExtension(pi);
-		for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
-		for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
-		console.log(JSON.stringify(calls));
-	} finally {
-		setChildSessionFactory(undefined);
-	}
-`;
-
-function runScript(root: string): Array<[string, unknown?]> {
-	const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
-		cwd: process.cwd(),
-		encoding: "utf-8",
-		env: {
-			...process.env,
-			HOME: path.join(root, "home"), USERPROFILE: path.join(root, "home"),
-			PI_CODING_AGENT_DIR: path.join(root, "agent"),
-			TMPDIR: root, TMP: root, TEMP: root,
-			PI_SUBAGENT_CHILD: undefined,
-			PI_SUBAGENTS_TEST_NO_OWNER: "1",
+	const pi = new Proxy({
+		events,
+		on(name, handler) { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); },
+		registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, getSessionName() {},
+		sendMessage() {},
+	}, { get(target, property) { return property in target ? target[property] : () => undefined; } });
+	const ctx = {
+		cwd: projectRoot, hasUI: false, model: undefined, isIdle() { return false; },
+		ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
+		sessionManager: {
+			getSessionId() { return "shutdown-scope-session"; },
+			getSessionFile() { return parentSessionFile; },
+			getEntries() { return []; },
 		},
-		timeout: 10_000,
-	});
-	assert.equal(result.status, 0, result.stderr);
-	return JSON.parse(result.stdout.trim().split("\n").pop() ?? "[]");
-}
+		modelRegistry: { getAvailable() { return []; } },
+	};
+	registerSubagentExtension(pi);
+	for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
+	for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
+	console.log(JSON.stringify(calls));
+`;
 
 describe("session_shutdown disposal scope", () => {
 	it("calls disposeForParent with this session's file, not the whole-process dispose", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-shutdown-scope-fixture-"));
-		const calls = runScript(root);
-		assert.deepEqual(calls.map(([name]) => name), ["disposeForParent"]);
-		assert.match(String(calls[0]?.[1]), /parent-session\.jsonl$/);
+		try {
+			const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
+				cwd: process.cwd(),
+				encoding: "utf-8",
+				env: {
+					...process.env,
+					HOME: path.join(root, "home"), USERPROFILE: path.join(root, "home"),
+					PI_CODING_AGENT_DIR: path.join(root, "agent"),
+					TMPDIR: root, TMP: root, TEMP: root,
+					PI_SUBAGENT_CHILD: undefined,
+					PI_SUBAGENTS_TEST_NO_OWNER: "1",
+				},
+				timeout: 10_000,
+			});
+			assert.equal(result.status, 0, result.stderr);
+			const calls: Array<[string, unknown?]> = JSON.parse(result.stdout.trim().split("\n").pop() ?? "[]");
+			// The file must be read before runtimeEntry.cleanup() clears it in the same handler.
+			assert.deepEqual(calls.map(([name]) => name), ["disposeForParent"]);
+			assert.match(String(calls[0]?.[1]), /parent-session\.jsonl$/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
