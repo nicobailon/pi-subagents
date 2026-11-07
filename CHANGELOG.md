@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A forked subagent (`context: "fork"`) launched in another folder than the parent session now gets that folder's `AGENTS.md` / `CLAUDE.md`. Before, it kept only the parent's project instructions, so a fork started in a repository worktree never saw the repository's `AGENTS.md`.
+
 ## [0.87.0] - 2026-11-07
 
 ### Highlights
