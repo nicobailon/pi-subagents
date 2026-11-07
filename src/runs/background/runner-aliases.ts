@@ -3,7 +3,7 @@
  *
  * The runner is a plain Node process started through jiti. The child hooks it
  * loads import pi's host packages (`@earendil-works/pi-coding-agent`,
- * `pi-agent-core`, `pi-ai`, `pi-schema`, `pi-tui`, `typebox`), which are peer packages of
+ * `pi-agent-core`, `pi-ai`, `pi-tui`, `typebox`), which are peer packages of
  * this extension and are not installed next to it. pi's own extension loader
  * aliases those specifiers to the copies shipped inside the installed pi
  * package; the parent computes the same map and hands it to the runner
@@ -14,18 +14,8 @@ import * as path from "node:path";
 
 export const JITI_ALIAS_ENV = "JITI_ALIAS";
 
-interface PeerAlias {
-	specifier: string;
-	pkg: string;
-	subpath: string;
-	/** An absent subpath of a present package is unreachable, so it is skipped instead of failing. */
-	optional?: boolean;
-	/** Package root to resolve from; defaults to the host root, matching a hoisted install. */
-	from?: string;
-}
-
 /** Specifiers the runner's import graph may use, with the package and export subpath each resolves to. */
-export const HOST_PEER_ALIASES: ReadonlyArray<PeerAlias> = [
+export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; subpath: string; optional?: boolean }> = [
 	{ specifier: "@earendil-works/pi-coding-agent", pkg: "@earendil-works/pi-coding-agent", subpath: "." },
 	{ specifier: "@earendil-works/pi-agent-core", pkg: "@earendil-works/pi-agent-core", subpath: "." },
 	// Optional: hosts whose pi-agent-core declares no "./node" export cannot import it, so no alias is needed.
@@ -40,23 +30,14 @@ export const HOST_PEER_ALIASES: ReadonlyArray<PeerAlias> = [
 	{ specifier: "typebox/value", pkg: "typebox", subpath: "./value" },
 ];
 
-/**
- * Pi 1.5.0+ `pi-ai` imports `@earendil-works/pi-schema` and `@earendil-works/pi-schema/formats`
- * from its schema modules. Hosts before 1.5 do not depend on it, so it is required only when the
- * resolved pi-ai manifest declares it (see resolveHostPeerAliases).
- */
-const SCHEMA_PACKAGE = "@earendil-works/pi-schema";
-const SCHEMA_PEER_ALIASES: ReadonlyArray<PeerAlias> = [
-	{ specifier: SCHEMA_PACKAGE, pkg: SCHEMA_PACKAGE, subpath: "." },
-	{ specifier: `${SCHEMA_PACKAGE}/formats`, pkg: SCHEMA_PACKAGE, subpath: "./formats" },
-];
-
 /** Pi manifests declare chord from 0.85.0 through 1.1.x; earlier hosts and 1.2.0+ do not ship it. */
 const CHORD_PACKAGE = "@earendil-works/chord";
 const CHORD_PEER_ALIASES: typeof HOST_PEER_ALIASES = [
 	{ specifier: "@earendil-works/chord", pkg: "@earendil-works/chord", subpath: "." },
 	{ specifier: "@earendil-works/chord/context", pkg: "@earendil-works/chord", subpath: "./context" },
 ];
+
+const SCHEMA_PACKAGE = "@earendil-works/pi-schema";
 
 interface PackageManifest {
 	name?: unknown;
@@ -169,23 +150,27 @@ export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record
 	// manifest declares it (Pi 0.85 through 1.1), so a declared-but-missing chord still
 	// fails closed. An unreadable host manifest keeps it required rather than hiding a broken install.
 	const chordRequired = !hostManifest || declaresDependency(hostManifest, CHORD_PACKAGE);
-	// Without pi-schema a child dies on its first import of pi-ai, after the launch was accepted,
-	// so a pi-ai that declares it makes it required. pi-ai owns the import, so resolve from pi-ai's
-	// real path: nested, hoisted, and pnpm-sibling copies are all what pi-ai itself would load.
-	const foundPiAiDir = findPeerPackageDir(piPackageRoot, "@earendil-works/pi-ai", hostManifest?.name);
-	const piAiDir = foundPiAiDir ? fs.realpathSync(foundPiAiDir) : undefined;
-	const piAiManifest = piAiDir ? readManifest(piAiDir) : undefined;
-	const schemaAliases: PeerAlias[] = piAiDir && piAiManifest && declaresDependency(piAiManifest, SCHEMA_PACKAGE)
-		? SCHEMA_PEER_ALIASES.map((entry) => ({ ...entry, from: piAiDir }))
-		: [];
-	for (const { specifier, pkg, subpath, optional, from } of [...HOST_PEER_ALIASES, ...CHORD_PEER_ALIASES, ...schemaAliases]) {
-		const packageDir = findPeerPackageDir(from ?? piPackageRoot, pkg, hostManifest?.name);
+	for (const { specifier, pkg, subpath, optional } of [...HOST_PEER_ALIASES, ...CHORD_PEER_ALIASES]) {
+		const packageDir = findPeerPackageDir(piPackageRoot, pkg, hostManifest?.name);
 		const target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
 		// An optional subpath the package does not declare is unreachable, so skip it; a declared but missing file still fails.
 		if (optional && packageDir && target === undefined) continue;
 		// Native loaders short-circuit resolution, so aliases must retain the real package's dependency scope.
 		if (target && fs.existsSync(target)) aliases[specifier] = fs.realpathSync(target);
 		else if (pkg !== CHORD_PACKAGE || chordRequired) missing.push(specifier);
+	}
+	// Pi 1.5+ pi-ai imports pi-schema; without it a child dies after its launch was accepted. pi-ai's
+	// own import already reaches the right copy, so this is only a presence check, never an alias:
+	// an alias would also redirect extensions that ship their own copy.
+	const piAiDir = findPeerPackageDir(piPackageRoot, "@earendil-works/pi-ai", hostManifest?.name);
+	const piAiManifest = piAiDir ? readManifest(piAiDir) : undefined;
+	if (piAiDir && piAiManifest && declaresDependency(piAiManifest, SCHEMA_PACKAGE)) {
+		// Resolve from pi-ai's real path, as Node does, so nested, hoisted and pnpm-sibling copies count.
+		const schemaDir = findPeerPackageDir(fs.realpathSync(piAiDir), SCHEMA_PACKAGE, undefined);
+		for (const subpath of [".", "./formats"]) {
+			const target = schemaDir ? resolvePackageSubpath(schemaDir, subpath) : undefined;
+			if (!target || !fs.existsSync(target)) missing.push(subpath === "." ? SCHEMA_PACKAGE : `${SCHEMA_PACKAGE}/formats`);
+		}
 	}
 	return { aliases, missing };
 }
