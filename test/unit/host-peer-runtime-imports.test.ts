@@ -295,6 +295,57 @@ test("chord is required only when the host declares it, and aliased host-first w
 	}
 });
 
+test("requires pi-schema only when the host's pi-ai declares it, and never aliases it", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-pi-schema-"));
+	const host = path.join(root, "host");
+	const schema = "@earendil-works/pi-schema";
+	const piAiDir = path.join(host, "node_modules", "@earendil-works", "pi-ai");
+	function writePackage(dir: string, name: string, version: string, exports: Record<string, string>, extra: Record<string, unknown> = {}) {
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version, exports, ...extra }));
+		for (const target of Object.values(exports)) {
+			fs.mkdirSync(path.dirname(path.join(dir, target)), { recursive: true });
+			fs.writeFileSync(path.join(dir, target), "export {};\n");
+		}
+	}
+	const writeSchema = (dir: string) => writePackage(dir, schema, "1.5.0", { ".": "./dist/index.js", "./formats": "./dist/formats/index.js" });
+	function assertPresent() {
+		const result = resolveHostPeerAliases(host);
+		assert.deepEqual(result.missing.filter((specifier) => specifier.startsWith(schema)), []);
+		assert.equal(result.aliases[schema], undefined);
+	}
+	try {
+		writePackage(host, "@earendil-works/pi-coding-agent", "1.5.0", { ".": "./index.mjs" });
+		writePackage(piAiDir, "@earendil-works/pi-ai", "1.5.0", { ".": "./index.mjs", "./compat": "./compat.mjs" }, { dependencies: { [schema]: "1.5.0" } });
+		assert.deepEqual(resolveHostPeerAliases(host).missing.filter((specifier) => specifier.startsWith(schema)), [schema, `${schema}/formats`]);
+
+		const hoisted = path.join(host, "node_modules", schema);
+		writeSchema(hoisted);
+		assertPresent();
+		fs.rmSync(hoisted, { recursive: true });
+
+		const nested = path.join(piAiDir, "node_modules", schema);
+		writeSchema(nested);
+		assertPresent();
+		fs.rmSync(nested, { recursive: true });
+
+		// pnpm: the host's pi-ai is a link, and pi-schema sits beside pi-ai's real path, not under the host.
+		const store = path.join(root, ".pnpm", "pi-ai@1.5.0", "node_modules", "@earendil-works");
+		fs.mkdirSync(store, { recursive: true });
+		fs.renameSync(piAiDir, path.join(store, "pi-ai"));
+		fs.symlinkSync(path.join(store, "pi-ai"), piAiDir, "junction");
+		writeSchema(path.join(store, "pi-schema"));
+		assertPresent();
+		fs.rmSync(piAiDir);
+
+		// Pre-1.5 pi-ai never imports it, so its absence is not a launch failure.
+		writePackage(piAiDir, "@earendil-works/pi-ai", "1.2.0", { ".": "./index.mjs", "./compat": "./compat.mjs" });
+		assertPresent();
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("skips the pi-agent-core/node alias when the host package declares no ./node export", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-core-no-node-"));
 	const packageDir = path.join(root, "node_modules", "@earendil-works", "pi-agent-core");

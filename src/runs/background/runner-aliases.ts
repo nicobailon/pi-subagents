@@ -37,6 +37,8 @@ const CHORD_PEER_ALIASES: typeof HOST_PEER_ALIASES = [
 	{ specifier: "@earendil-works/chord/context", pkg: "@earendil-works/chord", subpath: "./context" },
 ];
 
+const SCHEMA_PACKAGE = "@earendil-works/pi-schema";
+
 interface PackageManifest {
 	name?: unknown;
 	version?: unknown;
@@ -156,6 +158,19 @@ export function resolveHostPeerAliases(piPackageRoot: string): { aliases: Record
 		// Native loaders short-circuit resolution, so aliases must retain the real package's dependency scope.
 		if (target && fs.existsSync(target)) aliases[specifier] = fs.realpathSync(target);
 		else if (pkg !== CHORD_PACKAGE || chordRequired) missing.push(specifier);
+	}
+	// Pi 1.5+ pi-ai imports pi-schema; without it a child dies after its launch was accepted. pi-ai's
+	// own import already reaches the right copy, so this is only a presence check, never an alias:
+	// an alias would also redirect extensions that ship their own copy.
+	const piAiDir = findPeerPackageDir(piPackageRoot, "@earendil-works/pi-ai", hostManifest?.name);
+	const piAiManifest = piAiDir ? readManifest(piAiDir) : undefined;
+	if (piAiDir && piAiManifest && declaresDependency(piAiManifest, SCHEMA_PACKAGE)) {
+		// Resolve from pi-ai's real path, as Node does, so nested, hoisted and pnpm-sibling copies count.
+		const schemaDir = findPeerPackageDir(fs.realpathSync(piAiDir), SCHEMA_PACKAGE, undefined);
+		for (const subpath of [".", "./formats"]) {
+			const target = schemaDir ? resolvePackageSubpath(schemaDir, subpath) : undefined;
+			if (!target || !fs.existsSync(target)) missing.push(subpath === "." ? SCHEMA_PACKAGE : `${SCHEMA_PACKAGE}/formats`);
+		}
 	}
 	return { aliases, missing };
 }
