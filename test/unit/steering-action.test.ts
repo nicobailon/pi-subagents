@@ -647,11 +647,14 @@ describe("acknowledged steering action", () => {
 		}
 	});
 
-	for (const stage of ["before-wait", "before-claim", "after-claim"]) {
-		it(`does not recover explicitly rejected guidance ${stage}`, async () => {
+	for (const stage of ["before-wait", "before-claim", "after-claim", "during-pause", "late"]) {
+		it(`respects rejected versus late guidance ${stage}`, async () => {
 			const runId = `steer-rejected-${stage}-${Date.now().toString(36)}`;
 			const asyncDir = path.join(ASYNC_DIR, runId);
 			writeStatus(asyncDir, runningStatus(runId));
+			const sessionFile = path.join(asyncDir, "child.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writePrivateAtomicJson(recoveryDescriptorPath(path.dirname(asyncDir), path.basename(asyncDir)), recoveryDescriptor(runId, sessionFile));
 			let request!: SteerRequest;
 			let recovered = false;
 			const reject = () => {
@@ -661,16 +664,27 @@ describe("acknowledged steering action", () => {
 			};
 			try {
 				const result = await steerAsyncRun({
-					state: createState(), runId, message: "Late guidance", location: { asyncDir }, ackTimeoutMs: 10, recoveryTimeoutMs: 50, kill: () => true,
+					state: createState(), runId, message: "Late guidance", location: { asyncDir }, ackTimeoutMs: 10, recoveryTimeoutMs: 1_000, kill: () => true,
 					onRequestQueued(requestPath) { request = JSON.parse(fs.readFileSync(requestPath, "utf-8")); if (stage === "before-wait") reject(); },
 					onBeforeRecoveryClaim() { if (stage === "before-claim") reject(); },
-					onRecoveryCommitted() { if (stage === "after-claim") reject(); },
+					onRecoveryCommitted() {
+						if (stage === "after-claim") reject();
+						const settle = () => {
+							const status = runningStatus(runId);
+							projectRequest(status, request, [stage === "late" ? "late" : "failed"]);
+							writeStatus(asyncDir, { ...status, state: "paused", endedAt: Date.now(), steps: [{ ...status.steps![0]!, status: "paused", sessionFile }] });
+						};
+						if (stage === "during-pause") queueMicrotask(settle);
+						if (stage === "late") settle();
+					},
 					recover: async () => { recovered = true; return successResult("replacement"); },
 				});
-				assert.equal(result.isError, true);
-				assert.equal(recovered, false);
-				assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
-				assert.equal(fs.existsSync(path.join(asyncDir, "control", "steer-recovery", "claim.json")), false);
+				assert.equal(recovered, stage === "late");
+				assert.equal(result.isError, stage === "late" ? undefined : true);
+				if (stage !== "late") {
+					assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), stage === "during-pause");
+					assert.equal(fs.existsSync(path.join(asyncDir, "control", "steer-recovery", "claim.json")), false);
+				}
 			} finally { removeAsyncDir(asyncDir); }
 		});
 	}

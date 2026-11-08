@@ -738,6 +738,12 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 						if (report.report || report.malformed) {
 							reportCompleted = true;
 							session.clearQueue();
+							const rejectQueuedGuidance = (): never => {
+								session.clearQueue();
+								throw new Error("Child completed its acceptance report; resume it for further guidance.");
+							};
+							session.agent.steer = rejectQueuedGuidance;
+							session.agent.followUp = rejectQueuedGuidance;
 						}
 					}
 					listener(event as unknown as ChildSessionEvent);

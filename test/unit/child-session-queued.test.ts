@@ -35,7 +35,7 @@ describe("childSessionHasQueuedMessages", () => {
 
 describe("default factory queued-message probe", () => {
 	for (const [kind, body] of [
-		["valid", JSON.stringify({ criteriaSatisfied: [], commandsRun: [{ command: "npm test", result: "passed" }] })],
+		["valid", JSON.stringify({ criteriaSatisfied: [], commandsRun: [{ command: "npm test", result: "passed", summary: "All tests passed" }] })],
 		["malformed", "{invalid json"],
 	]) it(`keeps a ${kind} terminal acceptance report instead of consuming queued guidance after it`, async () => {
 		const report = `Complete implementation\n\`\`\`acceptance-report\n${body}\n\`\`\``;
@@ -79,6 +79,38 @@ describe("default factory queued-message probe", () => {
 		await assert.rejects(child.steer("More guidance"), /acceptance report.*resume/i);
 		await assert.rejects(child.followUp("New work"), /acceptance report.*resume/i);
 	});
+	for (const mode of ["steer", "followUp"] as const) {
+		it(`rejects in-flight ${mode} at the agent queue after report closure`, async () => {
+			let release!: () => void;
+			const inputHandler = new Promise<void>((resolve) => { release = resolve; });
+			let listener!: (event: ChildSessionEvent) => void;
+			let queued = false;
+			const agent = { steer() { queued = true; }, followUp() { queued = true; } };
+			const underlying = {
+				agent, bindExtensions: async () => {}, abort: async () => {}, dispose() {},
+				extensionRunner: { hasHandlers: () => false },
+				subscribe(callback: typeof listener) { listener = callback; return () => {}; },
+				clearQueue() { queued = false; },
+				async steer() { await inputHandler; agent.steer(); },
+				async followUp() { await inputHandler; agent.followUp(); },
+			};
+			const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
+				ModelRuntime: { create: async () => ({}) }, SettingsManager: { create: () => ({}) },
+				DefaultResourceLoader: class { async reload() {} }, SessionManager: { inMemory: () => ({}) },
+				resolveCliModel: () => ({}), createAgentSession: async () => ({ session: underlying }),
+			} as unknown as PiCodingAgentModule) });
+			try {
+				const child = await factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] });
+				child.subscribe(() => {});
+				const submission = child[mode]("Guidance awaiting an input handler");
+				listener({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: '```acceptance-report\n{"criteriaSatisfied":[],"commandsRun":[]}\n```' }], stopReason: "stop" } });
+				release();
+				await assert.rejects(submission, /acceptance report.*resume/i);
+				assert.equal(queued, false);
+			} finally { await factory.dispose(); }
+		});
+	}
+
 	it("rejects a required loader failure before requested-model resolution", async () => {
 		let modelResolved = false;
 		const requiredPath = "/tmp/required-provider.mjs";
