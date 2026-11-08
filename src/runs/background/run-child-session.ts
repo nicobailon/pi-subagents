@@ -9,7 +9,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, assistantMessageError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse } from "../../shared/utils.ts";
 import { qualifyModelWithProvider } from "../../shared/model-info.ts";
-import type { EffectsProjection, RuntimeAcknowledgedChildExtensions, SubagentOutputState, ToolBudgetState, Usage } from "../../shared/types.ts";
+import type { EffectsProjection, RuntimeAcknowledgedChildExtensions, SteeringFailureKind, SubagentOutputState, ToolBudgetState, Usage } from "../../shared/types.ts";
 import {
 	acceptChildWatchdogEvent,
 	applyChildWatchdogMessage,
@@ -68,6 +68,7 @@ export interface ChildEvent {
 
 export interface SteerDelivery {
 	state: "delivered" | "queued" | "failed";
+	failureKind?: SteeringFailureKind;
 	deliveryStatus?: SteerDeliveryStatus;
 	message: string;
 }
@@ -589,7 +590,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 
 		const failUnconsumedSteers = (): void => {
 			for (const entry of acceptedSteers.splice(0)) {
-				input.onSteerOutcome?.(entry.request, { state: "failed", message: unconsumedSteerReason(entry.request.mode) });
+				input.onSteerOutcome?.(entry.request, { state: "failed", failureKind: "unconsumed", message: unconsumedSteerReason(entry.request.mode) });
 			}
 		};
 		/** The child run ended (or was forced to end); fold in the outcome once the child's shutdown work is done. */
@@ -728,7 +729,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					} catch (steerError) {
 						const index = acceptedSteers.indexOf(accepted);
 						if (index >= 0) acceptedSteers.splice(index, 1);
-						return { state: "failed", message: steerError instanceof Error ? steerError.message : String(steerError) };
+						return { state: "failed", failureKind: "rejected", message: steerError instanceof Error ? steerError.message : String(steerError) };
 					}
 					return queued;
 				});

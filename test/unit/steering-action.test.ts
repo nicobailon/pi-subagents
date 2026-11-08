@@ -69,7 +69,7 @@ it("does not acknowledge queued steering when the child transport rejects it", a
 	});
 	const steer = await registered;
 	const result = await steer({ type: "steer", id: "rejected", ts: Date.now(), message: "new direction" });
-	assert.deepEqual(result, { state: "failed", message: "transport rejected steer" });
+	assert.deepEqual(result, { state: "failed", failureKind: "rejected", message: "transport rejected steer" });
 	assert.deepEqual(outcomes, []);
 	stop?.();
 	releasePrompt();
@@ -647,7 +647,7 @@ describe("acknowledged steering action", () => {
 		}
 	});
 
-	for (const stage of ["before-wait", "before-claim", "after-claim", "during-pause", "late"]) {
+	for (const stage of ["before-wait", "before-claim", "after-claim", "during-pause", "late", "unconsumed"]) {
 		it(`respects rejected versus late guidance ${stage}`, async () => {
 			const runId = `steer-rejected-${stage}-${Date.now().toString(36)}`;
 			const asyncDir = path.join(ASYNC_DIR, runId);
@@ -672,16 +672,18 @@ describe("acknowledged steering action", () => {
 						const settle = () => {
 							const status = runningStatus(runId);
 							projectRequest(status, request, [stage === "late" ? "late" : "failed"]);
+							if (stage === "unconsumed") Object.assign(status.steering!.recent[0]!.targets[0]!, { failureKind: "unconsumed" });
 							writeStatus(asyncDir, { ...status, state: "paused", endedAt: Date.now(), steps: [{ ...status.steps![0]!, status: "paused", sessionFile }] });
 						};
-						if (stage === "during-pause") queueMicrotask(settle);
+						if (stage === "during-pause" || stage === "unconsumed") queueMicrotask(settle);
 						if (stage === "late") settle();
 					},
 					recover: async () => { recovered = true; return successResult("replacement"); },
 				});
-				assert.equal(recovered, stage === "late");
-				assert.equal(result.isError, stage === "late" ? undefined : true);
-				if (stage !== "late") {
+				const shouldRecover = stage === "late" || stage === "unconsumed";
+				assert.equal(recovered, shouldRecover);
+				assert.equal(result.isError, shouldRecover ? undefined : true);
+				if (!shouldRecover) {
 					assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), stage === "during-pause");
 					assert.equal(fs.existsSync(path.join(asyncDir, "control", "steer-recovery", "claim.json")), false);
 				}

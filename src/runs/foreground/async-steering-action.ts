@@ -17,7 +17,7 @@ function steerTargetsAccepted(result: Pick<SteerActionResult, "targets"> | undef
 }
 
 function steerTargetsRejected(result: SteerActionResult | undefined): boolean {
-	return result?.targets.some((target) => target.state === "failed") === true;
+	return result?.targets.some((target) => target.state === "failed" && target.failureKind !== "unconsumed") === true;
 }
 
 export function canQueueRetainedAsyncFollowUp(status: AsyncStatus, index?: number): boolean {

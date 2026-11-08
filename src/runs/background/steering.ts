@@ -87,11 +87,13 @@ export function updateSteeringTarget(
 	index: number,
 	state: SteeringTargetState,
 	now: number,
-	fields: Pick<SteeringTargetStatus, "reason" | "replacementRunId"> = {},
+	fields: Pick<SteeringTargetStatus, "reason" | "replacementRunId" | "failureKind"> = {},
 ): SteeringTargetStatus | undefined {
 	const request = status.recent.find((candidate) => candidate.id === requestId);
 	const target = request?.targets.find((candidate) => candidate.index === index);
 	if (!target) return undefined;
+	if (state === "failed") target.failureKind = fields.failureKind;
+	else delete target.failureKind;
 	if (state === "late" && target.state === "recovered") {
 		if (target.lateDeliveredAt === undefined) {
 			target.lateDeliveredAt = now;
@@ -143,6 +145,7 @@ export function actionResultFromSteeringStatus(status: SteeringStatus, sourceRun
 		...(target.deliveredAt !== undefined ? { deliveredAt: target.deliveredAt } : {}),
 		...(target.lateDeliveredAt !== undefined ? { lateDeliveredAt: target.lateDeliveredAt } : {}),
 		...(target.reason ? { reason: target.reason } : {}),
+		...(target.failureKind ? { failureKind: target.failureKind } : {}),
 		...(target.replacementRunId ? { replacementRunId: target.replacementRunId } : {}),
 	}));
 	const states = targets.map((target) => target.state);

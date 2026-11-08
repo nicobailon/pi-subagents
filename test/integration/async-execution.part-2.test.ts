@@ -403,7 +403,7 @@ syncBuiltinESMExports();
 		const asyncDir = path.join(ASYNC_DIR, id);
 		requestAsyncSteer(asyncDir, { message: "Steer while the queue is still live.", id: "queued-steer", ts: Date.now() });
 		requestAsyncSteer(asyncDir, { message: "Follow up while the queue is still live.", id: "queued-follow", ts: Date.now() + 1, mode: "follow_up" });
-		type SteeringTargets = { steering?: { recent: Array<{ id: string; targets: Array<{ state: string; reason?: string }> }> } };
+		type SteeringTargets = { steering?: { recent: Array<{ id: string; targets: Array<{ state: string; reason?: string; failureKind?: string }> }> } };
 		const queuedStatePath = path.join(mockPi.dir, "queued-messages.json");
 		const accepted = await waitForAsyncState(id, (candidate) => {
 			const recent = (candidate as SteeringTargets).steering?.recent ?? [];
@@ -427,6 +427,9 @@ syncBuiltinESMExports();
 		const recent = terminal.steering?.recent ?? [];
 		assert.equal(recent.find((request) => request.id === "queued-steer")?.targets[0]?.state, "failed");
 		assert.equal(recent.find((request) => request.id === "queued-follow")?.targets[0]?.state, "failed");
+		for (const requestId of ["queued-steer", "queued-follow"]) {
+			assert.equal(recent.find((request) => request.id === requestId)?.targets[0]?.failureKind, "unconsumed");
+		}
 		assert.equal(recent.find((request) => request.id === "queued-steer")?.targets[0]?.reason, "child completed before consuming steering");
 		assert.equal(recent.find((request) => request.id === "queued-follow")?.targets[0]?.reason, "child completed before consuming follow-up");
 		assert.notEqual(recent.find((request) => request.id === "queued-steer")?.targets[0]?.reason, recent.find((request) => request.id === "queued-follow")?.targets[0]?.reason);
