@@ -3122,6 +3122,8 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 				const payload = JSON.parse(fs.readFileSync(resultPath, "utf8"));
 				assert.equal(payload.success, false);
 				assert.equal(payload.results[0].stopReason, "length");
+				const status = JSON.parse(fs.readFileSync(path.join(DIRS.async, result.details.asyncId!, "status.json"), "utf8"));
+				assert.equal(status.steps[0].stopReason, "length");
 				const { toWaitCompletion } = await import("../../src/runs/background/wait-completions.ts");
 				assert.equal(toWaitCompletion(payload, result.details.asyncId!).results?.[0]?.stopReason, "length");
 			} else {

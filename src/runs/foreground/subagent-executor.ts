@@ -6437,6 +6437,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								const settledResults = notification.result.results ?? [];
 								const settledStep = settledResults.length ? status.steps?.find((candidate) => candidate.workflowKey === notification.childKey) : undefined;
 								if (settledStep) {
+									settledStep.stopReason = notification.result.stopReason;
 									const usage = sumResultsUsage(settledResults);
 									settledStep.tokens = { input: usage.input, output: usage.output, total: usage.input + usage.output };
 									if (usage.turns > 0) settledStep.turnCount = usage.turns;
