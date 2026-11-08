@@ -168,7 +168,7 @@ describe("async chain root attachment", () => {
 			state: "failed",
 			success: false,
 			summary: "root failed",
-			results: [{ agent: "worker", output: "root failed", error: "root failed", success: false }],
+			results: [{ agent: "worker", output: "root failed", error: "root failed", success: false, stopReason: "length" }],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
@@ -176,6 +176,7 @@ describe("async chain root attachment", () => {
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.error, "root failed");
 		assert.equal(result.output, "root failed");
+		assert.equal(result.stopReason, "length");
 		assert.deepEqual(result.importedPublication, { snapshot: fs.readFileSync(importedRoot.resultPath, "utf-8") });
 	});
 

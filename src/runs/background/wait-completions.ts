@@ -97,6 +97,9 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 			const model = asNonEmptyString(child.model);
 			const structuredOutput = projectStructuredOutput(child.structuredOutput);
 			const structuredOutputPath = asNonEmptyString(child.structuredOutputPath);
+			const stopReason = child.stopReason === "stop" || child.stopReason === "length" || child.stopReason === "toolUse" || child.stopReason === "error" || child.stopReason === "aborted"
+				? child.stopReason
+				: undefined;
 			const contextOverflow = child.contextOverflow === true;
 			const timeoutRecovery = projectTimeoutRecovery(child.timeoutRecovery);
 			return [{
@@ -111,6 +114,7 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 				...(structuredOutputPath ? { structuredOutputPath } : {}),
 				...(error ? { error } : {}),
 				...(model ? { model } : {}),
+				...(stopReason ? { stopReason } : {}),
 				...(contextOverflow ? { contextOverflow: true } : {}),
 				...(artifactPaths ? { artifactPaths } : {}),
 				...(timeoutRecovery ? { timeoutRecovery } : {}),

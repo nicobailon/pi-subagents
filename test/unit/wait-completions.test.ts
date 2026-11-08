@@ -267,6 +267,13 @@ describe("workflow wait completion projection", () => {
 		assert.doesNotMatch(JSON.stringify(completion), /raw recovery message|settlementDiagnostic/);
 	});
 
+	it("retains known stop reasons and omits invalid values", () => {
+		for (const stopReason of ["stop", "length", "toolUse", "error", "aborted", undefined, "invalid", 42]) {
+			const completion = toWaitCompletion({ success: false, results: [{ success: false, stopReason }] }, "run-stop");
+			assert.equal(completion.results?.[0]?.stopReason, typeof stopReason === "string" && stopReason !== "invalid" ? stopReason : undefined);
+		}
+	});
+
 	it("retains captured structured output and its durable artifact path", () => {
 		const completion = toWaitCompletion({
 			success: true,

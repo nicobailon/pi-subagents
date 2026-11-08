@@ -201,7 +201,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	for (const terminal of [
 		{ name: "empty text stop", content: [{ type: "text", text: "" }], stopReason: "stop", error: /no output.*empty response/i },
 		{ name: "tool-call-only stop", content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "README.md" } }], stopReason: "toolUse", error: /grep failed.*Path not found/i },
-		{ name: "empty text length limit", content: [{ type: "text", text: "" }], stopReason: "length", error: /grep failed.*Path not found/i },
+		{ name: "empty text length limit", content: [{ type: "text", text: "" }], stopReason: "length", error: /stopReason "length"/ },
 	]) {
 		it(`background diagnoses ${terminal.name} after an exploratory tool error`, { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 			mockPi.onCall({

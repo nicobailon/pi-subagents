@@ -3099,6 +3099,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(getFinalOutput(result.messages), "settled without a terminal assistant stop");
 		assert.equal(result.exitCode, 1);
 		assert.match(result.error ?? "", /stopReason "length"/);
+		assert.equal(result.stopReason, "length");
 		assert.ok(Date.now() - startedAt < 4000, "agent_settled should trigger bounded child cleanup");
 	});
 

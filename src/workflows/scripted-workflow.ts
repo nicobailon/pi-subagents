@@ -60,6 +60,7 @@ export interface WorkflowScriptChildResult {
 	runId?: string;
 	output: string;
 	error?: string;
+	stopReason?: SingleResult["stopReason"];
 	detached?: boolean;
 	interrupted?: boolean;
 	structuredOutput?: unknown;

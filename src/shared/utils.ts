@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Message, Usage as PiUsage } from "@earendil-works/pi-ai";
+import type { Message, StopReason, Usage as PiUsage } from "@earendil-works/pi-ai";
 import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./display-text.ts";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
@@ -298,6 +298,15 @@ export function getFinalOutput(messages: Message[]): string {
 
 export function getSingleResultOutput(result: Pick<SingleResult, "finalOutput" | "messages">): string {
 	return result.finalOutput ?? getFinalOutput(result.messages ?? []);
+}
+
+export function getTerminalAssistantStopReason(messages: Message[]): StopReason | undefined {
+	const lastAssistant = messages.findLast((message) => message.role === "assistant");
+	return lastAssistant?.role === "assistant" ? lastAssistant.stopReason : undefined;
+}
+
+export function formatIncompleteAssistantResponseError(stopReason: StopReason): string {
+	return `Subagent ended with stopReason "${stopReason}"; output may be incomplete.`;
 }
 
 export function getDisplayItems(messages: Message[] | undefined): DisplayItem[] {

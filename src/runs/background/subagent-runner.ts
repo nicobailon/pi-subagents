@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, StopReason } from "@earendil-works/pi-ai";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { withResultRunLease, writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
@@ -102,7 +102,7 @@ import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentRecordedPid } from "./boot-id.ts";
 import type { RecordedPid } from "./stale-run-reconciler.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
-import { PROMPT_REDACTED, SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { PROMPT_REDACTED, SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, formatIncompleteAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import {
 	createMutatingFailureState,
@@ -275,6 +275,7 @@ interface StepResult {
 	nativeMachine?: import("../../shared/types.ts").SingleResult["nativeMachine"];
 	thinking?: string;
 	requestedModel?: string;
+	stopReason?: StopReason;
 	contextOverflow?: boolean;
 	totalCost?: CostSummary;
 	artifactPaths?: ArtifactPaths;
@@ -796,6 +797,7 @@ export async function runSingleStepInner(
 				intercomTarget: imported.intercomTarget,
 				model: imported.model,
 				requestedModel: imported.requestedModel,
+				stopReason: imported.stopReason,
 				contextOverflow: imported.contextOverflow,
 				totalCost: imported.totalCost,
 				usage: imported.usage,
@@ -1253,6 +1255,9 @@ export async function runSingleStepInner(
 		const toolDiagnostic = run.exitCode === 0 && !run.error ? launch.capture.toolDiagnostic() : undefined;
 		const toolAvailabilityError = toolDiagnostic ? formatChildToolDiagnostic(toolDiagnostic) : undefined;
 		const runtimeAcknowledgedExtensions = launch.capture.runtimeAcknowledgedExtensions();
+		const incompleteAssistantResponseError = run.exitCode === 0 && !run.error && run.stopReason === "length"
+			? formatIncompleteAssistantResponseError(run.stopReason)
+			: undefined;
 		const midToolExitError = run.currentTool
 			&& isOrdinaryToolForMidToolExit(run.currentTool)
 			&& !run.interrupted
@@ -1266,7 +1271,7 @@ export async function runSingleStepInner(
 		let structuredError: string | undefined;
 		let validatedStructuredOutput = false;
 		if (effectiveStructuredOutput) {
-			const otherwiseSuccessful = terminalDiagnosticsEligible && run.exitCode === 0 && !run.error && !toolAvailabilityError && !midToolExitError;
+			const otherwiseSuccessful = terminalDiagnosticsEligible && run.exitCode === 0 && !run.error && !toolAvailabilityError && !incompleteAssistantResponseError && !midToolExitError;
 			if (!run.structuredOutputToolInvoked && otherwiseSuccessful) {
 				structuredError = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
 			} else if (run.structuredOutputToolInvoked) {
@@ -1294,7 +1299,7 @@ export async function runSingleStepInner(
 		const errorMessages = validatedStructuredOutput
 			? run.messages.slice(run.structuredOutputMessageStartIndex ?? run.messages.length)
 			: run.messages;
-		const hiddenError = terminalDiagnosticsEligible && run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !midToolExitError
+		const hiddenError = terminalDiagnosticsEligible && run.exitCode === 0 && !run.error && !toolAvailabilityError && !incompleteAssistantResponseError && !structuredError && !midToolExitError
 			? detectSubagentError(errorMessages)
 			: null;
 		const terminalEmptyAfterUsefulWork = !validatedStructuredOutput
@@ -1303,6 +1308,7 @@ export async function runSingleStepInner(
 		const emptyOutputError = terminalDiagnosticsEligible && run.exitCode === 0
 			&& !run.error
 			&& !toolAvailabilityError
+			&& !incompleteAssistantResponseError
 			&& !structuredError
 			&& !validatedStructuredOutput
 			&& (!run.finalOutput.trim() || terminalEmptyAfterUsefulWork)
@@ -1326,7 +1332,7 @@ export async function runSingleStepInner(
 		finalRequiredOutputMissing = requiredOutput?.missing;
 		const missingRequiredOutputError = terminalDiagnosticsEligible ? formatRequiredOutputError(requiredOutput) : undefined;
 		const missingRequiredOutputAfterMutation = Boolean(missingRequiredOutputError) && (mutationAttemptObserved || Boolean(mutationEvidence.changedFiles.length));
-		const effectiveExitCode = toolAvailabilityError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
+		const effectiveExitCode = toolAvailabilityError || incompleteAssistantResponseError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
 			? 1
 			: hiddenError?.hasError
 				? (hiddenError.exitCode ?? 1)
@@ -1334,6 +1340,7 @@ export async function runSingleStepInner(
 					? 1
 					: run.exitCode;
 		const underlyingError = toolAvailabilityError
+			?? incompleteAssistantResponseError
 			?? midToolExitError
 			?? structuredError
 			?? run.error
@@ -1522,6 +1529,7 @@ export async function runSingleStepInner(
 				model: finalResult?.model,
 				nativeMachine: finalResult?.nativeMachine,
 				requestedModel: step.requestedModel,
+				stopReason: finalResult?.stopReason,
 				usage,
 				error: effectiveFinalError,
 				acceptance: effectiveAcceptance,
@@ -1554,6 +1562,7 @@ export async function runSingleStepInner(
 		nativeMachine: finalResult?.nativeMachine,
 		thinking: resolveEffectiveThinking(finalResult?.model, step.thinking),
 		requestedModel: step.requestedModel,
+		stopReason: finalResult?.stopReason,
 		contextOverflow: contextOverflow || undefined,
 		totalCost: costSummaryFromUsage(usage),
 		usage,
@@ -2258,6 +2267,7 @@ export async function runSubagent(
 				model: step.model,
 				thinking: step.thinking,
 				requestedModel: step.requestedModel,
+				stopReason: step.stopReason,
 				contextOverflow: step.contextOverflow,
 			})),
 			exitCode: state === "complete" || state === "paused" ? 0 : 1,
@@ -3030,6 +3040,7 @@ export async function runSubagent(
 		setOptionalProperty(step, "model", step.model ?? singleResult.model);
 		setOptionalProperty(step, "thinking", resolveEffectiveThinking(singleResult.model, step.thinking));
 		setOptionalProperty(step, "requestedModel", singleResult.requestedModel);
+		setOptionalProperty(step, "stopReason", singleResult.stopReason);
 		setOptionalProperty(step, "contextOverflow", singleResult.contextOverflow);
 		setOptionalProperty(step, "totalCost", singleResult.totalCost);
 		setOptionalProperty(step, "error", stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE) : singleResult.error);
@@ -3921,6 +3932,7 @@ export async function runSubagent(
 					model: pr.model,
 					thinking: pr.thinking,
 					requestedModel: pr.requestedModel,
+					stopReason: pr.stopReason,
 					contextOverflow: pr.contextOverflow,
 					totalCost: pr.totalCost,
 					usage: pr.usage,
@@ -4329,6 +4341,7 @@ export async function runSubagent(
 						model: pr.model,
 						thinking: pr.thinking,
 						requestedModel: pr.requestedModel,
+						stopReason: pr.stopReason,
 						contextOverflow: pr.contextOverflow,
 						totalCost: pr.totalCost,
 						usage: pr.usage,
@@ -4630,6 +4643,7 @@ export async function runSubagent(
 				model: singleResult.model,
 				thinking: singleResult.thinking,
 				requestedModel: singleResult.requestedModel,
+				stopReason: singleResult.stopReason,
 				contextOverflow: singleResult.contextOverflow,
 				totalCost: singleResult.totalCost,
 				usage: singleResult.usage,
@@ -4999,6 +5013,7 @@ export async function runSubagent(
 				model: r.model,
 				thinking: r.thinking,
 				requestedModel: r.requestedModel,
+				stopReason: r.stopReason,
 				contextOverflow: r.contextOverflow,
 				totalCost: r.totalCost,
 				usage: r.usage,

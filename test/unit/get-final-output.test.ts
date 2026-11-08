@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Message } from "@earendil-works/pi-ai";
-import { getFinalOutput } from "../../src/shared/utils.ts";
+import { getFinalOutput, getTerminalAssistantStopReason } from "../../src/shared/utils.ts";
 
 function assistantContent(content: unknown[]): Message {
 	return { role: "assistant", content } as unknown as Message;
@@ -171,5 +171,14 @@ describe("getFinalOutput", () => {
 		const messages = [assistantContent([{ type: "text", text: " \n Summary \n " }])];
 
 		assert.equal(getFinalOutput(messages), " \n Summary \n ");
+	});
+
+	it("returns the final assistant stop reason", () => {
+		const messages = [
+			{ ...assistantContent([{ type: "text", text: "retry" }]), stopReason: "error" },
+			{ ...assistantContent([{ type: "text", text: "partial" }]), stopReason: "length" },
+		] as Message[];
+
+		assert.equal(getTerminalAssistantStopReason(messages), "length");
 	});
 });

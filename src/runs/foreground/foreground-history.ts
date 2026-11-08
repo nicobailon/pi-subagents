@@ -48,6 +48,7 @@ function compactChild(child: ForegroundResumeChild): ForegroundResumeChild {
 		...(child.toolCount !== undefined ? { toolCount: child.toolCount } : {}),
 		...(child.exitCode !== undefined ? { exitCode: child.exitCode } : {}),
 		...(child.error ? { error: child.error } : {}),
+		...(child.stopReason ? { stopReason: child.stopReason } : {}),
 		...(!outputPath && child.finalOutput ? { finalOutput: boundedTail(child.finalOutput) } : {}),
 		...(child.outputState ? { outputState: child.outputState } : {}),
 		...(child.outputPartial ? { outputPartial: true } : {}),

@@ -979,6 +979,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
 		...(input.result.error ? { error: input.result.error } : {}),
 		...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
+		...(input.result.stopReason ? { stopReason: input.result.stopReason } : {}),
 		outputState: input.result.outputState,
 		outputPartial: input.result.outputPartial,
 		outputMode: input.result.outputMode,
@@ -3553,6 +3554,7 @@ function importWorkflowAwaitedChildResult(
 		...(completed.sessionFile ? { sessionFile: completed.sessionFile } : {}),
 		...(completed.model ? { model: completed.model } : {}),
 		...(completed.requestedModel ? { requestedModel: completed.requestedModel } : {}),
+		...(completed.stopReason ? { stopReason: completed.stopReason } : {}),
 		...(completed.contextOverflow ? { contextOverflow: true } : {}),
 		...(completed.structuredOutput !== undefined ? { structuredOutput: completed.structuredOutput } : {}),
 		...(completed.structuredOutputPath ? { structuredOutputPath: completed.structuredOutputPath } : {}),
@@ -4834,6 +4836,7 @@ function workflowChildResult(
 	const structured = result.details.results.map((child) => child.structuredOutput).filter((value) => value !== undefined);
 	const resolvedAgents = [...new Set(result.details.results.map((child) => child.agent).filter((agent): agent is string => Boolean(agent)))];
 	const resolvedContexts = [...new Set(result.details.results.map((child) => child.context).filter((context): context is "fresh" | "fork" => context === "fresh" || context === "fork"))];
+	const stopReasons = [...new Set(result.details.results.map((child) => child.stopReason).filter((stopReason): stopReason is NonNullable<SingleResult["stopReason"]> => Boolean(stopReason)))];
 	const runId = result.details.runId ?? result.details.asyncId;
 	let resumability: WorkflowScriptChildResult["resumability"];
 	if (!runId || !resumeState) {
@@ -4875,6 +4878,7 @@ function workflowChildResult(
 		...(runId ? { runId } : {}),
 		output,
 		...(!ok && !running ? { error: failureError } : {}),
+		...(stopReasons.length === 1 ? { stopReason: stopReasons[0] } : {}),
 		...(detached ? { detached: true } : {}),
 		...(interrupted ? { interrupted: true } : {}),
 		...(stopped ? { stopped: true } : {}),
