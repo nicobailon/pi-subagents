@@ -55,7 +55,7 @@ export function steeringStatus(status: Pick<AsyncStatus, "steering">): SteeringS
 
 export function recordSteeringRequest(
 	status: SteeringStatus,
-	input: { id: string; requestedAt: number; source?: string; message: string; targets: Array<{ index: number; state: SteeringTargetState; reason?: string }> },
+	input: { id: string; requestedAt: number; source?: string; message: string; targets: Array<Pick<SteeringTargetStatus, "index" | "state" | "reason" | "failureKind">> },
 ): SteeringRequestStatus {
 	const existing = status.recent.find((request) => request.id === input.id);
 	if (existing) return existing;
@@ -64,7 +64,7 @@ export function recordSteeringRequest(
 		requestedAt: input.requestedAt,
 		...(input.source ? { source: input.source } : {}),
 		messagePreview: steeringMessagePreview(input.message),
-		targets: input.targets.map((target) => ({ index: target.index, state: target.state, ...(target.reason ? { reason: target.reason } : {}) })),
+		targets: input.targets.map((target) => ({ index: target.index, state: target.state, ...(target.reason ? { reason: target.reason } : {}), ...(target.failureKind ? { failureKind: target.failureKind } : {}) })),
 	};
 	status.requested++;
 	status.lastRequestedAt = input.requestedAt;

@@ -113,7 +113,7 @@ function runningStatus(runId: string, mode: AsyncStatus["mode"] = "single", coun
 }
 
 function projectRequest(status: AsyncStatus, request: SteerRequest, states: SteeringTargetState[]): void {
-	const targets = states.map((state, index) => ({ index, state }));
+	const targets = states.map((state, index) => ({ index, state, ...(state === "failed" ? { failureKind: "rejected" as const } : {}) }));
 	status.steering ??= createSteeringStatus();
 	recordSteeringRequest(status.steering, { id: request.id, requestedAt: request.ts, source: request.source, message: request.message, targets });
 	for (const target of targets) {
@@ -647,7 +647,7 @@ describe("acknowledged steering action", () => {
 		}
 	});
 
-	for (const stage of ["before-wait", "before-claim", "after-claim", "during-pause", "late", "unconsumed"]) {
+	for (const stage of ["before-wait", "before-claim", "after-claim", "during-pause", "late", "unconsumed", "unsubmitted"]) {
 		it(`respects rejected versus late guidance ${stage}`, async () => {
 			const runId = `steer-rejected-${stage}-${Date.now().toString(36)}`;
 			const asyncDir = path.join(ASYNC_DIR, runId);
@@ -673,14 +673,15 @@ describe("acknowledged steering action", () => {
 							const status = runningStatus(runId);
 							projectRequest(status, request, [stage === "late" ? "late" : "failed"]);
 							if (stage === "unconsumed") Object.assign(status.steering!.recent[0]!.targets[0]!, { failureKind: "unconsumed" });
+							if (stage === "unsubmitted") delete status.steering!.recent[0]!.targets[0]!.failureKind;
 							writeStatus(asyncDir, { ...status, state: "paused", endedAt: Date.now(), steps: [{ ...status.steps![0]!, status: "paused", sessionFile }] });
 						};
-						if (stage === "during-pause" || stage === "unconsumed") queueMicrotask(settle);
+						if (stage === "during-pause" || stage === "unconsumed" || stage === "unsubmitted") queueMicrotask(settle);
 						if (stage === "late") settle();
 					},
 					recover: async () => { recovered = true; return successResult("replacement"); },
 				});
-				const shouldRecover = stage === "late" || stage === "unconsumed";
+				const shouldRecover = stage === "late" || stage === "unconsumed" || stage === "unsubmitted";
 				assert.equal(recovered, shouldRecover);
 				assert.equal(result.isError, shouldRecover ? undefined : true);
 				if (!shouldRecover) {
