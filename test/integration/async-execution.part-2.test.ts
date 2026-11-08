@@ -795,11 +795,12 @@ syncBuiltinESMExports();
 		}
 	});
 
-	it("lets the shorter run-level deadline win over a per-tool timeout", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+	for (const waiting of [false, true]) it(`keeps the per-tool deadline independent of supervisor wait=${waiting}`,  { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [
-				{ jsonl: [events.toolStart("bash")] },
-				{ delay: 30_000 },
+				{ jsonl: [events.toolStart("bash"), ...(waiting ? [events.toolStart("contact_supervisor", { reason: "need_decision" })] : [])] },
+				{ delay: 1500 },
+				{ jsonl: [events.assistantMessage("done"), { type: "agent_settled" }] },
 			],
 		});
 		const id = `async-tool-timeout-run-budget-${Date.now().toString(36)}`;
@@ -824,7 +825,7 @@ syncBuiltinESMExports();
 
 			const payload = await readAsyncPayload(id);
 			assert.equal(payload.results[0]?.timedOut, true);
-			assert.equal(payload.results[0]?.error, "Subagent timed out after 300ms.");
+			assert.equal(payload.results[0]?.error, waiting ? "Tool 'bash' exceeded its timeout of 1000ms." : "Subagent timed out after 300ms.");
 		} finally {
 			delete process.env.PI_SUBAGENT_TOOL_TIMEOUT_MS;
 		}
@@ -985,6 +986,19 @@ syncBuiltinESMExports();
 		const target = resolveAsyncResumeTarget({ id });
 		assert.equal(target.kind, "revive");
 		assert.equal(target.sessionFile, payload.results[0]?.sessionFile);
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
+		const stopCtx = makeMinimalCtx(tempDir);
+		stopCtx.sessionManager.getSessionId = () => "session-1";
+		const stopped = await executor.execute("stop-expired", { action: "stop", id }, undefined, undefined, stopCtx);
+		assert.notEqual(stopped.isError, true, stopped.content[0]?.text);
+		const stoppedStatus = readStatus(path.join(ASYNC_DIR, id))!;
+		assert.equal(stoppedStatus.state, "stopped");
+		assert.equal(stoppedStatus.terminationReason, undefined);
+		assert.equal(stoppedStatus.steps[0]?.terminationReason, undefined);
+		const stoppedPayload = await readAsyncPayload(id);
+		assert.equal(stoppedPayload.state, "stopped");
+		assert.equal(stoppedPayload.terminationReason, undefined);
+		assert.equal(stoppedPayload.results[0]?.terminationReason, undefined);
 	});
 
 	it("publishes async workflow supervisor expiry as paused with a resumable receipt", async () => {

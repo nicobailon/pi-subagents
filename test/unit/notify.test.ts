@@ -120,6 +120,9 @@ it("delivers supervisor expiry as paused with structured completion metadata", (
 	assert.equal(details.status, "paused");
 	assert.equal(details.terminationReason, terminationReason);
 	assert.equal(details.childOutputs?.[0]?.status, "paused");
+		const stopped = buildCompletionDetails({ ...result, state: "stopped", stopped: true, results: [{ ...result.results[0], status: "stopped", stopped: true }] });
+		assert.equal(stopped.status, "stopped");
+		assert.equal(stopped.childOutputs?.[0]?.status, "stopped");
 	assert.equal(buildCompletionDetails({ ...result, results: [], terminationReason: undefined }).status, "failed");
 	const { events, sent, dispose } = createPi();
 	try {

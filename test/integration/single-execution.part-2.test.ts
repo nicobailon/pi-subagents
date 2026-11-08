@@ -4971,6 +4971,16 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		});
 	}
 
+	it("foreground keeps a concurrent tool deadline while supervisor wait pauses runtime", async () => {
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.toolStart("bash"), events.toolStart("contact_supervisor", { reason: "need_decision" })] },
+			{ delay: 900, jsonl: [events.assistantMessage("too late")] },
+		] });
+		const result = await runSync(tempDir, makeAgentConfigs(["worker"]), "worker", "Task", { timeoutMs: 250, toolTimeoutMs: 400, acceptance: false });
+		assert.equal(result.timedOut, true);
+		assert.equal(result.error, "Tool 'bash' exceeded its timeout of 400ms.");
+	});
+
 	it("foreground resumes the remaining budget rather than resetting after a reply", async () => {
 		mockPi.onCall({ steps: [
 			{ delay: 100, jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Question" })] },

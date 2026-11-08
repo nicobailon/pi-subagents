@@ -2580,6 +2580,31 @@ Answer only from the supplied synthetic text.
 			assert.equal(child.state, "stopped");
 		});
 
+		it("retains supervisor expiry when a re-attached child settles after reload", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			const nonce = `reattach-expired-${Date.now()}`;
+			const release = path.join(tempDir, `${nonce}.release`);
+			const script = `await runs.run("stage1", { agent: "echo", task: "Stage one ${nonce}" }); return await runs.run("stage2", { agent: "bg", task: "Stage two ${nonce}" });`;
+			const args = { nonce };
+			const { launch, waitFor, settled, stopWhenStage2Starts } = setup();
+			mockPi.onCall({ matchArgIncludes: `Stage one ${nonce}`, output: "stage one done" });
+			mockPi.onCall({ matchArgIncludes: `Stage two ${nonce}`, steps: [
+				{ waitForPath: release, jsonl: [{ ...events.toolStart("contact_supervisor", { reason: "need_decision" }), toolCallId: "expired" }] },
+				{ jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "expired", result: { content: [], details: { terminationReason: "timed-out-waiting-on-supervisor" } } }] },
+				{ delay: 10000 },
+			] });
+			const callsBefore = mockPi.callCount();
+			const firstId = await launch({ workflowScript: script, args });
+			const childId = (await stopWhenStage2Starts(firstId, runtimeReplacedAbortReason(), awaitedStage2Ready)).steps?.find(step => step.workflowKey === "stage2")?.runId;
+			assert.ok(childId);
+			const secondId = await launch({ workflowScript: script, args });
+			await waitFor(secondId, status => status.steps?.some(step => step.workflowKey === "stage2" && step.runId === childId) === true);
+			fs.writeFileSync(release, "go");
+			const result = await settled(secondId);
+			assert.equal(result.state, "paused");
+			assert.equal(result.terminationReason, "timed-out-waiting-on-supervisor");
+			assert.equal(mockPi.callCount(), callsBefore + 2, "expired child is not launched again");
+		});
+
 		it("launches fresh when a re-attached child fails after the reload", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 			const nonce = `reattach-failed-${Date.now()}`;
 			const release = path.join(tempDir, `${nonce}.release`);
@@ -3632,18 +3657,19 @@ Answer only from the supplied synthetic text.
 
 	it("stops a live async workflow through its controller", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const controller = new AbortController();
-		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), new Map([["workflow-stop", controller]]));
+		const runId = `controller-stop-${Date.now()}`;
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), new Map([[runId, controller]]));
 		const result = await executor.execute(
 			"stop-call",
-			{ action: "stop", id: "workflow-stop" },
+			{ action: "stop", id: runId },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
 		);
-		assert.equal(result.isError, undefined);
+		assert.equal(result.isError, undefined, result.content[0]?.text);
 		assert.equal(controller.signal.aborted, true);
 		assert.equal(controller.signal.reason instanceof Error ? controller.signal.reason.message : String(controller.signal.reason), "Workflow stopped.");
-		assert.match(result.content[0]?.text ?? "", /Stop requested for async workflow workflow-stop/);
+		assert.equal(result.content[0]?.text, `Stop requested for async workflow ${runId}.`);
 	});
 
 	it("persists parent-stopped workflow children as stopped instead of failed", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

@@ -252,6 +252,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			fs.mkdirSync(runDir);
 			const events = createEventBus();
 			const transitions: SupervisorWaitEvent[] = [];
+			const notices: unknown[] = [];
+			events.on("subagent:steering-notice", event => notices.push(event));
 			events.on(SUPERVISOR_WAIT_EVENT, event => { if (isSupervisorWaitEvent(event)) transitions.push(event); });
 			const state = createState();
 			let alive = true;
@@ -278,10 +280,12 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				assert.equal(siblingAborted, false);
 				emitSupervisorWait(events, { ...pending, runId: "foreign" });
 				fs.appendFileSync(path.join(runDir, "events.jsonl"), JSON.stringify({ ...pending, key: "0:id:last" }) + "\n");
+				fs.appendFileSync(path.join(runDir, "events.jsonl"), JSON.stringify({ type: "subagent.steering.notice", runId: "waiting", requestId: "final", state: "failed", message: "Final guidance failed", ts: Date.now() }) + "\n");
 				if (settlement === "death") { alive = false; t.mock.timers.tick(10); assert.equal(state.asyncJobs.get("waiting")?.status, "failed"); }
 				else if (settlement === "completion") tracker.handleComplete({ id: "waiting", state: "failed" });
 				else if (settlement === "reset") tracker.resetJobs();
 				else tracker.dispose();
+				if (settlement === "completion") assert.equal(notices.length, 1);
 				assert.deepEqual(transitions.filter(event => event.runId === "waiting" && event.key === "0:id:last").map(event => event.waiting), [true, false]);
 				assert.deepEqual(supervisorWaitSnapshot(events), [{ runId: "foreign", key: pending.key, waiting: true }]);
 				t.mock.timers.tick(100);

@@ -6540,8 +6540,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									if (reattached.status === "settled" && claimedPath) {
 										const imported = importWorkflowAwaitedChildResult(reattached.result, { runId: priorRunId, asyncDir: priorAsyncDir, resultPath: claimedPath, task: typeof childParams.task === "string" ? childParams.task : "", parentWorkflowRunId: workflowReuseSource?.runId, details: { mode: "single", asyncId: priorRunId, asyncDir: priorAsyncDir, results: [] }, state: deps.state, pi: deps.pi });
 										const reattachedResult = workflowChildResult(key, imported, childParams, deps.state);
-										// Like a settled journal match: only a successful child is reused; a failed or stopped one launches fresh.
-										if (reattachedResult.ok) {
+										if (reattachedResult.ok || reattachedResult.terminationReason === SUPERVISOR_WAIT_TIMEOUT_REASON) {
 											workflowChildRunIds.set(key, priorRunId);
 											return { ...reattachedResult, reused: true };
 										}

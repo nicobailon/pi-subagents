@@ -237,6 +237,7 @@ function formatRetainedPathError(label: string, error: RetainedPathError): strin
 }
 
 function childStatus(child: CompletionChild, workflowState?: string): string {
+	if (child.stopped || child.status === "stopped" || child.state === "stopped") return "stopped";
 	if (child.terminationReason) return "paused";
 	const knownStatus = child.status === "complete"
 		? "completed"

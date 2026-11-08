@@ -183,10 +183,9 @@ export function readNamedWorkflowReuseSource(asyncDirRoot: string, runId: string
 	return readWorkflowReuseChain(asyncDirRoot, runId, status);
 }
 
-/** A settled match is reusable only when that child succeeded; failed or stopped children run again. */
 export function matchWorkflowReuse(source: WorkflowReuseSource, key: string, fingerprint: string): WorkflowReuseMatch | undefined {
 	const settled = source.settled.get(key);
-	if (settled) return settled.fingerprint === fingerprint && settled.result.ok ? { kind: "settled", result: settled.result } : undefined;
+	if (settled) return settled.fingerprint === fingerprint && (settled.result.ok || settled.result.terminationReason === "timed-out-waiting-on-supervisor") ? { kind: "settled", result: settled.result } : undefined;
 	const started = source.started.get(key);
 	return started?.fingerprint === fingerprint ? { kind: "started", runId: started.runId } : undefined;
 }

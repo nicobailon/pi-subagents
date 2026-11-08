@@ -75,7 +75,7 @@ function sealPausedRun(asyncDir: string, status: AsyncStatus, resultsDir: string
 	const now = Date.now();
 	const steps = (status.steps ?? []).map((step) => {
 		if (step.status !== "pending" && step.status !== "running" && step.status !== "paused") return step;
-		const { activityState: _activityState, ...rest } = step;
+		const { activityState: _activityState, terminationReason: _terminationReason, timedOut: _timedOut, ...rest } = step;
 		return {
 			...rest,
 			status: "stopped" as const,
@@ -91,12 +91,15 @@ function sealPausedRun(asyncDir: string, status: AsyncStatus, resultsDir: string
 		? existingResult.results.map((entry, index) => {
 			const stepState = status.steps?.[index]?.status;
 			if ((stepState !== "pending" && stepState !== "running" && stepState !== "paused") || !entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
-			const { interrupted: _interrupted, ...result } = entry as Record<string, unknown>;
+			const { interrupted: _interrupted, terminationReason: _terminationReason, timedOut: _timedOut, activityState: _activityState, ...result } = entry as Record<string, unknown>;
 			return { ...result, output: SUBAGENT_STOPPED_MESSAGE, error: SUBAGENT_STOPPED_MESSAGE, success: false, exitCode: 1, stopped: true };
 		})
 		: existingResult.results;
 	const stoppedResult = {
 		...existingResult,
+		terminationReason: undefined,
+		timedOut: undefined,
+		activityState: undefined,
 		success: false,
 		state: "stopped",
 		summary: SUBAGENT_STOPPED_MESSAGE,
@@ -116,6 +119,8 @@ function sealPausedRun(asyncDir: string, status: AsyncStatus, resultsDir: string
 		steps,
 	};
 	delete stoppedStatus.activityState;
+	delete stoppedStatus.terminationReason;
+	delete stoppedStatus.timedOut;
 	writeAsyncResultFile(resultFilePath(resultsDir, status.runId), stoppedResult);
 	writeAtomicJson(path.join(asyncDir, "status.json"), stoppedStatus);
 	updateActiveRunIndex(asyncDir, "stopped", status.toolCallId, { retryCapacityErrors: true, terminalIndexBeforeRelease: true });

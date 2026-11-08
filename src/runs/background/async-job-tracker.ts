@@ -435,13 +435,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}
 	};
 
-	const retireSupervisorWaits = (job: AsyncJobState) => {
+	const retireSupervisorWaits = (job: AsyncJobState, deliverControlEvents = false) => {
 		try {
 			const end = fs.statSync(path.join(job.asyncDir, "events.jsonl")).size;
 			let cursor: number | undefined;
 			do {
 				cursor = job.controlEventCursor;
-				emitNewControlEvents(job, true, end);
+				emitNewControlEvents(job, !deliverControlEvents, end);
 			} while (job.controlEventCursor !== cursor && (job.controlEventCursor ?? 0) < end);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Failed to drain supervisor wait events for '${job.asyncId}':`, error);
@@ -612,7 +612,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							terminalPublications.set(job.asyncId, publication);
 						} else cancelCleanup(job.asyncId);
 					}
-					if (!publication?.pending) retireSupervisorWaits(job);
+					if (!publication?.pending) retireSupervisorWaits(job, true);
 					// Scan on close too: publication may have raced the payload check.
 					if (!isTerminalJobStatus(previousStatus) || (wasPending && !publication?.pending)) options.onJobTerminal?.(job);
 					rememberFleetJob(state, job);
@@ -857,7 +857,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			// Delivery can precede the first terminal status refresh. Remember its
 			// settlement even when no pending publication has been observed yet.
 			terminalPublications.set(asyncId, { pending: false });
-			retireSupervisorWaits(job);
+			retireSupervisorWaits(job, true);
 			try {
 				updateAsyncJobNestedProjection(job);
 			} catch (error) {

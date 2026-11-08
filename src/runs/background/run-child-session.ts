@@ -417,8 +417,6 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 		const armToolTimeout = (event: { toolCallId?: unknown; toolName: string }): void => {
 			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, input.toolTimeoutMs);
 			if (timeoutForTool === undefined) return;
-			const runRemaining = input.runDeadlineAt === undefined ? undefined : Math.max(0, input.runDeadlineAt - Date.now());
-			if (runRemaining !== undefined && timeoutForTool >= runRemaining) return;
 			const key = toolTimeoutCallKey(event, ++toolTimeoutSequence);
 			const toolName = event.toolName;
 			const timer = setTimeout(() => {

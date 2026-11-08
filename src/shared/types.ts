@@ -1385,6 +1385,9 @@ export interface SpawnBudgetSnapshot {
 
 /** Slim per-child projection of a terminal result payload, safe to surface in tool_result details. */
 export interface WaitCompletionChild {
+	terminationReason?: SubagentTerminationReason;
+	timedOut?: boolean;
+	activityState?: "needs_attention";
 	agent?: string;
 	/** Child run identity where the producer records one (workflow children); artifact files are keyed by it. */
 	runId?: string;
@@ -1409,6 +1412,9 @@ export interface WaitCompletionChild {
  * identity and the artifact trail; output text stays in the tool result content.
  */
 export interface WaitCompletion {
+	terminationReason?: SubagentTerminationReason;
+	timedOut?: boolean;
+	activityState?: "needs_attention";
 	runId: string;
 	workflowReceiptPath?: string;
 	agent?: string;

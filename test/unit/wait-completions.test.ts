@@ -15,7 +15,14 @@ describe("workflow wait completion projection", () => {
 		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 		const resultsDir = path.join(root, "nested", "root-run");
 		const runId = "persona";
-		const data = { runId, sessionId: "owner", results: [{ agent: "persona", output: "NESTED_FINDING" }] };
+		const expiry = { terminationReason: "timed-out-waiting-on-supervisor", timedOut: true, activityState: "needs_attention" };
+		const data = { runId, sessionId: "owner", ...expiry, results: [{ agent: "persona", output: "NESTED_FINDING", ...expiry }] };
+		const projected = toWaitCompletion(data, runId);
+		for (const value of [projected, projected.results?.[0]]) {
+			assert.equal(value?.terminationReason, expiry.terminationReason);
+			assert.equal(value?.timedOut, true);
+			assert.equal(value?.activityState, "needs_attention");
+		}
 		const resultPath = path.join(resultsDir, `${runId}.json`);
 		writeAsyncResultFile(resultPath, data);
 		writeAsyncResultFile(path.join(root, `${runId}.json`), { ...data, results: [{ output: "WRONG_NAMESPACE" }] });
@@ -29,7 +36,10 @@ describe("workflow wait completion projection", () => {
 		const replay = writeCompletionReplay({ resultsDir, runId, sessionId: "owner", completion: toWaitCompletion(data, runId), data, now: Date.now(), ttlMs: 60_000 });
 		fs.rmSync(resultPath);
 		references.length = 0;
-		assert.equal(collectWaitCompletions(terminal, state, resultsDir, (text) => references.push(text))?.[0]?.archivePath, replay.archivePath);
+		const replayed = collectWaitCompletions(terminal, state, resultsDir, (text) => references.push(text))?.[0];
+		assert.equal(replayed?.archivePath, replay.archivePath);
+		assert.equal(replayed?.terminationReason, expiry.terminationReason);
+		assert.equal(replayed?.results?.[0]?.terminationReason, expiry.terminationReason);
 		assert.deepEqual(references, [`Result [${runId}]: ${replay.archivePath}`]);
 		assert.equal(JSON.parse(fs.readFileSync(replay.archivePath, "utf8")).entries[0].text, "NESTED_FINDING");
 		assert.equal(collectWaitCompletions([{ ...terminal[0]!, sessionId: "sibling" }], state, resultsDir), undefined);

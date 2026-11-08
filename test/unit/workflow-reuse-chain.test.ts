@@ -34,6 +34,18 @@ describe("workflow reuse across a relaunch chain", () => {
 		}
 	};
 
+	it("retains supervisor expiry while retrying ordinary failed children", () => {
+		withRoot((root, writeRun) => {
+			writeRun("source", { head: true });
+			for (const expired of [true, false]) {
+				const result: WorkflowScriptChildResult = { key: "child", ok: false, output: "retained evidence", artifactPaths: [], ...(expired ? { state: "paused", timedOut: true, terminationReason: "timed-out-waiting-on-supervisor" } : {}) };
+				appendWorkflowChildJournal(path.join(root, "source"), { type: "settle", key: "child", fingerprint: "fp", result });
+				const source = readNamedWorkflowReuseSource(root, "source", "digest", CWD);
+				assert.deepEqual(matchWorkflowReuse(source, "child", "fp"), expired ? { kind: "settled", result } : undefined);
+			}
+		});
+	});
+
 	it("takes each key from the newest run that recorded it", () => {
 		withRoot((root, writeRun) => {
 			writeRun("a", { records: [{ key: "k3", settle: "a-k3" }, { key: "k4", settle: "a-k4" }] });

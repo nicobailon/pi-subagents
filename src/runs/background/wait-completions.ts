@@ -100,6 +100,9 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 			const contextOverflow = child.contextOverflow === true;
 			const timeoutRecovery = projectTimeoutRecovery(child.timeoutRecovery);
 			return [{
+				...(child.terminationReason === "timed-out-waiting-on-supervisor" ? { terminationReason: child.terminationReason } : {}),
+				...(typeof child.timedOut === "boolean" ? { timedOut: child.timedOut } : {}),
+				...(child.activityState === "needs_attention" ? { activityState: child.activityState } : {}),
 				...(agent ? { agent } : {}),
 				...(childRunId ? { runId: childRunId } : {}),
 				...(usage ? { usage } : {}),
@@ -127,6 +130,9 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 	if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match its completion run id.");
 	return {
 		runId,
+		...(data.terminationReason === "timed-out-waiting-on-supervisor" ? { terminationReason: data.terminationReason } : {}),
+		...(typeof data.timedOut === "boolean" ? { timedOut: data.timedOut } : {}),
+		...(data.activityState === "needs_attention" ? { activityState: data.activityState } : {}),
 		...(agent ? { agent } : {}),
 		...(mode ? { mode } : {}),
 		...(workflowReceiptPath ? { workflowReceiptPath } : {}),
