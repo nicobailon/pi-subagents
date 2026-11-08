@@ -268,7 +268,7 @@ describe("workflow wait completion projection", () => {
 	});
 
 	it("retains known stop reasons and omits invalid values", () => {
-		for (const stopReason of ["stop", "length", "toolUse", "error", "aborted", undefined, "invalid", 42]) {
+		for (const stopReason of ["pending", "stop", "length", "toolUse", "error", "aborted", "deferred", undefined, "invalid", 42]) {
 			const completion = toWaitCompletion({ success: false, results: [{ success: false, stopReason }] }, "run-stop");
 			assert.equal(completion.results?.[0]?.stopReason, typeof stopReason === "string" && stopReason !== "invalid" ? stopReason : undefined);
 		}

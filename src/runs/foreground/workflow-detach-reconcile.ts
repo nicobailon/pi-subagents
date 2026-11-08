@@ -58,12 +58,13 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 			if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
 			const child = entry as Record<string, unknown>;
 			if (child.runId !== childRunId) return child;
-			return {
+			const settled = {
 				...child,
 				success: result.exitCode === 0 && !result.error && !result.interrupted,
 				output,
 				outputState: output.trim() ? "present" : "absent",
 				detached: undefined,
+				...(result.stopReason ? { stopReason: result.stopReason } : {}),
 				...(usage ? { usage } : {}),
 				...(outputReference ? { outputReference } : {}),
 				...(outputPathMapping ? { outputPathMapping } : {}),
@@ -74,6 +75,8 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 				...(result.sessionFile ? { sessionFile: result.sessionFile } : {}),
 				...(result.error ? { error: result.error } : {}),
 			};
+			delete settled.detached;
+			return settled;
 		});
 	}
 	return status.steps?.map((step: WorkflowStatusStep) => ({
@@ -83,6 +86,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 		runId: step.runId,
 		success: step.status === "completed" || step.status === "complete",
 		output: step.runId === childRunId ? output : "",
+		...(step.runId === childRunId && result.stopReason ? { stopReason: result.stopReason } : step.stopReason ? { stopReason: step.stopReason } : {}),
 		outputState: step.runId === childRunId && output.trim() ? "present" : "absent",
 		...(step.runId === childRunId ? { ...(usage ? { usage } : {}), ...(result.sessionFile ? { sessionFile: result.sessionFile } : {}) } : {}),
 		...(step.runId === childRunId && outputReference ? { outputReference } : step.workflowKey && receipt?.entries[step.workflowKey]?.outputReference ? { outputReference: receipt.entries[step.workflowKey]!.outputReference } : {}),
@@ -199,6 +203,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 	const outputPathMapping = outputPathMappingFromTask(input.result.task, outputReference);
 	const settledStep = findWorkflowSettlementStep(next, input.childRunId);
 	if (settledStep && outputPathMapping) settledStep.outputPathMapping = outputPathMapping;
+	if (settledStep && input.result.stopReason) settledStep.stopReason = input.result.stopReason;
 	const resultPath = resultFilePath(DIRS.results, input.workflowRunId);
 	let existing: Record<string, unknown> | undefined;
 	try {

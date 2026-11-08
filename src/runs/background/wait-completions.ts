@@ -97,7 +97,7 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 			const model = asNonEmptyString(child.model);
 			const structuredOutput = projectStructuredOutput(child.structuredOutput);
 			const structuredOutputPath = asNonEmptyString(child.structuredOutputPath);
-			const stopReason = child.stopReason === "stop" || child.stopReason === "length" || child.stopReason === "toolUse" || child.stopReason === "error" || child.stopReason === "aborted"
+			const stopReason = child.stopReason === "pending" || child.stopReason === "stop" || child.stopReason === "length" || child.stopReason === "toolUse" || child.stopReason === "error" || child.stopReason === "aborted" || child.stopReason === "deferred"
 				? child.stopReason
 				: undefined;
 			const contextOverflow = child.contextOverflow === true;

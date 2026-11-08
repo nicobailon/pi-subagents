@@ -3103,6 +3103,36 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.ok(Date.now() - startedAt < 4000, "agent_settled should trigger bounded child cleanup");
 	});
 
+	for (const mode of ["single", "workflow", "async-workflow"] as const) {
+		it(`retains length stop reasons through ${mode} publication and history`, async () => {
+			const message = events.assistantMessage("partial reply") as { message: { stopReason: string } };
+			message.message.stopReason = "length";
+			mockPi.onCall({ jsonl: [message, { type: "agent_settled" }] });
+			const bus = createEventBus();
+			const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, bus);
+			const result = await executor.execute("length-projection", mode === "single"
+				? { agent: "echo", task: "Reply", async: false, acceptance: false, output: false }
+				: { async: mode === "async-workflow", workflowScript: 'return await runs.run("child", { agent: "echo", task: "Reply", async: false, acceptance: false, output: false });' },
+				undefined, undefined, makeMinimalCtx(tempDir));
+			if (mode === "async-workflow") {
+				const resultPath = path.join(DIRS.results, `${result.details.asyncId}.json`);
+				for (let attempt = 0; attempt < 20 && !fs.existsSync(resultPath); attempt++) {
+					await new Promise((resolve) => setTimeout(resolve, 250));
+				}
+				const payload = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+				assert.equal(payload.success, false);
+				assert.equal(payload.results[0].stopReason, "length");
+				const { toWaitCompletion } = await import("../../src/runs/background/wait-completions.ts");
+				assert.equal(toWaitCompletion(payload, result.details.asyncId!).results?.[0]?.stopReason, "length");
+			} else {
+				assert.equal(result.details.results[0]?.stopReason, "length");
+				assert.equal(result.details.results[0]?.exitCode, 1);
+			}
+			const saved = savedForegroundRuns<{ children: Array<{ stopReason?: string }> }>();
+			assert.ok(saved.some((run) => run.children.some((child) => child.stopReason === "length")));
+		});
+	}
+
 	it("tracks usage from message events", async () => {
 		mockPi.onCall({ output: "Done" });
 		const agents = makeAgentConfigs(["echo"]);

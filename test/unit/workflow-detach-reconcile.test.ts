@@ -184,7 +184,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 			workflowRunId,
 			childRunId: "child-1",
 			events: { emit: (_name, payload) => { emitted = payload as CompletionNotification; } } as IntercomEventBus,
-			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${requestedPath}`, exitCode: 0, sessionFile, savedOutputPath: savedPath, usage: { input: 100, output: 50, cacheRead: 25, cacheWrite: 5, cost: 0.001, turns: 1 } },
+			result: { index: 0, agent: "worker", task: `Write your findings to exactly this path: ${requestedPath}`, exitCode: 0, stopReason: "stop", sessionFile, savedOutputPath: savedPath, usage: { input: 100, output: 50, cacheRead: 25, cacheWrite: 5, cost: 0.001, turns: 1 } },
 		}), true);
 		const published = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${workflowRunId}.json`), "utf-8")) as { state?: string; success?: boolean; summary?: string; error?: string; sessionId?: string; scheduleOrigin?: typeof scheduleOrigin; workflowResolution?: string; recovery?: unknown[]; results?: Array<{ outputReference?: string; outputPathMapping?: unknown }>; workflowReceipt?: { receipt?: { state?: string; workflowResolution?: string; recovery?: unknown[]; entries?: Record<string, { resumability?: { state?: string; reason?: string } }> } } };
 		assert.equal(published.state, "failed");
@@ -198,6 +198,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		assert.deepEqual(published.results?.[0]?.outputPathMapping, { requestedPath, savedPath });
 		const publishedChild = published.results?.[0] as { usage?: unknown; sessionFile?: string } | undefined;
 		assert.deepEqual(publishedChild?.usage, { input: 100, output: 50, cacheRead: 25, cacheWrite: 5, cost: 0.001, turns: 1 });
+		assert.equal(publishedChild?.stopReason, "stop");
 		assert.equal(publishedChild?.sessionFile, sessionFile);
 		assert.equal(published.sessionId, "session-1");
 		assert.deepEqual(published.scheduleOrigin, scheduleOrigin);
