@@ -464,7 +464,7 @@ Optional hard per-tool-call deadline in milliseconds. When configured, a child t
 
 Without a configured value, Pi still applies a five-minute hard timeout to known-fast built-in tools: `read`, `grep`, `find`, `ls`, `edit`, `write`, and `structured_output`. Long-running tools such as `bash`, custom tools, and MCP tools do not get a hard default. They get the normal open-tool attention notice after `activeNoticeAfterMs` and remain bounded by the run-level deadline.
 
-The tool timer tracks each active `toolCallId` separately and never extends the run-level deadline: when the remaining run budget is shorter, the ordinary run-level timeout wins. `contact_supervisor`, `intercom`, and `bg_wait` are exempt because their legitimate purpose can be to wait for a human, supervisor, or background run. Use hard tool timeouts only for wedge protection; an elapsed timeout is not a mutation-safe boundary. Configured values must be positive integers no greater than `2147483647`; invalid or out-of-range values are rejected with a visible error rather than silently ignored.
+The tool timer tracks each active `toolCallId` separately. While the run clock is advancing, a shorter remaining run budget expires first. Ordinary tool timers keep running when a concurrent supervisor wait pauses the run budget. `contact_supervisor`, `intercom`, and `bg_wait` are exempt because their legitimate purpose can be to wait for a human, supervisor, or background run. Use hard tool timeouts only for wedge protection; an elapsed timeout is not a mutation-safe boundary. Configured values must be positive integers no greater than `2147483647`; invalid or out-of-range values are rejected with a visible error rather than silently ignored.
 
 ## `checkpointBeforeDeadlineMs`
 
