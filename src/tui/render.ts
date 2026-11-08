@@ -2579,12 +2579,15 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const status = widgetStepStatus(step.status, theme, thinking);
 		const activity = widgetStepActivityLine(step, width, false, job.updatedAt);
 		const stepStats = widgetStepStats(theme, step, job.updatedAt);
-		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 		const task = compactTaskText(step.description, step.label);
 		const taskSuffix = task ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", `task: ${task}`)}` : "";
+		const progressRow = reportedProgressRow(step, theme, "      ", width - 6);
+		const activitySuffix = activity && !progressRow ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
 		const marker = rowIndex === rows.length - 1 && rowIndex >= group.total - 1 ? "└─" : "├─";
 		lines.push(`    ${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, row.index), frame, thinking)} ${themeBold(theme, row.rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		if (progressRow) lines.push(progressRow);
+		if (progressRow && activity) lines.push(`      ${theme.fg("dim", `⎿  ${activity}`)}`);
 		const lane = projectAsyncLane(job, step);
 		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "      "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`      ${nestedLine}`);
