@@ -647,6 +647,34 @@ describe("acknowledged steering action", () => {
 		}
 	});
 
+	for (const stage of ["before-wait", "before-claim", "after-claim"]) {
+		it(`does not recover explicitly rejected guidance ${stage}`, async () => {
+			const runId = `steer-rejected-${stage}-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, runId);
+			writeStatus(asyncDir, runningStatus(runId));
+			let request!: SteerRequest;
+			let recovered = false;
+			const reject = () => {
+				const status = runningStatus(runId);
+				projectRequest(status, request, ["failed"]);
+				writeStatus(asyncDir, status);
+			};
+			try {
+				const result = await steerAsyncRun({
+					state: createState(), runId, message: "Late guidance", location: { asyncDir }, ackTimeoutMs: 10, recoveryTimeoutMs: 50, kill: () => true,
+					onRequestQueued(requestPath) { request = JSON.parse(fs.readFileSync(requestPath, "utf-8")); if (stage === "before-wait") reject(); },
+					onBeforeRecoveryClaim() { if (stage === "before-claim") reject(); },
+					onRecoveryCommitted() { if (stage === "after-claim") reject(); },
+					recover: async () => { recovered = true; return successResult("replacement"); },
+				});
+				assert.equal(result.isError, true);
+				assert.equal(recovered, false);
+				assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
+				assert.equal(fs.existsSync(path.join(asyncDir, "control", "steer-recovery", "claim.json")), false);
+			} finally { removeAsyncDir(asyncDir); }
+		});
+	}
+
 	it("leaves a single run paused when no session can be revived", async () => {
 		const runId = `steer-no-session-${Date.now().toString(36)}`;
 		const asyncDir = path.join(ASYNC_DIR, runId);
@@ -661,7 +689,7 @@ describe("acknowledged steering action", () => {
 				onRequestQueued: (requestPath) => {
 					const request = JSON.parse(fs.readFileSync(requestPath, "utf-8")) as SteerRequest;
 					routed = runningStatus(runId);
-					projectRequest(routed, request, ["failed"]);
+					projectRequest(routed, request, ["routed"]);
 					writeStatus(asyncDir, routed);
 				},
 				onRecoveryCommitted: () => {

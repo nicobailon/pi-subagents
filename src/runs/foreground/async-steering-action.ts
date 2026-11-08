@@ -199,7 +199,7 @@ export async function steerAsyncRun(input: {
 	if (finalResult && steerTargetsAccepted(finalResult)) return acceptedReply(finalResult);
 	const running = (finalStatus?.steps ?? status.steps ?? []).filter((step) => step.status === "running");
 	const recoveryAllowed = (input.mode ?? "steer") === "steer" && status.mode === "single" && status.isNested !== true && running.length === 1 && Boolean(finalStatus?.steering) && (input.index === undefined || input.index === 0);
-	if (recoveryAllowed && finalResult?.state !== "scheduled" && input.recover) {
+	if (recoveryAllowed && finalResult?.state !== "scheduled" && finalResult?.state !== "failed" && input.recover) {
 		const appendSteeringNotice = (state: "failed" | "recovered", message: string): void => {
 			try {
 				fs.appendFileSync(path.join(asyncDir, "events.jsonl"), `${JSON.stringify({ type: "subagent.steering.notice", ts: Date.now(), runId: status.runId, requestId, state, message, ...(status.sessionId ? { currentSessionId: status.sessionId } : {}) })}\n`);
@@ -211,6 +211,7 @@ export async function steerAsyncRun(input: {
 			const latest = readStatus(asyncDir);
 			const latestResult = latest?.steering ? actionResultFromSteeringStatus(latest.steering, status.runId, requestId) : undefined;
 			if (latestResult && steerTargetsAccepted(latestResult)) return acceptedReply(latestResult);
+			if (latestResult?.state === "failed") throw new Error("Child rejected guidance; use explicit retained resume for further work.");
 			const committedAt = Date.now();
 			input.onBeforeRecoveryClaim?.(requestId, committedAt);
 			const { claimPath, markerPath } = claimSteeringRecovery(asyncDir, { requestId, sourceRunId: status.runId, committedAt });
@@ -219,11 +220,12 @@ export async function steerAsyncRun(input: {
 			const preCommitResult = preCommitStatus?.steering ? actionResultFromSteeringStatus(preCommitStatus.steering, status.runId, requestId) : undefined;
 			if (
 				preCommitResult
-				&& preCommitResult.targets.length > 0
-				&& preCommitResult.targets.every((target) => target.state === "queued" || (target.deliveredAt !== undefined && target.deliveredAt <= committedAt))
+				&& (preCommitResult.state === "failed" || (preCommitResult.targets.length > 0
+					&& preCommitResult.targets.every((target) => target.state === "queued" || (target.deliveredAt !== undefined && target.deliveredAt <= committedAt))))
 			) {
 				fs.rmSync(markerPath, { force: true });
 				fs.rmSync(claimPath, { force: true });
+				if (preCommitResult.state === "failed") throw new Error("Child rejected guidance; use explicit retained resume for further work.");
 				return acceptedReply(preCommitResult);
 			}
 			try {

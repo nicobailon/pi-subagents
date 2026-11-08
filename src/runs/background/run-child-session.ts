@@ -703,12 +703,12 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				const steer = created.steer.bind(created);
 				const followUp = created.followUp.bind(created);
 				created.steer = async (text) => {
+					await steer(text);
 					if (cleanTerminalAssistantStopReceived || agentSettledReceived) queuedDrainHold = true;
-					return steer(text);
 				};
 				created.followUp = async (text) => {
+					await followUp(text);
 					if (cleanTerminalAssistantStopReceived || agentSettledReceived) queuedDrainHold = true;
-					return followUp(text);
 				};
 				unsubscribe = created.subscribe(processEvent);
 				input.registerWatchdogStatus?.((event) => processEvent(event as unknown as ChildSessionEvent));

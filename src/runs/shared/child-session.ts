@@ -16,6 +16,7 @@ import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult
 import { CHILD_COMMAND_TOOL, createChildCommandRuntime } from "./child-commands.ts";
 import { supervisorChannelDir } from "./child-tool-plan.ts";
 import { pinChildCacheRetention } from "../../shared/child-cache-retention.ts";
+import { parseAcceptanceReport } from "./acceptance.ts";
 import { getAgentDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import { resolvePackageSubpath } from "../background/runner-aliases.ts";
 import { PI_CODING_AGENT_PACKAGE, resolveHostPiPackageRoot } from "./pi-spawn.ts";
@@ -725,12 +726,26 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				mcpWaits.set(cancel, { ready, parent: launch.parentSessionFile });
 				try { await ready; } finally { mcpWaits.delete(cancel); }
 			}
+			let reportCompleted = false;
+			const assertAcceptsGuidance = (): void => {
+				if (reportCompleted) throw new Error("Child completed its acceptance report; resume it for further guidance.");
+			};
 			const child: ChildSession = {
-				subscribe: (listener) => session.subscribe((event) => listener(event as unknown as ChildSessionEvent)),
+				subscribe: (listener) => session.subscribe((event) => {
+					if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "stop") {
+						const text = event.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+						const report = parseAcceptanceReport(text);
+						if (report.report || report.malformed) {
+							reportCompleted = true;
+							session.clearQueue();
+						}
+					}
+					listener(event as unknown as ChildSessionEvent);
+				}),
 				prompt: (text) => session.prompt(text),
 				...(commands ? { finishCommands: () => commands.finish() } : {}),
-				steer: async (text) => { await session.steer(text); },
-				followUp: async (text) => { await session.followUp(text); },
+				steer: async (text) => { assertAcceptsGuidance(); await session.steer(text); },
+				followUp: async (text) => { assertAcceptsGuidance(); await session.followUp(text); },
 				abort: () => session.abort(),
 				hasQueuedMessages: () => session.agent?.hasQueuedMessages?.() === true,
 				dispose: () => {
