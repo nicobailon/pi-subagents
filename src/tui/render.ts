@@ -673,6 +673,20 @@ function workflowLabelForResult(details: Details, resultIndex: number): string |
 	return details.workflowGraph ? visit(details.workflowGraph.nodes) : undefined;
 }
 
+function reportedProgressRow(progress: Pick<AgentProgress, "progressText" | "progressUpdatedAt">, theme: Theme, indent: string, width: number): string | undefined {
+	const text = progress.progressText?.trim();
+	if (!text) return undefined;
+	const ageMs = progress.progressUpdatedAt !== undefined ? Math.max(0, Date.now() - progress.progressUpdatedAt) : undefined;
+	let updated = "";
+	if (ageMs !== undefined) {
+		const seconds = Math.floor(ageMs / 1000);
+		const minutes = Math.floor(seconds / 60);
+		const age = seconds < 60 ? `${seconds}s` : minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
+		updated = ` · updated ${age} ago`;
+	}
+	return truncLine(theme.fg("dim", `${indent}progress: ${sanitizeDisplayText(text)}${updated}`), Math.max(0, width));
+}
+
 function foregroundProgressForResult(details: Details, resultIndex: number): AgentProgress | undefined {
 	const result = details.results[resultIndex];
 	if (result?.progress) return result.progress;
@@ -1040,6 +1054,8 @@ function widgetStepRenderKey(step: AsyncJobStep, index: number, expanded = false
 		step.workflowKey,
 		step.phase,
 		step.label,
+		step.progressText,
+		step.progressUpdatedAt,
 		step.status,
 		step.activityState,
 		step.lastActivityAt,
@@ -2417,6 +2433,8 @@ function foregroundStyleWidgetStepLines(
 	const task = fullTask ? undefined : collapseDetails ? stepTaskSummary(step, displayName) : compactTaskText(step.description, step.label);
 	for (const line of fullTask ?? []) lines.push(`${detailIndent}${theme.fg("dim", line)}`);
 	if (task) lines.push(`${detailIndent}${theme.fg("dim", `task: ${task}`)}`);
+	const progressRow = reportedProgressRow(step, theme, detailIndent, width - detailIndent.length - 4);
+	if (progressRow) lines.push(progressRow);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	const currentPath = options?.includeCurrentPath && step.currentPath ? shortenPath(step.currentPath) : undefined;
 	const activityWithPath = currentPath && activity && !activity.includes(currentPath)
@@ -3261,6 +3279,8 @@ function renderSingleCompact(
 	if (isRunning && r.progress) {
 		const task = compactTaskText(r.task);
 		if (task) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}task: ${task}`), width), 0, 0));
+		const reportedRow = reportedProgressRow(foregroundProgressForResult(d, 0) ?? r.progress, theme, detailIndent, width);
+		if (reportedRow) c.addChild(new Text(reportedRow, 0, 0));
 		const progressSnapshotNow = snapshotNowForProgress(r.progress);
 		const activity = compactCurrentActivity(r.progress);
 		c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}⎿  ${activity}`), width), 0, 0));
@@ -3522,6 +3542,8 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 			const task = compactTaskText(r.task, workflowLabelForResult(d, i));
 			if (task) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}task: ${task}`), width), 0, 0));
 		}
+		const reportedRow = progressFromArray ? reportedProgressRow(progressFromArray, theme, detailIndent, width) : undefined;
+		if (reportedRow) c.addChild(new Text(reportedRow, 0, 0));
 		if (rRunning && rProg && "status" in rProg) {
 			const liveProgress = rProg as AgentProgress;
 			const activity = compactCurrentActivity(liveProgress);
@@ -3662,6 +3684,8 @@ export function renderSubagentResult(
 		}
 
 		if (isRunning && r.progress) {
+			const reportedRow = reportedProgressRow(foregroundProgressForResult(d, 0) ?? r.progress, theme, "  ", w);
+			if (reportedRow) c.addChild(new Text(fit(reportedRow), 0, 0));
 			const progressSnapshotNow = snapshotNowForProgress(r.progress);
 			for (const nestedLine of formatNestedWidgetLines(r.children, theme, w, true, progressSnapshotNow, 12)) {
 				c.addChild(new Text(fit(`  ${nestedLine}`), 0, 0));
@@ -3873,6 +3897,8 @@ export function renderSubagentResult(
 			? r.task
 			: `${r.task.slice(0, taskMaxLen)}...`;
 		c.addChild(new Text(fit(theme.fg("dim", `    task: ${taskPreview}`)), 0, 0));
+		const reportedRow = progressFromArray ? reportedProgressRow(progressFromArray, theme, "    ", w) : undefined;
+		if (reportedRow) c.addChild(new Text(fit(reportedRow), 0, 0));
 
 		const outputTarget = extractOutputTarget(r.task);
 		if (outputTarget) {

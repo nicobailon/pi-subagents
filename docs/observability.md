@@ -16,6 +16,12 @@ Long-open `bash` attention notices identify the exact tool call and include stat
 
 Live progress shows compact detail for single, chain, and parallel modes: a bounded one-line task, current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available. Workflow `label` metadata wins over raw task text in compact multi-child cards.
 
+Children can report a concise status through `contact_supervisor` without asking for a reply. The first line of each successful `progress_update` message is shown as an extra progress row; later lines are not displayed. Keep it short and describe the current activity without repeating the task title. The UI places `progress:` below the task and above activity details; a leading `progress:` in the message is stripped case-insensitively. The update age shows seconds for the first minute, whole minutes for the first hour, and then hours and minutes (for example, `1:05 ago`). For example:
+
+```ts
+contact_supervisor({ reason: "progress_update", message: "[1/2] Reading the status projection tests" });
+```
+
 Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step.
 
 Sequential chains show a flow line like `done scout → running worker`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
