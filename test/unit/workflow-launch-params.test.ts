@@ -150,36 +150,30 @@ describe("workflow launch params", () => {
 		assert.equal(redo.task, "Run with narrower guidance");
 	});
 
-	it("passes an omitted child timeout parent deadline for default resolution", () => {
-		const parentDeadlineAt = Date.now() + 60_000;
+	it("leaves omitted child timeouts to child defaults", () => {
 		const params = prepareWorkflowLaunchParams(
 			{},
 			{ agent: "worker", task: "Run" },
 			"workflow-run",
 			"run",
-			{ parentDeadlineAt },
 		);
 		assert.equal(params.async, undefined);
 		assert.equal(params.workflowAwaitAsync, true);
 		assert.equal(params.timeoutMs, undefined);
-		assert.equal(params.workflowParentDeadlineAt, parentDeadlineAt);
 	});
 
-	it("preserves explicit child timeout aliases over the parent deadline", () => {
-		const parentDeadlineAt = Date.now() + 60_000;
+	it("preserves explicit child timeout aliases", () => {
 		assert.equal(prepareWorkflowLaunchParams(
 			{},
 			{ agent: "worker", task: "Run", timeoutMs: 90_000 },
 			"workflow-run",
 			"timeout",
-			{ parentDeadlineAt },
 		).timeoutMs, 90_000);
 		const maxRuntimeParams = prepareWorkflowLaunchParams(
 			{},
 			{ agent: "worker", task: "Run", maxRuntimeMs: 90_000 },
 			"workflow-run",
 			"max-runtime",
-			{ parentDeadlineAt },
 		);
 		assert.equal(maxRuntimeParams.maxRuntimeMs, 90_000);
 		assert.equal(maxRuntimeParams.timeoutMs, undefined);
@@ -370,14 +364,13 @@ describe("workflow launch params", () => {
 		assert.deepEqual(control.notifyChannels, []);
 	});
 
-	it("does not inherit parent deadlines for retained workflow children", () => {
+	it("preserves the retained resume launch contract", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
 				{},
 				{ resume: "retained-run", task: "Continue" },
 				"workflow-run",
 				"continue",
-				{ parentDeadlineAt: Date.now() + 60_000 },
 			),
 			{
 				action: "resume",

@@ -6,8 +6,10 @@ import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/para
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
 import { describeGateAcceptanceConflict, parseGateInput } from "../runs/shared/acceptance.ts";
 import { REQUIRE_LAUNCHER_SHAPE_ERROR } from "../runs/shared/runner-launcher.ts";
-import type { AcceptanceRecoveryMetadata, HostStepNode, SingleResult, WorkflowScriptFailureKind } from "../shared/types.ts";
+import type { AcceptanceRecoveryMetadata, HostStepNode, IntercomEventBus, SingleResult, WorkflowScriptFailureKind } from "../shared/types.ts";
 import { normalizeWorkflowHostCommandParams, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "./host-command.ts";
+
+import { createActiveRuntimeTimeout, isSupervisorWaitEvent, supervisorWaitSnapshot, SUPERVISOR_WAIT_EVENT, type SupervisorWaitEvent } from "../runs/shared/active-runtime-timeout.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const BASE_REF_VALIDATION_ERROR = "baseRef must be a valid Git ref: use HEAD or a supported named ref (for example, refs/heads/main). Full 40/64-character commit IDs and revision expressions are unsupported.";
@@ -49,8 +51,9 @@ export interface WorkflowScriptChildResult {
 	key: string;
 	/** True only for successfully completed child work, never for a launch receipt. */
 	ok: boolean;
-	/** An explicit async launch returned before a final child result was available. */
-	state?: "running";
+	/** Running marks a launch receipt; paused marks terminal supervisor expiry. */
+	state?: "running" | "paused";
+	terminationReason?: import("../shared/types.ts").SubagentTerminationReason;
 	asyncDir?: string;
 	lane?: import("../shared/types.ts").WorkflowLaneMetadata;
 	terminalOutcome?: import("../shared/types.ts").WorkflowTerminalOutcome;
@@ -82,7 +85,8 @@ export interface WorkflowScriptChildResult {
 export interface WorkflowScriptTraceEntry {
 	operation: "run" | "status" | "steer" | "host";
 	key: string;
-	state: "started" | "completed" | "failed" | "detached" | "stopped" | "reused" | "queued" | "delivered" | "missed";
+	state: "started" | "completed" | "failed" | "paused" | "detached" | "stopped" | "reused" | "queued" | "delivered" | "missed";
+	terminationReason?: import("../shared/types.ts").SubagentTerminationReason;
 	/** Canonical child agent name when resolved launch or result data is available. */
 	agent?: string;
 	runId?: string;
@@ -193,13 +197,14 @@ export interface RunWorkflowScriptOptions {
 	/** Host-only first-slice admission context. It is never sent to the workflow worker. */
 	oneUsePermit?: { claim: (key: string) => string | undefined };
 	timeoutMs?: number;
+	supervisorWait?: { events: IntercomEventBus; owns: (runId: string) => boolean };
 	signal?: AbortSignal;
 	/** Let an async workflow flush pure result assembly after reload once every child is terminal. */
 	continueAfterAbortWhenChildrenSettled?: (abortError: Error) => boolean;
 	/** Maximum children executing concurrently within this workflow. Defaults to 20. */
 	globalConcurrencyLimit?: number;
 	admit?: (calls: Array<{ key: string; params: Record<string, unknown> }>, signal: AbortSignal) => void | Promise<void>;
-	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean; batch: boolean }) => Promise<WorkflowScriptChildResult>;
+	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean; batch: boolean; adoptSupervisorWait: (runId: string) => void }) => Promise<WorkflowScriptChildResult>;
 	resolveResume?: (reference: WorkflowReceiptResumeReference | string, signal: AbortSignal, index?: number) => string | WorkflowResolvedResumeReference | Promise<string | WorkflowResolvedResumeReference>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	steer?: (key: string, message: string, options: WorkflowSteerOptions, signal: AbortSignal) => Promise<WorkflowSteerResult>;
@@ -1451,7 +1456,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			? "completed"
 			: result.stopped
 				? "stopped"
-				: result.detached
+				: result.detached || result.terminationReason
 					? "paused"
 					: "failed";
 		const outputReference = result.outputReference ?? result.outputArtifactPath;
@@ -1477,6 +1482,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 		const finish = (outcome: { value: unknown } | { error: Error & { workflowErrorKind?: unknown } }) => {
 			if (settled || finishing) return;
 			finishing = true;
+			timer?.dispose();
+			unsubscribeSupervisorWait?.();
 			if (assemblyFlushTimer !== undefined) {
 				clearTimeout(assemblyFlushTimer);
 				assemblyFlushTimer = undefined;
@@ -1487,7 +1494,6 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				settled = true;
 				options.registerStopChild?.(undefined);
 				options.registerDrain?.(undefined);
-				if (timer) clearTimeout(timer);
 				options.signal?.removeEventListener("abort", onAbort);
 				void worker.terminate();
 				const unobservedKeys = "value" in outcome ? [...launches].filter(([, launch]) => !launch.observed).map(([key]) => key) : [];
@@ -1552,11 +1558,22 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			traceChanged();
 			finish({ error });
 		};
-		const timer = options.timeoutMs === undefined
-			? undefined
-			: setTimeout(() => {
-				finish({ error: taggedWorkflowError(`Workflow script timed out after ${options.timeoutMs}ms.`, "timeout") });
-			}, options.timeoutMs);
+		const timer = options.timeoutMs === undefined ? undefined : createActiveRuntimeTimeout(options.timeoutMs);
+		const adoptedRuns = new Set<string>();
+		const applyOwnedWaitOrRelease = (event: SupervisorWaitEvent) => {
+			if (event.waiting && !adoptedRuns.has(event.runId) && !options.supervisorWait?.owns(event.runId)) return;
+			timer?.setWaiting(JSON.stringify([event.runId, event.key]), event.waiting);
+		};
+		const reconcileWaits = () => {
+			if (!timer || !options.supervisorWait) return;
+			for (const event of supervisorWaitSnapshot(options.supervisorWait.events)) applyOwnedWaitOrRelease(event);
+		};
+		const adoptSupervisorWait = (runId: string) => { adoptedRuns.add(runId); reconcileWaits(); };
+		const unsubscribeSupervisorWait = timer && options.supervisorWait?.events.on(SUPERVISOR_WAIT_EVENT, (event) => {
+			if (isSupervisorWaitEvent(event)) applyOwnedWaitOrRelease(event);
+		});
+		reconcileWaits();
+		timer?.start(() => finish({ error: taggedWorkflowError(`Workflow script timed out after ${options.timeoutMs}ms.`, "timeout") }));
 		options.signal?.addEventListener("abort", onAbort, { once: true });
 		if (options.signal?.aborted) return onAbort();
 
@@ -1909,13 +1926,13 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 						return stoppedChildResult(key, text);
 					}
 					acquiredLaunches.add(key);
-					const result = await options.launch(key, launchParams, childSignal, { admitted: true, batch: batch !== undefined });
+					const result = await options.launch(key, launchParams, childSignal, { admitted: true, batch: batch !== undefined, adoptSupervisorWait });
 					const autoResumeParams = setupAbortResumeParams(params, result, childSignal);
 					if (!autoResumeParams) return result;
 					resolvedResumeLineage = [...new Set([...(resolvedResumeLineage ?? []), result.runId!])];
 					trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(autoResumeParams), ...(generatedLaneKey ? { generatedLaneKey } : {}), phase: "auto-resume", runId: result.runId });
 					traceChanged();
-					return options.launch(key, autoResumeParams, childSignal, { admitted: true, batch: batch !== undefined });
+					return options.launch(key, autoResumeParams, childSignal, { admitted: true, batch: batch !== undefined, adoptSupervisorWait });
 				} finally {
 					launchSemaphore.release();
 				}
@@ -1932,8 +1949,8 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				if (stoppedLaunches.has(key)) return children.get(key) ?? normalized;
 				children.set(key, normalized);
 				recordAcceptanceRecoveryBarrier(key, normalized);
-				const state = normalized.state === "running" ? "started" : normalized.ok ? "completed" : normalized.stopped ? "stopped" : normalized.detached ? "detached" : "failed";
-				const settledEntry: WorkflowScriptTraceEntry = { operation: "run", key, state, durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok && normalized.state !== "running" ? { error: normalized.error ?? normalized.output } : {}) };
+				const state = normalized.state === "running" ? "started" : normalized.ok ? "completed" : normalized.stopped ? "stopped" : normalized.terminationReason ? "paused" : normalized.detached ? "detached" : "failed";
+				const settledEntry: WorkflowScriptTraceEntry = { operation: "run", key, state, ...(normalized.terminationReason ? { terminationReason: normalized.terminationReason } : {}), durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(generatedLaneKey ? { generatedLaneKey } : {}), ...(normalized.agent ? { agent: normalized.agent } : {}), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok && normalized.state !== "running" ? { error: normalized.error ?? normalized.output } : {}) };
 				if (normalized.reused) settledEntry.reused = true;
 				trace.push(settledEntry);
 				traceChanged();

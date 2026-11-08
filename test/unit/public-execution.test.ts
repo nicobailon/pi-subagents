@@ -179,7 +179,6 @@ describe("public subagent execution normalization", () => {
 			{ agent: "worker", workflowChildAsyncId: "child" },
 			{ agent: "worker", workflowAwaitAsync: true },
 			{ agent: "worker", workflowAwaitDetached: true },
-			{ agent: "worker", workflowParentDeadlineAt: Date.now() + 1_000 },
 			{ agent: "worker", suppressRoutineResultIntercom: true },
 		] as const) {
 			const result = normalizePublicSubagentExecution(params);

@@ -4,12 +4,15 @@ export function isAgentContract(contract: AgentContract | undefined): boolean {
 	return contract?.version === 1;
 }
 
-export function buildExecutionProjection(result: Pick<SingleResult, "exitCode" | "error" | "interrupted" | "timedOut" | "stopped" | "detached">): ExecutionProjection {
+export function buildExecutionProjection(result: Pick<SingleResult, "exitCode" | "error" | "interrupted" | "timedOut" | "terminationReason" | "stopped" | "detached">): ExecutionProjection {
 	if (result.detached) {
 		return { status: "detached", success: false, exitCode: result.exitCode, detached: true, ...(result.error ? { error: result.error } : {}) };
 	}
 	if (result.stopped) {
 		return { status: "stopped", success: false, exitCode: result.exitCode, stopped: true, ...(result.error ? { error: result.error } : {}) };
+	}
+	if (result.terminationReason) {
+		return { status: "paused", success: false, exitCode: result.exitCode, timedOut: true, terminationReason: result.terminationReason, ...(result.error ? { error: result.error } : {}) };
 	}
 	if (result.interrupted) {
 		return { status: "paused", success: false, exitCode: result.exitCode, interrupted: true, ...(result.error ? { error: result.error } : {}) };

@@ -145,6 +145,42 @@ describe("applyDetachedChildToPausedWorkflow", () => {
 });
 
 describe("reconcileDetachedWorkflowChildCompletion", () => {
+	it("publishes detached supervisor expiry as terminal paused without a running child projection", () => {
+		const workflowRunId = "workflow-supervisor-expiry";
+		const childRunId = "detached-supervisor-expiry";
+		const asyncDir = path.join(DIRS.async, workflowRunId);
+		const childDir = path.join(DIRS.async, childRunId);
+		const resultPath = path.join(DIRS.results, `${workflowRunId}.json`);
+		const terminationReason = "timed-out-waiting-on-supervisor" as const;
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.mkdirSync(childDir, { recursive: true });
+			fs.mkdirSync(DIRS.results, { recursive: true });
+			const sessionFile = path.join(childDir, "session.jsonl");
+			fs.writeFileSync(sessionFile, "");
+			fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({ runId: childRunId, mode: "single", state: "paused", terminationReason, sessionId: "session-1", startedAt: 1, steps: [{ agent: "worker", status: "paused", sessionFile }] }));
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ ...pausedWorkflow(childRunId), runId: workflowRunId, sessionId: "session-1" }));
+			fs.writeFileSync(resultPath, JSON.stringify({ results: [{ runId: childRunId, state: "running", output: "", success: false }] }));
+			writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({ workflowRunId, state: "paused", children: [{ key: "detaches", ok: false, agent: "worker", runId: childRunId, output: "", detached: true, artifactPaths: [] }] }));
+			const state = { asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" }]]) } as SubagentState;
+			let emitted: CompletionNotification | undefined;
+			assert.equal(reconcileDetachedWorkflowChildCompletion({ state, workflowRunId, childRunId, events: { emit: (_name, payload) => { emitted = payload as CompletionNotification; } } as IntercomEventBus, result: { index: 0, agent: "worker", task: "Ask", exitCode: 1, timedOut: true, terminationReason, error: "not timeout prose", sessionFile } }), true);
+			const published = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+			assert.equal(published.state, "paused");
+			assert.equal(published.terminationReason, terminationReason);
+			assert.equal(published.results[0].state, "paused");
+			assert.equal(published.results[0].terminationReason, terminationReason);
+			assert.equal(published.workflowReceipt.receipt.entries.detaches.resumability.state, "resumable");
+			assert.deepEqual(published.workflowReceipt.receipt.entries.detaches.terminalOutcome, { state: "paused", reason: terminationReason });
+			assert.equal(emitted?.state, "paused");
+			assert.equal(emitted?.terminationReason, terminationReason);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(childDir, { recursive: true, force: true });
+			fs.rmSync(resultPath, { force: true });
+		}
+	});
+
 	it("preserves quiet schedule attribution when the paused result file is already gone", () => {
 		const workflowRunId = "workflow-missing-result";
 		const asyncDir = path.join(DIRS.async, workflowRunId);
@@ -625,6 +661,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
 		fs.writeFileSync(path.join(asyncDir, "workflow-receipt.json"), JSON.stringify({ version: 1, workflowRunId, state: "paused", createdAt: 1, entries: { detaches: { key: "wrong" } } }), "utf-8");
 		fs.mkdirSync(path.join(asyncDir, "events.jsonl"));
+		fs.writeFileSync(path.join(DIRS.results, `${workflowRunId}.json`), JSON.stringify({ results: [{ workflowKey: "detaches", agent: "worker", runId: "child-1", success: false, output: "", outputState: "absent", detached: true }] }));
 		const state = {
 			asyncJobs: new Map([[workflowRunId, { asyncId: workflowRunId, asyncDir, status: "paused" as const }]]),
 		} as SubagentState;

@@ -25,12 +25,13 @@ export function resolveSubagentResultStatus(input: {
 	detached?: boolean;
 	processSignal?: string | null;
 	timedOut?: boolean;
+	terminationReason?: SingleResult["terminationReason"];
 	stopped?: boolean;
 	turnBudgetExceeded?: boolean;
 }): SubagentResultStatus {
 	if (input.detached) return "detached";
 	if (input.stopped || input.state === "stopped") return "stopped";
-	if (input.interrupted || input.state === "paused") return "paused";
+	if (input.terminationReason || input.interrupted || input.state === "paused") return "paused";
 	if (input.state === "running" || input.state === "queued") return "running";
 	if (input.success === true) return "completed";
 	if (isUnexplainedProcessSignal(input) && input.exitCode !== 0) return "stopped";
@@ -299,12 +300,14 @@ export function buildSubagentResultIntercomPayload(input: GroupedResultIntercomM
 	const status = resolveGroupedStatus(children);
 	const summary = formatStatusCounts(countStatuses(children));
 	const firstChild = children[0];
+	const terminationReason = status === "paused" ? children.find(child => child.terminationReason)?.terminationReason : undefined;
 	const payload: SubagentResultIntercomPayload = {
 		to: input.to,
 		runId: input.runId,
 		mode: input.mode,
 		status,
 		summary,
+		...(terminationReason ? { terminationReason } : {}),
 		source: input.source,
 		children,
 		...(input.asyncId ? { asyncId: input.asyncId } : {}),

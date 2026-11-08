@@ -38,6 +38,7 @@ function compactChild(child: ForegroundResumeChild): ForegroundResumeChild {
 		...(child.model ? { model: child.model } : {}),
 		...(child.thinking ? { thinking: child.thinking } : {}),
 		status: child.status,
+		...(child.terminationReason ? { terminationReason: child.terminationReason, timedOut: true } : {}),
 		...(child.activityState ? { activityState: child.activityState } : {}),
 		...(child.lastActivityAt !== undefined ? { lastActivityAt: child.lastActivityAt } : {}),
 		...(child.currentTool ? { currentTool: child.currentTool } : {}),

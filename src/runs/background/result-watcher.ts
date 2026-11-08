@@ -85,6 +85,7 @@ type ResultFileChild = {
 	state?: string;
 	interrupted?: boolean;
 	timedOut?: boolean;
+	terminationReason?: import("../../shared/types.ts").SubagentTerminationReason;
 	stopped?: boolean;
 	turnBudgetExceeded?: boolean;
 	processSignal?: string | null;
@@ -524,12 +525,14 @@ export function createResultWatcher(
 							: undefined;
 				return {
 					agent: result.agent ?? data.agent ?? `step-${index + 1}`,
+					...(result.terminationReason ? { terminationReason: result.terminationReason } : {}),
 					...(result.sessionName ? { sessionName: result.sessionName } : {}),
 					status: resolveSubagentResultStatus({
 						success: result.success,
 						state: childState,
 						interrupted: result.interrupted,
 						timedOut: result.timedOut,
+						terminationReason: result.terminationReason,
 						stopped: result.stopped,
 						turnBudgetExceeded: result.turnBudgetExceeded,
 						processSignal: result.processSignal,

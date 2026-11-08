@@ -181,7 +181,7 @@ subagent({
 });
 ```
 
-- `timeoutMs` sets the workflow deadline and bounds child deadlines to the remaining time.
+- `timeoutMs` sets the workflow's active-runtime budget. Blocking supervisor requests from owned children pause it; overlapping waits count once, and reply/cancellation resumes the remaining budget. The host cancels owned children when that budget expires. Child timers keep their own configured/default budgets rather than inheriting a static parent wall deadline.
 - `toolBudget` becomes the default for each child unless that child supplies a narrower value.
 - `usageBudget` accounts for reported usage across completed workflow children. Once exhausted, it rejects later child launches but does not stop children that are already running.
 - Budget and timeout stops return a structured `terminalOutcome` with `state: "partial"` and reason `budget_exhausted` or `timeout`. Workflow receipts keep settled child evidence for recovery.

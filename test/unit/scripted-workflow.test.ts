@@ -12,6 +12,8 @@ import { workflowChildSummary } from "../../src/workflows/workflow-child-summary
 import { preflightWorkflowWorktrees } from "../../src/runs/foreground/subagent-executor.ts";
 import { runSetupCommand } from "../../src/runs/shared/worktree-setup-command.ts";
 import { claimRunFanoutBatch, createRunFanoutBudget, getRunFanoutBudgetSnapshot } from "../../src/runs/shared/run-fanout-budget.ts";
+import { createEventBus } from "../support/helpers.ts";
+import { emitSupervisorWait } from "../../src/runs/shared/active-runtime-timeout.ts";
 
 function nextChildMessage(child: ChildProcess, timeoutMs = 15_000): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
@@ -47,6 +49,80 @@ async function stopChild(child: ChildProcess): Promise<void> {
 }
 
 describe("scripted workflow runtime", () => {
+	it("adopts an already-waiting reused child without inheriting foreign sibling waits", async (t) => {
+		t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+		const events = createEventBus();
+		const pending = { runId: "retained-child", key: "0:id:ask", waiting: true };
+		emitSupervisorWait(events, pending);
+		emitSupervisorWait(events, { ...pending, runId: "foreign-sibling" });
+		const started = Promise.withResolvers<void>();
+		let aborted = false;
+		const workflow = runWorkflowScript({
+			script: `return await runs.run("reuse", { agent: "worker", task: "Continue" });`, timeoutMs: 100,
+			supervisorWait: { events, owns: () => false },
+			launch: (key, _params, signal, admission) => new Promise((resolve) => {
+				admission.adoptSupervisorWait("retained-child");
+				signal.addEventListener("abort", () => { aborted = true; resolve({ key, ok: false, stopped: true, output: "Stopped", artifactPaths: [] }); }, { once: true });
+				started.resolve();
+			}),
+			status: async (key) => ({ key, ok: true, output: "unused", artifactPaths: [] }),
+		});
+		const rejected = assert.rejects(workflow, (error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "timeout");
+		await started.promise;
+		t.mock.timers.tick(1000);
+		assert.equal(aborted, false);
+		emitSupervisorWait(events, pending);
+		emitSupervisorWait(events, { ...pending, waiting: false });
+		t.mock.timers.tick(30);
+		emitSupervisorWait(events, { ...pending, key: "0:id:second" });
+		t.mock.timers.tick(1000);
+		emitSupervisorWait(events, { ...pending, key: "0:id:second", waiting: false });
+		t.mock.timers.tick(69);
+		assert.equal(aborted, false);
+		t.mock.timers.tick(1);
+		await rejected;
+		assert.equal(aborted, true);
+		emitSupervisorWait(events, { ...pending, runId: "foreign-sibling", waiting: false });
+	});
+
+	for (const owned of [true, false]) {
+		it(`explicit workflow timeout pauses overlapping owned waits: ${owned}`, async (t) => {
+			t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+			const events = createEventBus();
+			const started = Promise.withResolvers<void>();
+			let launched = 0;
+			let aborted = 0;
+			const workflow = runWorkflowScript({
+				script: `return await runs.all([{ key: "a", agent: "worker", task: "A" }, { key: "b", agent: "worker", task: "B" }]);`,
+				timeoutMs: 100,
+				supervisorWait: { events, owns: (runId: string) => owned && ["a", "b"].includes(runId) },
+				launch: (key, _params, signal) => new Promise((resolve) => {
+					signal.addEventListener("abort", () => { aborted++; resolve({ key, ok: false, stopped: true, output: "Stopped", artifactPaths: [] }); }, { once: true });
+					if (++launched === 2) started.resolve();
+				}),
+				status: async (key) => ({ key, ok: true, output: "unused", artifactPaths: [] }),
+			});
+			const rejected = assert.rejects(workflow, (error: unknown) => error instanceof WorkflowScriptError && error.errorKind === "timeout");
+			await started.promise;
+			t.mock.timers.tick(30);
+			events.emit("subagent:supervisor-wait", { runId: "a", key: "0:id:ask-a", waiting: true });
+			events.emit("subagent:supervisor-wait", { runId: "b", key: "0:id:ask-b", waiting: true });
+			t.mock.timers.tick(1000);
+			if (owned) {
+				assert.equal(aborted, 0);
+				events.emit("subagent:supervisor-wait", { runId: "a", key: "0:id:ask-a", waiting: false });
+				t.mock.timers.tick(1000);
+				assert.equal(aborted, 0);
+				events.emit("subagent:supervisor-wait", { runId: "b", key: "0:id:ask-b", waiting: false });
+				t.mock.timers.tick(69);
+				assert.equal(aborted, 0);
+				t.mock.timers.tick(1);
+			}
+			await rejected;
+			assert.equal(aborted, 2);
+		});
+	}
+
 	it("exposes supplied and executor-normalized empty arguments as deeply frozen values", async () => {
 		const launch = async (key: string) => ({ key, ok: true, output: "unused", artifactPaths: [] });
 		const status = async (key: string) => ({ key, ok: true, output: "unused", artifactPaths: [] });

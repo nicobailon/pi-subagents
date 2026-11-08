@@ -11,8 +11,10 @@ import { createNativeSupervisorChannel, ensureSupervisorChannelDir, resolveSuper
 import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { resolveSubagentRunId } from "../../src/runs/background/run-id-resolver.ts";
+import { emitSupervisorWait, isSupervisorWaitEvent, supervisorWaitSnapshot, SUPERVISOR_WAIT_EVENT, type SupervisorWaitEvent } from "../../src/runs/shared/active-runtime-timeout.ts";
 import { registerProgramStatusReporter } from "../../src/integrations/program-status.ts";
-import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
+import { runWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
+import { createEventBus, createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
 
 interface AsyncJobTrackerModule {
 	createAsyncJobTracker(
@@ -38,6 +40,7 @@ interface AsyncJobTrackerModule {
 		restoreActiveJobs(ctx?: unknown): void;
 		handleStarted(data: unknown): void;
 		handleComplete(data: unknown): void;
+		dispose(): void;
 	};
 }
 
@@ -241,6 +244,110 @@ function createUiContext() {
 }
 
 describe("async job tracker", { skip: !available ? "pi packages not available" : undefined }, () => {
+	for (const settlement of ["death", "completion", "reset", "dispose"] as const) {
+		it(`retires a waiting run on ${settlement} so its workflow budget can cancel an active sibling`, async (t) => {
+			t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: Date.now() });
+			const root = createTempDir("pi-wait-settlement-");
+			const runDir = path.join(root, "waiting");
+			fs.mkdirSync(runDir);
+			const events = createEventBus();
+			const transitions: SupervisorWaitEvent[] = [];
+			events.on(SUPERVISOR_WAIT_EVENT, event => { if (isSupervisorWaitEvent(event)) transitions.push(event); });
+			const state = createState();
+			let alive = true;
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({ runId: "waiting", state: "running", mode: "single", pid: 12345, startedAt: Date.now() - 1000, lastUpdate: Date.now() - 1000, steps: [{ agent: "worker", status: "running" }] }));
+			const pending = { type: SUPERVISOR_WAIT_EVENT, runId: "waiting", key: "0:id:ask", waiting: true };
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), JSON.stringify(pending) + "\n");
+			const tracker = createTracker({ events } as never, state, root, { pollIntervalMs: 10, resultsDir: path.join(root, "results"), kill: (...args) => alive ? true : pidGone(...args), watch: (() => { throw new Error("watch disabled"); }) as never });
+			const controller = new AbortController();
+			const started = Promise.withResolvers<void>();
+			let siblingAborted = false;
+			const workflow = runWorkflowScript({
+				script: `return await runs.run("sibling", { agent: "worker", task: "Keep working" });`, timeoutMs: 100, signal: controller.signal,
+				supervisorWait: { events, owns: runId => runId === "waiting" },
+				launch: (key, _params, signal) => new Promise(resolve => { signal.addEventListener("abort", () => { siblingAborted = true; resolve({ key, ok: false, stopped: true, output: "", artifactPaths: [] }); }, { once: true }); started.resolve(); }),
+				status: async key => ({ key, ok: true, output: "", artifactPaths: [] }),
+			});
+			const rejected = assert.rejects(workflow, error => error instanceof WorkflowScriptError && error.errorKind === "timeout");
+			void rejected.catch(() => {});
+			try {
+				await started.promise;
+				tracker.handleStarted({ id: "waiting", asyncDir: runDir, agent: "worker" });
+				t.mock.timers.tick(25);
+				t.mock.timers.tick(1000);
+				assert.equal(siblingAborted, false);
+				emitSupervisorWait(events, { ...pending, runId: "foreign" });
+				fs.appendFileSync(path.join(runDir, "events.jsonl"), JSON.stringify({ ...pending, key: "0:id:last" }) + "\n");
+				if (settlement === "death") { alive = false; t.mock.timers.tick(10); assert.equal(state.asyncJobs.get("waiting")?.status, "failed"); }
+				else if (settlement === "completion") tracker.handleComplete({ id: "waiting", state: "failed" });
+				else if (settlement === "reset") tracker.resetJobs();
+				else tracker.dispose();
+				assert.deepEqual(transitions.filter(event => event.runId === "waiting" && event.key === "0:id:last").map(event => event.waiting), [true, false]);
+				assert.deepEqual(supervisorWaitSnapshot(events), [{ runId: "foreign", key: pending.key, waiting: true }]);
+				t.mock.timers.tick(100);
+				await rejected;
+				assert.equal(siblingAborted, true);
+			} finally { controller.abort(); await workflow.catch(() => {}); await rejected.catch(() => {}); tracker.resetJobs(); removeTempDir(root); }
+		});
+	}
+
+	for (const end of ["reply", "cancel"] as const) {
+		it(`restores only current wait identities before workflow adoption and resumes on ${end}`, async (t) => {
+			t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: Date.now() });
+			const root = createTempDir("pi-wait-restoration-");
+			for (const id of ["reused", "foreign"]) {
+				const runDir = path.join(root, id);
+				fs.mkdirSync(runDir);
+				fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({ runId: id, state: "running", mode: "single", sessionId: "parent", pid: process.pid, startedAt: Date.now(), lastUpdate: Date.now(), parentWorkflowRunId: "old-owner", pendingSupervisorWaits: ["0:id:external-ask"], steps: [{ agent: "worker", status: "running", currentTool: "intercom" }] }));
+				fs.writeFileSync(path.join(runDir, "events.jsonl"), JSON.stringify({ type: SUPERVISOR_WAIT_EVENT, runId: id, key: "0:id:external-ask", waiting: true }) + "\n");
+				writeControlRecord(runDir, supervisorControlEvent(id, "historic-ui"));
+				updateActiveRunIndex(runDir, "running");
+			}
+			const state = createState(); state.currentSessionId = "parent";
+			const events = createEventBus();
+			const notices: unknown[] = []; events.on(SUBAGENT_CONTROL_EVENT, event => notices.push(event));
+			const tracker = createTracker({ events } as never, state, root, { pollIntervalMs: 10, watch: (() => { throw new Error("watch disabled"); }) as never });
+			tracker.restoreActiveJobs();
+			const controller = new AbortController();
+			const started = Promise.withResolvers<void>(); let aborted = false;
+			const workflow = runWorkflowScript({
+				script: `return await runs.run("reuse", { agent: "worker", task: "Continue" });`, timeoutMs: 100, signal: controller.signal,
+				supervisorWait: { events, owns: () => false },
+				launch: (key, _params, signal, admission) => new Promise(resolve => { admission.adoptSupervisorWait("reused"); signal.addEventListener("abort", () => { aborted = true; resolve({ key, ok: false, stopped: true, output: "", artifactPaths: [] }); }, { once: true }); started.resolve(); }),
+				status: async key => ({ key, ok: true, output: "", artifactPaths: [] }),
+			});
+			const rejected = assert.rejects(workflow, error => error instanceof WorkflowScriptError && error.errorKind === "timeout");
+			void rejected.catch(() => {});
+			try {
+				await started.promise; t.mock.timers.tick(1000); assert.equal(aborted, false);
+				assert.deepEqual(notices, []);
+				const statusPath = path.join(root, "reused", "status.json");
+				fs.writeFileSync(statusPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(statusPath, "utf-8")), pendingSupervisorWaits: [] }));
+				if (end === "reply") fs.appendFileSync(path.join(root, "reused", "events.jsonl"), JSON.stringify({ type: SUPERVISOR_WAIT_EVENT, runId: "reused", key: "0:id:external-ask", waiting: false }) + "\n");
+				t.mock.timers.tick(10); t.mock.timers.tick(99); assert.equal(aborted, false);
+				t.mock.timers.tick(1); await rejected; assert.equal(aborted, true);
+				assert.deepEqual(supervisorWaitSnapshot(events), [{ runId: "foreign", key: "0:id:external-ask", waiting: true }]);
+			} finally { controller.abort(); await workflow.catch(() => {}); await rejected.catch(() => {}); tracker.resetJobs(); removeTempDir(root); }
+		});
+	}
+
+	it("forwards wait transitions only for the tracked run, independently of control notices", (t) => {
+		t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: Date.now() });
+		const root = createTempDir("pi-supervisor-wait-events-");
+		const runDir = path.join(root, "own");
+		fs.mkdirSync(runDir);
+		fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({ id: "own", state: "running", pid: process.pid, lastUpdate: Date.now(), steps: [{ agent: "worker", status: "running" }] }));
+		const own = { type: SUPERVISOR_WAIT_EVENT, runId: "own", key: "0:id:ask", waiting: true };
+		fs.writeFileSync(path.join(runDir, "events.jsonl"), [own, { ...own, runId: "foreign" }, { ...own, waiting: "invalid" }, { ...own, waiting: false }].map(event => JSON.stringify(event)).join("\n") + "\n");
+		const recorder = createEventRecorder();
+		const tracker = createTracker(recorder.pi, createState(), root, { watch: (() => { throw new Error("watch disabled"); }) as never });
+		try {
+			tracker.handleStarted({ id: "own", asyncDir: runDir, agent: "worker" });
+			t.mock.timers.tick(25);
+			assert.deepEqual(recorder.events.filter(event => event.channel === SUPERVISOR_WAIT_EVENT).map(event => event.data), [own, { ...own, waiting: false }]);
+		} finally { tracker.resetJobs(); removeTempDir(root); }
+	});
+
 	it("drops stale captured extension contexts instead of crashing background timers", () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-stale-context-");
 		try {

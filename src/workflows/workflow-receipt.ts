@@ -222,6 +222,7 @@ function parseTerminalOutcome(value: unknown, label: string): WorkflowTerminalOu
 	if (value === undefined) return undefined;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
 	const outcome = value as Record<string, unknown>;
+	if (outcome.state === "paused" && outcome.reason === "timed-out-waiting-on-supervisor") return { state: "paused", reason: outcome.reason };
 	if (outcome.state !== "partial" || (outcome.reason !== "budget_exhausted" && outcome.reason !== "timeout")) throw new Error(`${label} is invalid.`);
 	return { state: "partial", reason: outcome.reason };
 }

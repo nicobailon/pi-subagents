@@ -60,7 +60,7 @@ export interface OrcaProgressTab {
 	section(input: { agent: string; index: number; count: number }): void;
 	event(event: { type?: string; message?: Message; toolName?: string; args?: unknown }): void;
 	/** Resolves once the mirrored log and its done marker are on disk, so a host may exit afterwards. */
-	finish(status: "completed" | "failed" | "stopped", sessionFile?: string): Promise<void>;
+	finish(status: "completed" | "failed" | "paused" | "stopped", sessionFile?: string): Promise<void>;
 }
 
 function executableFile(candidate: string): boolean {

@@ -11,6 +11,7 @@ import { readStatus } from "../shared/utils.ts";
 import { inheritedSessionIds } from "../shared/session-succession.ts";
 import { ownsRun } from "../runs/shared/run-ownership.ts";
 import { writeAtomicJson, writePrivateAtomicJson } from "../shared/atomic-json.ts";
+import { emitSupervisorWait, SUPERVISOR_WAIT_TIMEOUT_MESSAGE, SUPERVISOR_WAIT_TIMEOUT_REASON } from "../runs/shared/active-runtime-timeout.ts";
 import { shouldUseNativeFsWatch } from "../shared/watch-strategy.ts";
 import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 import { reportSessionWarning } from "../shared/session-warnings.ts";
@@ -21,6 +22,8 @@ import {
 	type SupervisorReason,
 	type SupervisorReplyEntryData,
 } from "./supervisor-ui.ts";
+
+class SupervisorWaitTimeoutError extends Error {}
 
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
@@ -215,7 +218,7 @@ async function waitForReply(channelDir: string, requestId: string, initialDeadli
 		await delay(250, signal);
 		deadline = extendedDeadline(request, deadline);
 	}
-	throw new Error("Timed out waiting for supervisor reply.");
+	throw new SupervisorWaitTimeoutError(SUPERVISOR_WAIT_TIMEOUT_MESSAGE);
 }
 
 async function sendSupervisorRequest(params: ContactSupervisorParams, metadata: ChildSupervisorMetadata, signal?: AbortSignal, toolCallId?: string): Promise<AgentToolResult<Record<string, unknown>>> {
@@ -272,6 +275,9 @@ async function sendSupervisorRequest(params: ContactSupervisorParams, metadata: 
 		};
 	} catch (error) {
 		removeRequestFile(requestPath(metadata.channelDir, requestId));
+		if (error instanceof SupervisorWaitTimeoutError) {
+			return { content: [{ type: "text", text: error.message }], details: { requestId, reason: params.reason, terminationReason: SUPERVISOR_WAIT_TIMEOUT_REASON } };
+		}
 		throw error;
 	}
 }
@@ -762,6 +768,15 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		requestCorrelations.set(key, { request, state: "resolved", updatedAt: Date.now() });
 		pruneRequestCorrelations();
 	};
+	const emitRequestWait = (request: PendingSupervisorRequest, waiting: boolean) => {
+		const events = (pi as { events?: IntercomEventBus }).events;
+		if (!request.expectsReply || !events) return;
+		emitSupervisorWait(events, {
+			runId: request.runId,
+			key: `${request.childIndex}:${request.toolCallId ? `id:${request.toolCallId}` : request.id}`,
+			waiting,
+		});
+	};
 	// How each request ended, so a late reply can say why it is gone instead of a generic miss.
 	const endedRequests = new Map<string, EndedSupervisorRequest>();
 	const rememberEndedRequest = (request: PendingSupervisorRequest, lifecycle: EndedSupervisorRequest["lifecycle"], eventAt: number | undefined): void => {
@@ -777,7 +792,10 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	const observeRequestLifecycle: SupervisorRequestLifecycleObserver = (request, lifecycle, eventAt) => {
 		settleNotices.delete(request.id);
 		if (queuedNotices.delete(request.id)) updateDeliverySubscription();
-		if (lifecycle !== "wrong-session") rememberResolvedRequest(request);
+		if (lifecycle !== "wrong-session") {
+			rememberResolvedRequest(request);
+			emitRequestWait(request, false);
+		}
 		// A child that hits its ask deadline deletes its own request file, so a missing file past the deadline can be
 		// that timeout or a stop just before it. The parent extends a queued ask's expiresAt in memory too, so a live
 		// ask never reads as past it.
@@ -902,6 +920,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			pending.set(request.id, request);
 			declareParentTool();
 			updateSettleSubscription();
+			emitRequestWait(request, true);
 			markForegroundSupervisorAttention(request, state);
 			// The ask is already queued above. A sendMessage failure (no UI, stale context) must not
 			// lose it, and must not abort the loop before the remaining asks register.
@@ -1191,6 +1210,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			safetyPoller = undefined;
 			if (deferredWatcherRefresh) timers.clearImmediate(deferredWatcherRefresh);
 			deferredWatcherRefresh = undefined;
+			for (const request of pending.values()) emitRequestWait(request, false);
 			pending.clear();
 			settleNotices.clear();
 			requestCorrelations.clear();

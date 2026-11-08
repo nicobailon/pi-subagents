@@ -12,6 +12,18 @@ import {
 } from "../../src/intercom/result-intercom.ts";
 
 describe("result intercom formatter", () => {
+	it("retains supervisor expiry on child and parent payloads without masking ordinary failure", () => {
+		const terminationReason = "timed-out-waiting-on-supervisor" as const;
+		const child = { agent: "worker", status: "paused" as const, terminationReason, summary: "not timeout prose" };
+		const payload = buildSubagentResultIntercomPayload({ to: "parent", runId: "run", mode: "single", source: "async", children: [child] });
+		assert.equal(payload.status, "paused");
+		assert.equal(payload.terminationReason, terminationReason);
+		assert.equal(payload.children[0]?.terminationReason, terminationReason);
+		const mixed = buildSubagentResultIntercomPayload({ to: "parent", runId: "run", mode: "parallel", source: "async", children: [child, { agent: "other", status: "failed", summary: "missing schema output" }] });
+		assert.equal(mixed.status, "failed");
+		assert.equal(mixed.terminationReason, undefined);
+	});
+
 	it("does not promote running children to grouped completion", () => {
 		assert.equal(resolveSubagentResultStatus({ state: "running" }), "running");
 		assert.equal(resolveSubagentResultStatus({ state: "running", success: true }), "running");

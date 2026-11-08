@@ -4956,6 +4956,137 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		// Exit code is platform-dependent (Windows: often 1 or 0, Linux: null/143)
 	});
 
+	for (const reason of ["need_decision", "interview_request", "progress_update"] as const) {
+		it(`foreground active timeout excludes ${reason} only when blocking`, async () => {
+			mockPi.onCall({ steps: [
+				{ delay: 40, jsonl: [{ ...events.toolStart("contact_supervisor", { reason, message: "Question" }), toolCallId: "ask-1" }] },
+				{ delay: 400, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-1" }] },
+				{ delay: 40, jsonl: [{ ...events.toolStart("contact_supervisor", { reason, message: "Another" }), toolCallId: "ask-2" }] },
+				{ delay: 400, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-2" }] },
+				{ delay: 40, jsonl: [events.assistantMessage("Done")] },
+			] });
+			const result = await runSync(tempDir, makeAgentConfigs(["worker"]), "worker", "Task", { timeoutMs: 250, acceptance: false });
+			assert.equal(result.timedOut === true, reason === "progress_update");
+			assert.equal(result.exitCode, reason === "progress_update" ? 1 : 0);
+		});
+	}
+
+	it("foreground resumes the remaining budget rather than resetting after a reply", async () => {
+		mockPi.onCall({ steps: [
+			{ delay: 100, jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Question" })] },
+			{ delay: 400, jsonl: [events.toolEnd("contact_supervisor")] },
+			{ delay: 200, jsonl: [events.assistantMessage("Too late")] },
+		] });
+		const result = await runSync(tempDir, makeAgentConfigs(["worker"]), "worker", "Task", { timeoutMs: 250, acceptance: false });
+		assert.equal(result.timedOut, true);
+		assert.equal(result.error, "Subagent timed out after 250ms.");
+	});
+
+	for (const mode of ["single", "workflow"] as const) it(`foreground ${mode} supervisor-wait expiry is retained attention with real resume`, async () => {
+		const executor = makeExecutor([makeAgent("worker")]);
+		mockPi.onCall({ steps: [
+			{ jsonl: [{ ...events.toolStart("contact_supervisor", { reason: "need_decision", message: "Question" }), toolCallId: "expired-ask" }] },
+			{ jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "expired-ask", result: { content: [{ type: "text", text: "Timed out waiting on supervisor." }], details: { terminationReason: "timed-out-waiting-on-supervisor" } } }] },
+			{ delay: 10000 },
+		] });
+		const expired = await executor.execute("expired", mode === "single"
+			? { agent: "worker", task: "Ask", async: false, acceptance: false, agentContract: { version: 1 } }
+			: { async: false, workflowScript: `return await runs.run("ask", { agent: "worker", task: "Ask", acceptance: false, output: false, agentContract: { version: 1 } });` }, undefined, undefined, makeMinimalCtx(tempDir));
+		assert.equal(expired.details.state, "paused");
+		assert.equal(expired.details.activityState, "needs_attention");
+		assert.equal(expired.details.success, false);
+		assert.equal(expired.details.timedOut, true);
+		assert.equal(expired.details.terminationReason, "timed-out-waiting-on-supervisor");
+		assert.equal(expired.details.results[0]?.error, "Timed out waiting on supervisor.");
+		assert.equal(expired.details.results[0]?.timedOut, true);
+		assert.equal(expired.details.results[0]?.terminationReason, "timed-out-waiting-on-supervisor");
+		assert.equal(expired.details.results[0]?.execution?.status, "paused");
+		assert.notEqual(expired.details.results[0]?.acceptance?.status, "accepted");
+		const runId = mode === "single" ? expired.details.runId! : expired.details.workflow!.receipt!.entries.ask.latestRunId!;
+		if (mode === "workflow") {
+			const receipt = expired.details.workflow!.receipt!;
+			assert.equal(receipt.state, "paused");
+			assert.deepEqual(receipt.entries.ask.terminalOutcome, { state: "paused", reason: "timed-out-waiting-on-supervisor" });
+			assert.equal(receipt.entries.ask.resumability.state, "resumable");
+		}
+		const { DIRS } = await import("../../src/shared/types.ts");
+		const history = JSON.parse(fs.readFileSync(path.join(DIRS.results, "foreground-history", `${encodeIndexSegment(runId)}.json`), "utf-8"));
+		const retained = history.children[0];
+		assert.equal(retained.status, "paused");
+		assert.equal(retained.terminationReason, "timed-out-waiting-on-supervisor");
+		assert.equal(retained.activityState, "needs_attention");
+		assert.ok(runId);
+		assert.ok(expired.details.results[0]?.sessionFile);
+		mockPi.onCall({ jsonl: [events.assistantMessage("Resumed")] });
+		const resumed = await executor.execute("resume", { async: false, workflowScript: `return await runs.run("resumed", { resume: ${JSON.stringify(runId)}, task: "Proceed", acceptance: false, output: false });` }, undefined, undefined, makeMinimalCtx(tempDir));
+		assert.equal(resumed.isError, undefined, JSON.stringify(resumed));
+		assert.match(resumed.content[0]?.text ?? "", /Resumed/);
+		assert.ok(readCallArgs().includes(expired.details.results[0]!.sessionFile!));
+	});
+
+	it("preserves paused foreground single worktree handoff after supervisor expiry", { timeout: 30000 }, async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n");
+		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+		mockPi.onCall({ writeFiles: [{ path: "base.txt", content: "waiting changes" }], steps: [
+			{ jsonl: [{ ...events.toolStart("contact_supervisor", { reason: "need_decision" }), toolCallId: "expired" }] },
+			{ jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "expired", result: { content: [{ type: "text", text: "Expired" }], details: { terminationReason: "timed-out-waiting-on-supervisor" } } }] },
+			{ delay: 10000 },
+		] });
+		const worktreeBaseDir = `${tempDir}-worktrees`;
+		const executor = makeExecutor([makeAgent("worker")], { worktreeBaseDir, worktreeProvider: "native" });
+		try {
+			const result = await executor.execute("worktree-expiry", { async: false, agent: "worker", task: "Ask", worktree: true, acceptance: false }, undefined, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.details.terminationReason, "timed-out-waiting-on-supervisor", JSON.stringify(result));
+			const manifest = JSON.parse(fs.readFileSync(result.details.parallelHandoff!.path!, "utf8"));
+			const child = manifest.groups[0].children[0];
+			assert.equal(child.status, "paused");
+			assert.equal(child.sessionPath, result.details.results[0]?.sessionFile);
+			assert.equal(fs.existsSync(child.sessionPath), true);
+			const retained = manifest.groups[0].cleanup.tasks[0];
+			assert.equal(retained.preserved, true);
+			assert.equal(fs.readFileSync(path.join(retained.path, "base.txt"), "utf8"), "waiting changes");
+			mockPi.onCall({ output: "Resumed", writeFiles: [{ path: "resumed.txt", content: "continued" }] });
+			const resumed = await executor.execute("worktree-resume", { async: false, workflowScript: `return await runs.run("resumed", { resume: ${JSON.stringify(result.details.runId)}, task: "Proceed", acceptance: false, output: false });` }, undefined, undefined, makeMinimalCtx(tempDir));
+			assert.equal(resumed.isError, undefined, JSON.stringify(resumed));
+			assert.equal(fs.readFileSync(path.join(retained.path, "resumed.txt"), "utf8"), "continued");
+			assert.equal(fs.existsSync(path.join(tempDir, "resumed.txt")), false);
+		} finally {
+			removeTempDir(worktreeBaseDir);
+		}
+	});
+
+	it("workflow host timeout lets active siblings survive the old wall deadline during an owned wait", async () => {
+		const bus = createEventBus();
+		const executor = makeExecutor([makeAgent("worker")], {}, false, undefined, true, new Map(), undefined, undefined, bus);
+		let siblingReachedBoundary = false;
+		mockPi.onCall({ matchArgIncludes: "Wait for decision", steps: [
+			{ jsonl: [{ ...events.toolStart("contact_supervisor", { reason: "need_decision", message: "Question" }), toolCallId: "owned" }] },
+			{ delay: 1600, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "owned" }] },
+			{ delay: 10000 },
+		] });
+		mockPi.onCall({ matchArgIncludes: "Active sibling", steps: [
+			{ jsonl: [events.toolStart("bash", { command: "work" })] },
+			{ delay: 1400, jsonl: [events.toolEnd("bash"), events.toolStart("read", { path: "boundary" })] },
+			{ delay: 10000 },
+		] });
+		const start = Date.now();
+		const result = await executor.execute("workflow-pause", {
+			async: false, timeoutMs: 1000,
+			workflowScript: `return await runs.all([{ key: "ask", agent: "worker", task: "Wait for decision", acceptance: false, output: false }, { key: "active", agent: "worker", task: "Active sibling", acceptance: false, output: false }]);`,
+		}, undefined, (update) => {
+			const children = update.details.workflowChildren?.children ?? [];
+			if (children.some((child) => child.childId === "active" && child.activity?.currentTool === "read")) siblingReachedBoundary = true;
+		}, makeMinimalCtx(tempDir));
+		assert.equal(siblingReachedBoundary, true, JSON.stringify(result));
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Workflow script timed out after 1000ms/);
+		assert.ok(Date.now() - start >= 1600);
+	});
+
 	it("marks foreground runs that exceed timeoutMs as timed out", async () => {
 		mockPi.onCall({ delay: 10000 });
 		const agents = makeAgentConfigs(["slow"]);

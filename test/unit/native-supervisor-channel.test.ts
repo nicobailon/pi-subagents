@@ -15,6 +15,8 @@ import {
 import { SUPERVISOR_REPLY_ENTRY_TYPE, SUPERVISOR_REQUEST_MESSAGE_TYPE } from "../../src/intercom/supervisor-ui.ts";
 import { recordSessionReplacement } from "../../src/shared/session-succession.ts";
 import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, type SubagentState } from "../../src/shared/types.ts";
+import { createEventBus } from "../support/helpers.ts";
+import { SUPERVISOR_WAIT_EVENT } from "../../src/runs/shared/active-runtime-timeout.ts";
 
 const createdChannels: string[] = [];
 
@@ -154,6 +156,32 @@ describe("native supervisor channel", () => {
 			}
 		});
 	}
+
+	it("publishes owned wait lifecycle transitions on reply, cancellation and disposal, not progress", async () => {
+		const owner = randomUUID();
+		const runId = randomUUID();
+		const requestId = writeRequest({ sessionId: owner, runId });
+		writeRequest({ sessionId: owner, runId, reason: "progress_update" });
+		writeRequest({ sessionId: "foreign", runId: randomUUID() });
+		const events = createEventBus();
+		const waits: Array<{ runId: string; waiting: boolean }> = [];
+		events.on(SUPERVISOR_WAIT_EVENT, (event) => waits.push(event as typeof waits[number]));
+		let tool: { execute: (id: string, params: unknown) => Promise<unknown> };
+		const channel = createNativeSupervisorChannel({ events, getAllTools: () => [], registerTool: (value: typeof tool) => { tool = value; }, sendMessage() {} } as never, makeState(owner, { sessionManager: { getSessionId: () => owner } }));
+		try {
+			channel.start();
+			assert.deepEqual(waits.map(event => event.waiting), [true]);
+			await tool!.execute("reply", { action: "reply", replyTo: requestId, message: "Proceed" });
+			const cancelled = writeRequest({ sessionId: owner, runId });
+			channel.hasPendingRequests();
+			fs.rmSync(requestFile(runId, cancelled));
+			channel.hasPendingRequests();
+			writeRequest({ sessionId: owner, runId });
+			channel.hasPendingRequests();
+		} finally { channel.dispose(); }
+		assert.deepEqual(waits.map(event => event.waiting), [true, false, true, false, true, false]);
+		assert.ok(waits.every(event => event.runId === runId));
+	});
 
 	for (const platform of ["darwin", "win32", "linux"] as const) {
 		it(`bounds coordinator polling to owned channels and stops when idle (${platform})`, async () => {
@@ -762,6 +790,7 @@ describe("native supervisor channel", () => {
 			sendMessage: () => { log.push("send"); },
 			events: {
 				emit: (channel: string, payload: { requestId?: string; runId?: string; agent?: string; childIndex?: number }) => {
+					if (channel !== INTERCOM_DETACH_REQUEST_EVENT) return;
 					log.push("emit");
 					emitted.push({ channel, payload });
 				},
@@ -1383,6 +1412,18 @@ describe("native supervisor channel", () => {
 		assert.equal(request.childIndex, 3);
 	});
 
+	it("classifies the independent supervisor reply deadline and removes the expired request", async () => {
+		process.env.PI_INTERCOM_ASK_TIMEOUT_MS = "1";
+		const runId = randomUUID();
+		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+		createdChannels.push(channelDir);
+		let execute: (id: string, params: unknown) => Promise<{ details?: Record<string, unknown> }>;
+		registerNativeSupervisorClient({ getAllTools: () => [], registerTool: (tool: { execute: typeof execute }) => { execute = tool.execute; } } as never, { channelDir, runId, agent: "worker", childIndex: 0 });
+		const result = await execute!("expiry", { reason: "need_decision", message: "Question" });
+		assert.equal(result.details?.terminationReason, "timed-out-waiting-on-supervisor");
+		assert.deepEqual(fs.readdirSync(path.join(channelDir, "requests")), []);
+	});
+
 	it("removes the request file when a child supervisor ask is cancelled", async () => {
 		const runId = `run-${randomUUID()}`;
 		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
@@ -1449,7 +1490,9 @@ describe("native supervisor channel", () => {
 		const abandoned = await ask();
 		abandoned.extendBy(400);
 		const started = Date.now();
-		await assert.rejects(abandoned.result, /Timed out waiting for supervisor reply/);
+		const expired = await abandoned.result;
+		assert.equal(expired.content[0]?.text, "Timed out waiting on supervisor.");
+		assert.equal((expired as { details?: { terminationReason?: string } }).details?.terminationReason, "timed-out-waiting-on-supervisor");
 		const waited = Date.now() - started;
 		assert.ok(waited >= 300 && waited < 1500, `a parent that stops extending lets the child time out at the last deadline (waited ${waited} ms)`);
 	});

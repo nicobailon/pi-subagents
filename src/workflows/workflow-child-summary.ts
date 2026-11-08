@@ -75,7 +75,7 @@ export function workflowChildSummary(input: {
 		if (entry.operation !== "run" || !KEY_PATTERN.test(entry.key)) continue;
 		const previous = rows.get(entry.key);
 		const state = entry.state === "completed" ? "completed"
-			: entry.state === "failed" ? "failed"
+			: entry.state === "paused" ? "paused" : entry.state === "failed" ? "failed"
 				: entry.state === "stopped" ? "stopped"
 					: entry.state === "detached" ? "detached"
 						: previous?.state ?? "running";
@@ -113,7 +113,7 @@ export function workflowChildSummary(input: {
 	for (const child of input.children ?? []) {
 		if (!KEY_PATTERN.test(child.key)) continue;
 		const result = Array.isArray(child.results) ? child.results.find((value) => value && typeof value === "object") as Record<string, unknown> | undefined : undefined;
-		const state = child.state === "running" ? "running" : child.detached ? "detached" : child.stopped ? "stopped" : child.interrupted ? "paused" : child.ok ? "completed" : result?.acceptance && typeof result.acceptance === "object" && (result.acceptance as { status?: unknown }).status === "rejected" ? "rejected" : "failed";
+		const state = child.state === "running" ? "running" : child.detached ? "detached" : child.stopped ? "stopped" : child.terminationReason || child.interrupted ? "paused" : child.ok ? "completed" : result?.acceptance && typeof result.acceptance === "object" && (result.acceptance as { status?: unknown }).status === "rejected" ? "rejected" : "failed";
 		rows.set(child.key, {
 			childId: child.key,
 			state,

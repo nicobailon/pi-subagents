@@ -38,6 +38,7 @@ export interface ImportedAsyncRootResult {
 	transcriptPath?: string;
 	transcriptError?: string;
 	timedOut?: boolean;
+	terminationReason?: import("../../shared/types.ts").SubagentTerminationReason;
 	stopped?: boolean;
 	execution?: ExecutionProjection;
 	effects?: EffectsProjection;
@@ -51,6 +52,7 @@ interface AsyncResultFile {
 	summary?: string;
 	error?: string;
 	timedOut?: boolean;
+	terminationReason?: import("../../shared/types.ts").SubagentTerminationReason;
 	stopped?: boolean;
 	results?: Array<{
 		agent?: string;
@@ -59,6 +61,7 @@ interface AsyncResultFile {
 		error?: string;
 		success?: boolean;
 		timedOut?: boolean;
+		terminationReason?: import("../../shared/types.ts").SubagentTerminationReason;
 		stopped?: boolean;
 		execution?: ExecutionProjection;
 		effects?: EffectsProjection;
@@ -189,6 +192,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 	const state = resultState(result, child);
 	const agent = child?.agent ?? step?.agent ?? status?.steps?.[root.index]?.agent ?? "subagent";
 	const output = child?.output ?? result.summary ?? "";
+	const terminationReason = child?.terminationReason ?? step?.terminationReason ?? result.terminationReason ?? status?.terminationReason;
 	const timedOut = child?.timedOut === true || step?.timedOut === true || result.timedOut === true || status?.timedOut === true;
 	const stopped = child?.stopped === true || step?.stopped === true || result.stopped === true || status?.stopped === true || state === "stopped";
 	const success = state === "complete" && !timedOut && !stopped;
@@ -207,6 +211,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		exitCode: success ? 0 : 1,
 		...(error ? { error } : {}),
 		...(timedOut ? { timedOut: true } : {}),
+		...(terminationReason ? { terminationReason } : {}),
 		...(stopped ? { stopped: true } : {}),
 		...(child?.sessionName ?? step?.sessionName ? { sessionName: child?.sessionName ?? step?.sessionName } : {}),
 		...(child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile ? { sessionFile: child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile } : {}),

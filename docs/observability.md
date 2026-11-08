@@ -4,7 +4,9 @@ Where running subagents show up, how to inspect them, and the files and events t
 
 ## Foreground runs
 
-Foreground runs stream progress in the conversation while they run. They default to a generous 30-minute wall-clock timeout when neither the call nor the selected agent provides a timeout; a global [`timeoutMs`](configuration.md#timeoutms) config replaces that default, and explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win.
+Foreground runs stream progress in the conversation while they run. They default to a generous 30-minute active-runtime timeout when neither the call nor the selected agent provides a timeout; a global [`timeoutMs`](configuration.md#timeoutms) config replaces that default, and explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win.
+
+Blocking supervisor decisions/interviews pause the remaining runtime budget; progress updates do not. Workflow budgets pause for their owned waiting children, counting overlapping waits once. The separate native supervisor reply deadline still expires after ten minutes: the child reports `terminationReason: "timed-out-waiting-on-supervisor"`, `timedOut: true`, and `success: false`. This is terminal retained attention (`paused`, `activityState: "needs_attention"`), not ordinary runtime failure or a still-live detach. Async process-terminal proof and resume disposition identify the closed runner and retained session; workflow receipts preserve the paused reason and explicit resume route. Current async wait identities are persisted as `pendingSupervisorWaits` and restored for exact-child adoption without replaying historical control notices. Terminal settlement, reset, and disposal retire the owned waits.
 
 A foreground child is a pi session created inside the parent Pi process, not a second `pi` process. A run timeout, tool timeout, interrupt, or stop aborts the child session and disposes it. Detach keeps the session running inside the parent and publishes the same receipt and completion notification as before.
 
