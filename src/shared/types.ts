@@ -979,6 +979,8 @@ export interface AgentProgress {
 	/** Human-readable display name for the child's session, when derived at launch. */
 	sessionName?: string;
 	status: "pending" | "running" | "completed" | "failed" | "detached";
+	progressText?: string;
+	progressUpdatedAt?: number;
 	activityState?: ActivityState;
 	task: string;
 	skills?: string[];
@@ -1629,6 +1631,8 @@ export interface NestedStepSummary {
 	/** Human-readable display name for the child session, when derived at launch. */
 	sessionName?: string;
 	status: "pending" | "running" | "complete" | "completed" | "failed" | "partial" | "paused" | "stopped" | "rejected";
+	progressText?: string;
+	progressUpdatedAt?: number;
 	model?: string;
 	thinking?: string;
 	sessionFile?: string;
@@ -2046,6 +2050,8 @@ export interface AsyncStatus {
 		currentPath?: string;
 		recentTools?: Array<{ tool: string; args: string; endMs: number }>;
 		recentOutput?: string[];
+		progressText?: string;
+		progressUpdatedAt?: number;
 		turnCount?: number;
 		toolCount?: number;
 		startedAt?: number;

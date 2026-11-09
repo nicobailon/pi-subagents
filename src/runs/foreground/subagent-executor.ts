@@ -4,7 +4,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatAvailableAgentLines, formatUnknownAgentError, resolveAgentName, suggestAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
-import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
+import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir, missingForkCopyNote } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
 import { reportSessionWarning } from "../../shared/session-warnings.ts";
@@ -63,6 +63,7 @@ import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../shared/types.ts";
+import { resolveConfigDefaultTimeoutMs } from "../../extension/config.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
@@ -328,6 +329,7 @@ export interface SubagentParamsLike {
 	agent?: string;
 	task?: string;
 	capabilities?: boolean;
+	search?: string;
 	extensionBindings?: ExtensionBindings;
 	/** Retained async child run id. Valid only on workflow runs.run items. */
 	resume?: string;
@@ -1050,7 +1052,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 	if (!child.sessionFile) throw new Error(`Foreground run '${run.runId}' child ${index} does not have a persisted session file to resume from.`);
 	if (path.extname(child.sessionFile) !== ".jsonl") throw new Error(`Foreground run '${run.runId}' child ${index} session file must be a .jsonl file: ${child.sessionFile}`);
 	const sessionFile = path.resolve(child.sessionFile);
-	if (!fs.existsSync(sessionFile)) throw new Error(`Foreground run '${run.runId}' child ${index} session file does not exist: ${child.sessionFile}`);
+	if (!fs.existsSync(sessionFile)) throw new Error(`Foreground run '${run.runId}' child ${index} session file does not exist: ${child.sessionFile}${missingForkCopyNote(sessionFile)}`);
 	return {
 		runId: run.runId,
 		mode: run.mode,
@@ -1571,7 +1573,7 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 	if (path.extname(sessionFile) !== ".jsonl") throw new Error(`Nested run '${run.id}' session file must be a .jsonl file: ${sessionFile}`);
 	const resolved = path.resolve(sessionFile);
 	if (!path.isAbsolute(sessionFile)) throw new Error(`Nested run '${run.id}' session file must be absolute: ${sessionFile}`);
-	if (!fs.existsSync(resolved)) throw new Error(`Nested run '${run.id}' session file does not exist: ${sessionFile}`);
+	if (!fs.existsSync(resolved)) throw new Error(`Nested run '${run.id}' session file does not exist: ${sessionFile}${missingForkCopyNote(resolved)}`);
 	const stat = fs.lstatSync(resolved);
 	if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Nested run '${run.id}' session file is not a regular file: ${sessionFile}`);
 	const realSessionFile = fs.realpathSync(resolved);
@@ -3114,18 +3116,6 @@ function timerDelayOverflowError(name: string, value: unknown): string | undefin
 	return typeof value === "number" && value > MAX_TIMER_DELAY_MS
 		? `${name} must be a positive integer no larger than ${MAX_TIMER_DELAY_MS}.`
 		: undefined;
-}
-
-/**
- * Resolve the optional global default runtime deadline from extension config
- * (`config.timeoutMs`). Returns undefined for unset or invalid values so callers
- * fall back to the built-in defaults. "Invalid" covers non-positive-integer
- * values and values above `MAX_TIMER_DELAY_MS`; the latter would overflow the
- * Node.js timer and expire the run almost immediately instead of running long.
- */
-export function resolveConfigDefaultTimeoutMs(raw: unknown): number | undefined {
-	if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0 || raw > MAX_TIMER_DELAY_MS) return undefined;
-	return raw;
 }
 
 export function resolveForegroundTimeout(params: SubagentParamsLike, defaultTimeoutMs?: number): { timeoutMs?: number; error?: string } {
@@ -6574,6 +6564,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										step.currentToolArgs = progress.currentToolArgs;
 										step.currentToolStartedAt = progress.currentToolStartedAt;
 										step.currentPath = progress.currentPath;
+										step.progressText = progress.progressText;
+										step.progressUpdatedAt = progress.progressUpdatedAt;
 										step.recentTools = progress.recentTools.map((tool) => ({ ...tool }));
 										step.recentOutput = [...progress.recentOutput];
 										step.turnCount = progress.turnCount;

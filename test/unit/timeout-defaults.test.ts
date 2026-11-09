@@ -3,9 +3,9 @@ import { describe, it } from "node:test";
 import {
 	DEFAULT_ASYNC_TIMEOUT_MS,
 	DEFAULT_FOREGROUND_TIMEOUT_MS,
-	resolveConfigDefaultTimeoutMs,
 	resolveSingleAgentLaunchTimeout,
 } from "../../src/runs/foreground/subagent-executor.ts";
+import { resolveConfigDefaultTimeoutMs } from "../../src/extension/config.ts";
 
 describe("single-agent launch timeout wiring", () => {
 	it("async runs default to DEFAULT_ASYNC_TIMEOUT_MS when no explicit/agent timeout", () => {

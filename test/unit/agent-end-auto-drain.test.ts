@@ -47,7 +47,7 @@ const script = String.raw`
 		name: "agent-end-drain-test",
 		listActiveWork() {
 			if (process.env.PI_SUBAGENTS_TEST_DRAIN_FAILURE === "1") throw providerError;
-			return [];
+			return process.env.PI_SUBAGENTS_TEST_ACTIVE_WORK === "1" ? [{ id: "long-job", sessionId: "agent-end-drain-session" }] : [];
 		},
 	});
 	if (process.env.PI_SUBAGENTS_TEST_FINISHED_RUN === "1") {
@@ -142,6 +142,19 @@ describe("headless agent_end auto-drain", () => {
 			assert.equal(completions.length, 1);
 			assert.match(completions[0]!.message.content, /CHILD_DONE/);
 			assert.deepEqual(completions[0]!.options, { triggerTurn: true });
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		}
+	});
+
+	it("waits for unfinished work as long as the configured run timeoutMs", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-end-fixture-"));
+		try {
+			const configDir = path.join(root, "agent", "extensions", "subagent");
+			fs.mkdirSync(configDir, { recursive: true });
+			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ timeoutMs: 300 }));
+			const payload = runScript(root, { PI_SUBAGENTS_TEST_ACTIVE_WORK: "1" });
+			assert.equal(payload.rejected, "Auto-drain timed out after 300ms with background work still active in session 'agent-end-drain-session'.");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 		}

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { extractReportedProgress } from "../../shared/reported-progress.ts";
 import { withResultRunLease, writeAsyncResultFile, writePendingAsyncResultFile } from "./result-files.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
@@ -2667,7 +2668,7 @@ export async function runSubagent(
 	const emittedControlEventKeys = new Set<string>();
 	const activeLongRunningSteps = new Set<number>();
 	const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
-	type PendingToolResult = { tool: string; path?: string; mutates: boolean; startedAt?: number };
+	type PendingToolResult = { tool: string; path?: string; mutates: boolean; startedAt?: number; progressText?: string };
 	const pendingToolResults: Array<PendingToolResult | undefined> = initialStatusSteps.map(() => undefined);
 	// Pi's parallel tool execution emits every tool_execution_start before the first result message, so each
 	// step matches results to calls by toolCallId; pendingToolResults keeps the last-started call for events without one.
@@ -3106,7 +3107,7 @@ export async function runSubagent(
 				statusPayload.toolBudget = step.toolBudget;
 			}
 			recordActiveToolCall(flatIndex, { toolCallId: (event as { toolCallId?: unknown }).toolCallId, toolName: event.toolName }, { argsPreview, currentPath, blocksSupervisor, now });
-			const pending: PendingToolResult = omitUndefinedProperties({ tool: event.toolName, path: currentPath, mutates, startedAt: now });
+			const pending: PendingToolResult = omitUndefinedProperties({ tool: event.toolName, path: currentPath, mutates, startedAt: now, progressText: extractReportedProgress(event.toolName, event.args) });
 			pendingToolResults[flatIndex] = pending;
 			const startedCallId = (event as { toolCallId?: unknown }).toolCallId;
 			if (typeof startedCallId === "string" && startedCallId) pendingToolResultsByCallId[flatIndex]!.set(startedCallId, pending);
@@ -3162,6 +3163,10 @@ export async function runSubagent(
 			if (!keyedSnapshot || pendingToolResults[flatIndex] === keyedSnapshot) pendingToolResults[flatIndex] = undefined;
 			const resultText = extractTextFromContent(event.message.content);
 			const resultToolName = (event.message as { toolName?: unknown }).toolName;
+			if (event.message.isError !== true && resultToolName === toolSnapshot?.tool && toolSnapshot?.progressText) {
+				step.progressText = toolSnapshot.progressText;
+				step.progressUpdatedAt = now;
+			}
 			const blockedTool = (typeof resultToolName === "string" && resultToolName.length > 0 ? resultToolName : undefined) ?? toolSnapshot?.tool;
 			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
 			const budgetBlocked = configuredToolBudget !== undefined && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool);

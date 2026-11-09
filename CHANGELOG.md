@@ -2,9 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- The subagent widget shows the latest progress a running child reported with `contact_supervisor` (`progress_update`), with how long ago it reported, and `status` lists it on the child's line. Before, the report text was not shown anywhere in the parent. Thanks to [@kodfodrasz](https://github.com/kodfodrasz) for #3230.
+
 ### Fixed
 
+- Subagents now skip `mcp:` selectors for pi-mcp-adapter servers explicitly configured with `disabled: true`. Before, a disabled server could prevent a child from launching. Unknown servers and enabled servers without matching cached tools still fail the launch. Thanks to [@shura-v](https://github.com/shura-v) for #3238.
+- Workflow scripts start on hosts that run Pi on Electron, such as pi Desktop. Before, Electron left the sandbox flags in the script process's arguments and every workflow script failed with `Cannot find module '--allow-worker'`. Thanks to [@hotsnow-sean](https://github.com/hotsnow-sean) for #3222.
 - A forked subagent (`context: "fork"`) launched in another folder than the parent session now gets that folder's `AGENTS.md` / `CLAUDE.md`. Before, it kept only the parent's project instructions, so a fork started in a repository worktree never saw the repository's `AGENTS.md`.
+- The copies of the parent session that forked subagents write under `<parent session>/forks/` are now deleted once nothing has written to them for `artifactConfig.cleanupDays` (default 7) and their run is no longer active. Before, nothing deleted them; one parent session of about 400 MB filled 22 GB in a day with 57 forks. Resuming a child whose copy was deleted now says so. (#3232)
+- `{ action: "list" }` now shows at most 30 agents and points to the new `options.search` filter for the rest. Before, it printed every agent with its full description, so a catalog of a few hundred agents put about 160 KB into the conversation in one call. Thanks to [@peskycipher](https://github.com/peskycipher) for the report. (#3225)
+- In a non-interactive session (`pi -p`), Pi now waits for background subagent work at the end of a turn for as long as the `timeoutMs` setting allows a run to take. Before, it always gave up after 30 minutes, so a parent that ended its turn to wait for a longer child failed and exited before the child's result arrived. Without `timeoutMs`, the wait is still 30 minutes. Thanks to [@mt-huerta](https://github.com/mt-huerta) for #3229.
+- The Watchdog's own model requests (reviews and permission decisions) and Prompt Audit's task rewrite now carry the parent session id, so providers that key prompt caching on it get a `prompt_cache_key`. Before, a gateway that requires one rejected every Watchdog review with HTTP 400. Thanks to [@hetingyi](https://github.com/hetingyi) for #3223.
 
 ## [0.87.0] - 2026-11-07
 

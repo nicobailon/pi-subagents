@@ -94,6 +94,22 @@ function withMockedDateNow<T>(now: number, fn: () => T): T {
 }
 
 describe("renderSubagentResult fork indicator", () => {
+	it("renders reported foreground progress in the result renderer", () => {
+		const progress = {
+			index: 0, agent: "reviewer", status: "running", task: "Review source",
+			recentTools: [], recentOutput: [], toolCount: 1, tokens: 42, durationMs: 1_000,
+			progressText: "Reviewing the parser", progressUpdatedAt: 958_000,
+		};
+		const rendered = withMockedDateNow(1_000_000, () => renderSubagentResult!({
+			content: [{ type: "text", text: "working" }],
+			details: {
+				mode: "single",
+				progress: [progress],
+				results: [{ agent: "reviewer", task: "Review source", exitCode: 0, messages: [], usage: emptyUsage, progress }],
+			},
+		}, { expanded: false }, theme).render(120).join("\n"));
+		assert.match(rendered, /progress: Reviewing the parser · updated 42s ago/);
+	});
 	it("renders result-owned nested children for foreground single, parallel, and chain runs", () => {
 		const cases = [
 			{

@@ -62,7 +62,7 @@ import { handleSubagentSteeringNotice, type SubagentSteeringMessageDetails } fro
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/child-runtime-config.ts";
 import { disposeChildSessionsForParent } from "../runs/shared/child-session.ts";
 import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capability-ceiling.ts";
-import { loadConfig, resolveAsyncByDefault, resolveScheduledStoreRoot } from "./config.ts";
+import { loadConfig, resolveAsyncByDefault, resolveConfigDefaultTimeoutMs, resolveScheduledStoreRoot } from "./config.ts";
 import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
 import { formatWorkflowPreflightSummary, normalizeWorkflowPreflight } from "../workflows/workflow-preflight.ts";
 import { runtimeReplacedAbortReason } from "../workflows/workflow-reuse.ts";
@@ -827,7 +827,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			// A headless host may dispose the session as soon as this turn settles, so hand
 			// finished results to Pi now; Pi runs the queued completion turn after agent_end.
 			// A failed drain rejects without this step so its deadline stays exact.
-			if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events, hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests }).then(resultWatcher.deliverPendingResults);
+			// The parent was told to end its turn and wait for the wake, so the drain must last as long as a run may.
+			if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events, hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests, timeoutMs: resolveConfigDefaultTimeoutMs(config.timeoutMs) }).then(resultWatcher.deliverPendingResults);
 		} finally {
 			// Deliver notices after a failed drain without suppressing its rejection.
 			const ownerSessionId = state.currentSessionId;

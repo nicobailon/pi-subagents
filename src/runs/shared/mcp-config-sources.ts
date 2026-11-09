@@ -42,6 +42,8 @@ export interface McpServerDefinition {
 	pluginDataDir?: string;
 	literalEnv?: boolean;
 	inheritEnv?: boolean;
+	/** Only literal true disables a server, matching pi-mcp-adapter. */
+	disabled?: boolean;
 }
 
 export function isMcpServerDefinition(value: unknown): value is McpServerDefinition {
