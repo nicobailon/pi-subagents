@@ -542,7 +542,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 						]),
 					});
 				} catch (error) {
-					console.error("Failed to clean retained async subagent state:", error);
+					reportSessionWarning(state, `Failed to clean retained async subagent state: ${error instanceof Error ? error.message : String(error)}`, "async-retention-cleanup");
 				}
 			}, ASYNC_RETENTION_DELAY_MS);
 			asyncRetentionTimer.unref?.();

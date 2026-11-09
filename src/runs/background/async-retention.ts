@@ -378,9 +378,14 @@ async function computeProcessStartIdentity(pid: number): Promise<string | undefi
 	if (process.platform === "win32") {
 		// PowerShell takes ~0.5 s to start; a synchronous spawn would freeze the TUI.
 		const started = await new Promise<string>((resolve) => {
-			execFile("powershell.exe", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate`], { encoding: "utf-8", windowsHide: true, timeout: 5_000 }, (error, stdout) => {
-				resolve(error ? "" : stdout.trim());
-			});
+			// Node throws instead of calling back when the executable cannot be spawned at all (spawn UNKNOWN when policy blocks PowerShell).
+			try {
+				execFile("powershell.exe", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate`], { encoding: "utf-8", windowsHide: true, timeout: 5_000 }, (error, stdout) => {
+					resolve(error ? "" : stdout.trim());
+				});
+			} catch {
+				resolve("");
+			}
 		});
 		return started ? `win:${started}` : undefined;
 	}
