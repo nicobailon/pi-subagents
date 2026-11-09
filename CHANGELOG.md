@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Subagents now skip `mcp:` selectors for pi-mcp-adapter servers explicitly configured with `disabled: true`. Before, a disabled server could prevent a child from launching. Unknown servers and enabled servers without matching cached tools still fail the launch. Thanks to [@shura-v](https://github.com/shura-v) for #3238.
 - A forked subagent (`context: "fork"`) launched in another folder than the parent session now gets that folder's `AGENTS.md` / `CLAUDE.md`. Before, it kept only the parent's project instructions, so a fork started in a repository worktree never saw the repository's `AGENTS.md`.
 
 ## [0.87.0] - 2026-11-07
