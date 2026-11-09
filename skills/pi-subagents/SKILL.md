@@ -107,7 +107,8 @@ number.
   the parent's history; it requires a persisted parent session. Each fork
   copies the parent's session file to
   `<parent session file without .jsonl>/forks/<run id>/`:
-  before forking from a session file of hundreds of MB, check `df -h /`. Once
+  before forking from a session file of hundreds of MB, run `df -h` on that
+  file's folder. Once
   a forked child is accepted or dropped and won't be resumed, delete its
   `forks/<run id>/` folder; never one whose run is still active.
 - Children do not spawn subagents unless the parent delegated fanout and their
