@@ -103,7 +103,7 @@ import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentRecordedPid } from "./boot-id.ts";
 import type { RecordedPid } from "./stale-run-reconciler.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, unconsumedSteerReason, updateSteeringTarget } from "./steering.ts";
-import { PROMPT_REDACTED, SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { PROMPT_REDACTED, SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, TRUNCATED_RESPONSE_ERROR, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getAgentDir, getFinalOutput, getTerminalAssistantStopReason, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
 import {
 	createMutatingFailureState,
@@ -1310,6 +1310,13 @@ export async function runSingleStepInner(
 			&& (!hiddenError?.hasError || hasEmptyTerminalAssistantResponse(run.messages))
 			? formatEmptyTerminalAssistantResponseError(run.messages)
 			: undefined;
+		const truncatedResponseError = terminalDiagnosticsEligible && run.exitCode === 0 && !run.error && !toolAvailabilityError && !structuredError && !midToolExitError
+			&& !emptyOutputError
+			&& !hiddenError?.hasError
+			&& !validatedStructuredOutput
+			&& getTerminalAssistantStopReason(run.messages) === "length"
+			? TRUNCATED_RESPONSE_ERROR
+			: undefined;
 		const remoteGitChanged = run.nativeMachine?.initialGit && run.nativeMachine.finalGit ? run.nativeMachine.initialGit.head !== run.nativeMachine.finalGit.head || run.nativeMachine.initialGit.dirty !== run.nativeMachine.finalGit.dirty : undefined;
 		const mutationEvidence = run.nativeMachine && !isRexLocalMachine(step.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : await collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
@@ -1327,7 +1334,7 @@ export async function runSingleStepInner(
 		finalRequiredOutputMissing = requiredOutput?.missing;
 		const missingRequiredOutputError = terminalDiagnosticsEligible ? formatRequiredOutputError(requiredOutput) : undefined;
 		const missingRequiredOutputAfterMutation = Boolean(missingRequiredOutputError) && (mutationAttemptObserved || Boolean(mutationEvidence.changedFiles.length));
-		const effectiveExitCode = toolAvailabilityError || midToolExitError || structuredError || emptyOutputError || missingRequiredOutputError
+		const effectiveExitCode = toolAvailabilityError || midToolExitError || structuredError || truncatedResponseError || emptyOutputError || missingRequiredOutputError
 			? 1
 			: hiddenError?.hasError
 				? (hiddenError.exitCode ?? 1)
@@ -1339,6 +1346,7 @@ export async function runSingleStepInner(
 			?? structuredError
 			?? run.error
 			?? emptyOutputError
+			?? truncatedResponseError
 			?? (missingRequiredOutputAfterMutation ? missingRequiredOutputError : undefined)
 			?? (hiddenError?.hasError
 				? hiddenError.details
