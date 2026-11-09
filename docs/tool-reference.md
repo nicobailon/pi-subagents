@@ -95,6 +95,7 @@ The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `
 | `options.view` | `fleet \| transcript` | - | Optional `status` view for the active fleet surface or transcript tail inspection. |
 | `options.lines` | number | `80` | Maximum transcript lines for `action: "status"` with `options.view: "transcript"`; capped at 500. |
 | `options.agentScope` | `user \| project \| both` | `both` | Agent discovery scope. Project wins on collisions. |
+| `options.search` | string | - | With `action: "list"`, show only agents whose name, alias, or description contains this text (case-insensitive). |
 | `options.capabilities` | boolean | `false` | With `action: "list"`, return compact prompt-free rows and `details.agentCapabilities` machine-readable records for each agent's declared/default routing capabilities. External CLI rows also include their command and passive local availability. |
 
 ### Execution parameters
@@ -210,6 +211,7 @@ Agent definitions are not loaded into context by default. Management actions let
 { action: "list" }
 { action: "list", options: { agentScope: "project" } }
 { action: "list", options: { capabilities: true } }
+{ action: "list", options: { search: "review" } }
 { action: "get", agent: "scout" }
 { action: "models" }
 { action: "models", agent: "reviewer" }
@@ -252,6 +254,7 @@ Agent definitions are not loaded into context by default. Management actions let
 
 Rules:
 
+- `action: "list"` shows at most 30 agents, then a `+N more` line pointing at `options.search`; `details.agentCapabilities` still covers every match.
 - `options.capabilities: true` changes `action: "list"` to compact one-line rows and adds `details.agentCapabilities: { agents, restrictedCount, capabilityCeilingSources? }`. Each agent row includes source, aliases, runner type/capabilities, tools, MCP direct tools, mutation tools, model/thinking, default async/timeout, declared acceptance policy/role, output path/mode, skills/extensions, and whether the current capability ceiling allows execution. External CLI rows include `runner.command`, `runner.available`, and a bounded `runner.unavailableReason` when passive PATH/PATHEXT/X_OK lookup cannot find the command. It never includes an agent's system prompt. Rows show declared/default capabilities and command discoverability, not authentication, version compatibility, or successful launch; launch preflight remains authoritative.
 - `create` uses `config.scope`, not `agentScope`.
 - `config.name` is the local frontmatter name; optional `config.package` registers the runtime name as `{package}.{name}` and is saved as separate `name` and `package` frontmatter.

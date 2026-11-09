@@ -354,7 +354,7 @@ export function unknownAgentDiagnosticContext(discovered: Pick<AgentDiscoveryRes
 	};
 }
 
-const MAX_LISTED_AGENTS = 30;
+export const MAX_LISTED_AGENTS = 30;
 const MAX_LISTED_DESCRIPTION_CHARS = 80;
 
 /** One line per agent the caller can launch instead, so a wrong name needs no separate list call. */
@@ -365,7 +365,7 @@ export function formatAvailableAgentLines(agents: readonly AgentConfig[]): strin
 		const short = description.length > MAX_LISTED_DESCRIPTION_CHARS ? `${description.slice(0, MAX_LISTED_DESCRIPTION_CHARS - 1).trimEnd()}…` : description;
 		return `- ${agent.name} (${agent.source})${short ? ` — ${short}` : ""}`;
 	});
-	if (sorted.length > MAX_LISTED_AGENTS) lines.push(`+${sorted.length - MAX_LISTED_AGENTS} more; {action:"list"}`);
+	if (sorted.length > MAX_LISTED_AGENTS) lines.push(`+${sorted.length - MAX_LISTED_AGENTS} more; {action:"list", options:{search:"<term>"}}`);
 	return lines.length ? lines : ["- (none)"];
 }
 

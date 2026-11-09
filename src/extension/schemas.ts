@@ -159,6 +159,7 @@ const SubagentParamProperties = {
 		description: "Management/control only; omit for execution. validate accepts workflow: true or a script path. Discover actions with {action:\"guide\",options:{topic:\"tool-reference\"}}."
 	})),
 	capabilities: Type.Optional(Type.Boolean({ description: "list: compact capability rows/details without system prompts." })),
+	search: Type.Optional(Type.String({ minLength: 1, description: "list: case-insensitive match on agent name, alias, or description." })),
 	name: Type.Optional(Type.String({ description: "schedule.create name." })),
 	id: Type.Optional(Type.String({
 		description: "Run id/prefix for status/control."
