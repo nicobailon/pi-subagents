@@ -3161,12 +3161,11 @@ export async function runSubagent(
 			const toolSnapshot = keyedSnapshot ?? pendingToolResults[flatIndex];
 			if (!keyedSnapshot || pendingToolResults[flatIndex] === keyedSnapshot) pendingToolResults[flatIndex] = undefined;
 			const resultText = extractTextFromContent(event.message.content);
-			const completedToolName = (event.message as { toolName?: unknown }).toolName;
-			if (event.message.isError !== true && completedToolName === toolSnapshot?.tool && toolSnapshot?.progressText) {
+			const resultToolName = (event.message as { toolName?: unknown }).toolName;
+			if (event.message.isError !== true && resultToolName === toolSnapshot?.tool && toolSnapshot?.progressText) {
 				step.progressText = toolSnapshot.progressText;
 				step.progressUpdatedAt = now;
 			}
-			const resultToolName = (event.message as { toolName?: unknown }).toolName;
 			const blockedTool = (typeof resultToolName === "string" && resultToolName.length > 0 ? resultToolName : undefined) ?? toolSnapshot?.tool;
 			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
 			const budgetBlocked = configuredToolBudget !== undefined && isToolBudgetBlockedMessage(configuredToolBudget, resultText, blockedTool);

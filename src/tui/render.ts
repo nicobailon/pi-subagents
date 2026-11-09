@@ -2433,7 +2433,7 @@ function foregroundStyleWidgetStepLines(
 	const task = fullTask ? undefined : collapseDetails ? stepTaskSummary(step, displayName) : compactTaskText(step.description, step.label);
 	for (const line of fullTask ?? []) lines.push(`${detailIndent}${theme.fg("dim", line)}`);
 	if (task) lines.push(`${detailIndent}${theme.fg("dim", `task: ${task}`)}`);
-	const progressRow = reportedProgressRow(step, theme, detailIndent, width - detailIndent.length - 4);
+	const progressRow = step.status === "running" ? reportedProgressRow(step, theme, detailIndent, width - 4) : undefined;
 	if (progressRow) lines.push(progressRow);
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	const currentPath = options?.includeCurrentPath && step.currentPath ? shortenPath(step.currentPath) : undefined;
@@ -2582,12 +2582,11 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
 		const task = compactTaskText(step.description, step.label);
 		const taskSuffix = task ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", `task: ${task}`)}` : "";
-		const progressRow = reportedProgressRow(step, theme, "      ", width - 6);
-		const activitySuffix = activity && !progressRow ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
+		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
 		const marker = rowIndex === rows.length - 1 && rowIndex >= group.total - 1 ? "└─" : "├─";
 		lines.push(`    ${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, row.index), frame, thinking)} ${themeBold(theme, row.rowLabel)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${taskSuffix}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+		const progressRow = step.status === "running" ? reportedProgressRow(step, theme, "      ", width) : undefined;
 		if (progressRow) lines.push(progressRow);
-		if (progressRow && activity) lines.push(`      ${theme.fg("dim", `⎿  ${activity}`)}`);
 		const lane = projectAsyncLane(job, step);
 		if (lane) lines.push(...formatLaneProjectionLines(lane, theme, "      "));
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`      ${nestedLine}`);
@@ -3545,7 +3544,7 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 			const task = compactTaskText(r.task, workflowLabelForResult(d, i));
 			if (task) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}task: ${task}`), width), 0, 0));
 		}
-		const reportedRow = progressFromArray ? reportedProgressRow(progressFromArray, theme, detailIndent, width) : undefined;
+		const reportedRow = rRunning && progressFromArray ? reportedProgressRow(progressFromArray, theme, detailIndent, width) : undefined;
 		if (reportedRow) c.addChild(new Text(reportedRow, 0, 0));
 		if (rRunning && rProg && "status" in rProg) {
 			const liveProgress = rProg as AgentProgress;
@@ -3900,7 +3899,7 @@ export function renderSubagentResult(
 			? r.task
 			: `${r.task.slice(0, taskMaxLen)}...`;
 		c.addChild(new Text(fit(theme.fg("dim", `    task: ${taskPreview}`)), 0, 0));
-		const reportedRow = progressFromArray ? reportedProgressRow(progressFromArray, theme, "    ", w) : undefined;
+		const reportedRow = rRunning && progressFromArray ? reportedProgressRow(progressFromArray, theme, "    ", w) : undefined;
 		if (reportedRow) c.addChild(new Text(fit(reportedRow), 0, 0));
 
 		const outputTarget = extractOutputTarget(r.task);

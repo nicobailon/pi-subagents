@@ -94,12 +94,8 @@ return child.output;
 Every child starts cold. Its task states: goal; repo, explicit `cwd`, and
 ref; authority and edit boundary; relevant files, decisions, and evidence;
 success criteria; validation; expected output; and when to stop or ask.
-For observable long-running work, ask for meaningful transitions via
-`contact_supervisor({ reason: "progress_update", message: "..." })`, not per-tool
-reports. Keep the first line short: current activity only, without repeating the
-task title or adding a `progress:` prefix (the UI supplies it). Include counts only
-when known; omit unknown counts rather than using placeholders. Make parallel briefs
-differ by seam, evidence, and decision, not just an item number.
+Make parallel briefs differ by seam, evidence, and decision, not just an item
+number.
 
 ## Rules
 

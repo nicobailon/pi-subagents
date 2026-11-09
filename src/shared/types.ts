@@ -2104,8 +2104,6 @@ export interface AsyncStatus {
 }
 
 export type AsyncJobStep = Omit<NonNullable<AsyncStatus["steps"]>[number], "timeoutRecovery"> & {
-	progressText?: string;
-	progressUpdatedAt?: number;
 	index?: number;
 	description?: string;
 	timeoutRecovery?: TimeoutRecoveryProjection;

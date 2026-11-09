@@ -3,9 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
+import { formatAsyncRunList, listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { runSubagent, type SubagentRunConfig } from "../../src/runs/background/subagent-runner.ts";
 import { createFakeChildSessions } from "../support/fake-child-session.ts";
+
+const LONG_REPORT = `[2/2] First child latest ${"x".repeat(600)}`;
 
 function toolCall(id: string, message: string, isError = false): unknown[] {
 	return [
@@ -21,11 +23,11 @@ describe("async reported progress", () => {
 		fs.mkdirSync(queue, { recursive: true });
 		fs.writeFileSync(path.join(queue, "pending-first.json"), JSON.stringify({
 			matchArgIncludes: "first task",
-			jsonl: [...toolCall("first-a", "[1/2] First child begins\nnot displayed"), ...toolCall("first-b", "[2/2] First child latest"), ...toolCall("first-fail", "failed replacement", true)],
+			jsonl: [...toolCall("first-a", "[1/2] First child begins\nnot displayed"), ...toolCall("first-b", `Progress: ${LONG_REPORT}`), ...toolCall("first-fail", "failed replacement", true)],
 		}));
 		fs.writeFileSync(path.join(queue, "pending-second.json"), JSON.stringify({
 			matchArgIncludes: "second task",
-			jsonl: toolCall("second-a", "Second child checking isolation\nnot displayed"),
+			jsonl: toolCall("second-a", "UPDATE: Second child checking isolation\nnot displayed"),
 		}));
 		const fake = createFakeChildSessions(() => queue);
 		const asyncDir = path.join(root, "runs", "progress-isolation");
@@ -39,11 +41,12 @@ describe("async reported progress", () => {
 		try {
 			await runSubagent(config, fake.factory);
 			const summary = listAsyncRuns(path.join(root, "runs"), { runId: config.id, sessionId: config.sessionId })[0];
-			assert.equal(summary?.steps[0]?.progressText, "[2/2] First child latest");
+			assert.equal(summary?.steps[0]?.progressText, LONG_REPORT.slice(0, 512));
 			assert.equal(summary?.steps[1]?.progressText, "Second child checking isolation");
 			assert.ok(summary?.steps.every((step) => typeof step.progressUpdatedAt === "number"));
+			assert.match(formatAsyncRunList(summary ? [summary] : []), /\| progress: Second child checking isolation$/m);
 			const restoredStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as { steps: Array<{ progressText?: string }> };
-			assert.equal(restoredStatus.steps[0]?.progressText, "[2/2] First child latest");
+			assert.equal(restoredStatus.steps[0]?.progressText, LONG_REPORT.slice(0, 512));
 			assert.equal(restoredStatus.steps[1]?.progressText, "Second child checking isolation");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

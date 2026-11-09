@@ -671,7 +671,7 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	const modelThinking = formatModelThinking(step.model, step.thinking);
 	if (modelThinking) parts.push(modelThinking);
 	if (step.durationMs !== undefined) parts.push(formatDuration(step.durationMs));
-	if (step.progressText) parts.push(step.progressText);
+	if (step.progressText) parts.push(`progress: ${step.progressText}`);
 	if (step.tokens) parts.push(`${formatTokens(step.tokens.total)} tok`);
 	if (step.lane) parts.push(`lane ${step.lane.key}`);
 	if (step.worktreePath) parts.push(`worktree ${shortenPath(step.worktreePath)} · branch ${step.branch ?? "unknown"}${step.provider ? ` · provider ${step.provider}` : ""}`);

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- The subagent widget shows the latest progress a running child reported with `contact_supervisor` (`progress_update`), with how long ago it reported, and `status` lists it on the child's line. Before, the report text was not shown anywhere in the parent. Thanks to [@kodfodrasz](https://github.com/kodfodrasz) for #3230.
+
 ## [0.87.0] - 2026-11-07
 
 ### Highlights

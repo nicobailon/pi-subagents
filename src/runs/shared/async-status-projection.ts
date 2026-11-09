@@ -262,6 +262,8 @@ function projectStep(step: AsyncJobStep | NestedStepSummary, index: number, dept
 	const activity = activityFor(step, ctx);
 	const { id, label } = stepIdentity(step, index, ctx);
 	const agent = publicOptionalText(step.agent, ctx.caps.maxStringLength);
+	const progressText = publicOptionalText(step.progressText, ctx.caps.maxStringLength);
+	const progressUpdatedAt = publicTime(step.progressUpdatedAt);
 	const node: AsyncStatusSnapshotNode = {
 		id,
 		kind: "step",
@@ -271,8 +273,8 @@ function projectStep(step: AsyncJobStep | NestedStepSummary, index: number, dept
 		...(updatedAt !== undefined ? { updatedAt } : {}),
 		...(terminalState(state) && endedAt !== undefined ? { endedAt } : {}),
 		...(activity ? { activity } : {}),
-		...(publicOptionalText(step.progressText, ctx.caps.maxStringLength) ? { progressText: publicOptionalText(step.progressText, ctx.caps.maxStringLength) } : {}),
-		...(publicTime(step.progressUpdatedAt) !== undefined ? { progressUpdatedAt: publicTime(step.progressUpdatedAt) } : {}),
+		...(progressText ? { progressText } : {}),
+		...(progressUpdatedAt !== undefined ? { progressUpdatedAt } : {}),
 	};
 	if (agent) node.agent = agent;
 	setStepModel(node, ctx, step);
@@ -428,9 +430,7 @@ function projectMaterializedStep(step: AsyncJobStep, index: number, child: Async
 	const progressText = publicOptionalText(selfStep?.progressText ?? step.progressText, ctx.caps.maxStringLength);
 	const progressUpdatedAt = publicTime(selfStep?.progressUpdatedAt ?? step.progressUpdatedAt);
 	if (progressText) node.progressText = progressText;
-	else delete node.progressText;
 	if (progressUpdatedAt !== undefined) node.progressUpdatedAt = progressUpdatedAt;
-	else delete node.progressUpdatedAt;
 	const agent = publicOptionalText(selfStep?.agent || step.agent, ctx.caps.maxStringLength);
 	if (agent) node.agent = agent;
 	if (activity) node.activity = activity;

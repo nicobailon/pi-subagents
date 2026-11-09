@@ -107,7 +107,7 @@ describe("renderSubagentResult fork indicator", () => {
 				progress: [progress],
 				results: [{ agent: "reviewer", task: "Review source", exitCode: 0, messages: [], usage: emptyUsage, progress }],
 			},
-		}, { expanded: false }, theme).render(120).join("\\n");
+		}, { expanded: false }, theme).render(120).join("\n");
 		assert.match(rendered, /progress: Reviewing the parser · updated 42s ago/);
 	});
 	it("renders result-owned nested children for foreground single, parallel, and chain runs", () => {

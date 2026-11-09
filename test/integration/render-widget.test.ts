@@ -979,17 +979,18 @@ describe("subagent async widget rendering", () => {
 			const steps = [
 				{ index: 0, agent: "reviewer", status: "running", workflowKey: "review", description: "Review the implementation", outputName: "review.md", progressText: "Checking the changed paths", currentTool: "read", currentToolStartedAt: Date.now() },
 				{ index: 1, agent: "tester", status: "running", workflowKey: "tests", description: "Run the focused tests", outputName: "tests.md", progressText: "Running integration checks", currentTool: "bash", currentToolStartedAt: Date.now() },
+				{ index: 2, agent: "linter", status: "complete", workflowKey: "lint", description: "Lint the changed files", outputName: "lint.md", progressText: "Finished linter report" },
 			];
 			renderWidget(ui.ctx as never, [{
 				asyncId: "reported-progress-parallel",
 				asyncDir: "/tmp/reported-progress-parallel",
 				status: "running",
 				mode: "parallel",
-				agents: ["reviewer", "tester"],
+				agents: ["reviewer", "tester", "linter"],
 				activeParallelGroup: true,
 				runningSteps: 2,
-				completedSteps: 0,
-				stepsTotal: 2,
+				completedSteps: 1,
+				stepsTotal: 3,
 				steps,
 			}]);
 
@@ -999,7 +1000,10 @@ describe("subagent async widget rendering", () => {
 			assert.match(text, /task: Review the implementation/);
 			assert.match(text, /task: Run the focused tests/);
 			assert.ok(text.indexOf("progress: Checking the changed paths") > text.indexOf("task: Review the implementation"));
-			assert.ok(text.indexOf("progress: Checking the changed paths") < text.indexOf("⎿  read"));
+			const reviewerRow = lines.findIndex((line) => line.includes("task: Review the implementation"));
+			assert.match(lines[reviewerRow] ?? "", /· read/);
+			assert.match(lines[reviewerRow + 1] ?? "", /progress: Checking the changed paths/);
+			assert.ok(!text.includes("Finished linter report"), text);
 			assert.match(text, /out:review\.md/);
 			assert.match(text, /out:tests\.md/);
 			for (const line of lines) assert.ok(visibleWidth(line) <= 120, `widget line exceeds render width: ${visibleWidth(line)}`);
