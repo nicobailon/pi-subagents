@@ -108,9 +108,9 @@ number.
   copies the parent's session file to
   `<parent session file without .jsonl>/forks/<run id>/`:
   before forking from a session file of hundreds of MB, run `df -h` on that
-  file's folder. Once
-  a forked child is accepted or dropped and won't be resumed, delete its
-  `forks/<run id>/` folder; never one whose run is still active.
+  file's folder. Once a forked child is accepted or dropped and won't be
+  resumed, delete its `forks/<run id>/` folder; never one whose run is still
+  active.
 - Children do not spawn subagents unless the parent delegated fanout and their
   resolved `tools` include `subagent`.
 - A failed workflow, launch, prompt runtime, extension load, or child tool
