@@ -199,11 +199,26 @@ export function registerSubagentToolActivation(
 	};
 	registerPinnedTool(pi, loader);
 
-	// Decided at session start and tree navigation only; switching models keeps the session's tools.
+	// Decided at session start and tree navigation. Pi declares a session's first tools only with its first request, so a
+	// model switch before then decides again; later switches keep the session's tools.
 	let loaderSelected = true;
+	// The loader and subagent state the last decision left, until the first request (agent_start). A different live
+	// state is a choice made since, and stands.
+	let undeclared: string | undefined;
+	const activationState = () => [LOADER_NAME, SUBAGENT_NAME].map((name) => pi.getActiveTools().includes(name)).join();
 	const replyOwed = () => options.hasPendingSupervisorRequest?.() === true;
-	pi.on("session_start", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode, replyOwed()); });
-	pi.on("session_tree", (_event, ctx) => { loaderSelected = applyRecordedSelection(pi, ctx, mode, replyOwed()); });
+	const decide = (ctx: ExtensionContext) => {
+		loaderSelected = applyRecordedSelection(pi, ctx, mode, replyOwed());
+		undeclared = Array.isArray(pi.getActiveTools()) ? activationState() : undefined;
+	};
+	pi.on("session_start", (_event, ctx) => decide(ctx));
+	pi.on("session_tree", (_event, ctx) => decide(ctx));
+	pi.on("agent_start", () => { undeclared = undefined; });
+	pi.on("model_select", (_event, ctx) => {
+		if (mode === "auto" && undeclared !== undefined && undeclared === activationState() && loaderSelected !== addsToolsWithoutCheckpoint(ctx.model)
+			// SAFETY: as in applyRecordedSelection.
+			&& (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: unknown[] } }).buildSessionContext().messages.length === 0) decide(ctx);
+	});
 	pi.on("before_agent_start", (event) => {
 		const available = pi.getAllTools();
 		if (!Array.isArray(available) || !available.some((tool) => tool.name === LOADER_NAME)) return;
