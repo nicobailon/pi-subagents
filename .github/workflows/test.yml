@@ -227,16 +227,25 @@ jobs:
           # Bubblewrap needs only the runner's Ubuntu mirror (sources.list), not its third-party repositories (sources.list.d).
           sudo apt-get -o Dir::Etc::sourceparts=- update
           sudo apt-get -o Dir::Etc::sourceparts=- install -y bubblewrap
+      - name: Read the pinned official release
+        id: release
+        run: echo "sha=$(node -p 'require("./test/smoke/standalone-release.json").archiveSha256')" >> "$GITHUB_OUTPUT"
+      # GitHub release downloads from runners return 504 for long stretches; the archive is checksum-pinned, so reuse it.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pi-official-archive
+          key: pi-official-${{ steps.release.outputs.sha }}
       - name: Provision the checksum-pinned official binary
         shell: bash
         run: |
           set -euo pipefail
           url="$(node -p 'require("./test/smoke/standalone-release.json").url')"
           sha="$(node -p 'require("./test/smoke/standalone-release.json").archiveSha256')"
-          mkdir -p "$RUNNER_TEMP/pi-official"
-          curl --fail --location --retry 3 "$url" --output "$RUNNER_TEMP/pi-official/release.tar.gz"
-          printf '%s  %s\n' "$sha" "$RUNNER_TEMP/pi-official/release.tar.gz" | sha256sum --check -
-          tar -xzf "$RUNNER_TEMP/pi-official/release.tar.gz" -C "$RUNNER_TEMP/pi-official"
+          archive="$RUNNER_TEMP/pi-official-archive/release.tar.gz"
+          mkdir -p "$RUNNER_TEMP/pi-official" "$RUNNER_TEMP/pi-official-archive"
+          test -f "$archive" || curl --fail --location --retry 3 "$url" --output "$archive"
+          printf '%s  %s\n' "$sha" "$archive" | sha256sum --check -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/pi-official"
       - name: Complete isolated official binary matrix
         run: node test/smoke/standalone-matrix.mjs "$RUNNER_TEMP/pi-official/pi/pi" "$RUNNER_TEMP/standalone-matrix"
       - name: Provision npm host for public launch regression
