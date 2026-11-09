@@ -104,7 +104,13 @@ number.
   `.pi/subagents/` does not). For Pi extension repos, put lane worktrees
   outside `~/.pi/agent/extensions`, for example `~/.pi/agent/worktrees`.
 - Reviewers use fresh context. Use `context: "fork"` only when the child needs
-  the parent's history; it requires a persisted parent session.
+  the parent's history; it requires a persisted parent session. Each fork
+  copies the parent's session file to
+  `<parent session file without .jsonl>/forks/<run id>/`:
+  before forking from a session file of hundreds of MB, run `df -h` on that
+  file's folder. Once a forked child is accepted or dropped and won't be
+  resumed, delete its `forks/<run id>/` folder; never one whose run is still
+  active.
 - Children do not spawn subagents unless the parent delegated fanout and their
   resolved `tools` include `subagent`.
 - A failed workflow, launch, prompt runtime, extension load, or child tool
@@ -112,7 +118,7 @@ number.
   verify a clean worktree or capture the partial diff, then retry the same way
   once. Switching to `interactive_shell`, `pi -ne`, or another CLI needs owner
   approval.
-- As a conservative orchestration policy, do not pass a hard `toolBudget` or tight `usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools. If interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.
+- Do not pass a hard `toolBudget` or tight `usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools. If interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.
 - Route workers and scouts to a fast capable tier, serious reviews to a strong
   tier, and top reasoning only to bounded read-only critique. Exact model names
   belong in user or project settings, not here. When neither the user nor
