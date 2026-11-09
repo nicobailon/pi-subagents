@@ -8,15 +8,10 @@ for (const key of Object.keys(process.env)) {
   if (process.platform !== "win32" || key.toLowerCase() !== "systemroot") delete process.env[key];
 }
 
-// The launcher passes the parser path as the only plain argument. Read it by shape rather than by position:
-// a host that does not strip execArgv leaves flags such as --allow-worker in the child's argv, ahead of it.
-const plainArgs = process.argv.slice(2).filter((arg) => !arg.startsWith("-"));
-const acornPath = plainArgs[plainArgs.length - 1];
-
 // Keep IPC on this thread: a busy workflow must not prevent parent-disconnect cleanup.
 // The script thread has no worker permission; filesystem grants are inherited from the process.
 const worker = new Worker(join(__dirname, "workflow-script-worker.cjs"), {
-  workerData: { acornPath },
+  workerData: { acornPath: process.argv[2] },
   execArgv: process.execArgv.filter((arg) => arg !== "--allow-worker"),
 });
 

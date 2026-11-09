@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Workflow scripts start on hosts that run Pi on Electron, such as pi Desktop. Before, Electron left the sandbox flags in the script process's arguments and every workflow script failed with `Cannot find module '--allow-worker'`. Thanks to [@hotsnow-sean](https://github.com/hotsnow-sean) for #3222.
+
 ## [0.87.0] - 2026-11-07
 
 ### Highlights

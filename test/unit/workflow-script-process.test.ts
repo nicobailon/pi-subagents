@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 import { runWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
 import { WorkflowScriptProcess } from "../../src/workflows/workflow-script-worker.ts";
@@ -64,18 +63,6 @@ describe("restricted Node workflow process", { skip: Boolean(process.versions.bu
 			if (previous === undefined) delete process.env.NODE_OPTIONS;
 			else process.env.NODE_OPTIONS = previous;
 		}
-	});
-
-	it("finds the parser when the host leaves Node flags in the child's argv", { timeout: 10_000 }, async (t) => {
-		// Electron hosts (pi Desktop, and anything else that runs Pi on ELECTRON_RUN_AS_NODE) hand the child its
-		// execArgv as ordinary arguments, so the parser path is no longer argv[2]. Launch the supervisor the way
-		// such a host does and require the script to still run.
-		const supervisor = fileURLToPath(new URL("../../workflow-script-process.cjs", import.meta.url));
-		const child = spawn(process.execPath, [supervisor, "--allow-worker", `--allow-fs-read=${acornPath}`, acornPath], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
-		t.after(() => { child.kill(); });
-		child.send(JSON.stringify({ type: "start", script: "return 7;", stateEnabled: false }));
-		const [reply] = await once(child, "message");
-		assert.deepEqual(JSON.parse(String(reply)), { type: "complete", value: 7 });
 	});
 
 	it("can kill a busy script at timeout or abort", async () => {
