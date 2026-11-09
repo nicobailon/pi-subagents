@@ -184,7 +184,6 @@ describe("nested widget rendering", () => {
 		assert.ok(lines[secondTask + 1]?.includes("[2/2] Checking the second file · updated 2s ago"));
 		assert.ok(lines.some((line) => line.includes("task: First task")));
 		assert.ok(lines.some((line) => line.includes("task: Second task")));
-		assert.ok(!lines.some((line) => line.includes("progress: Quiet task")));
 		assert.ok(!lines.some((line) => line.includes("Finished child report")));
 		assert.ok(withMockedDateNow(69_000, () => buildWidgetLines([state], theme, 120, false)).some((line) => line.includes("Reading the first file · updated 1m ago")));
 		assert.ok(withMockedDateNow(129_000, () => buildWidgetLines([state], theme, 120, false)).some((line) => line.includes("Reading the first file · updated 2m ago")));

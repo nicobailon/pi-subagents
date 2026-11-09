@@ -44,7 +44,9 @@ describe("async reported progress", () => {
 			assert.equal(summary?.steps[0]?.progressText, LONG_REPORT.slice(0, 512));
 			assert.equal(summary?.steps[1]?.progressText, "Second child checking isolation");
 			assert.ok(summary?.steps.every((step) => typeof step.progressUpdatedAt === "number"));
-			assert.match(formatAsyncRunList(summary ? [summary] : []), /\| progress: Second child checking isolation$/m);
+			assert.doesNotMatch(formatAsyncRunList(summary ? [summary] : []), /progress:/);
+			const running = summary ? { ...summary, steps: summary.steps.map((step) => ({ ...step, status: "running" as const })) } : undefined;
+			assert.match(formatAsyncRunList(running ? [running] : []), /\| progress: Second child checking isolation$/m);
 			const restoredStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as { steps: Array<{ progressText?: string }> };
 			assert.equal(restoredStatus.steps[0]?.progressText, LONG_REPORT.slice(0, 512));
 			assert.equal(restoredStatus.steps[1]?.progressText, "Second child checking isolation");
