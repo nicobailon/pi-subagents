@@ -15,6 +15,7 @@ import {
 	buildRuntimeName,
 	findBlockingAgentDiagnostic,
 	frontmatterNameForConfig,
+	MAX_LISTED_AGENTS,
 	parsePackageName,
 	mergeBuiltinAgentOverride,
 	removeBuiltinAgentOverride,
@@ -55,6 +56,7 @@ interface ManagementParams {
 	agentScope?: unknown;
 	capabilities?: unknown;
 	config?: unknown;
+	search?: unknown;
 }
 
 function result(text: string, isError = false, details?: Partial<Details>): AgentToolResult<Details> {
@@ -981,7 +983,9 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	scopedAgents = scopedAgents
 		.sort((a, b) => a.name.localeCompare(b.name));
 	const capabilityCeiling = resolveCurrentSubagentCapabilityCeiling(ctx.piSessionId);
-	const visibleAgents = scopedAgents.filter((a) => !a.disabled);
+	const search = typeof params.search === "string" ? params.search.trim().toLowerCase() : "";
+	const visibleAgents = scopedAgents.filter((a) => !a.disabled
+		&& (!search || [a.name, a.description, ...(a.aliases ?? [])].some((text) => text.toLowerCase().includes(search))));
 	const agents = visibleAgents.filter((a) => isAgentAllowedByCapabilityCeiling(a.name, capabilityCeiling));
 	const restrictedAgents = visibleAgents.filter((a) => !isAgentAllowedByCapabilityCeiling(a.name, capabilityCeiling));
 	const restrictedSources = capabilityCeilingAgentRestrictionSources(capabilityCeiling);
@@ -1001,11 +1005,16 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	const formatLine = capabilityMode
 		? (agent: AgentConfig, names: Set<string> | undefined) => formatAgentCapabilitiesLine(agent, names, externalCliAvailability, unavailableModels)
 		: formatAgentListLine;
+	// A large catalog would otherwise put every agent's description into the model's context at once.
+	const shownAgents = agents.slice(0, MAX_LISTED_AGENTS);
+	const shownRestrictedAgents = restrictedAgents.slice(0, MAX_LISTED_AGENTS - shownAgents.length);
+	const omittedCount = agents.length + restrictedAgents.length - shownAgents.length - shownRestrictedAgents.length;
 	const lines = [
 		capabilityMode ? "Executable agents (capabilities):" : "Executable agents:",
-		...formatAgentListSections(agents, providerNameSet, formatLine),
+		...formatAgentListSections(shownAgents, providerNameSet, formatLine),
 	];
-	appendRestrictedAgentLines({ lines, agents: restrictedAgents, sources: restrictedSources, providerNames: providerNameSet, formatLine });
+	appendRestrictedAgentLines({ lines, agents: shownRestrictedAgents, sources: restrictedSources, providerNames: providerNameSet, formatLine });
+	if (omittedCount > 0) lines.push("", `+${omittedCount} more; narrow with {action:"list", options:{search:"<term>"}}`);
 	appendExternalJobRegistryLine(lines, [...agents, ...restrictedAgents], providerStatus);
 	appendAgentDiagnosticLines(lines, d.agentDiagnostics);
 	if (proactiveSuggestions.length) lines.push("", ...proactiveSuggestions);
