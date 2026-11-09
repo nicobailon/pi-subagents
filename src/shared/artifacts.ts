@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, CHAIN_RUNS_DIR, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
+import { CHAIN_RUNS_DIR, DIRS, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
 import { getAgentDir, readStatus } from "./utils.ts";
+import { inspectSessionLease } from "../runs/shared/session-lease.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 // Pi lists only directories under its sessions root, so a marker file there is invisible to it.
 const FORK_CLEANUP_MARKER_FILE = ".pi-subagents-fork-cleanup";
@@ -234,12 +235,10 @@ export function cleanupOldArtifacts(dir: string, maxAgeDays: number): void {
 	const markerPath = path.join(dir, CLEANUP_MARKER_FILE);
 	const now = Date.now();
 
-	if (fs.existsSync(markerPath)) {
-		const stat = fs.statSync(markerPath);
-		if (now - stat.mtimeMs < DAY_MS) return;
-	}
+	if (ranWithinDay(markerPath, now)) return;
 
-	const cutoff = now - maxAgeDays * DAY_MS;
+	const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+	const cutoff = now - maxAgeMs;
 
 	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
 		if (entry.name === CLEANUP_MARKER_FILE || (entry.isDirectory() && RETAINED_ARTIFACT_DIRS.has(entry.name))) continue;
@@ -311,7 +310,6 @@ function ranWithinDay(markerPath: string, now: number): boolean {
 	}
 }
 
-/** Deletes each forked child's `<parent session>/forks/<run id>/` copy once nothing wrote to it since `cutoff` and its run is not active. */
 function removeOldForkCopies(projectDir: string, cutoff: number): void {
 	let sessions: fs.Dirent[];
 	try {
@@ -324,6 +322,8 @@ function removeOldForkCopies(projectDir: string, cutoff: number): void {
 		const forksDir = path.join(projectDir, session.name, "forks");
 		let runIds: string[];
 		try {
+			// Never follow a symlinked forks folder: the deletes below would land in its target.
+			if (!fs.lstatSync(forksDir).isDirectory()) continue;
 			runIds = fs.readdirSync(forksDir);
 		} catch {
 			continue;
@@ -331,7 +331,7 @@ function removeOldForkCopies(projectDir: string, cutoff: number): void {
 		for (const runId of runIds) {
 			const runDir = path.join(forksDir, runId);
 			try {
-				if (newestMtimeMs(runDir) < cutoff && !asyncRunActive(runId)) fs.rmSync(runDir, { recursive: true, force: true });
+				if (!forkCopyInUse(runDir, cutoff) && !asyncRunActive(runId)) fs.rmSync(runDir, { recursive: true, force: true });
 			} catch {
 				// Best-effort like artifact cleanup: an entry that vanishes or can't be read is left for the next pass.
 			}
@@ -339,18 +339,19 @@ function removeOldForkCopies(projectDir: string, cutoff: number): void {
 	}
 }
 
-function newestMtimeMs(entryPath: string): number {
+// A write anywhere inside, including a nested fork's copy, keeps the whole folder. A resumed run writes
+// into its old copy under a new run id, so the session lease it holds, not the folder name, shows it is live.
+function forkCopyInUse(entryPath: string, cutoff: number): boolean {
 	const stat = fs.lstatSync(entryPath);
-	if (!stat.isDirectory()) return stat.mtimeMs;
-	let newest = stat.mtimeMs;
-	for (const name of fs.readdirSync(entryPath)) newest = Math.max(newest, newestMtimeMs(path.join(entryPath, name)));
-	return newest;
+	if (stat.mtimeMs >= cutoff) return true;
+	if (!stat.isDirectory()) return entryPath.endsWith(".jsonl") && inspectSessionLease(entryPath).state !== "free";
+	return fs.readdirSync(entryPath).some((name) => forkCopyInUse(path.join(entryPath, name), cutoff));
 }
 
 // An async run waiting on a long tool call or a reply can leave its session file untouched for a long time.
 function asyncRunActive(runId: string): boolean {
 	try {
-		const state = readStatus(path.join(ASYNC_DIR, runId))?.state;
+		const state = readStatus(path.join(DIRS.async, runId))?.state;
 		return state === "queued" || state === "running";
 	} catch {
 		// A status that can't be read may still belong to a live run.
@@ -358,8 +359,7 @@ function asyncRunActive(runId: string): boolean {
 	}
 }
 
-/** Names the cleanup when a missing session file was a fork copy, so a failed resume says why it is gone. */
 export function missingForkCopyNote(sessionFile: string): string {
 	if (path.basename(path.dirname(path.dirname(sessionFile))) !== "forks") return "";
-	return ". It was a forked child's copy of the parent session; copies of finished runs are deleted after artifactConfig.cleanupDays days (default 7).";
+	return ". It was a forked child's copy of the parent session; such copies are deleted once nothing has written to them for artifactConfig.cleanupDays days (default 7).";
 }

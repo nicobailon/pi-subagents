@@ -61,7 +61,7 @@ describe("async resume lookup", () => {
 
 			assert.throws(
 				() => resolveAsyncResumeTarget({ id: "run-fork1" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
-				/session file does not exist: .*child\.jsonl\. It was a forked child's copy of the parent session; copies of finished runs are deleted after artifactConfig\.cleanupDays days/,
+				/session file does not exist: .*child\.jsonl\. It was a forked child's copy of the parent session; such copies are deleted once nothing has written to them for artifactConfig\.cleanupDays days/,
 			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
