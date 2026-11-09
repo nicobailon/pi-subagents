@@ -6,6 +6,7 @@
 
 - A forked subagent (`context: "fork"`) launched in another folder than the parent session now gets that folder's `AGENTS.md` / `CLAUDE.md`. Before, it kept only the parent's project instructions, so a fork started in a repository worktree never saw the repository's `AGENTS.md`.
 - The copies of the parent session that forked subagents write under `<parent session>/forks/` are now deleted once nothing has written to them for `artifactConfig.cleanupDays` (default 7) and their run is no longer active. Before, nothing deleted them; one parent session of about 400 MB filled 22 GB in a day with 57 forks. Resuming a child whose copy was deleted now says so. (#3232)
+- The Watchdog's own model requests (reviews and permission decisions) and Prompt Audit's task rewrite now carry the parent session id, so providers that key prompt caching on it get a `prompt_cache_key`. Before, a gateway that requires one rejected every Watchdog review with HTTP 400. Thanks to [@hetingyi](https://github.com/hetingyi) for #3223.
 
 ## [0.87.0] - 2026-11-07
 
