@@ -6,6 +6,10 @@
 
 - The subagent widget shows the latest progress a running child reported with `contact_supervisor` (`progress_update`), with how long ago it reported, and `status` lists it on the child's line. Before, the report text was not shown anywhere in the parent. Thanks to [@kodfodrasz](https://github.com/kodfodrasz) for #3230.
 
+### Fixed
+
+- A forked subagent (`context: "fork"`) launched in another folder than the parent session now gets that folder's `AGENTS.md` / `CLAUDE.md`. Before, it kept only the parent's project instructions, so a fork started in a repository worktree never saw the repository's `AGENTS.md`.
+
 ## [0.87.0] - 2026-11-07
 
 ### Highlights
