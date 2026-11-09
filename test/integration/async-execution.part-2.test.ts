@@ -915,6 +915,84 @@ syncBuiltinESMExports();
 		}
 	});
 
+	for (const reason of ["need_decision", "progress_update"] as const) {
+		it(`async timeoutMs ${reason === "need_decision" ? "pauses while a child waits on" : "keeps running through"} contact_supervisor ${reason}`, { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+			mockPi.onCall({ steps: [
+				{ jsonl: [{ ...events.toolStart("contact_supervisor", { reason, message: "Question" }), toolCallId: "ask-1" }] },
+				{ delay: 2_000, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-1" }, events.assistantMessage("done"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+			] });
+			const id = `async-supervisor-wait-${reason}-${Date.now().toString(36)}`;
+			executeAsyncChain(id, {
+				chain: [{ agent: "one", task: "Ask" }],
+				agents: [makeAgent("one")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				timeoutMs: 1_000,
+			});
+			const payload = await readAsyncPayload(id);
+			if (reason === "need_decision") {
+				assert.equal(payload.state, "complete", JSON.stringify(payload));
+				assert.notEqual(payload.results[0]?.timedOut, true);
+			} else {
+				assert.equal(payload.results[0]?.timedOut, true);
+				assert.equal(payload.results[0]?.error, "Subagent timed out after 1000ms.");
+			}
+		});
+	}
+
+	it("async timeoutMs lets a parallel sibling outlast the original deadline while another child waits on its supervisor", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "Ask the supervisor", steps: [
+			{ jsonl: [{ ...events.toolStart("contact_supervisor", { reason: "need_decision", message: "Question" }), toolCallId: "ask-1" }] },
+			{ delay: 2_500, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-1" }, events.assistantMessage("asker done"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		mockPi.onCall({ matchArgIncludes: "Keep working", steps: [
+			{ delay: 1_800, jsonl: [events.assistantMessage("worker done"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		const id = `async-supervisor-wait-sibling-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ parallel: [{ agent: "one", task: "Ask the supervisor" }, { agent: "two", task: "Keep working" }] }],
+			agents: [makeAgent("one"), makeAgent("two")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			timeoutMs: 1_000,
+		});
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.state, "complete", JSON.stringify(payload));
+		assert.deepEqual(payload.results.map((result) => result.timedOut === true), [false, false]);
+	});
+
+	it("keeps a parallel sibling's per-tool timeout armed when the run deadline is closer but a supervisor wait pauses it", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "Ask the supervisor", steps: [
+			{ delay: 300, jsonl: [{ ...events.toolStart("contact_supervisor", { reason: "need_decision", message: "Question" }), toolCallId: "ask-1" }] },
+			{ delay: 3_000, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-1" }, events.assistantMessage("asker done"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		mockPi.onCall({ matchArgIncludes: "Run a wedged tool", steps: [
+			{ delay: 400, jsonl: [{ ...events.toolStart("bash"), toolCallId: "bash-1" }] },
+			{ delay: 6_000 },
+		] });
+		const id = `async-supervisor-wait-tool-timeout-${Date.now().toString(36)}`;
+		process.env.PI_SUBAGENT_TOOL_TIMEOUT_MS = "1500";
+		try {
+			executeAsyncChain(id, {
+				chain: [{ parallel: [{ agent: "one", task: "Ask the supervisor" }, { agent: "two", task: "Run a wedged tool" }] }],
+				agents: [makeAgent("one"), makeAgent("two")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				timeoutMs: 2_000,
+			});
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.results[1]?.error, "Tool 'bash' exceeded its timeout of 1500ms.", JSON.stringify(payload.results.map((result) => result.error)));
+		} finally {
+			delete process.env.PI_SUBAGENT_TOOL_TIMEOUT_MS;
+		}
+	});
+
 	it("enforces child timeouts on async parallel tasks without a composite deadline", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ delay: 5_000, output: "one too late" });
 		mockPi.onCall({ delay: 5_000, output: "two too late" });

@@ -109,6 +109,7 @@ import { childSessionFactory, childSessionHasQueuedMessages, projectChildSession
 import { reconcileAttemptUsage } from "../shared/usage-reconciliation.ts";
 import { clearProviderRetry, observeProviderDiagnostics, snapshotProviderDiagnostics } from "../../shared/provider-diagnostics.ts";
 import { isRexLocalMachine } from "../shared/rex-machine.ts";
+import { pauseForSupervisorWait, startPausableTimer, type PausableTimer } from "../shared/supervisor-wait-timer.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -346,7 +347,8 @@ function isCompleteUsageCounter(value: unknown): value is number {
 
 const STOPPED_BEFORE_COMPLETION_ERROR = "Subagent stopped before completion.";
 const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
-type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true };
+const REMAINING_TIMEOUT_MS = Symbol("remainingTimeoutMs");
+type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true; [REMAINING_TIMEOUT_MS]?: number };
 
 
 async function runSingleAttempt(
@@ -566,6 +568,7 @@ async function runSingleAttempt(
 	let toolAvailabilityError: string | undefined;
 	let abortedBySignal = options.signal?.aborted === true;
 	let afterCompactionSettlement = false;
+	let remainingTimeoutMs: number | undefined;
 
 	if (options.workflowChildPermitLaunch) {
 		const permitError = consumeWorkflowChildPermit(options.workflowChildPermitLaunch.permit, {
@@ -602,11 +605,12 @@ async function runSingleAttempt(
 		let removeAbortListener: (() => void) | undefined;
 		let removeInterruptListener: (() => void) | undefined;
 		let activityTimer: NodeJS.Timeout | undefined;
-		let timeoutTimer: NodeJS.Timeout | undefined;
+		let timeoutTimer: PausableTimer | undefined;
 		let timeoutHardFinishTimer: NodeJS.Timeout | undefined;
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
-				clearTimeout(timeoutTimer);
+				remainingTimeoutMs = timeoutTimer.remainingMs();
+				timeoutTimer.clear();
 				timeoutTimer = undefined;
 			}
 			if (timeoutHardFinishTimer) {
@@ -1111,6 +1115,7 @@ async function runSingleAttempt(
 					: {};
 				const activeTool = evt.toolName !== undefined ? recordActiveToolCall(evt as { toolCallId?: unknown; toolName: string }, toolArgs, now) : undefined;
 				if (evt.toolName !== undefined) armToolTimeout(evt as { toolCallId?: unknown; toolName: string });
+				pauseForSupervisorWait(timeoutTimer, evt);
 				if (options.structuredOutput && evt.toolName === "structured_output") {
 					structuredOutputToolInvoked = true;
 					structuredOutputMessageStartIndex = result.messages?.length ?? 0;
@@ -1130,6 +1135,7 @@ async function runSingleAttempt(
 
 			if (evt.type === "tool_execution_end") {
 				clearActiveToolTimeout(evt);
+				pauseForSupervisorWait(timeoutTimer, evt);
 				const endedTool = removeActiveToolCall(evt);
 				if (endedTool) {
 					progress.recentTools.push({
@@ -1267,7 +1273,7 @@ async function runSingleAttempt(
 		}
 
 		if (attemptTimeout) {
-			timeoutTimer = setTimeout(() => {
+			timeoutTimer = startPausableTimer(attemptTimeout.remainingMs, () => {
 				if (sessionSettled || lifecycleFinished || interruptedByControl || result.timedOut) return;
 				result.timedOut = true;
 				timeoutCause = attemptTimeout.message;
@@ -1284,8 +1290,7 @@ async function runSingleAttempt(
 					settle(undefined, true);
 				}, 4000);
 				timeoutHardFinishTimer.unref?.();
-			}, attemptTimeout.remainingMs);
-			timeoutTimer.unref?.();
+			});
 		}
 
 		let toolTimeoutSequence = 0;
@@ -1320,7 +1325,7 @@ async function runSingleAttempt(
 		};
 		const terminateForToolTimeout = (message: string): void => {
 			if (sessionSettled || lifecycleFinished || interruptedByControl || result.timedOut) return;
-			clearTimeout(timeoutTimer);
+			timeoutTimer?.clear();
 			result.timedOut = true;
 			timeoutCause = message;
 			result.error = message;
@@ -1339,9 +1344,6 @@ async function runSingleAttempt(
 		const armToolTimeout = (event: { toolCallId?: unknown; toolName: string }): void => {
 			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, options.toolTimeoutMs);
 			if (timeoutForTool === undefined) return;
-			const elapsed = Date.now() - startTime;
-			const runRemaining = attemptTimeout ? Math.max(0, attemptTimeout.remainingMs - elapsed) : undefined;
-			if (runRemaining !== undefined && timeoutForTool >= runRemaining) return;
 			const key = toolTimeoutCallKey(event, ++toolTimeoutSequence);
 			const toolName = event.toolName;
 			const timer = setTimeout(() => {
@@ -1534,6 +1536,7 @@ async function runSingleAttempt(
 	if (afterCompactionSettlement) {
 		(result as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT] = true;
 	}
+	(result as AbortRecoverySingleResult)[REMAINING_TIMEOUT_MS] = remainingTimeoutMs;
 	if (interruptedByControl) {
 		result.exitCode = 0;
 		result.interrupted = true;
@@ -2028,6 +2031,9 @@ async function runSyncCompletionInner(
 		});
 		if (recovery.action === "resume") {
 			recoveryPrompt = recovery.prompt;
+			// The retry gets the budget the first attempt left, so that attempt's supervisor waits stay uncounted.
+			const remainingMs = (attemptResult as AbortRecoverySingleResult)[REMAINING_TIMEOUT_MS];
+			if (remainingMs !== undefined) attemptOptions.deadlineAt = Date.now() + remainingMs;
 			attemptNotes.push("[abort-recovery] compaction abort after useful progress; resuming the retained child session once on the same model.");
 			continue;
 		}
