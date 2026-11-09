@@ -9,7 +9,7 @@ import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../.
 import { loadConfig, updateConfig } from "../../src/extension/config.ts";
 import { diagnoseIntercomBridge, resolveIntercomBridge } from "../../src/intercom/intercom-bridge.ts";
 import { cleanupAllArtifactDirs, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
-import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
+import { ASYNC_DIR, TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 import { getAgentDir, getConfigDirName, getProjectConfigDir, resolveConfigDirName } from "../../src/shared/utils.ts";
 
 let tempDir = "";
@@ -243,6 +243,31 @@ Package skill content.
 		assert.equal(fs.existsSync(newOutput), true);
 		assert.equal(fs.existsSync(handoff), true);
 		assert.equal(fs.existsSync(patch), true);
+	});
+
+	it("deletes old fork copies of finished runs and keeps recent or active ones", () => {
+		const forksDir = path.join(agentDir, "sessions", "--project--", "2026-11-01T00-00-00-000Z_parent", "forks");
+		const copy = (runId: string) => path.join(forksDir, runId, "child.jsonl");
+		const runIds = { finished: `fork-finished-${process.pid}`, recent: `fork-recent-${process.pid}`, active: `fork-active-${process.pid}` };
+		for (const runId of Object.values(runIds)) writeFile(copy(runId), "{}\n");
+		const oldTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+		for (const runId of [runIds.finished, runIds.active]) {
+			fs.utimesSync(copy(runId), oldTime, oldTime);
+			fs.utimesSync(path.dirname(copy(runId)), oldTime, oldTime);
+		}
+		const activeStatus = path.join(ASYNC_DIR, runIds.active, "status.json");
+		writeFile(activeStatus, JSON.stringify({ runId: runIds.active, mode: "single", state: "running", startedAt: 1, lastUpdate: 1, steps: [] }));
+		try {
+			cleanupAllArtifactDirs(0);
+			assert.equal(fs.existsSync(copy(runIds.finished)), true);
+
+			cleanupAllArtifactDirs(1);
+			assert.equal(fs.existsSync(path.dirname(copy(runIds.finished))), false);
+			assert.equal(fs.existsSync(copy(runIds.recent)), true);
+			assert.equal(fs.existsSync(copy(runIds.active)), true);
+		} finally {
+			fs.rmSync(path.dirname(activeStatus), { recursive: true, force: true });
+		}
 	});
 
 	it("resolves configured artifact directory preferences", () => {
