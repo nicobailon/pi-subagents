@@ -5,6 +5,7 @@
 ### Fixed
 
 - A forked subagent (`context: "fork"`) launched in another folder than the parent session now gets that folder's `AGENTS.md` / `CLAUDE.md`. Before, it kept only the parent's project instructions, so a fork started in a repository worktree never saw the repository's `AGENTS.md`.
+- In a non-interactive session (`pi -p`), Pi now waits for background subagent work at the end of a turn for as long as the `timeoutMs` setting allows a run to take. Before, it always gave up after 30 minutes, so a parent that ended its turn to wait for a longer child failed and exited before the child's result arrived. Without `timeoutMs`, the wait is still 30 minutes. Thanks to [@mt-huerta](https://github.com/mt-huerta) for #3229.
 
 ## [0.87.0] - 2026-11-07
 
