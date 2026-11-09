@@ -79,6 +79,7 @@ export async function rewritePromptWithGuidance(input: {
 	});
 	const ctxThinking = (input.ctx as { getThinkingLevel?: () => ThinkingLevel }).getThinkingLevel?.();
 	const agent = new Agent({
+		sessionId,
 		initialState: {
 			systemPrompt: [
 				"Rewrite one subagent authored task from Prompt Audit context.",

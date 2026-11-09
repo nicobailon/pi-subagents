@@ -63,6 +63,7 @@ test("Prompt Audit rewrite uses the session model registry stream for complete p
 	assert.equal(calls.length, 1);
 	assert.equal(calls[0]?.model, current);
 	assert.equal(calls[0]?.options?.apiKey, "complete-provider-key");
+	assert.equal(calls[0]?.options?.sessionId, "prompt-audit-session");
 	assert.equal(calls[0]?.options?.headers?.["x-opencode-session"], "prompt-audit-session");
 	assert.equal(calls[0]?.options?.headers?.["x-provider-auth"], "present");
 	assert.deepEqual(calls[0]?.options?.env, { COMPLETE_PROVIDER: "1" });
