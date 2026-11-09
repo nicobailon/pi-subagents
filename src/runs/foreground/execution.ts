@@ -41,6 +41,8 @@ import {
 	detectSubagentError,
 	hasEmptyTerminalAssistantResponse,
 	formatEmptyTerminalAssistantResponseError,
+	getTerminalAssistantStopReason,
+	TRUNCATED_RESPONSE_ERROR,
 	extractToolArgsPreview,
 	assistantMessageError,
 	extractTextFromContent,
@@ -1603,6 +1605,9 @@ async function runSingleAttempt(
 			result.error = errInfo.details
 				? `${errInfo.errorType} failed (exit ${errInfo.exitCode}): ${errInfo.details}`
 				: `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`;
+		} else if (!validatedStructuredOutput && getTerminalAssistantStopReason(messages) === "length") {
+			result.exitCode = 1;
+			result.error = TRUNCATED_RESPONSE_ERROR;
 		}
 	}
 

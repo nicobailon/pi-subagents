@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Message, Usage as PiUsage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, StopReason, Usage as PiUsage } from "@earendil-works/pi-ai";
 import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./display-text.ts";
 import { formatToolCall } from "./formatters.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
@@ -298,6 +298,12 @@ export function getFinalOutput(messages: Message[]): string {
 
 export function getSingleResultOutput(result: Pick<SingleResult, "finalOutput" | "messages">): string {
 	return result.finalOutput ?? getFinalOutput(result.messages ?? []);
+}
+
+export const TRUNCATED_RESPONSE_ERROR = "Response was truncated: the model reached its maximum output length.";
+
+export function getTerminalAssistantStopReason(messages: Message[]): StopReason | undefined {
+	return messages.findLast((message): message is AssistantMessage => message.role === "assistant")?.stopReason;
 }
 
 export function getDisplayItems(messages: Message[] | undefined): DisplayItem[] {

@@ -11,6 +11,7 @@ import {
 	resolveModelSelection,
 	resolveSubagentModelOverride,
 } from "../../src/runs/shared/model-resolution.ts";
+import { TRUNCATED_RESPONSE_ERROR } from "../../src/shared/utils.ts";
 import { resolveModelScopesForAgent } from "../../src/runs/shared/model-scope.ts";
 
 const models = [
@@ -175,6 +176,7 @@ describe("context overflow classification", () => {
 	it("does not classify tool failures, provider failures, or empty input as overflow", () => {
 		assert.equal(isContextOverflow("bash failed (exit 1): input too long"), false);
 		assert.equal(isContextOverflow("429 rate limit exceeded"), false);
+		assert.equal(isContextOverflow(TRUNCATED_RESPONSE_ERROR), false);
 		assert.equal(isContextOverflow(undefined), false);
 	});
 });
