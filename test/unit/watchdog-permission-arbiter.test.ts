@@ -84,6 +84,17 @@ describe("watchdog permission arbiter", () => {
 		assert.deepEqual(denied, { approved: false, reason: "path is outside scope", source: "watchdog" });
 	});
 
+	it("sends the parent session id with the arbiter's model request", async () => {
+		const sessionIds: Array<string | undefined> = [];
+		const decide = stream("approve", "safe output path");
+		const streamFn: StreamFn = (nextModel, context, options) => {
+			sessionIds.push(options?.sessionId);
+			return decide(nextModel, context, options);
+		};
+		await createWatchdogPermissionArbiter({ streamFn })({ ctx: ctx(), toolName: "write", args: { path: "out.txt" }, rawWatchdogConfig: childConfig });
+		assert.deepEqual(sessionIds, ["watchdog-permission-session", "watchdog-permission-session"]);
+	});
+
 	it("sends complete arbiter instructions and the helper cwd in the leading system message", async () => {
 		const calls: TranscriptContext[] = [];
 		const context = ctx(model(), "/tmp/watchdog-parent/../watchdog-permission");
