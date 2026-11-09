@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CHAIN_RUNS_DIR, DIRS, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
 import { getAgentDir, readStatus } from "./utils.ts";
-import { inspectSessionLease } from "../runs/shared/session-lease.ts";
+import { acquireSessionLease, type SessionLeaseHandle } from "../runs/shared/session-lease.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 // Pi lists only directories under its sessions root, so a marker file there is invisible to it.
 const FORK_CLEANUP_MARKER_FILE = ".pi-subagents-fork-cleanup";
@@ -330,22 +330,35 @@ function removeOldForkCopies(projectDir: string, cutoff: number): void {
 		}
 		for (const runId of runIds) {
 			const runDir = path.join(forksDir, runId);
+			const leases: SessionLeaseHandle[] = [];
 			try {
-				if (!forkCopyInUse(runDir, cutoff) && !asyncRunActive(runId)) fs.rmSync(runDir, { recursive: true, force: true });
+				const sessionFiles = idleSessionFiles(runDir, cutoff);
+				if (!sessionFiles || asyncRunActive(runId)) continue;
+				// A resumed run writes into its old copy under a new run id and holds that file's session lease.
+				// Holding the leases while deleting means a resume elsewhere finds either the lease taken or the file gone.
+				for (const file of sessionFiles) leases.push(acquireSessionLease({ sessionFile: file, runId: "fork-cleanup", sourceRunId: runId }));
+				fs.rmSync(runDir, { recursive: true, force: true });
 			} catch {
-				// Best-effort like artifact cleanup: an entry that vanishes or can't be read is left for the next pass.
+				// Best-effort like artifact cleanup: a leased copy, or an entry that vanishes or can't be read, is left for the next pass.
+			} finally {
+				for (const lease of leases) lease.release();
 			}
 		}
 	}
 }
 
-// A write anywhere inside, including a nested fork's copy, keeps the whole folder. A resumed run writes
-// into its old copy under a new run id, so the session lease it holds, not the folder name, shows it is live.
-function forkCopyInUse(entryPath: string, cutoff: number): boolean {
+// Undefined when anything inside, including a nested fork's copy, was written since cutoff: that keeps the whole folder.
+function idleSessionFiles(entryPath: string, cutoff: number, files: string[] = []): string[] | undefined {
 	const stat = fs.lstatSync(entryPath);
-	if (stat.mtimeMs >= cutoff) return true;
-	if (!stat.isDirectory()) return entryPath.endsWith(".jsonl") && inspectSessionLease(entryPath).state !== "free";
-	return fs.readdirSync(entryPath).some((name) => forkCopyInUse(path.join(entryPath, name), cutoff));
+	if (stat.mtimeMs >= cutoff) return undefined;
+	if (!stat.isDirectory()) {
+		if (stat.isFile() && entryPath.endsWith(".jsonl")) files.push(entryPath);
+		return files;
+	}
+	for (const name of fs.readdirSync(entryPath)) {
+		if (!idleSessionFiles(path.join(entryPath, name), cutoff, files)) return undefined;
+	}
+	return files;
 }
 
 // An async run waiting on a long tool call or a reply can leave its session file untouched for a long time.
