@@ -347,7 +347,8 @@ function isCompleteUsageCounter(value: unknown): value is number {
 
 const STOPPED_BEFORE_COMPLETION_ERROR = "Subagent stopped before completion.";
 const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
-type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true };
+const REMAINING_TIMEOUT_MS = Symbol("remainingTimeoutMs");
+type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true; [REMAINING_TIMEOUT_MS]?: number };
 
 
 async function runSingleAttempt(
@@ -567,6 +568,7 @@ async function runSingleAttempt(
 	let toolAvailabilityError: string | undefined;
 	let abortedBySignal = options.signal?.aborted === true;
 	let afterCompactionSettlement = false;
+	let remainingTimeoutMs: number | undefined;
 
 	if (options.workflowChildPermitLaunch) {
 		const permitError = consumeWorkflowChildPermit(options.workflowChildPermitLaunch.permit, {
@@ -607,6 +609,7 @@ async function runSingleAttempt(
 		let timeoutHardFinishTimer: NodeJS.Timeout | undefined;
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
+				remainingTimeoutMs = timeoutTimer.remainingMs();
 				timeoutTimer.clear();
 				timeoutTimer = undefined;
 			}
@@ -1341,8 +1344,6 @@ async function runSingleAttempt(
 		const armToolTimeout = (event: { toolCallId?: unknown; toolName: string }): void => {
 			const timeoutForTool = effectiveToolTimeoutMs(event.toolName, options.toolTimeoutMs);
 			if (timeoutForTool === undefined) return;
-			const runRemaining = attemptTimeout ? timeoutTimer?.remainingMs() ?? 0 : undefined;
-			if (runRemaining !== undefined && timeoutForTool >= runRemaining) return;
 			const key = toolTimeoutCallKey(event, ++toolTimeoutSequence);
 			const toolName = event.toolName;
 			const timer = setTimeout(() => {
@@ -1535,6 +1536,7 @@ async function runSingleAttempt(
 	if (afterCompactionSettlement) {
 		(result as AbortRecoverySingleResult)[AFTER_COMPACTION_SETTLEMENT] = true;
 	}
+	(result as AbortRecoverySingleResult)[REMAINING_TIMEOUT_MS] = remainingTimeoutMs;
 	if (interruptedByControl) {
 		result.exitCode = 0;
 		result.interrupted = true;
@@ -2029,6 +2031,9 @@ async function runSyncCompletionInner(
 		});
 		if (recovery.action === "resume") {
 			recoveryPrompt = recovery.prompt;
+			// The retry gets the budget the first attempt left, so that attempt's supervisor waits stay uncounted.
+			const remainingMs = (attemptResult as AbortRecoverySingleResult)[REMAINING_TIMEOUT_MS];
+			if (remainingMs !== undefined) attemptOptions.deadlineAt = Date.now() + remainingMs;
 			attemptNotes.push("[abort-recovery] compaction abort after useful progress; resuming the retained child session once on the same model.");
 			continue;
 		}

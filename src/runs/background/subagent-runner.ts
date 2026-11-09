@@ -689,8 +689,6 @@ interface SingleStepContext {
 	stopMessage?: string;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
-	/** Time left before the step or run deadline, net of supervisor waits; undefined without a budget. */
-	remainingMs?: () => number | undefined;
 	childIntercomTarget?: string;
 	orchestratorIntercomTarget?: string;
 	nestedRoute?: NestedRouteInfo;
@@ -1226,7 +1224,6 @@ export async function runSingleStepInner(
 			onContextWindow: (contextLimit) => ctx.onAttemptStart?.({ ...attemptModel, contextLimit }),
 			transcriptWriter,
 			toolTimeoutMs: ctx.toolTimeoutMs,
-			runRemainingMs: ctx.remainingMs,
 			expectedModelForVerification,
 			modelVerificationRegistry: step.modelVerificationRegistry,
 			modelResponseAliases: step.modelResponseAliases,
@@ -1850,7 +1847,7 @@ async function runSingleStepWithTimeout(
 	const runRemainingAtStart = runRemainingMs();
 	// When the run deadline comes first, the run timer ends this child; it also pauses for a sibling's supervisor wait.
 	if (step.timeoutMs === undefined || (runRemainingAtStart !== undefined && runRemainingAtStart <= step.timeoutMs)) {
-		return runSingleStep(step, { ...ctx, remainingMs: runRemainingMs });
+		return runSingleStep(step, ctx);
 	}
 
 	const timeoutController = new AbortController();
@@ -1872,7 +1869,6 @@ async function runSingleStepWithTimeout(
 		return await runSingleStep(step, {
 			...ctx,
 			registerTimeout,
-			remainingMs: () => timer.remainingMs(),
 			onChildEvent: (event) => {
 				pauseForSupervisorWait(timer, event);
 				ctx.onChildEvent?.(event);

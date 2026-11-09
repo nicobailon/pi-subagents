@@ -3449,6 +3449,35 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.match(readAllCallArgs(true)[1]?.at(-1) ?? "", /Continue from the current files and transcript/);
 	});
 
+	it("gives a compaction-abort recovery the run budget left after the first attempt's supervisor wait", async () => {
+		const sessionFile = path.join(tempDir, "abort-recovery-supervisor-wait.jsonl");
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [{ ...events.toolStart("contact_supervisor", { reason: "need_decision", message: "Question" }), toolCallId: "ask-1" }] },
+				{ delay: 2_000, jsonl: [
+					{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-1" },
+					events.toolStart("write", { path: "side-effect.txt", content: "done" }),
+					events.toolEnd("write"),
+					events.toolResult("write", "Wrote side-effect.txt"),
+					{ type: "message_end", message: { role: "assistant", content: [], model: "openai/gpt-5-mini", stopReason: "error", errorMessage: "This operation was aborted", usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+					{ type: "agent_settled" },
+					{ type: "compaction_start" },
+				] },
+			],
+			omitImplicitFinalEvents: true,
+			writeFiles: [{ path: "side-effect.txt", content: "done" }, { path: sessionFile, content: "{}\n" }],
+			keepAliveAfterFinalMessageMs: 5_000,
+			exitCode: 0,
+		});
+		mockPi.onCall({ delay: 50, output: "Recovered from retained session" });
+
+		const result = await runSync(tempDir, [makeAgent("echo", { model: "openai/gpt-5-mini" })], "echo", "Task", { runId: "abort-recovery-supervisor-wait", sessionFile, timeoutMs: 1_500 });
+
+		assert.equal(result.error, undefined);
+		assert.equal(result.finalOutput, "Recovered from retained session");
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("does not recover a compaction abort without a retained session", async () => {
 		mockPi.onCall({
 			jsonl: [

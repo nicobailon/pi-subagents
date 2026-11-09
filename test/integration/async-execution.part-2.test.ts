@@ -965,6 +965,34 @@ syncBuiltinESMExports();
 		assert.deepEqual(payload.results.map((result) => result.timedOut === true), [false, false]);
 	});
 
+	it("keeps a parallel sibling's per-tool timeout armed when the run deadline is closer but a supervisor wait pauses it", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "Ask the supervisor", steps: [
+			{ delay: 300, jsonl: [{ ...events.toolStart("contact_supervisor", { reason: "need_decision", message: "Question" }), toolCallId: "ask-1" }] },
+			{ delay: 3_000, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-1" }, events.assistantMessage("asker done"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		mockPi.onCall({ matchArgIncludes: "Run a wedged tool", steps: [
+			{ delay: 400, jsonl: [{ ...events.toolStart("bash"), toolCallId: "bash-1" }] },
+			{ delay: 6_000 },
+		] });
+		const id = `async-supervisor-wait-tool-timeout-${Date.now().toString(36)}`;
+		process.env.PI_SUBAGENT_TOOL_TIMEOUT_MS = "1500";
+		try {
+			executeAsyncChain(id, {
+				chain: [{ parallel: [{ agent: "one", task: "Ask the supervisor" }, { agent: "two", task: "Run a wedged tool" }] }],
+				agents: [makeAgent("one"), makeAgent("two")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				timeoutMs: 2_000,
+			});
+			const payload = await readAsyncPayload(id);
+			assert.equal(payload.results[1]?.error, "Tool 'bash' exceeded its timeout of 1500ms.", JSON.stringify(payload.results.map((result) => result.error)));
+		} finally {
+			delete process.env.PI_SUBAGENT_TOOL_TIMEOUT_MS;
+		}
+	});
+
 	it("enforces child timeouts on async parallel tasks without a composite deadline", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ delay: 5_000, output: "one too late" });
 		mockPi.onCall({ delay: 5_000, output: "two too late" });
