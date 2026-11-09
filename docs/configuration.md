@@ -444,6 +444,8 @@ Forces depth-0 internal single, parallel, and chain runs into background mode an
 
 Global default runtime deadline, in milliseconds, for subagent runs. It replaces the built-in 30-minute backstop for foreground launches (single, parallel, chain, and workflow scripts) and plain single-agent async runs whenever no call-level `timeoutMs`/`maxRuntimeMs` applies. For single-agent launches, selected agent frontmatter `timeoutMs` still wins. This only moves the *default*. Expiring this run-level deadline is terminal.
 
+A run's deadline does not count time a child spends waiting for its supervisor's reply to a `contact_supervisor` decision or interview, or to an `intercom` ask; `progress_update` does not pause it, and the overall deadline of a workflow script stays wall-clock.
+
 This deadline bounds the whole run. The wait for a single model response is bounded separately by Pi's `httpIdleTimeoutMs` setting (default 300000; `0` disables it), which Pi applies both as the SDK request timeout and as the undici header/body idle timeout. Detached async runners read the same setting from `~/.pi/agent/settings.json` and the project `.pi/settings.json` for their own HTTP dispatcher, so a local model that queues or prefills for longer than five minutes needs `httpIdleTimeoutMs` raised or disabled in Pi settings, plus a `timeoutMs` long enough for the run.
 
 In a non-interactive session (`pi -p`), the same value is how long Pi stays open at the end of a turn waiting for background subagent work to finish. When it is unset, Pi waits 30 minutes, then fails and exits if that work is still running.

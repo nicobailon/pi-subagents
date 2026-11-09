@@ -915,6 +915,33 @@ syncBuiltinESMExports();
 		}
 	});
 
+	for (const reason of ["need_decision", "progress_update"] as const) {
+		it(`async timeoutMs ${reason === "need_decision" ? "pauses while a child waits on" : "keeps running through"} contact_supervisor ${reason}`, { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+			mockPi.onCall({ steps: [
+				{ jsonl: [{ ...events.toolStart("contact_supervisor", { reason, message: "Question" }), toolCallId: "ask-1" }] },
+				{ delay: 2_000, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-1" }, events.assistantMessage("done"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+			] });
+			const id = `async-supervisor-wait-${reason}-${Date.now().toString(36)}`;
+			executeAsyncChain(id, {
+				chain: [{ agent: "one", task: "Ask" }],
+				agents: [makeAgent("one")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				timeoutMs: 1_000,
+			});
+			const payload = await readAsyncPayload(id);
+			if (reason === "need_decision") {
+				assert.equal(payload.state, "complete", JSON.stringify(payload));
+				assert.notEqual(payload.results[0]?.timedOut, true);
+			} else {
+				assert.equal(payload.results[0]?.timedOut, true);
+				assert.equal(payload.results[0]?.error, "Subagent timed out after 1000ms.");
+			}
+		});
+	}
+
 	it("enforces child timeouts on async parallel tasks without a composite deadline", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ delay: 5_000, output: "one too late" });
 		mockPi.onCall({ delay: 5_000, output: "two too late" });

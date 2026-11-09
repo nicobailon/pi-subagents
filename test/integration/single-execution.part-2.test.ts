@@ -4983,6 +4983,24 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		// Exit code is platform-dependent (Windows: often 1 or 0, Linux: null/143)
 	});
 
+	for (const reason of ["need_decision", "progress_update"] as const) {
+		it(`foreground timeoutMs ${reason === "need_decision" ? "pauses while a child waits on" : "keeps running through"} contact_supervisor ${reason}`, async () => {
+			mockPi.onCall({ steps: [
+				{ delay: 40, jsonl: [{ ...events.toolStart("contact_supervisor", { reason, message: "Question" }), toolCallId: "ask-1" }] },
+				{ delay: 400, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-1" }] },
+				{ delay: 40, jsonl: [events.assistantMessage("Done")] },
+			] });
+			const result = await runSync(tempDir, makeAgentConfigs(["worker"]), "worker", "Task", { timeoutMs: 250, acceptance: false });
+			if (reason === "need_decision") {
+				assert.equal(result.exitCode, 0, result.error);
+				assert.notEqual(result.timedOut, true);
+			} else {
+				assert.equal(result.timedOut, true);
+				assert.equal(result.error, "Subagent timed out after 250ms.");
+			}
+		});
+	}
+
 	it("marks foreground runs that exceed timeoutMs as timed out", async () => {
 		mockPi.onCall({ delay: 10000 });
 		const agents = makeAgentConfigs(["slow"]);
