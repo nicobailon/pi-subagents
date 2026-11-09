@@ -25,6 +25,7 @@ assert.equal(os.homedir(), homeDir, "test isolation must redirect the home direc
 
 const { computeMcpServerHash, resolveMcpDirectToolResolution } = await import("../../src/runs/shared/mcp-direct-tool-allowlist.ts");
 const { getAgentDir, getProjectConfigDir } = await import("../../src/shared/utils.ts");
+const { resolvePiLaunchToolPlan } = await import("../../src/runs/shared/child-tool-plan.ts");
 
 const SELECTORS = ["codegraph/codegraph_explore", "codegraph/codegraph_node", "codegraph/codegraph_status"];
 const SELECTED_NAMES = ["codegraph_explore", "codegraph_node", "codegraph_status"];
@@ -104,6 +105,58 @@ describe("MCP direct-tool resolution config sources", () => {
 		} finally {
 			for (const name of names) delete process.env[name];
 		}
+	});
+
+	it("skips disabled server and tool selectors while resolving enabled servers", () => {
+		writeServerConfig(path.join(agentDir, "mcp-adapter.json"), CURRENT_DEFINITION);
+		writeServerConfig(path.join(getProjectConfigDir(projectDir), "mcp-adapter.json"), { disabled: true });
+		writeMetadataCache(CURRENT_DEFINITION);
+
+		const resolution = resolveMcpDirectToolResolution(["codegraph", "codegraph/codegraph_explore", "missing"], projectDir);
+		assert.deepEqual(resolution.selections, []);
+		assert.deepEqual(resolution.unresolvedSelectors, ["missing"]);
+
+		const mixed = resolveMcpDirectToolResolution(["disabled", "disabled/search", ...SELECTORS], projectDir, undefined, {
+			mcpServers: { disabled: { disabled: true }, codegraph: CURRENT_DEFINITION },
+		});
+		assert.deepEqual(mixed.selections.map((selection) => selection.name), SELECTED_NAMES);
+		assert.deepEqual(mixed.unresolvedSelectors, []);
+
+		const cachedDisabled = resolveMcpDirectToolResolution(SELECTORS, projectDir, undefined, {
+			mcpServers: { codegraph: { ...CURRENT_DEFINITION, disabled: true } },
+		});
+		assert.deepEqual(cachedDisabled.selections, []);
+		assert.deepEqual(cachedDisabled.unresolvedSelectors, []);
+	});
+
+	it("does not grant default tools when every selected MCP server is disabled", () => {
+		writeServerConfig(path.join(getProjectConfigDir(projectDir), "mcp-adapter.json"), { disabled: true });
+		const plan = resolvePiLaunchToolPlan({ mcpDirectTools: ["codegraph"], cwd: projectDir });
+		assert.equal(plan.explicitToolAllowlist, true);
+		assert.deepEqual(plan.effectiveToolAllowlist, []);
+		assert.deepEqual(plan.requiredChildTools, []);
+	});
+
+	it("keeps a lower-priority disabled flag unless explicitly enabled", () => {
+		writeServerConfig(path.join(agentDir, "mcp-adapter.json"), { ...CURRENT_DEFINITION, disabled: true });
+		writeServerConfig(path.join(getProjectConfigDir(projectDir), "mcp-adapter.json"), { args: CURRENT_DEFINITION.args });
+		writeMetadataCache(CURRENT_DEFINITION);
+		assert.deepEqual(resolveMcpDirectToolResolution(SELECTORS, projectDir).unresolvedSelectors, []);
+		assert.deepEqual(resolveMcpDirectToolResolution(SELECTORS, projectDir).selections, []);
+
+		writeServerConfig(path.join(getProjectConfigDir(projectDir), "mcp-adapter.json"), { disabled: false });
+		const enabled = resolveMcpDirectToolResolution(SELECTORS, projectDir);
+		assert.deepEqual(enabled.selections.map((selection) => selection.name), SELECTED_NAMES);
+		assert.deepEqual(enabled.unresolvedSelectors, []);
+	});
+
+	it("skips disabled selectors without a cache but still requires metadata for enabled selectors", () => {
+		const config = { mcpServers: { disabled: { disabled: true }, codegraph: CURRENT_DEFINITION, enabled: { disabled: false } } };
+		assert.deepEqual(resolveMcpDirectToolResolution(["disabled", "disabled/search"], projectDir, undefined, config), {
+			selections: [], unresolvedSelectors: [],
+		});
+		assert.deepEqual(resolveMcpDirectToolResolution(["disabled", "codegraph", "enabled", "missing"], projectDir, undefined, config).unresolvedSelectors,
+			["codegraph", "enabled", "missing"]);
 	});
 
 	it("ignores Pi's own mcp.json files, which the adapter no longer reads", () => {

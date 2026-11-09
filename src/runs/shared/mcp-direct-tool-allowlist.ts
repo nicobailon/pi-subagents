@@ -129,19 +129,22 @@ export function resolveMcpDirectToolResolution(
 	const resolvedConfig = Object.keys(runtimeServers).length > 0
 		? mergeConfigs(config, { mcpServers: runtimeServers })
 		: config;
-	validateSelectedServerDefinitions(resolvedConfig, selectors);
+	const enabledSelectors = selectors.filter((selector) => resolvedConfig.mcpServers[selector.split("/", 1)[0]!]?.disabled !== true);
+	validateSelectedServerDefinitions(resolvedConfig, enabledSelectors);
 	const runtime = Object.keys(runtimeServers).length > 0
 		? { mcpConfig: resolvedConfig, runtimeServerNames: Object.keys(runtimeServers) }
 		: {};
+	if (enabledSelectors.length === 0) return { selections: [], unresolvedSelectors: [], ...runtime };
 	const cache = loadMetadataCache();
-	if (!cache) return { selections: [], unresolvedSelectors: selectors, ...runtime };
+	if (!cache) return { selections: [], unresolvedSelectors: enabledSelectors, ...runtime };
 	const validMetadata: Record<string, ServerCacheEntry> = {};
 	for (const [serverName, definition] of Object.entries(resolvedConfig.mcpServers)) {
+		if (definition.disabled === true) continue;
 		const serverCache = cache.servers[serverName];
 		if (isServerCacheValid(serverCache, definition)) validMetadata[serverName] = serverCache;
 	}
 	const grant = planMcpDirectToolGrant({
-		selectors,
+		selectors: enabledSelectors,
 		servers: resolvedConfig.mcpServers,
 		metadata: validMetadata,
 		toolPrefix: resolvedConfig.settings?.toolPrefix,
@@ -401,10 +404,25 @@ function parseSettings(value: unknown): McpConfig["settings"] | undefined {
 function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
 	const imports = [...(base.imports ?? []), ...(next.imports ?? [])];
 	return {
-		mcpServers: { ...base.mcpServers, ...next.mcpServers },
+		mcpServers: mergeServerDefinitions(base.mcpServers, next.mcpServers),
 		imports: imports.length ? [...new Set(imports)] : undefined,
 		settings: next.settings ? { ...base.settings, ...next.settings } : base.settings,
 	};
+}
+
+function mergeServerDefinitions(base: Record<string, ServerEntry>, next: Record<string, ServerEntry>): Record<string, ServerEntry> {
+	const servers = { ...base };
+	for (const [name, definition] of Object.entries(next)) {
+		const previous = base[name];
+		if (!previous) {
+			servers[name] = definition;
+		} else if (Object.keys(definition).every((key) => key === "disabled")) {
+			servers[name] = { ...previous, ...definition };
+		} else {
+			servers[name] = { ...(previous.disabled !== undefined ? { disabled: previous.disabled } : {}), ...definition };
+		}
+	}
+	return servers;
 }
 
 function expandImports(config: McpConfig, cwd: string): McpConfig {
@@ -428,7 +446,7 @@ function expandImports(config: McpConfig, cwd: string): McpConfig {
 	return {
 		imports: config.imports,
 		settings: config.settings,
-		mcpServers: { ...importedServers, ...config.mcpServers },
+		mcpServers: mergeServerDefinitions(importedServers, config.mcpServers),
 	};
 }
 

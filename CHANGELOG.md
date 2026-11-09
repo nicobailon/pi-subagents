@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Subagents now skip `mcp:` selectors for pi-mcp-adapter servers explicitly configured with `disabled: true`. Before, a disabled server could prevent a child from launching. Unknown servers and enabled servers without matching cached tools still fail the launch. Thanks to [@shura-v](https://github.com/shura-v) for #3238.
 - Workflow scripts start on hosts that run Pi on Electron, such as pi Desktop. Before, Electron left the sandbox flags in the script process's arguments and every workflow script failed with `Cannot find module '--allow-worker'`. Thanks to [@hotsnow-sean](https://github.com/hotsnow-sean) for #3222.
 - A forked subagent (`context: "fork"`) launched in another folder than the parent session now gets that folder's `AGENTS.md` / `CLAUDE.md`. Before, it kept only the parent's project instructions, so a fork started in a repository worktree never saw the repository's `AGENTS.md`.
 - The copies of the parent session that forked subagents write under `<parent session>/forks/` are now deleted once nothing has written to them for `artifactConfig.cleanupDays` (default 7) and their run is no longer active. Before, nothing deleted them; one parent session of about 400 MB filled 22 GB in a day with 57 forks. Resuming a child whose copy was deleted now says so. (#3232)
