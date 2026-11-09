@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- With `toolActivation: "auto"`, switching models before the first message now picks the subagent tools for the model you switched to. Before, the choice was made for the startup model, so a session that switched to a model that can't add tools mid-conversation kept the loader, and calling it later made the provider miss its prompt cache. Thanks to [@IdrisGit](https://github.com/IdrisGit) for #3241.
 - A subagent's final acceptance report now reaches the parent intact. Before, a steer or follow-up queued while the child was finishing started another turn after the report, and the parent received that turn's text instead of the report. A steer the child rejects now stays rejected until you resume the child, instead of the child being restarted automatically. Thanks to [@adrian-ludwig](https://github.com/adrian-ludwig) for #3227.
 - The bundled `undici` dependency is now 8.12.4, which fixes the security advisories published against 8.12.3 (cache and redirect information disclosure, credential stripping, a skipped integrity check, and an uncaught exception). Thanks to [@dzervas](https://github.com/dzervas) for the report. (#3242)
 - On Windows machines where policy blocks `powershell.exe`, the cleanup of old background subagent state now finishes. Before, it stopped with `spawn UNKNOWN` and printed the error over the footer every session. A cleanup failure now shows as a warning in Pi instead of raw text over the screen. Thanks to [@SuperSalsa20](https://github.com/SuperSalsa20) for the report. (#3240)
