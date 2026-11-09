@@ -942,6 +942,29 @@ syncBuiltinESMExports();
 		});
 	}
 
+	it("async timeoutMs lets a parallel sibling outlast the original deadline while another child waits on its supervisor", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
+		mockPi.onCall({ matchArgIncludes: "Ask the supervisor", steps: [
+			{ jsonl: [{ ...events.toolStart("contact_supervisor", { reason: "need_decision", message: "Question" }), toolCallId: "ask-1" }] },
+			{ delay: 2_500, jsonl: [{ ...events.toolEnd("contact_supervisor"), toolCallId: "ask-1" }, events.assistantMessage("asker done"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		mockPi.onCall({ matchArgIncludes: "Keep working", steps: [
+			{ delay: 1_800, jsonl: [events.assistantMessage("worker done"), { type: "agent_end", willRetry: false }, { type: "agent_settled" }] },
+		] });
+		const id = `async-supervisor-wait-sibling-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ parallel: [{ agent: "one", task: "Ask the supervisor" }, { agent: "two", task: "Keep working" }] }],
+			agents: [makeAgent("one"), makeAgent("two")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			timeoutMs: 1_000,
+		});
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.state, "complete", JSON.stringify(payload));
+		assert.deepEqual(payload.results.map((result) => result.timedOut === true), [false, false]);
+	});
+
 	it("enforces child timeouts on async parallel tasks without a composite deadline", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ delay: 5_000, output: "one too late" });
 		mockPi.onCall({ delay: 5_000, output: "two too late" });

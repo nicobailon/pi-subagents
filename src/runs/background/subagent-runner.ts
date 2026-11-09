@@ -689,8 +689,8 @@ interface SingleStepContext {
 	stopMessage?: string;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
-	/** Effective step deadline (Date.now() + effective timeout) when a run budget exists. */
-	deadlineAt?: number;
+	/** Time left before the step or run deadline, net of supervisor waits; undefined without a budget. */
+	remainingMs?: () => number | undefined;
 	childIntercomTarget?: string;
 	orchestratorIntercomTarget?: string;
 	nestedRoute?: NestedRouteInfo;
@@ -1226,7 +1226,7 @@ export async function runSingleStepInner(
 			onContextWindow: (contextLimit) => ctx.onAttemptStart?.({ ...attemptModel, contextLimit }),
 			transcriptWriter,
 			toolTimeoutMs: ctx.toolTimeoutMs,
-			runDeadlineAt: ctx.deadlineAt,
+			runRemainingMs: ctx.remainingMs,
 			expectedModelForVerification,
 			modelVerificationRegistry: step.modelVerificationRegistry,
 			modelResponseAliases: step.modelResponseAliases,
@@ -1845,18 +1845,14 @@ function combinedAbortSignal(signals: Array<AbortSignal | undefined>): AbortSign
 async function runSingleStepWithTimeout(
 	step: SubagentStep,
 	ctx: SingleStepContext,
-	parentDeadlineAt?: number,
+	runRemainingMs: () => number | undefined,
 ): Promise<SingleStepResult> {
-	if (step.timeoutMs === undefined) return runSingleStep(step, parentDeadlineAt === undefined ? ctx : {
-		...ctx,
-		deadlineAt: ctx.deadlineAt === undefined ? parentDeadlineAt : Math.min(ctx.deadlineAt, parentDeadlineAt),
-	});
+	const runRemainingAtStart = runRemainingMs();
+	// When the run deadline comes first, the run timer ends this child; it also pauses for a sibling's supervisor wait.
+	if (step.timeoutMs === undefined || (runRemainingAtStart !== undefined && runRemainingAtStart <= step.timeoutMs)) {
+		return runSingleStep(step, { ...ctx, remainingMs: runRemainingMs });
+	}
 
-	const parentRemainingMs = parentDeadlineAt === undefined ? undefined : Math.max(0, parentDeadlineAt - Date.now());
-	const timeoutMs = parentRemainingMs === undefined ? step.timeoutMs : Math.min(step.timeoutMs, parentRemainingMs);
-	const timeoutMessage = parentRemainingMs !== undefined && parentRemainingMs <= step.timeoutMs
-		? ctx.timeoutMessage
-		: `Subagent timed out after ${step.timeoutMs}ms.`;
 	const timeoutController = new AbortController();
 	let timeoutAction: (() => void) | undefined;
 	let timeoutTriggered = false;
@@ -1871,18 +1867,18 @@ async function runSingleStepWithTimeout(
 		ctx.registerTimeout?.(action ? triggerTimeout : undefined);
 		if (action && timeoutTriggered) action();
 	};
-	const timer = startPausableTimer(timeoutMs, triggerTimeout);
+	const timer = startPausableTimer(step.timeoutMs, triggerTimeout);
 	try {
 		return await runSingleStep(step, {
 			...ctx,
 			registerTimeout,
-			deadlineAt: Date.now() + timeoutMs,
+			remainingMs: () => timer.remainingMs(),
 			onChildEvent: (event) => {
 				pauseForSupervisorWait(timer, event);
 				ctx.onChildEvent?.(event);
 			},
 			timeoutSignal: combinedAbortSignal([ctx.timeoutSignal, timeoutController.signal]),
-			timeoutMessage,
+			timeoutMessage: `Subagent timed out after ${step.timeoutMs}ms.`,
 		});
 	} finally {
 		timer.clear();
@@ -1924,11 +1920,12 @@ export async function runSubagent(
 	let timeoutTimer: PausableTimer | undefined;
 	let checkpointTimer: PausableTimer | undefined;
 	// The run deadline moves later by the time its children spent blocked on a supervisor reply.
-	const runDeadlineAt = (): number | undefined => config.deadlineAt === undefined || !timeoutTimer ? config.deadlineAt : Date.now() + timeoutTimer.remainingMs();
-	const runDeadlineExpired = (): boolean => {
-		const deadlineAt = runDeadlineAt();
-		return deadlineAt !== undefined && Date.now() >= deadlineAt;
+	const runRemainingMs = (): number | undefined => timeoutTimer?.remainingMs();
+	const runDeadlineAt = (): number | undefined => {
+		const remainingMs = runRemainingMs();
+		return remainingMs === undefined ? undefined : Date.now() + remainingMs;
 	};
+	const runDeadlineExpired = (): boolean => runRemainingMs() === 0;
 	let timedOut = false;
 	let stopped = false;
 	let usageBudgetExceeded = false;
@@ -3899,7 +3896,7 @@ export async function runSubagent(
 					usageBudgetExhausted: continuationUsageBudgetExhausted,
 					usageBudget: config.usageBudget,
 					orcaProgressTab,
-				}), runDeadlineAt());
+				}), runRemainingMs);
 				const taskEndTime = Date.now();
 				const childInterrupted = singleResult.interrupted === true;
 				const childStopped = singleResult.stopped === true;
@@ -4273,7 +4270,7 @@ export async function runSubagent(
 							usageBudgetExhausted: continuationUsageBudgetExhausted,
 							usageBudget: config.usageBudget,
 							orcaProgressTab,
-						}), runDeadlineAt());
+						}), runRemainingMs);
 						if (task.sessionFile) {
 							latestSessionFile = task.sessionFile;
 						}
@@ -4624,7 +4621,7 @@ export async function runSubagent(
 				usageBudgetExhausted: continuationUsageBudgetExhausted,
 				usageBudget: config.usageBudget,
 				orcaProgressTab,
-				}), runDeadlineAt());
+				}), runRemainingMs);
 			} catch (error) {
 				if (singleWorktreeSetup) await cleanupRemainingWorktree(singleWorktreeSetup, stepIndex, flatIndex);
 				throw error;

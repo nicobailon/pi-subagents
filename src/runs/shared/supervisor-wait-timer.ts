@@ -26,7 +26,6 @@ export function startPausableTimer(delayMs: number, onFire: () => void): Pausabl
 		runningSince = Date.now();
 		timer = setTimeout(() => {
 			done = true;
-			timer = undefined;
 			runningSince = undefined;
 			remaining = 0;
 			onFire();
@@ -34,8 +33,7 @@ export function startPausableTimer(delayMs: number, onFire: () => void): Pausabl
 		timer.unref?.();
 	};
 	const stop = (): void => {
-		if (timer) clearTimeout(timer);
-		timer = undefined;
+		clearTimeout(timer);
 		if (runningSince !== undefined) remaining = Math.max(0, remaining - (Date.now() - runningSince));
 		runningSince = undefined;
 	};
@@ -54,7 +52,6 @@ export function startPausableTimer(delayMs: number, onFire: () => void): Pausabl
 		clear() {
 			done = true;
 			stop();
-			pausedBy.clear();
 		},
 	};
 }
