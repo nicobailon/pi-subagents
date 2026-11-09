@@ -2,8 +2,44 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { compactForegroundResult, extractToolArgsPreview } from "../../src/shared/utils.ts";
 import { formatToolCall } from "../../src/shared/formatters.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
+import { makeAgentConfigs } from "../support/helpers.ts";
+import type { ChildSession, ChildSessionEvent, ChildSessionFactory } from "../../src/runs/shared/child-session.ts";
 
 describe("foreground tool-call compaction", () => {
+	it("publishes only the latest successful progress update", async () => {
+		const updates: Array<{ progressText?: string; progressUpdatedAt?: number }> = [];
+		let listener: ((event: ChildSessionEvent) => void) | undefined;
+		const toolCall = (id: string, message: string) => {
+			listener?.({ type: "tool_execution_start", toolName: "contact_supervisor", toolCallId: id, args: { reason: "progress_update", message } });
+			listener?.({ type: "message_end", message: { role: "toolResult", toolName: "contact_supervisor", toolCallId: id, content: [] } });
+		};
+		const session: ChildSession = {
+			subscribe(callback) { listener = callback; return () => {}; },
+			async prompt() {
+				toolCall("first", "[1/3] First");
+				toolCall("second", "[2/3] Second");
+				listener?.({ type: "tool_execution_start", toolName: "contact_supervisor", toolCallId: "failed", args: { reason: "progress_update", message: "failed update" } });
+				listener?.({ type: "message_end", message: { role: "toolResult", toolName: "contact_supervisor", toolCallId: "failed", isError: true, content: [] } });
+				listener?.({ type: "tool_execution_start", toolName: "read", toolCallId: "normal", args: { path: "x" } });
+				listener?.({ type: "message_end", message: { role: "toolResult", toolName: "read", toolCallId: "normal", content: [] } });
+				listener?.({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop", usage: {} } });
+			},
+			async steer() {}, async followUp() {}, async abort() {}, async dispose() {},
+			messages: [], sessionId: "progress-test", modelId: "mock/test-model",
+		};
+		const factory: ChildSessionFactory = { async create() { return session; }, async dispose() {}, async disposeForParent() {} };
+		await runSync(process.cwd(), makeAgentConfigs(["worker"]), "worker", "test progress", {
+			childSessionFactory: factory,
+			onUpdate: (update) => {
+				const progress = (update.details as { progress?: Array<{ progressText?: string; progressUpdatedAt?: number }> }).progress?.[0];
+				if (progress) updates.push(progress);
+			},
+		});
+		assert.equal(updates.at(-1)?.progressText, "[2/3] Second");
+		assert.ok(updates.at(-1)?.progressUpdatedAt);
+		assert.ok(updates.some((update) => update.progressText === "[1/3] First"));
+	});
 	it("stores compact tool-call summaries instead of raw message payloads", () => {
 		const result = compactForegroundResult({
 			agent: "tester",

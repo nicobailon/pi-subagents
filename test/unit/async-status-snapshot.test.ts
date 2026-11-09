@@ -40,6 +40,8 @@ describe("async status snapshot", () => {
 				status: "running",
 				startedAt: 110,
 				currentTool: "read",
+				progressText: "[1/2] Reading status",
+				progressUpdatedAt: 175,
 				currentToolArgs: `args ${privateNeedle}`,
 				recentOutput: [`output ${privateNeedle}`],
 				error: `error ${privateNeedle}`,
@@ -68,6 +70,8 @@ describe("async status snapshot", () => {
 				startedAt: 110,
 				updatedAt: 110,
 				activity: { currentTool: "read" },
+				progressText: "[1/2] Reading status",
+				progressUpdatedAt: 175,
 			}],
 		});
 		assert.equal(json(snapshot).includes(privateNeedle), false);

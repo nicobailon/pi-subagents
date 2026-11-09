@@ -6564,6 +6564,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										step.currentToolArgs = progress.currentToolArgs;
 										step.currentToolStartedAt = progress.currentToolStartedAt;
 										step.currentPath = progress.currentPath;
+										step.progressText = progress.progressText;
+										step.progressUpdatedAt = progress.progressUpdatedAt;
 										step.recentTools = progress.recentTools.map((tool) => ({ ...tool }));
 										step.recentOutput = [...progress.recentOutput];
 										step.turnCount = progress.turnCount;

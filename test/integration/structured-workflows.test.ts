@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { DIRS, type AsyncStatus } from "../../src/shared/types.ts";
-import { createEventBus, makeAgent, makeMinimalCtx } from "../support/helpers.ts";
+import { createEventBus, events, makeAgent, makeMinimalCtx } from "../support/helpers.ts";
 import { available, createSubagentExecutor, installSingleExecutionHooks, makeExecutor, mockPi, readAllCallArgs, tempDir } from "../support/single-execution-fixture.ts";
 
 const DISABLED = { disabledFeatures: ["workflow-scripts"] };
@@ -78,6 +78,43 @@ describe("structured chain/tasks workflows", { skip: !available || !createSubage
 		]);
 		assert.match(JSON.stringify(result.details.results[0]), /FIRST-OUTPUT/);
 		assert.equal(readAllCallArgs().length, 2, "the step after the failure does not launch");
+	});
+
+	it("persists reported progress from a foreground child in an async workflow", async () => {
+		const release = path.join(tempDir, "workflow-progress-child-release");
+		fs.rmSync(release, { force: true });
+		mockPi.onCall({ steps: [
+			{ jsonl: [events.toolStart("contact_supervisor", { reason: "progress_update", message: "[1/1] Child progress" }), events.toolResult("contact_supervisor", "Progress recorded")] },
+			{ waitForPath: release, jsonl: [events.assistantMessage("Child complete")] },
+		] });
+		const executor = makeExecutor([makeAgent("scout")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, () => {});
+		const launch = await executor.executePublic("workflow-child-progress", {
+			workflowScript: 'return await runs.run("child", { agent: "scout", task: "Report progress", async: false, acceptance: false, output: false });',
+			async: true,
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(launch.isError, undefined, text(launch));
+		assert.ok(launch.details.asyncDir);
+		const statusPath = path.join(launch.details.asyncDir!, "status.json");
+		try {
+			let step: AsyncStatus["steps"] extends Array<infer T> | undefined ? T | undefined : never;
+			for (let attempt = 0; attempt < 250; attempt += 1) {
+				const status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as AsyncStatus;
+				step = status.steps?.[0];
+				if (step?.progressText === "[1/1] Child progress") break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(step?.progressText, "[1/1] Child progress");
+			assert.equal(typeof step?.progressUpdatedAt, "number");
+		} finally {
+			fs.writeFileSync(release, "continue");
+			for (let attempt = 0; attempt < 250; attempt += 1) {
+				const status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as AsyncStatus;
+				if (status.state === "complete" || status.state === "failed") break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			fs.rmSync(launch.details.asyncDir!, { recursive: true, force: true });
+			if (launch.details.asyncId) fs.rmSync(path.join(DIRS.results, `${launch.details.asyncId}.json`), { force: true });
+		}
 	});
 
 	it("records a failed state for an async tasks run with a failed child", async () => {

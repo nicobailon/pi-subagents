@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- The subagent widget shows the latest progress a running child reported with `contact_supervisor` (`progress_update`), with how long ago it reported, and `status` lists it on the child's line. Before, the report text was not shown anywhere in the parent. Thanks to [@kodfodrasz](https://github.com/kodfodrasz) for #3230.
+
 ### Fixed
 
 - Workflow scripts start on hosts that run Pi on Electron, such as pi Desktop. Before, Electron left the sandbox flags in the script process's arguments and every workflow script failed with `Cannot find module '--allow-worker'`. Thanks to [@hotsnow-sean](https://github.com/hotsnow-sean) for #3222.

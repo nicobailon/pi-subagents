@@ -12,6 +12,7 @@ import {
 	writeMetadata,
 } from "../../shared/artifacts.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
+import { extractReportedProgress } from "../../shared/reported-progress.ts";
 import {
 	type AgentProgress,
 	type ArtifactPaths,
@@ -282,6 +283,8 @@ interface StructuredDelegationProgressState {
 	recentOutput: string[];
 	recentTools: Array<{ tool: string; args: string }>;
 	activityState?: AgentProgress["activityState"];
+	progressText?: string;
+	progressUpdatedAt?: number;
 	model?: string;
 	toolCount: number;
 	tokens: number;
@@ -296,6 +299,8 @@ function captureStructuredDelegationProgressState(progress: AgentProgress, resul
 		recentOutput: [...progress.recentOutput],
 		recentTools: progress.recentTools.slice(-MAX_STREAMED_RECENT_TOOLS).map(({ tool, args }) => ({ tool, args })),
 		activityState: progress.activityState,
+		progressText: progress.progressText,
+		progressUpdatedAt: progress.progressUpdatedAt,
 		model: progress.model ?? result.model,
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
@@ -313,6 +318,8 @@ function structuredDelegationProgressChanged(
 		|| previous.currentTool !== progress.currentTool
 		|| previous.currentToolArgs !== progress.currentToolArgs
 		|| previous.activityState !== progress.activityState
+		|| previous.progressText !== progress.progressText
+		|| previous.progressUpdatedAt !== progress.progressUpdatedAt
 		|| previous.model !== (progress.model ?? result.model)
 		|| previous.toolCount !== progress.toolCount
 		|| previous.tokens !== progress.tokens
@@ -817,7 +824,7 @@ async function runSingleAttempt(
 		};
 
 		let activeLongRunningNotified = false;
-		type PendingToolResult = { tool: string; path?: string; mutates: boolean; startedAt?: number };
+		type PendingToolResult = { tool: string; path?: string; mutates: boolean; startedAt?: number; progressText?: string };
 		// Pi's parallel tool execution emits every tool_execution_start before the first result message,
 		// so results are matched to their call by toolCallId; the last-started slot covers events without one.
 		const pendingToolResultsByCallId = new Map<string, PendingToolResult>();
@@ -1114,7 +1121,7 @@ async function runSingleAttempt(
 					result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount, result.toolBudget?.blockedTool);
 				}
 				const mutates = isMutatingTool(evt.toolName, toolArgs, agent.mutationTools);
-				pendingToolResult = { tool: evt.toolName ?? "tool", path: activeTool?.path, mutates, startedAt: now };
+				pendingToolResult = { tool: evt.toolName ?? "tool", path: activeTool?.path, mutates, startedAt: now, progressText: extractReportedProgress(evt.toolName ?? "", evt.args) };
 				if (typeof evt.toolCallId === "string" && evt.toolCallId) pendingToolResultsByCallId.set(evt.toolCallId, pendingToolResult);
 				fireUpdate();
 			}
@@ -1213,6 +1220,10 @@ async function runSingleAttempt(
 						);
 					}
 					appendRecentOutput(progress, resultText.split("\n").slice(-10));
+					if (evt.message.isError !== true && resultToolName === toolSnapshot?.tool && toolSnapshot?.progressText) {
+						progress.progressText = toolSnapshot.progressText;
+						progress.progressUpdatedAt = now;
+					}
 					// A budget block has its own signal; it is not a failing mutation.
 					if (toolSnapshot?.mutates && !budgetBlocked && didMutatingToolFail(evt.message)) {
 						recordMutatingFailure(mutatingFailures, {
