@@ -21,6 +21,7 @@ import { validateIntercomBridgeConfig } from "../../intercom/intercom-bridge.ts"
 import { validateModelResponseAliases } from "../../shared/model-response-aliases.ts";
 import { readWorkflowLaunchRecord } from "../../workflows/workflow-launch-record.ts";
 import { recoveryDescriptorPath } from "../shared/run-launch-folder.ts";
+import { missingForkCopyNote } from "../../shared/artifacts.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -490,7 +491,7 @@ function launchedWorktreeCwdWithoutHandoff(runId: string, launchCwd: string, lau
 function validateResumeSessionFile(runId: string, sessionFile: string): string {
 	if (path.extname(sessionFile) !== ".jsonl") throw new Error(`Async run '${runId}' session file must be a .jsonl file: ${sessionFile}`);
 	const resolved = path.resolve(sessionFile);
-	if (!fs.existsSync(resolved)) throw new Error(`Async run '${runId}' session file does not exist: ${sessionFile}`);
+	if (!fs.existsSync(resolved)) throw new Error(`Async run '${runId}' session file does not exist: ${sessionFile}${missingForkCopyNote(resolved)}`);
 	return resolved;
 }
 

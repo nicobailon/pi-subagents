@@ -162,12 +162,46 @@ describe("nested widget rendering", () => {
 		assert.deepEqual(withoutRunningGlyphs(nextFrame), withoutRunningGlyphs(first));
 	});
 
+	it("renders per-step progress beneath each identity with age, fallback, and width bounds", () => {
+		const state: AsyncJobState = {
+			...job(nested("progress-owner", "root-run")),
+			mode: "parallel",
+			steps: [
+				{ agent: "first-child", label: "First task", status: "running", progressText: "[1/2] Reading the first file", progressUpdatedAt: 9_000 },
+				{ agent: "second-child", label: "Second task", status: "running", progressText: "[2/2] Checking the second file", progressUpdatedAt: 8_000 },
+				{ agent: "quiet-child", label: "Quiet task", status: "running" },
+				{ agent: "done-child", label: "Done task", status: "complete", progressText: "Finished child report", progressUpdatedAt: 7_000 },
+			],
+		};
+		const lines = withMockedDateNow(10_000, () => buildWidgetLines([state], theme as any, 120, false));
+		const firstRow = lines.findIndex((line) => line.includes("first-child"));
+		const secondRow = lines.findIndex((line) => line.includes("second-child"));
+		const firstTask = lines.findIndex((line) => line.includes("task: First task"));
+		const secondTask = lines.findIndex((line) => line.includes("task: Second task"));
+		assert.ok(firstRow >= 0 && firstTask > firstRow);
+		assert.ok(lines[firstTask + 1]?.includes("progress: [1/2] Reading the first file · updated 1s ago"));
+		assert.ok(secondRow >= 0 && secondTask > secondRow);
+		assert.ok(lines[secondTask + 1]?.includes("[2/2] Checking the second file · updated 2s ago"));
+		assert.ok(lines.some((line) => line.includes("task: First task")));
+		assert.ok(lines.some((line) => line.includes("task: Second task")));
+		assert.ok(!lines.some((line) => line.includes("Finished child report")));
+		assert.ok(withMockedDateNow(69_000, () => buildWidgetLines([state], theme, 120, false)).some((line) => line.includes("Reading the first file · updated 1m ago")));
+		assert.ok(withMockedDateNow(129_000, () => buildWidgetLines([state], theme, 120, false)).some((line) => line.includes("Reading the first file · updated 2m ago")));
+		assert.ok(withMockedDateNow(4_209_000, () => buildWidgetLines([state], theme, 120, false)).some((line) => line.includes("Reading the first file · updated 1:10 ago")));
+
+		const narrow = withMockedDateNow(10_000, () => buildWidgetLines([state], theme as any, 48, false));
+		assert.ok(narrow.every((line) => line.length <= 48));
+		assert.ok(narrow.some((line) => line.includes("[1/2]")));
+	});
+
 	it("rerenders when only nested state changes", () => {
 		const first = job(nested("nested-reviewer", "root-run", "running"));
 		const second = job(nested("nested-reviewer", "root-run", "complete"));
 		const renamed = job(nested("nested-reviewer", "root-run", "running", { sessionName: "nested-reviewer: Review nested run" }));
 		assert.notEqual(widgetRenderKey(first), widgetRenderKey(second));
 		assert.notEqual(widgetRenderKey(first), widgetRenderKey(renamed));
+		const progress = { ...first, steps: first.steps?.map((step) => ({ ...step, progressText: "Working", progressUpdatedAt: 20 })) };
+		assert.notEqual(widgetRenderKey(first), widgetRenderKey(progress));
 	});
 
 	it("colors running nested rows by the thinking level of the child each stands for", () => {

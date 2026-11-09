@@ -326,6 +326,7 @@ async function runWatchdogAttempt(ctx: ExtensionContext, request: WatchdogReview
 		hasDiff: diffBaseline !== undefined,
 	});
 	const agent = new Agent({
+		sessionId,
 		initialState: {
 			systemPrompt,
 			model: selection.model,

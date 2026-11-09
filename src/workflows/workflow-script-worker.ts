@@ -17,7 +17,9 @@ export class WorkflowScriptProcess extends EventEmitter {
 	constructor(acornPath: string) {
 		super();
 		const acorn = realpathSync(acornPath);
-		this.child = fork(WORKFLOW_PROCESS_URL, [acorn], {
+		// Fork a path, not the URL. A host that runs Pi on Electron does not strip execArgv from a child started
+		// from a file URL, so the flags below would arrive in the child's argv ahead of the script.
+		this.child = fork(fileURLToPath(WORKFLOW_PROCESS_URL), [acorn], {
 			// Under --permission, Node lets worker threads read everything under the process cwd, so the cwd must
 			// hold only public files: acorn's own directory. It also never holds a caller's cwd open on Windows.
 			cwd: dirname(acorn),

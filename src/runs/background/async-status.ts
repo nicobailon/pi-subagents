@@ -60,6 +60,8 @@ interface AsyncRunStepSummary {
 	currentPath?: string;
 	recentTools?: Array<{ tool: string; args: string; endMs: number }>;
 	recentOutput?: string[];
+	progressText?: string;
+	progressUpdatedAt?: number;
 	turnCount?: number;
 	toolCount?: number;
 	steering?: SteeringStatus;
@@ -382,6 +384,8 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.currentPath ? { currentPath: step.currentPath } : {}),
 			...(step.recentTools ? { recentTools: step.recentTools.map((tool) => ({ ...tool })) } : {}),
 			...(step.recentOutput ? { recentOutput: [...step.recentOutput] } : {}),
+			...(step.progressText ? { progressText: step.progressText } : {}),
+			...(step.progressUpdatedAt !== undefined ? { progressUpdatedAt: step.progressUpdatedAt } : {}),
 			...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
 			...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
 			...(step.steering ? { steering: step.steering } : {}),
@@ -667,6 +671,7 @@ function formatStepLine(step: AsyncRunStepSummary): string {
 	const modelThinking = formatModelThinking(step.model, step.thinking);
 	if (modelThinking) parts.push(modelThinking);
 	if (step.durationMs !== undefined) parts.push(formatDuration(step.durationMs));
+	if (step.progressText && step.status === "running") parts.push(`progress: ${step.progressText}`);
 	if (step.tokens) parts.push(`${formatTokens(step.tokens.total)} tok`);
 	if (step.lane) parts.push(`lane ${step.lane.key}`);
 	if (step.worktreePath) parts.push(`worktree ${shortenPath(step.worktreePath)} · branch ${step.branch ?? "unknown"}${step.provider ? ` · provider ${step.provider}` : ""}`);

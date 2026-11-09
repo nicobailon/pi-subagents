@@ -112,6 +112,7 @@ export function createWatchdogPermissionArbiter(options: WatchdogPermissionArbit
 				].join("\n");
 				const tools = [tool];
 				agent = new Agent({
+					sessionId,
 					initialState: {
 						systemPrompt,
 						model: selection.model,

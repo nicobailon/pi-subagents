@@ -112,6 +112,29 @@ describe("agent management config parsing", () => {
 		assert.doesNotMatch(readText(result), /- scout \(builtin/);
 	});
 
+	it("lists at most 30 agents and narrows a large catalog with search", () => {
+		const agentsDir = path.join(tempDir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		for (let i = 0; i < 40; i += 1) {
+			const name = `bulk-${String(i).padStart(2, "0")}`;
+			fs.writeFileSync(path.join(agentsDir, `${name}.md`), `---\nname: ${name}\ndescription: Handles ${i % 2 ? "odd" : "even"} work\n---\n\nBulk agent.\n`);
+		}
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+
+		const full = readText(handleManagementAction("list", { agentScope: "project" }, ctx));
+		assert.equal(full.split("\n").filter((line) => line.startsWith("- ")).length, 30);
+		assert.match(full, /^\+\d+ more; narrow with \{action:"list", options:\{search:"<term>"\}\}$/m);
+
+		const odd = readText(handleManagementAction("list", { agentScope: "project", search: "ODD" }, ctx));
+		const oddRows = odd.split("\n").filter((line) => line.startsWith("- "));
+		assert.equal(oddRows.length, 20);
+		assert.ok(oddRows.every((line) => line.endsWith(": Handles odd work")));
+		assert.doesNotMatch(odd, /more; narrow with/);
+
+		const byName = readText(handleManagementAction("list", { agentScope: "project", search: "bulk-07" }, ctx));
+		assert.deepEqual(byName.split("\n").filter((line) => line.startsWith("- ")), ["- bulk-07 (project): Handles odd work"]);
+	});
+
 	it("lists compact declared capabilities without exposing system prompts", () => {
 		const agentsDir = path.join(tempDir, ".pi", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });

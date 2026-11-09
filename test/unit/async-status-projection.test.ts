@@ -60,7 +60,7 @@ const materializedWorkflow = job({
 	updatedAt: 5_000,
 	steps: [
 		{ workflowKey: "rev-core", label: "rev-core", agent: "reviewer", status: "completed", runId: "child-core", startedAt: 1_500, durationMs: 2_500 },
-		{ workflowKey: "rev-r", label: "rev-r", agent: "reviewer", status: "running", runId: "child-r", startedAt: 1_500 },
+		{ workflowKey: "rev-r", label: "rev-r", agent: "reviewer", status: "running", runId: "child-r", startedAt: 1_500, progressText: "[1/2] Reviewing lane", progressUpdatedAt: 4_800 },
 		{ workflowKey: "rev-parity", label: "rev-parity", agent: "reviewer", status: "pending" },
 	],
 });
@@ -320,6 +320,8 @@ describe("async status projection", () => {
 		const running = snapshot.runs[0]?.children?.[1];
 		assert.equal(running?.startedAt, 1_700);
 		assert.deepEqual(running?.activity, { currentTool: "read", toolCount: 3, turnCount: 1 });
+		assert.equal(running?.progressText, "[1/2] Reviewing lane");
+		assert.equal(running?.progressUpdatedAt, 4_800);
 		assert.equal(running?.children, undefined);
 		assert.deepEqual(snapshot.omitted, { runs: 0, children: 0, byteLimitExceeded: false });
 	});

@@ -64,6 +64,8 @@ export interface AsyncStatusSnapshotNode {
 	updatedAt?: number;
 	endedAt?: number;
 	activity?: AsyncStatusSnapshotActivity;
+	progressText?: string;
+	progressUpdatedAt?: number;
 	/** Step nodes only: the agent the child runs as, and the model and thinking level it reports. */
 	agent?: string;
 	model?: string;
@@ -260,6 +262,8 @@ function projectStep(step: AsyncJobStep | NestedStepSummary, index: number, dept
 	const activity = activityFor(step, ctx);
 	const { id, label } = stepIdentity(step, index, ctx);
 	const agent = publicOptionalText(step.agent, ctx.caps.maxStringLength);
+	const progressText = publicOptionalText(step.progressText, ctx.caps.maxStringLength);
+	const progressUpdatedAt = publicTime(step.progressUpdatedAt);
 	const node: AsyncStatusSnapshotNode = {
 		id,
 		kind: "step",
@@ -269,6 +273,8 @@ function projectStep(step: AsyncJobStep | NestedStepSummary, index: number, dept
 		...(updatedAt !== undefined ? { updatedAt } : {}),
 		...(terminalState(state) && endedAt !== undefined ? { endedAt } : {}),
 		...(activity ? { activity } : {}),
+		...(progressText ? { progressText } : {}),
+		...(progressUpdatedAt !== undefined ? { progressUpdatedAt } : {}),
 	};
 	if (agent) node.agent = agent;
 	setStepModel(node, ctx, step);
@@ -421,6 +427,10 @@ function projectMaterializedStep(step: AsyncJobStep, index: number, child: Async
 	const selfActivity = selfStep ? activityFor(selfStep, ctx) : undefined;
 	const activity = laneActivity || selfActivity || live.activity ? { ...laneActivity, ...selfActivity, ...live.activity } : undefined;
 	const node: AsyncStatusSnapshotNode = { ...live, id, kind: "step", label };
+	const progressText = publicOptionalText(selfStep?.progressText ?? step.progressText, ctx.caps.maxStringLength);
+	const progressUpdatedAt = publicTime(selfStep?.progressUpdatedAt ?? step.progressUpdatedAt);
+	if (progressText) node.progressText = progressText;
+	if (progressUpdatedAt !== undefined) node.progressUpdatedAt = progressUpdatedAt;
 	const agent = publicOptionalText(selfStep?.agent || step.agent, ctx.caps.maxStringLength);
 	if (agent) node.agent = agent;
 	if (activity) node.activity = activity;
