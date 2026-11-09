@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- On Windows machines where policy blocks `powershell.exe`, the cleanup of old background subagent state now finishes. Before, it stopped with `spawn UNKNOWN` and printed the error over the footer every session. A cleanup failure now shows as a warning in Pi instead of raw text over the screen. Thanks to [@SuperSalsa20](https://github.com/SuperSalsa20) for the report. (#3240)
 - Subagents now skip `mcp:` selectors for pi-mcp-adapter servers explicitly configured with `disabled: true`. Before, a disabled server could prevent a child from launching. Unknown servers and enabled servers without matching cached tools still fail the launch. Thanks to [@shura-v](https://github.com/shura-v) for #3238.
 - Workflow scripts start on hosts that run Pi on Electron, such as pi Desktop. Before, Electron left the sandbox flags in the script process's arguments and every workflow script failed with `Cannot find module '--allow-worker'`. Thanks to [@hotsnow-sean](https://github.com/hotsnow-sean) for #3222.
 - A forked subagent (`context: "fork"`) launched in another folder than the parent session now gets that folder's `AGENTS.md` / `CLAUDE.md`. Before, it kept only the parent's project instructions, so a fork started in a repository worktree never saw the repository's `AGENTS.md`.
