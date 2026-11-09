@@ -92,7 +92,7 @@ export function updateSteeringTarget(
 	const request = status.recent.find((candidate) => candidate.id === requestId);
 	const target = request?.targets.find((candidate) => candidate.index === index);
 	if (!target) return undefined;
-	if (state === "failed") target.failureKind = fields.failureKind;
+	if (state === "failed") target.failureKind = fields.failureKind ?? (target.state === "failed" ? target.failureKind : undefined);
 	else delete target.failureKind;
 	if (state === "late" && target.state === "recovered") {
 		if (target.lateDeliveredAt === undefined) {
