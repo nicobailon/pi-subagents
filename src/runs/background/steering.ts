@@ -55,7 +55,7 @@ export function steeringStatus(status: Pick<AsyncStatus, "steering">): SteeringS
 
 export function recordSteeringRequest(
 	status: SteeringStatus,
-	input: { id: string; requestedAt: number; source?: string; message: string; targets: Array<{ index: number; state: SteeringTargetState; reason?: string }> },
+	input: { id: string; requestedAt: number; source?: string; message: string; targets: Array<Pick<SteeringTargetStatus, "index" | "state" | "reason" | "failureKind">> },
 ): SteeringRequestStatus {
 	const existing = status.recent.find((request) => request.id === input.id);
 	if (existing) return existing;
@@ -64,7 +64,7 @@ export function recordSteeringRequest(
 		requestedAt: input.requestedAt,
 		...(input.source ? { source: input.source } : {}),
 		messagePreview: steeringMessagePreview(input.message),
-		targets: input.targets.map((target) => ({ index: target.index, state: target.state, ...(target.reason ? { reason: target.reason } : {}) })),
+		targets: input.targets.map((target) => ({ index: target.index, state: target.state, ...(target.reason ? { reason: target.reason } : {}), ...(target.failureKind ? { failureKind: target.failureKind } : {}) })),
 	};
 	status.requested++;
 	status.lastRequestedAt = input.requestedAt;
@@ -87,11 +87,13 @@ export function updateSteeringTarget(
 	index: number,
 	state: SteeringTargetState,
 	now: number,
-	fields: Pick<SteeringTargetStatus, "reason" | "replacementRunId"> = {},
+	fields: Pick<SteeringTargetStatus, "reason" | "replacementRunId" | "failureKind"> = {},
 ): SteeringTargetStatus | undefined {
 	const request = status.recent.find((candidate) => candidate.id === requestId);
 	const target = request?.targets.find((candidate) => candidate.index === index);
 	if (!target) return undefined;
+	if (state === "failed") target.failureKind = fields.failureKind ?? (target.state === "failed" ? target.failureKind : undefined);
+	else delete target.failureKind;
 	if (state === "late" && target.state === "recovered") {
 		if (target.lateDeliveredAt === undefined) {
 			target.lateDeliveredAt = now;
@@ -143,6 +145,7 @@ export function actionResultFromSteeringStatus(status: SteeringStatus, sourceRun
 		...(target.deliveredAt !== undefined ? { deliveredAt: target.deliveredAt } : {}),
 		...(target.lateDeliveredAt !== undefined ? { lateDeliveredAt: target.lateDeliveredAt } : {}),
 		...(target.reason ? { reason: target.reason } : {}),
+		...(target.failureKind ? { failureKind: target.failureKind } : {}),
 		...(target.replacementRunId ? { replacementRunId: target.replacementRunId } : {}),
 	}));
 	const states = targets.map((target) => target.state);

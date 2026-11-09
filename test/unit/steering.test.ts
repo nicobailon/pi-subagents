@@ -84,6 +84,16 @@ describe("steering lifecycle ledger", () => {
 		assert.deepEqual(partial?.targets.map((target) => target.state), ["delivered", "failed"]);
 	});
 
+	it("keeps a rejection when a failed target's reason is updated", () => {
+		const status = createSteeringStatus();
+		recordSteeringRequest(status, { id: "rejected", requestedAt: 1, message: "stop", targets: [{ index: 0, state: "routed" }] });
+		updateSteeringTarget(status, "rejected", 0, "failed", 2, { reason: "closed", failureKind: "rejected" });
+		updateSteeringTarget(status, "rejected", 0, "failed", 3, { reason: "recovery refused" });
+		const result = actionResultFromSteeringStatus(status, "run", "rejected");
+		assert.equal(result?.targets[0]?.failureKind, "rejected");
+		assert.equal(result?.targets[0]?.reason, "recovery refused");
+	});
+
 	it("classifies terminal mixed outcomes regardless of acknowledgment order", () => {
 		for (const order of [["failed", "delivered"], ["delivered", "failed"]] as const) {
 			const status = createSteeringStatus();

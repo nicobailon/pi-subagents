@@ -2884,7 +2884,7 @@ export async function runSubagent(
 		index: number,
 		state: SteeringTargetState,
 		now: number,
-		fields: Pick<SteeringTargetStatus, "reason" | "replacementRunId"> = {},
+		fields: Pick<SteeringTargetStatus, "reason" | "replacementRunId" | "failureKind"> = {},
 	): SteeringTargetStatus | undefined => {
 		const updated = updateSteeringTarget(steeringStatus(statusPayload), requestId, index, state, now, fields);
 		const step = statusPayload.steps[index];
@@ -2953,13 +2953,14 @@ export async function runSubagent(
 		writeStatusPayload();
 	};
 	/** Record the outcome of handing a routed steer to the live child session. */
-	const applySteerDelivery = (requestId: string, index: number, delivery: { state: "delivered" | "queued" | "failed"; message: string }): void => {
+	const applySteerDelivery = (requestId: string, index: number, delivery: SteerDelivery): void => {
 		const lifecycle = steeringStatus(statusPayload);
 		const request = lifecycle.recent.find((candidate) => candidate.id === requestId);
 		const target = request?.targets.find((candidate) => candidate.index === index);
 		if (!request || !target) return;
-		if (target.state === "delivered" || target.state === "late" || target.state === "failed") return;
-		if (target.state === delivery.state) return;
+		if (target.state === "delivered" || target.state === "late") return;
+		if (target.state === "failed" && !(target.failureKind === "unconsumed" && delivery.failureKind === "rejected")) return;
+		if (target.state === delivery.state && target.failureKind === delivery.failureKind) return;
 		const late = fs.existsSync(steeringMarkerPath(requestId));
 		const now = Date.now();
 		if (delivery.state === "delivered") {
@@ -2970,7 +2971,7 @@ export async function runSubagent(
 			emitSteeringEvent("subagent.steer.queued", { type: "steer", id: requestId, ts: now, message: delivery.message }, index, { deliveryStatus: "queued", message: delivery.message });
 		} else {
 			markSteeringAttention(index);
-			updateSteeringLifecycleTarget(requestId, index, "failed", now, { reason: delivery.message });
+			updateSteeringLifecycleTarget(requestId, index, "failed", now, { reason: delivery.message, failureKind: delivery.failureKind ?? "rejected" });
 			emitSteeringEvent("subagent.steer.failed", { type: "steer", id: requestId, ts: now, message: delivery.message }, index, { reason: delivery.message });
 		}
 		emitTerminalSteeringNotice(requestId, `Steering failed for run ${id}: ${delivery.message}`);
@@ -4918,7 +4919,7 @@ export async function runSubagent(
 			if (target.state !== "scheduled" && target.state !== "routed" && target.state !== "queued") continue;
 			changed = true;
 			const reason = target.state === "queued" ? unconsumedSteerReason() : "child terminated before steering delivery";
-			updateSteeringLifecycleTarget(request.id, target.index, "failed", Date.now(), { reason });
+			updateSteeringLifecycleTarget(request.id, target.index, "failed", Date.now(), { reason, failureKind: "unconsumed" });
 			markSteeringAttention(target.index);
 			emitSteeringEvent("subagent.steer.failed", { type: "steer", id: request.id, ts: request.requestedAt, message: reason }, target.index, { reason });
 		}

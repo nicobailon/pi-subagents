@@ -742,6 +742,8 @@ export interface ScheduleOrigin {
 export type SteeringActionState = "delivered" | "scheduled" | "pending" | "partial" | "recovered" | "failed";
 export type SteeringTargetState = "scheduled" | "pending" | "routed" | "queued" | "delivered" | "late" | "failed" | "recovered";
 
+export type SteeringFailureKind = "rejected" | "unconsumed";
+
 export interface SteeringTargetStatus {
 	index: number;
 	state: SteeringTargetState;
@@ -750,6 +752,7 @@ export interface SteeringTargetStatus {
 	lateDeliveredAt?: number;
 	failedAt?: number;
 	recoveredAt?: number;
+	failureKind?: SteeringFailureKind;
 	reason?: string;
 	replacementRunId?: string;
 }
@@ -777,6 +780,7 @@ export interface SteeringStatus {
 export interface SteerActionTarget {
 	index: number;
 	state: SteeringTargetState;
+	failureKind?: SteeringFailureKind;
 	deliveredAt?: number;
 	lateDeliveredAt?: number;
 	reason?: string;

@@ -164,6 +164,27 @@ describe("in-process foreground child", () => {
 		]);
 	});
 
+	it("drains completed foreground output after guidance rejection", async () => {
+		mockPi.onCall({ jsonl: [events.assistantMessage("Complete report")], keepAliveAfterFinalMessageMs: 15_000 });
+		const inner = childSessionFactory();
+		const rejecting: ChildSessionFactory = { ...inner, create: async (launch) => {
+			const session = await inner.create(launch);
+			session.steer = session.followUp = async () => { throw new Error("Child completed its acceptance report"); };
+			return session;
+		} };
+		let controls: ForegroundChildSessionControls | undefined;
+		const run = runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "rejected-after-report", childSessionFactory: rejecting, timeoutMs: 2_000,
+			onChildSession: (next) => { controls = next; },
+		});
+		await waitFor(() => controls !== undefined && mockPi.sessions[0]?.scriptedFinalEmitted === true);
+		await assert.rejects(controls!.steer("More guidance"), /completed/);
+		await assert.rejects(controls!.followUp("New work"), /completed/);
+		const result = await run;
+		assert.equal(result.exitCode, 0, result.error);
+		assert.equal(result.finalOutput, "Complete report");
+	});
+
 	it("does not abort when a steer arrives after the final stop and turn_start is delayed", async () => {
 		mockPi.onCall({
 			jsonl: [events.assistantMessage("before steer")],
