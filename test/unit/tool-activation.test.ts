@@ -84,11 +84,17 @@ function createRuntime(messages: any[] = [], excluded: string[] = [], missingApi
 		handlers, tools, context,
 		active: () => [...activeNames],
 		select: (names: string[]) => { activeNames = [...names]; },
-		// Pi sets the model before model_select.
-		async switchModel(next: unknown) {
+		// Pi sets the model before model_select. `idle: false`: the switch happens during a run.
+		async switchModel(next: unknown, idle = true) {
 			const previousModel = context.model;
 			context.model = next;
-			for (const handler of handlers.get("model_select") ?? []) await handler({ type: "model_select", model: next, previousModel, source: "set" }, context);
+			const isIdle = context.isIdle;
+			context.isIdle = () => idle;
+			try {
+				for (const handler of handlers.get("model_select") ?? []) await handler({ type: "model_select", model: next, previousModel, source: "set" }, context);
+			} finally {
+				context.isIdle = isIdle;
+			}
 		},
 		async emit(name: string, event: any) {
 			for (const handler of handlers.get(name) ?? []) await handler(event, context);
@@ -302,6 +308,11 @@ describe("toolActivation modes", () => {
 		chosen.select(["read"]);
 		await chosen.switchModel(INCOMPATIBLE);
 		assert.equal((await startAgent(chosen)).includes("subagent"), false, "manual choice");
+
+		const running = createRuntime([], [], [], { model: COMPATIBLE });
+		await running.emit("session_start", { type: "session_start", reason: "startup" });
+		await running.switchModel(INCOMPATIBLE, false);
+		assert.equal((await startAgent(running)).includes("subagent"), false, "switch during a run");
 
 		const recorded = createRuntime([compacted], [], [], { model: COMPATIBLE });
 		await recorded.emit(RESUME.type, RESUME);

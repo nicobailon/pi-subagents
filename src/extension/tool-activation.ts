@@ -214,8 +214,9 @@ export function registerSubagentToolActivation(
 	pi.on("session_start", (_event, ctx) => decide(ctx));
 	pi.on("session_tree", (_event, ctx) => decide(ctx));
 	pi.on("agent_start", () => { undeclared = undefined; });
+	// Only while idle: a run being prepared or started may already have fixed its first tools.
 	pi.on("model_select", (_event, ctx) => {
-		if (mode === "auto" && undeclared !== undefined && undeclared === activationState() && loaderSelected !== addsToolsWithoutCheckpoint(ctx.model)
+		if (mode === "auto" && ctx.isIdle() && undeclared !== undefined && undeclared === activationState() && loaderSelected !== addsToolsWithoutCheckpoint(ctx.model)
 			// SAFETY: as in applyRecordedSelection.
 			&& (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: unknown[] } }).buildSessionContext().messages.length === 0) decide(ctx);
 	});
