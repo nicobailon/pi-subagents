@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- The bundled `undici` dependency is now 8.12.4, which fixes the security advisories published against 8.12.3 (cache and redirect information disclosure, credential stripping, a skipped integrity check, and an uncaught exception). Thanks to [@dzervas](https://github.com/dzervas) for the report. (#3242)
 - On Windows machines where policy blocks `powershell.exe`, the cleanup of old background subagent state now finishes. Before, it stopped with `spawn UNKNOWN` and printed the error over the footer every session. A cleanup failure now shows as a warning in Pi instead of raw text over the screen. Thanks to [@SuperSalsa20](https://github.com/SuperSalsa20) for the report. (#3240)
 - Subagents now skip `mcp:` selectors for pi-mcp-adapter servers explicitly configured with `disabled: true`. Before, a disabled server could prevent a child from launching. Unknown servers and enabled servers without matching cached tools still fail the launch. Thanks to [@shura-v](https://github.com/shura-v) for #3238.
 - Workflow scripts start on hosts that run Pi on Electron, such as pi Desktop. Before, Electron left the sandbox flags in the script process's arguments and every workflow script failed with `Cannot find module '--allow-worker'`. Thanks to [@hotsnow-sean](https://github.com/hotsnow-sean) for #3222.
