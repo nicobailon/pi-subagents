@@ -8,7 +8,17 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 function runScript(script: string): void {
 	const env = { ...process.env };
 	delete env.PI_SUBAGENT_CHILD;
-	execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+	const fixture = String.raw`
+		import * as fsFixture from "node:fs";
+		import * as osFixture from "node:os";
+		import * as pathFixture from "node:path";
+		const agentDir = fsFixture.mkdtempSync(pathFixture.join(osFixture.tmpdir(), "pi-compaction-agent-"));
+		const budgetGatewayDir = pathFixture.join(agentDir, "extensions", "budget-gateway");
+		fsFixture.mkdirSync(budgetGatewayDir, { recursive: true });
+		fsFixture.writeFileSync(pathFixture.join(budgetGatewayDir, "index.mjs"), "export default function budgetGateway() {}\n");
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+	`;
+	execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", `${fixture}\n${script}`], { cwd: projectRoot, env, stdio: "pipe" });
 }
 
 describe("async compaction resume", () => {

@@ -14,7 +14,9 @@ const refusal = /Workflow child 'review' was not started: the subagent_launch ca
 it("offers each workflow child start to tool_call handlers and does not start a blocked child", { timeout: 30_000 }, async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-launch-approval-"));
 	const agentDir = path.join(root, "agent");
-	fs.mkdirSync(agentDir);
+	const budgetGatewayDir = path.join(agentDir, "extensions", "budget-gateway");
+	fs.mkdirSync(budgetGatewayDir, { recursive: true });
+	fs.writeFileSync(path.join(budgetGatewayDir, "index.mjs"), "export default function budgetGateway() {}\n", "utf-8");
 	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	const launches: Array<Record<string, unknown>> = [];

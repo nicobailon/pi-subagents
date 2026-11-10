@@ -739,6 +739,11 @@ describe("supervisor ask registration", () => {
 			import registerExtension from "./index.ts";
 			import { resolveSupervisorChannelDir, ensureSupervisorChannelDir } from "./src/intercom/native-supervisor-channel.ts";
 			const root = fs.mkdtempSync(path.join(os.tmpdir(), "supervisor-owner-"));
+			const agentDir = path.join(root, "agent");
+			const budgetGatewayDir = path.join(agentDir, "extensions", "budget-gateway");
+			fs.mkdirSync(budgetGatewayDir, { recursive: true });
+			fs.writeFileSync(path.join(budgetGatewayDir, "index.mjs"), "export default function budgetGateway() {}\n");
+			process.env.PI_CODING_AGENT_DIR = agentDir;
 			const channels = [];
 			async function start(owner) {
 				const handlers = new Map();

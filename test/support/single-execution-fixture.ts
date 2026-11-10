@@ -290,6 +290,9 @@ export function installSingleExecutionHooks() {
 		agentDir = createTempDir("pi-subagent-agent-");
 		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const budgetGatewayDir = path.join(agentDir, "extensions", "budget-gateway");
+		fs.mkdirSync(budgetGatewayDir, { recursive: true });
+		fs.writeFileSync(path.join(budgetGatewayDir, "index.mjs"), "export default function budgetGateway() {}\n", "utf-8");
 		mockPi.reset();
 	});
 
