@@ -997,9 +997,7 @@ describe("subagent async widget rendering", () => {
 			const lines = renderWidgetLines(ui.widgets.at(-1), 120);
 			const text = lines.join("\n");
 			for (const progress of ["Checking the changed paths", "Running integration checks"]) assert.ok(text.includes(`progress: ${progress}`), text);
-			assert.match(text, /task: Review the implementation/);
 			assert.match(text, /task: Run the focused tests/);
-			assert.ok(text.indexOf("progress: Checking the changed paths") > text.indexOf("task: Review the implementation"));
 			const reviewerRow = lines.findIndex((line) => line.includes("task: Review the implementation"));
 			assert.match(lines[reviewerRow] ?? "", /· read/);
 			assert.match(lines[reviewerRow + 1] ?? "", /progress: Checking the changed paths/);

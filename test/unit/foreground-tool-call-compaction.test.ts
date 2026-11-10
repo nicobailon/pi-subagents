@@ -5,22 +5,22 @@ import { formatToolCall } from "../../src/shared/formatters.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { makeAgentConfigs } from "../support/helpers.ts";
 import type { ChildSession, ChildSessionEvent, ChildSessionFactory } from "../../src/runs/shared/child-session.ts";
+import type { AgentProgress } from "../../src/shared/types.ts";
 
 describe("foreground tool-call compaction", () => {
 	it("publishes only the latest successful progress update", async () => {
-		const updates: Array<{ progressText?: string; progressUpdatedAt?: number }> = [];
+		const updates: AgentProgress[] = [];
 		let listener: ((event: ChildSessionEvent) => void) | undefined;
-		const toolCall = (id: string, message: string) => {
+		const toolCall = (id: string, message: string, isError = false) => {
 			listener?.({ type: "tool_execution_start", toolName: "contact_supervisor", toolCallId: id, args: { reason: "progress_update", message } });
-			listener?.({ type: "message_end", message: { role: "toolResult", toolName: "contact_supervisor", toolCallId: id, content: [] } });
+			listener?.({ type: "message_end", message: { role: "toolResult", toolName: "contact_supervisor", toolCallId: id, ...(isError ? { isError: true } : {}), content: [] } });
 		};
 		const session: ChildSession = {
 			subscribe(callback) { listener = callback; return () => {}; },
 			async prompt() {
 				toolCall("first", "[1/3] First");
 				toolCall("second", "[2/3] Second");
-				listener?.({ type: "tool_execution_start", toolName: "contact_supervisor", toolCallId: "failed", args: { reason: "progress_update", message: "failed update" } });
-				listener?.({ type: "message_end", message: { role: "toolResult", toolName: "contact_supervisor", toolCallId: "failed", isError: true, content: [] } });
+				toolCall("failed", "failed update", true);
 				listener?.({ type: "tool_execution_start", toolName: "read", toolCallId: "normal", args: { path: "x" } });
 				listener?.({ type: "message_end", message: { role: "toolResult", toolName: "read", toolCallId: "normal", content: [] } });
 				listener?.({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop", usage: {} } });
@@ -32,7 +32,7 @@ describe("foreground tool-call compaction", () => {
 		await runSync(process.cwd(), makeAgentConfigs(["worker"]), "worker", "test progress", {
 			childSessionFactory: factory,
 			onUpdate: (update) => {
-				const progress = (update.details as { progress?: Array<{ progressText?: string; progressUpdatedAt?: number }> }).progress?.[0];
+				const progress = update.details.progress?.[0];
 				if (progress) updates.push(progress);
 			},
 		});

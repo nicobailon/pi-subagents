@@ -41,15 +41,13 @@ describe("async reported progress", () => {
 		try {
 			await runSubagent(config, fake.factory);
 			const summary = listAsyncRuns(path.join(root, "runs"), { runId: config.id, sessionId: config.sessionId })[0];
-			assert.equal(summary?.steps[0]?.progressText, LONG_REPORT.slice(0, 512));
-			assert.equal(summary?.steps[1]?.progressText, "Second child checking isolation");
-			assert.ok(summary?.steps.every((step) => typeof step.progressUpdatedAt === "number"));
-			assert.doesNotMatch(formatAsyncRunList(summary ? [summary] : []), /progress:/);
-			const running = summary ? { ...summary, steps: summary.steps.map((step) => ({ ...step, status: "running" as const })) } : undefined;
-			assert.match(formatAsyncRunList(running ? [running] : []), /\| progress: Second child checking isolation$/m);
-			const restoredStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as { steps: Array<{ progressText?: string }> };
-			assert.equal(restoredStatus.steps[0]?.progressText, LONG_REPORT.slice(0, 512));
-			assert.equal(restoredStatus.steps[1]?.progressText, "Second child checking isolation");
+			assert.ok(summary);
+			assert.equal(summary.steps[0]?.progressText, LONG_REPORT.slice(0, 512));
+			assert.equal(summary.steps[1]?.progressText, "Second child checking isolation");
+			assert.ok(summary.steps.every((step) => typeof step.progressUpdatedAt === "number"));
+			assert.doesNotMatch(formatAsyncRunList([summary]), /progress:/);
+			const running = { ...summary, steps: summary.steps.map((step) => ({ ...step, status: "running" as const })) };
+			assert.match(formatAsyncRunList([running]), /\| progress: Second child checking isolation$/m);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

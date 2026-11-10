@@ -211,7 +211,7 @@ function childWatchdogStatus(runId: string, phase: "idle" | "reviewing" | "stale
 	};
 }
 
-function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" = "stop") {
+function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" | "length" = "stop") {
 	return {
 		type: "message_end",
 		message: {

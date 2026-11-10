@@ -1498,9 +1498,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	});
 
 	it("background fails a settled child whose final assistant response hit the length limit", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		const lengthMessage = mockAssistantMessage("partial async response") as { message: { stopReason: string } };
-		lengthMessage.message.stopReason = "length";
-		mockPi.onCall({ jsonl: [lengthMessage, { type: "agent_settled" }], keepAliveAfterFinalMessageMs: 15_000 });
+		mockPi.onCall({ jsonl: [mockAssistantMessage("partial async response", "length"), { type: "agent_settled" }], keepAliveAfterFinalMessageMs: 15_000 });
 		const id = `async-lifecycle-length-${Date.now().toString(36)}`;
 		launchProtocolTest(id);
 		const payload = await readAsyncPayload(id);

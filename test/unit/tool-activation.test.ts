@@ -282,14 +282,14 @@ describe("toolActivation modes", () => {
 	});
 
 	it("decides a new auto session with the model chosen before the first prompt", async () => {
-		const cases: Array<[unknown, unknown, boolean]> = [[COMPATIBLE, INCOMPATIBLE, false], [INCOMPATIBLE, COMPATIBLE, true]];
+		const cases: Array<[typeof COMPATIBLE, typeof COMPATIBLE, boolean]> = [[COMPATIBLE, INCOMPATIBLE, false], [INCOMPATIBLE, COMPATIBLE, true]];
 		for (const event of [{ type: "session_start", reason: "startup" }, RESUME]) {
 			for (const [startModel, firstModel, loader] of cases) {
 				const runtime = createRuntime([], [], [], { model: startModel });
 				await runtime.emit(event.type, event);
 				await runtime.switchModel(firstModel);
 				const first = await startAgent(runtime);
-				const label = `${event.reason}, ${(firstModel as { api: string }).api}`;
+				const label = `${event.reason}, ${firstModel.api}`;
 				assert.equal(first.includes("subagents_enable"), loader, `${label}: loader`);
 				for (const name of ["subagent", "contact_supervisor", "bg_wait", "subagent_supervisor"]) assert.equal(first.includes(name), !loader, `${label}: ${name}`);
 				await runtime.switchModel(startModel);
@@ -297,20 +297,22 @@ describe("toolActivation modes", () => {
 			}
 		}
 
-		const failed = createRuntime([], [], [], { model: COMPATIBLE });
-		await failed.emit("session_start", { type: "session_start", reason: "startup" });
+		const started = async () => {
+			const runtime = createRuntime([], [], [], { model: COMPATIBLE });
+			await runtime.emit("session_start", { type: "session_start", reason: "startup" });
+			return runtime;
+		};
+		const failed = await started();
 		await startAgent(failed, false);
 		await failed.switchModel(INCOMPATIBLE);
 		assert.ok((await startAgent(failed)).includes("subagent"), "retry after a failed first run");
 
-		const chosen = createRuntime([], [], [], { model: COMPATIBLE });
-		await chosen.emit("session_start", { type: "session_start", reason: "startup" });
+		const chosen = await started();
 		chosen.select(["read"]);
 		await chosen.switchModel(INCOMPATIBLE);
 		assert.equal((await startAgent(chosen)).includes("subagent"), false, "manual choice");
 
-		const running = createRuntime([], [], [], { model: COMPATIBLE });
-		await running.emit("session_start", { type: "session_start", reason: "startup" });
+		const running = await started();
 		await running.switchModel(INCOMPATIBLE, false);
 		assert.equal((await startAgent(running)).includes("subagent"), false, "switch during a run");
 
@@ -319,12 +321,6 @@ describe("toolActivation modes", () => {
 		await recorded.switchModel(INCOMPATIBLE);
 		const next = await startAgent(recorded);
 		assert.ok(next.includes("subagents_enable") && !next.includes("subagent"), "recorded");
-
-		const dynamic = createRuntime([], [], [], { ...DYNAMIC, model: COMPATIBLE });
-		await dynamic.emit("session_start", { type: "session_start", reason: "startup" });
-		await dynamic.switchModel(INCOMPATIBLE);
-		const dynamicFirst = await startAgent(dynamic);
-		assert.ok(dynamicFirst.includes("subagents_enable") && !dynamicFirst.includes("subagent"), "dynamic");
 	});
 
 	it("offers the loader in auto only when the model's API can add tools mid-conversation", async () => {

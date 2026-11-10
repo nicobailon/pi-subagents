@@ -14,6 +14,16 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 	return result.content.map((part) => part.text ?? "").join("\n");
 }
 
+async function readStatusUntil(statusPath: string, done: (status: AsyncStatus) => boolean): Promise<AsyncStatus | undefined> {
+	let status: AsyncStatus | undefined;
+	for (let attempt = 0; attempt < 250; attempt += 1) {
+		if (fs.existsSync(statusPath)) status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as AsyncStatus;
+		if (status && done(status)) break;
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	return status;
+}
+
 describe("structured chain/tasks workflows", { skip: !available || !createSubagentExecutor ? "pi packages not available" : undefined }, () => {
 	installSingleExecutionHooks();
 
@@ -93,26 +103,17 @@ describe("structured chain/tasks workflows", { skip: !available || !createSubage
 			async: true,
 		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(launch.isError, undefined, text(launch));
-		assert.ok(launch.details.asyncDir);
-		const statusPath = path.join(launch.details.asyncDir!, "status.json");
+		const asyncDir = launch.details.asyncDir;
+		assert.ok(asyncDir);
+		const statusPath = path.join(asyncDir, "status.json");
 		try {
-			let step: AsyncStatus["steps"] extends Array<infer T> | undefined ? T | undefined : never;
-			for (let attempt = 0; attempt < 250; attempt += 1) {
-				const status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as AsyncStatus;
-				step = status.steps?.[0];
-				if (step?.progressText === "[1/1] Child progress") break;
-				await new Promise((resolve) => setTimeout(resolve, 20));
-			}
+			const step = (await readStatusUntil(statusPath, (status) => status.steps?.[0]?.progressText === "[1/1] Child progress"))?.steps?.[0];
 			assert.equal(step?.progressText, "[1/1] Child progress");
 			assert.equal(typeof step?.progressUpdatedAt, "number");
 		} finally {
 			fs.writeFileSync(release, "continue");
-			for (let attempt = 0; attempt < 250; attempt += 1) {
-				const status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as AsyncStatus;
-				if (status.state === "complete" || status.state === "failed") break;
-				await new Promise((resolve) => setTimeout(resolve, 20));
-			}
-			fs.rmSync(launch.details.asyncDir!, { recursive: true, force: true });
+			await readStatusUntil(statusPath, (status) => status.state === "complete" || status.state === "failed");
+			fs.rmSync(asyncDir, { recursive: true, force: true });
 			if (launch.details.asyncId) fs.rmSync(path.join(DIRS.results, `${launch.details.asyncId}.json`), { force: true });
 		}
 	});
@@ -129,13 +130,8 @@ describe("structured chain/tasks workflows", { skip: !available || !createSubage
 		assert.equal(launch.isError, undefined, text(launch));
 		assert.ok(launch.details.asyncDir);
 		const statusPath = path.join(launch.details.asyncDir!, "status.json");
-		let status: Partial<Pick<AsyncStatus, "state">> = {};
-		for (let attempt = 0; attempt < 250; attempt += 1) {
-			if (fs.existsSync(statusPath)) status = JSON.parse(fs.readFileSync(statusPath, "utf8"));
-			if (status.state === "complete" || status.state === "failed") break;
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
-		assert.equal(status.state, "failed");
+		const status = await readStatusUntil(statusPath, (current) => current.state === "complete" || current.state === "failed");
+		assert.equal(status?.state, "failed");
 		fs.rmSync(launch.details.asyncDir!, { recursive: true, force: true });
 		if (launch.details.asyncId) fs.rmSync(path.join(DIRS.results, `${launch.details.asyncId}.json`), { force: true });
 	});

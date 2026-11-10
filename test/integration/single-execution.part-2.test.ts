@@ -1814,14 +1814,12 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 	});
 
 	it("keeps a valid structured_output when the reply after it hit the length limit", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const cutOff = events.assistantMessage("Here is a summary of") as { message: { stopReason: string } };
-		cutOff.message.stopReason = "length";
 		mockPi.onCall({
 			stdoutRaw: [
 				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
 				{ type: "tool_execution_end", toolName: "structured_output" },
 				{ type: "message_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
-				cutOff,
+				mockAssistantMessage("Here is a summary of", "length"),
 			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
 			structuredOutputCapture: { ok: true },
 		});
@@ -3118,12 +3116,10 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 	});
 
 	it("fails a settled child whose final assistant response hit the length limit", async () => {
-		const nonTerminalMessage = events.assistantMessage("settled without a terminal assistant stop") as { message: { stopReason: string } };
-		nonTerminalMessage.message.stopReason = "length";
-		mockPi.onCall({ jsonl: [nonTerminalMessage, { type: "agent_settled" }], keepAliveAfterFinalMessageMs: 5000 });
+		mockPi.onCall({ jsonl: [mockAssistantMessage("partial truncated response", "length"), { type: "agent_settled" }], keepAliveAfterFinalMessageMs: 5000 });
 		const startedAt = Date.now();
 		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Wait until settled", { acceptance: false });
-		assert.equal(getFinalOutput(result.messages), "settled without a terminal assistant stop");
+		assert.equal(getFinalOutput(result.messages), "partial truncated response");
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.error, "Response was truncated: the model reached its maximum output length.");
 		assert.ok(Date.now() - startedAt < 4000, "agent_settled should trigger bounded child cleanup");
