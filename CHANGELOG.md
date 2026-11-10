@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- A run's remaining `timeoutMs` budget no longer changes when the system clock is adjusted. Before, setting the clock back or forward during a run could add that much time to the budget or end the run early. Thanks to [@Osraka](https://github.com/Osraka) for #3247.
 - A subagent run's `timeoutMs` no longer counts the time a child spends waiting for its supervisor to answer a `contact_supervisor` decision or interview, or an `intercom` ask. Before, a child that asked late in a run could time out while it waited, and the run was reported as failed even though the child did the right thing. Thanks to [@adrian-ludwig](https://github.com/adrian-ludwig) for #3228.
 - A subagent whose final reply was cut off at the model's maximum output length now fails with "Response was truncated: the model reached its maximum output length." and keeps the partial reply for inspection. Before, the run was reported as a success with the cut-off text as its answer. A run that already returned a valid `structured_output` still succeeds. Thanks to [@adrian-ludwig](https://github.com/adrian-ludwig) for #3226.
 - With `toolActivation: "auto"`, switching models before the first message now picks the subagent tools for the model you switched to. Before, the choice was made for the startup model, so a session that switched to a model that can't add tools mid-conversation kept the loader, and calling it later made the provider miss its prompt cache. Thanks to [@IdrisGit](https://github.com/IdrisGit) for #3241.
