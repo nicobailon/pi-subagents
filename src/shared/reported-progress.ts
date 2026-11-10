@@ -7,6 +7,6 @@ export function extractReportedProgress(toolName: string, args: unknown): string
 	const call = args as { reason?: unknown; message?: unknown };
 	if (call.reason !== "progress_update" || typeof call.message !== "string") return undefined;
 	const firstLine = call.message.split(/\r?\n/, 1)[0] ?? "";
-	const sanitized = sanitizeDisplayText(firstLine).trim().replace(/^(?:progress|update):\s*/i, "").trim();
+	const sanitized = sanitizeDisplayText(firstLine).replace(/^(?:progress|update):\s*/i, "");
 	return sanitized ? sanitized.slice(0, MAX_REPORTED_PROGRESS_LENGTH) : undefined;
 }

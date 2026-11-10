@@ -827,7 +827,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			// A headless host may dispose the session as soon as this turn settles, so hand
 			// finished results to Pi now; Pi runs the queued completion turn after agent_end.
 			// A failed drain rejects without this step so its deadline stays exact.
-			// The parent was told to end its turn and wait for the wake, so the drain must last as long as a run may.
+			// The parent ended its turn to wait for the wake, so the drain lasts as long as a run may.
 			if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events, hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests, timeoutMs: resolveConfigDefaultTimeoutMs(config.timeoutMs) }).then(resultWatcher.deliverPendingResults);
 		} finally {
 			// Deliver notices after a failed drain without suppressing its rejection.

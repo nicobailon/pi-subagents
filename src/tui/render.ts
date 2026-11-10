@@ -28,7 +28,7 @@ import { formatContextUsage, formatTokens, formatUsage, formatDuration, formatMo
 import { getDisplayItems, getSingleResultOutput, PROMPT_REDACTED } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
-import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
+import { aggregateStepStatus, formatActivityAge, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
 import { shouldSuppressSingleStep, stripRepeatedAgentPrefix, withDuplicateLabelDiscriminators } from "./render-helpers.ts";
 import { runningTone } from "./running-tone.ts";
@@ -676,15 +676,12 @@ function workflowLabelForResult(details: Details, resultIndex: number): string |
 function reportedProgressRow(progress: Pick<AgentProgress, "progressText" | "progressUpdatedAt">, theme: Theme, indent: string, width: number): string | undefined {
 	const text = progress.progressText?.trim();
 	if (!text) return undefined;
-	const ageMs = progress.progressUpdatedAt !== undefined ? Math.max(0, Date.now() - progress.progressUpdatedAt) : undefined;
 	let updated = "";
-	if (ageMs !== undefined) {
-		const seconds = Math.floor(ageMs / 1000);
-		const minutes = Math.floor(seconds / 60);
-		const age = seconds < 60 ? `${seconds}s` : minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
-		updated = ` · updated ${age} ago`;
+	if (progress.progressUpdatedAt !== undefined) {
+		const age = formatActivityAge(Math.max(0, Date.now() - progress.progressUpdatedAt));
+		updated = age === "now" ? " · updated now" : ` · updated ${age} ago`;
 	}
-	return truncLine(theme.fg("dim", `${indent}progress: ${sanitizeDisplayText(text)}${updated}`), Math.max(0, width));
+	return truncLine(theme.fg("dim", `${indent}progress: ${sanitizeDisplayText(text)}${updated}`), width);
 }
 
 function foregroundProgressForResult(details: Details, resultIndex: number): AgentProgress | undefined {
@@ -3281,7 +3278,7 @@ function renderSingleCompact(
 	if (isRunning && r.progress) {
 		const task = compactTaskText(r.task);
 		if (task) c.addChild(new Text(truncLine(theme.fg("dim", `${detailIndent}task: ${task}`), width), 0, 0));
-		const reportedRow = reportedProgressRow(foregroundProgressForResult(d, 0) ?? r.progress, theme, detailIndent, width);
+		const reportedRow = reportedProgressRow(r.progress, theme, detailIndent, width);
 		if (reportedRow) c.addChild(new Text(reportedRow, 0, 0));
 		const progressSnapshotNow = snapshotNowForProgress(r.progress);
 		const activity = compactCurrentActivity(r.progress);
@@ -3686,7 +3683,7 @@ export function renderSubagentResult(
 		}
 
 		if (isRunning && r.progress) {
-			const reportedRow = reportedProgressRow(foregroundProgressForResult(d, 0) ?? r.progress, theme, "  ", w);
+			const reportedRow = reportedProgressRow(r.progress, theme, "  ", w);
 			if (reportedRow) c.addChild(new Text(fit(reportedRow), 0, 0));
 			const progressSnapshotNow = snapshotNowForProgress(r.progress);
 			for (const nestedLine of formatNestedWidgetLines(r.children, theme, w, true, progressSnapshotNow, 12)) {

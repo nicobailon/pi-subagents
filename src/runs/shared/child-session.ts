@@ -727,9 +727,9 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				try { await ready; } finally { mcpWaits.delete(cancel); }
 			}
 			let reportCompleted = false;
-			const assertAcceptsGuidance = (): void => {
-				if (reportCompleted) throw new Error("Child completed its acceptance report; resume it for further guidance.");
-			};
+			const guidanceClosed = "Child completed its acceptance report; resume it for further guidance.";
+			const assertAcceptsGuidance = (): void => { if (reportCompleted) throw new Error(guidanceClosed); };
+			const rejectQueuedGuidance = (): never => { session.clearQueue(); throw new Error(guidanceClosed); };
 			const child: ChildSession = {
 				subscribe: (listener) => session.subscribe((event) => {
 					if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "stop") {
@@ -738,10 +738,6 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 						if (report.report || report.malformed) {
 							reportCompleted = true;
 							session.clearQueue();
-							const rejectQueuedGuidance = (): never => {
-								session.clearQueue();
-								throw new Error("Child completed its acceptance report; resume it for further guidance.");
-							};
 							session.agent.steer = rejectQueuedGuidance;
 							session.agent.followUp = rejectQueuedGuidance;
 						}

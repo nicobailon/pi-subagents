@@ -2,7 +2,7 @@ import type { ActivityState, AsyncJobStep } from "./types.ts";
 
 type StepStatusLike = Pick<AsyncJobStep, "status">;
 
-function formatActivityAge(ms: number): string {
+export function formatActivityAge(ms: number): string {
 	if (ms < 1000) return "now";
 	if (ms < 60000) return `${Math.floor(ms / 1000)}s`;
 	return `${Math.floor(ms / 60000)}m`;

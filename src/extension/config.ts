@@ -229,13 +229,7 @@ function validateConfig(config: Record<string, unknown>): void {
 	validateRunnerLaunchersConfig(config.runnerLaunchers);
 }
 
-/**
- * Resolve the optional global default runtime deadline from extension config
- * (`config.timeoutMs`). Returns undefined for unset or invalid values so callers
- * fall back to the built-in defaults. "Invalid" covers non-positive-integer
- * values and values above the Node.js timer ceiling; the latter would overflow
- * the timer and expire the run almost immediately instead of running long.
- */
+// An invalid value counts as unset; above Node's timer ceiling a timer fires almost at once.
 export function resolveConfigDefaultTimeoutMs(raw: unknown): number | undefined {
 	if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0 || raw > 2_147_483_647) return undefined;
 	return raw;

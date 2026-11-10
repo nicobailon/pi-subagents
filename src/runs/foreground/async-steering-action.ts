@@ -194,8 +194,10 @@ export async function steerAsyncRun(input: {
 	if (input.signal?.aborted) {
 		return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering pending for async run ${status.runId} (request ${requestId}); caller aborted before recovery.`) }], details: { mode: "management", results: [], steering: result } };
 	}
+	const projected = (current: AsyncStatus | null) => current?.steering ? actionResultFromSteeringStatus(current.steering, status.runId, requestId) : undefined;
+	const rejected = () => new Error(`Child rejected the guidance; continue it with action "resume" and id "${status.runId}".`);
 	const finalStatus = readStatus(asyncDir);
-	const finalResult = finalStatus?.steering ? actionResultFromSteeringStatus(finalStatus.steering, status.runId, requestId) : undefined;
+	const finalResult = projected(finalStatus);
 	const acceptedReply = (accepted: SteerActionResult): AgentToolResult<Details> => {
 		const acceptedState = accepted.state === "delivered" ? "delivered" : "queued";
 		return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering ${acceptedState} for async run ${status.runId} (request ${requestId}).`) }], details: { mode: "management", results: [], steering: accepted } };
@@ -212,16 +214,14 @@ export async function steerAsyncRun(input: {
 			}
 		};
 		try {
-			const latest = readStatus(asyncDir);
-			const latestResult = latest?.steering ? actionResultFromSteeringStatus(latest.steering, status.runId, requestId) : undefined;
+			const latestResult = projected(readStatus(asyncDir));
 			if (latestResult && steerTargetsAccepted(latestResult)) return acceptedReply(latestResult);
-			if (steerTargetsRejected(latestResult)) throw new Error("Child rejected guidance; use explicit retained resume for further work.");
+			if (steerTargetsRejected(latestResult)) throw rejected();
 			const committedAt = Date.now();
 			input.onBeforeRecoveryClaim?.(requestId, committedAt);
 			const { claimPath, markerPath } = claimSteeringRecovery(asyncDir, { requestId, sourceRunId: status.runId, committedAt });
 			input.onRecoveryCommitted?.(requestId, committedAt);
-			const preCommitStatus = readStatus(asyncDir);
-			const preCommitResult = preCommitStatus?.steering ? actionResultFromSteeringStatus(preCommitStatus.steering, status.runId, requestId) : undefined;
+			const preCommitResult = projected(readStatus(asyncDir));
 			if (
 				preCommitResult
 				&& (steerTargetsRejected(preCommitResult) || (preCommitResult.targets.length > 0
@@ -229,7 +229,7 @@ export async function steerAsyncRun(input: {
 			) {
 				fs.rmSync(markerPath, { force: true });
 				fs.rmSync(claimPath, { force: true });
-				if (steerTargetsRejected(preCommitResult)) throw new Error("Child rejected guidance; use explicit retained resume for further work.");
+				if (steerTargetsRejected(preCommitResult)) throw rejected();
 				return acceptedReply(preCommitResult);
 			}
 			try {
@@ -247,10 +247,9 @@ export async function steerAsyncRun(input: {
 				if (input.signal?.aborted) break;
 				const candidate = readStatus(asyncDir);
 				lastObservedState = candidate?.state;
-				const candidateResult = candidate?.steering ? actionResultFromSteeringStatus(candidate.steering, status.runId, requestId) : undefined;
-				if (steerTargetsRejected(candidateResult)) {
+				if (steerTargetsRejected(projected(candidate))) {
 					fs.rmSync(claimPath, { force: true });
-					throw new Error("Child rejected guidance; use explicit retained resume for further work.");
+					throw rejected();
 				}
 				if (candidate?.state === "paused" && candidate.endedAt !== undefined) { paused = candidate; break; }
 				await new Promise<void>((resolve) => setTimeout(resolve, 50));
@@ -274,11 +273,9 @@ export async function steerAsyncRun(input: {
 			if (recoveryTarget.kind !== "revive" || !recoveryTarget.sessionFile) throw new Error("Source run has no valid persisted child session; it remains paused and requires a new run.");
 			if (!recoveryTarget.recoveryDescriptor) throw new Error("Source run has no private recovery descriptor; it remains paused and is not safely resumable.");
 			const limits = remainingSteeringRecoveryLimits(recoveryTarget.recoveryDescriptor, paused);
-			const beforeRevive = readStatus(asyncDir);
-			const beforeReviveResult = beforeRevive?.steering ? actionResultFromSteeringStatus(beforeRevive.steering, status.runId, requestId) : undefined;
-			if (steerTargetsRejected(beforeReviveResult)) {
+			if (steerTargetsRejected(projected(readStatus(asyncDir)))) {
 				fs.rmSync(claimPath, { force: true });
-				throw new Error("Child rejected guidance; use explicit retained resume for further work.");
+				throw rejected();
 			}
 			const revived = await input.recover(limits);
 			if (revived.isError || !revived.details.asyncId) throw new Error(revived.content[0]?.type === "text" ? revived.content[0].text : "Replacement launch failed; source run remains paused.");
@@ -303,7 +300,7 @@ export async function steerAsyncRun(input: {
 				failedStatus.activityState = "needs_attention";
 				writeAtomicJson(path.join(asyncDir, "status.json"), failedStatus);
 			}
-			const failed = failedStatus?.steering ? actionResultFromSteeringStatus(failedStatus.steering, status.runId, requestId) : undefined;
+			const failed = projected(failedStatus);
 			appendSteeringNotice("failed", `Steering failed for run ${status.runId}: ${reason}`);
 			return { content: [{ type: "text", text: steeringReceipt(input.message, `Steering failed for async run ${status.runId} (request ${requestId}): ${reason}`) }], isError: true, details: { mode: "management", results: [], steering: failed ?? { requestId, state: "failed", sourceRunId: status.runId, deliveryStatus: "queued", targets: [{ index: input.index ?? 0, state: "failed", reason }] } } };
 		}

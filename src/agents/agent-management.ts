@@ -1008,7 +1008,7 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	// A large catalog would otherwise put every agent's description into the model's context at once.
 	const shownAgents = agents.slice(0, MAX_LISTED_AGENTS);
 	const shownRestrictedAgents = restrictedAgents.slice(0, MAX_LISTED_AGENTS - shownAgents.length);
-	const omittedCount = agents.length + restrictedAgents.length - shownAgents.length - shownRestrictedAgents.length;
+	const omittedCount = Math.max(0, agents.length + restrictedAgents.length - MAX_LISTED_AGENTS);
 	const lines = [
 		capabilityMode ? "Executable agents (capabilities):" : "Executable agents:",
 		...formatAgentListSections(shownAgents, providerNameSet, formatLine),
