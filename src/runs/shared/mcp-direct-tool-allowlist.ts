@@ -156,14 +156,6 @@ export function resolveMcpDirectToolResolution(
 	};
 }
 
-export function resolveMcpDirectToolSelections(
-	mcpDirectTools: string[] | undefined,
-	cwd = process.cwd(),
-	runtimeSnapshotHost?: McpRuntimeSnapshotHost,
-): ResolvedMcpDirectToolSelection[] {
-	return resolveMcpDirectToolResolution(mcpDirectTools, cwd, runtimeSnapshotHost).selections;
-}
-
 /**
  * pi-mcp-adapter keeps priority whenever it is loaded. 2.x registers /mcp, so Pi does not load its
  * built-in MCP. 3.x always registers /mcp-adapter and leaves /mcp to the built-in MCP.
@@ -414,13 +406,8 @@ function mergeServerDefinitions(base: Record<string, ServerEntry>, next: Record<
 	const servers = { ...base };
 	for (const [name, definition] of Object.entries(next)) {
 		const previous = base[name];
-		if (!previous) {
-			servers[name] = definition;
-		} else if (Object.keys(definition).every((key) => key === "disabled")) {
-			servers[name] = { ...previous, ...definition };
-		} else {
-			servers[name] = { ...(previous.disabled !== undefined ? { disabled: previous.disabled } : {}), ...definition };
-		}
+		if (previous && Object.keys(definition).every((key) => key === "disabled")) servers[name] = { ...previous, ...definition };
+		else servers[name] = previous?.disabled === undefined ? definition : { disabled: previous.disabled, ...definition };
 	}
 	return servers;
 }
@@ -465,10 +452,6 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
 		? obj.mcpServers ?? obj["mcp-servers"]
 		: obj.mcpServers;
 	return parseServerEntries(servers);
-}
-
-export function resolveMcpDirectToolNames(mcpDirectTools: string[] | undefined, cwd = process.cwd()): string[] {
-	return resolveMcpDirectToolSelections(mcpDirectTools, cwd).map((selection) => selection.name);
 }
 
 function validateSelectedServerDefinitions(config: McpConfig, selectors: string[]): void {

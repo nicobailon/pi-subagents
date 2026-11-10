@@ -163,15 +163,6 @@ describe("main watchdog review adapter", () => {
 		assert.equal(result?.stopReason, "stop");
 	});
 
-	it("sends the parent session id with the review's model request", async () => {
-		const current = model("openai", "gpt-session");
-		const { streamFn, calls } = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
-
-		await createMainWatchdogReview(createCtx({ current }), { streamFn })(request(enabledConfig(), []));
-
-		assert.equal(calls[0]?.options?.sessionId, "watchdog-review-session");
-	});
-
 	it("sends complete review instructions and the helper cwd in the leading system message", async () => {
 		const current = model("openai", "gpt-context");
 		const { streamFn, calls } = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
@@ -179,6 +170,7 @@ describe("main watchdog review adapter", () => {
 
 		await createMainWatchdogReview(context, { streamFn })(request(enabledConfig(), []));
 
+		assert.equal(calls[0]?.options?.sessionId, "watchdog-review-session");
 		assert.deepEqual(calls[0]?.context.messages[0], {
 			role: "system",
 			content: [

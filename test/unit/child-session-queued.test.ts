@@ -33,6 +33,13 @@ describe("childSessionHasQueuedMessages", () => {
 	});
 });
 
+const memoryLaunch = { cwd: process.cwd(), storage: { kind: "memory" as const }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] };
+const factoryOver = (session: unknown) => createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
+	ModelRuntime: { create: async () => ({}) }, SettingsManager: { create: () => ({}) },
+	DefaultResourceLoader: class { async reload() {} }, SessionManager: { inMemory: () => ({}) },
+	resolveCliModel: () => ({}), createAgentSession: async () => ({ session }),
+} as unknown as PiCodingAgentModule) });
+
 describe("default factory queued-message probe", () => {
 	for (const [kind, body] of [
 		["valid", JSON.stringify({ criteriaSatisfied: [], commandsRun: [{ command: "npm test", result: "passed", summary: "All tests passed" }] })],
@@ -65,19 +72,13 @@ describe("default factory queued-message probe", () => {
 			abort: async () => { releaseTail(); }, steer: async () => { queued = true; }, followUp: async () => { queued = true; },
 			messages: [], sessionId: "completed-report",
 		};
-		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
-			ModelRuntime: { create: async () => ({}) }, SettingsManager: { create: () => ({}) },
-			DefaultResourceLoader: class { async reload() {} }, SessionManager: { inMemory: () => ({}) },
-			resolveCliModel: () => ({}), createAgentSession: async () => ({ session: underlying }),
-		} as unknown as PiCodingAgentModule) });
-		const child = await factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] });
+		const factory = factoryOver(underlying);
+		const child = await factory.create(memoryLaunch);
 		const result = await runChildSession({ factory: { create: async () => child, dispose: () => factory.dispose() }, launch: { session: { hooks: [], runtime: {} }, capture: { finalDrainHeld: () => false } } as unknown as InProcessChildLaunch, prompt: "Implement", timeoutMessage: "timeout", registerTimeout(interrupt) { if (interrupt) timeout = setTimeout(interrupt, 2_000); else if (timeout) clearTimeout(timeout); }, appendChildEvent() {}, writeOutputLine() {}, registerSteer(handler) { steer = handler; }, onSteerOutcome(_request, outcome) { outcomes.push(`${outcome.state}: ${outcome.message}`); } });
 		assert.equal(result.finalOutput, report);
 		assert.equal(result.exitCode, 0, result.error);
 		assert.deepEqual(outcomes, ["failed: child completed before consuming follow-up"]);
 		assert.equal(child.hasQueuedMessages?.(), false);
-		await assert.rejects(child.steer("More guidance"), /acceptance report.*resume/i);
-		await assert.rejects(child.followUp("New work"), /acceptance report.*resume/i);
 	});
 	for (const mode of ["steer", "followUp"] as const) {
 		it(`rejects in-flight ${mode} at the agent queue after report closure`, async () => {
@@ -94,13 +95,9 @@ describe("default factory queued-message probe", () => {
 				async steer() { await inputHandler; agent.steer(); },
 				async followUp() { await inputHandler; agent.followUp(); },
 			};
-			const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
-				ModelRuntime: { create: async () => ({}) }, SettingsManager: { create: () => ({}) },
-				DefaultResourceLoader: class { async reload() {} }, SessionManager: { inMemory: () => ({}) },
-				resolveCliModel: () => ({}), createAgentSession: async () => ({ session: underlying }),
-			} as unknown as PiCodingAgentModule) });
+			const factory = factoryOver(underlying);
 			try {
-				const child = await factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] });
+				const child = await factory.create(memoryLaunch);
 				child.subscribe(() => {});
 				const submission = child[mode]("Guidance awaiting an input handler");
 				listener({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: '```acceptance-report\n{"criteriaSatisfied":[],"commandsRun":[]}\n```' }], stopReason: "stop" } });

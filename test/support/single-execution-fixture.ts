@@ -170,7 +170,7 @@ function childWatchdogStatus(phase: "idle" | "reviewing" | "stale" | "failed", s
 	};
 }
 
-function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" = "stop") {
+function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" | "length" = "stop") {
 	return {
 		type: "message_end",
 		message: {

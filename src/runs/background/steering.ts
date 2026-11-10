@@ -16,8 +16,8 @@ import { previewDisplayText } from "../../shared/display-text.ts";
 import { redactSecretValues } from "../shared/permissions.ts";
 import type { SteerDeliveryMode } from "./control-channel.ts";
 
-export const MAX_STEERING_REQUESTS = 20;
-export const STEERING_MESSAGE_PREVIEW_LIMIT = 160;
+const MAX_STEERING_REQUESTS = 20;
+const STEERING_MESSAGE_PREVIEW_LIMIT = 160;
 
 export function steeringMessagePreview(message: string): string {
 	return previewDisplayText(redactSecretValues(message), STEERING_MESSAGE_PREVIEW_LIMIT);
@@ -92,8 +92,8 @@ export function updateSteeringTarget(
 	const request = status.recent.find((candidate) => candidate.id === requestId);
 	const target = request?.targets.find((candidate) => candidate.index === index);
 	if (!target) return undefined;
-	if (state === "failed") target.failureKind = fields.failureKind ?? (target.state === "failed" ? target.failureKind : undefined);
-	else delete target.failureKind;
+	if (state !== "failed") delete target.failureKind;
+	else if (fields.failureKind) target.failureKind = fields.failureKind;
 	if (state === "late" && target.state === "recovered") {
 		if (target.lateDeliveredAt === undefined) {
 			target.lateDeliveredAt = now;
@@ -132,7 +132,7 @@ export function updateSteeringTarget(
 	return target;
 }
 
-export function findSteeringRequest(status: SteeringStatus, requestId: string): SteeringRequestStatus | undefined {
+function findSteeringRequest(status: SteeringStatus, requestId: string): SteeringRequestStatus | undefined {
 	return status.recent.find((request) => request.id === requestId);
 }
 
@@ -160,7 +160,7 @@ export function actionResultFromSteeringStatus(status: SteeringStatus, sourceRun
 	return { requestId, state, deliveryStatus, sourceRunId, ...(effectiveReplacementRunId ? { replacementRunId: effectiveReplacementRunId } : {}), targets };
 }
 
-export function steeringActionIsTerminal(result: SteerActionResult | undefined): boolean {
+function steeringActionIsTerminal(result: SteerActionResult | undefined): boolean {
 	return (result?.targets.length ?? 0) > 0 && result?.targets.every((target) => target.state === "queued" || target.state === "delivered") === true
 		|| result?.state === "delivered" || result?.state === "scheduled" || result?.state === "partial" || result?.state === "recovered" || result?.state === "failed";
 }
@@ -213,7 +213,7 @@ export function claimSteeringRecovery(
 	return { claimPath, markerPath };
 }
 
-export function readSteeringStatus(asyncDir: string): SteeringStatus | undefined {
+function readSteeringStatus(asyncDir: string): SteeringStatus | undefined {
 	return readStatus(asyncDir)?.steering;
 }
 

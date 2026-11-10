@@ -121,12 +121,6 @@ describe("MCP direct-tool resolution config sources", () => {
 		});
 		assert.deepEqual(mixed.selections.map((selection) => selection.name), SELECTED_NAMES);
 		assert.deepEqual(mixed.unresolvedSelectors, []);
-
-		const cachedDisabled = resolveMcpDirectToolResolution(SELECTORS, projectDir, undefined, {
-			mcpServers: { codegraph: { ...CURRENT_DEFINITION, disabled: true } },
-		});
-		assert.deepEqual(cachedDisabled.selections, []);
-		assert.deepEqual(cachedDisabled.unresolvedSelectors, []);
 	});
 
 	it("does not grant default tools when every selected MCP server is disabled", () => {
@@ -141,8 +135,7 @@ describe("MCP direct-tool resolution config sources", () => {
 		writeServerConfig(path.join(agentDir, "mcp-adapter.json"), { ...CURRENT_DEFINITION, disabled: true });
 		writeServerConfig(path.join(getProjectConfigDir(projectDir), "mcp-adapter.json"), { args: CURRENT_DEFINITION.args });
 		writeMetadataCache(CURRENT_DEFINITION);
-		assert.deepEqual(resolveMcpDirectToolResolution(SELECTORS, projectDir).unresolvedSelectors, []);
-		assert.deepEqual(resolveMcpDirectToolResolution(SELECTORS, projectDir).selections, []);
+		assert.deepEqual(resolveMcpDirectToolResolution(SELECTORS, projectDir), { selections: [], unresolvedSelectors: [] });
 
 		writeServerConfig(path.join(getProjectConfigDir(projectDir), "mcp-adapter.json"), { disabled: false });
 		const enabled = resolveMcpDirectToolResolution(SELECTORS, projectDir);

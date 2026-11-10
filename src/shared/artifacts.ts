@@ -237,8 +237,7 @@ export function cleanupOldArtifacts(dir: string, maxAgeDays: number): void {
 
 	if (ranWithinDay(markerPath, now)) return;
 
-	const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
-	const cutoff = now - maxAgeMs;
+	const cutoff = now - maxAgeDays * DAY_MS;
 
 	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
 		if (entry.name === CLEANUP_MARKER_FILE || (entry.isDirectory() && RETAINED_ARTIFACT_DIRS.has(entry.name))) continue;
