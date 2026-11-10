@@ -18,12 +18,13 @@ export interface PausableTimer {
 
 export function startPausableTimer(delayMs: number, onFire: () => void): PausableTimer {
 	let remaining = Math.max(0, delayMs);
+	// Monotonic clock: a system clock change must not shorten or extend the budget.
 	let runningSince: number | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let done = false;
 	const pausedBy = new Set<string>();
 	const run = (): void => {
-		runningSince = Date.now();
+		runningSince = performance.now();
 		timer = setTimeout(() => {
 			done = true;
 			runningSince = undefined;
@@ -34,7 +35,7 @@ export function startPausableTimer(delayMs: number, onFire: () => void): Pausabl
 	};
 	const stop = (): void => {
 		clearTimeout(timer);
-		if (runningSince !== undefined) remaining = Math.max(0, remaining - (Date.now() - runningSince));
+		if (runningSince !== undefined) remaining = Math.max(0, remaining - (performance.now() - runningSince));
 		runningSince = undefined;
 	};
 	run();
@@ -48,7 +49,7 @@ export function startPausableTimer(delayMs: number, onFire: () => void): Pausabl
 			if (done || !pausedBy.delete(key) || pausedBy.size > 0) return;
 			run();
 		},
-		remainingMs: () => runningSince === undefined ? remaining : Math.max(0, remaining - (Date.now() - runningSince)),
+		remainingMs: () => runningSince === undefined ? remaining : Math.max(0, remaining - (performance.now() - runningSince)),
 		clear() {
 			done = true;
 			stop();
