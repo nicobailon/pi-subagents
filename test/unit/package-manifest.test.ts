@@ -137,6 +137,8 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./child-tool-plan": "./src/api/child-tool-plan.ts",
 		"./shared-types": "./src/api/shared-types.ts",
 		"./project-panes": "./src/api/project-panes.ts",
+		"./project-panes": "./src/api/project-panes.ts",
+		"./placement": "./src/api/placement.ts",
 	});
 	const agents = await import("pi-subagents/agents");
 	assert.equal(agents.RUNTIME_AGENT_REGISTER_EVENT, "pi-subagents:runtime-agent-register:v1");
