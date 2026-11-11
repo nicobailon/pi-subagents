@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { AgentSession, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, type Component } from "@earendil-works/pi-tui";
 import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents, discoverAgentsAll, type AgentConfig, type AgentScope } from "../agents/agents.ts";
 import { resolveGlobalNpmRoot } from "../agents/global-npm-root.ts";
@@ -15,6 +15,7 @@ import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "..
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { recordSessionReplacement, recordSessionStart } from "../shared/session-succession.ts";
 import { createSessionSwitchGuard } from "./session-switch.ts";
+import { compactionInterruptedRun, installCompactionInterruptionCapture, takeCompactionAbort } from "./compaction-interruption.ts";
 import { reportSessionWarning } from "../shared/session-warnings.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { isStaleExtensionContextError, MODEL_ONLY_TOOL, withCachedUiContext } from "../shared/extension-context.ts";
@@ -275,6 +276,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
 		return;
 	}
+	installCompactionInterruptionCapture(AgentSession);
 	const runtimeRegistry = getRuntimeRegistry();
 	setMainThinkingLevelSource(() => readMainThinkingLevel(() => pi.getThinkingLevel()));
 
@@ -819,7 +821,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		try {
 			// The run is still active here, so its signal tells a user stop (Esc) apart from a finished or failed run.
 			// Pi skips agent_before_settle after an abort. Background runs keep going, but they must not restart the parent.
-			if (ctx.hasUI && ctx.signal?.aborted) {
+			if (ctx.hasUI && ctx.signal?.aborted && !takeCompactionAbort(ctx.sessionManager)) {
 				parentWake.userAborted();
 				const active = activeAsyncJobCount();
 				if (active > 0) ctx.ui.notify(`${active} background subagent run${active === 1 ? " is" : "s are"} still active${slashCommandsEnabled ? " · /subagents-stop" : ""}`, "info");
@@ -1194,12 +1196,14 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (event.reason !== "manual") suspendWidgetsForCompaction();
 	});
 
+	// Only a manual compaction that cut off a working parent leaves it stopped; Pi never continues that run.
 	// Pi emits session_compact before it clears its compaction state. sendMessage's run path has no
 	// compaction guard (only prompt() refuses), so wait for the parent to go idle before the resume notice
 	// starts a run. A run that starts first cancels the pending resume.
-	pi.on("session_compact", (event) => {
+	pi.on("session_compact", (event, ctx) => {
 		if (event.reason !== "manual") return;
 		if (activeAsyncJobCount() === 0 || !withLastUiContext(() => true)) return;
+		if (!compactionInterruptedRun(ctx.sessionManager)) return;
 		cancelCompactionResume();
 		const sessionId = state.currentSessionId;
 		const deadline = Date.now() + COMPACTION_RESUME_DEADLINE_MS;
@@ -1211,8 +1215,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				if (Date.now() < deadline) compactionResumeTimer = setTimeout(resumeWhenIdle, COMPACTION_RESUME_POLL_MS);
 				return;
 			}
-			// Pi's compact() aborts a live run first, which set the user-abort hold; this resume is deliberate.
-			parentWake.releaseHold();
 			parentWake.sendMessage(
 				{
 					customType: "subagent-compaction-resume",
