@@ -22,6 +22,7 @@ import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary, setInlineWorkflowCoverage } from "../tui/render.ts";
 import { getInspectorPlugins, registerInspectorEventListener } from "../inspectors/plugins.ts";
+import { registerPlacementEventListener } from "../runs/shared/placement-registry.ts";
 import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
 import { readMainThinkingLevel, setMainThinkingLevelSource } from "../tui/running-tone.ts";
 import { createSubagentParamsSchema } from "./schemas.ts";
@@ -900,6 +901,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const eventUnsubscribes = [
 		registerRuntimeAgentEventListener(pi),
 		registerInspectorEventListener(pi),
+		registerPlacementEventListener(pi),
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, asyncStartedHandler),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, asyncCompleteHandler),
 		pi.events.on(SUBAGENT_PROCESS_TERMINAL_EVENT, () => {

@@ -148,7 +148,8 @@ export async function createRexPiSession(launch: ChildSessionLaunch): Promise<Ch
 	return startPlacedPiSession(launch, await RexPlacedRunOwner.create(launch.machine, runId), policy);
 }
 
-async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSessionLaunch, owner: PlacedRunOwner<C>, policy: ReturnType<typeof serializeHerdrPiLaunch>): Promise<ChildSession> {
+/** The host-neutral placed-Pi bridge engine. Adapter packages drive it with their own PlacedRunOwner; see src/api/placement.ts for the public surface. */
+export async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSessionLaunch, owner: PlacedRunOwner<C>, policy: ReturnType<typeof serializeHerdrPiLaunch>): Promise<ChildSession> {
 	const machine = owner.machine, runId = owner.runId, runtimeDir = owner.runtimeDir, connection = owner.connection;
 	try {
 		let reconnectSession: { reconnect(): Promise<void> } | undefined; const agentName = `pi-${runId.slice(-20)}`;

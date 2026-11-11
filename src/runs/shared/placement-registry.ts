@@ -1,5 +1,6 @@
 import type { PlacementMachineReference } from "../../shared/types.ts";
 import type { ChildSession, ChildSessionLaunch } from "./child-session.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
  * The versioned seam between placement providers and the core: adapters register here, and the
@@ -35,9 +36,25 @@ export interface PlacementResolveRequest {
 	herdrBin?: string;
 }
 
+/**
+ * A third-party adapter's own machine reference shape. Core carries it opaquely across the
+ * registry boundary: `provider`, `id`, `cwd`, and `target` are the fields the placed-Pi bridge
+ * reads (launch identity, journal, reconnect identity); every other field belongs to the
+ * adapter, and the core never branches on a third-party provider. Adapters rehydrate their own
+ * reference shape from `launch.machine` with a cast at their own boundary.
+ */
+export interface PlacementOpaqueMachineReference {
+	provider: string;
+	id: string;
+	cwd: string;
+	/** Remote host target; local machines omit it. The bridge reports it in run identity. */
+	target?: string;
+	[key: string]: unknown;
+}
+
 /** A resolved `machine` value with the optional settings env exported in front of the remote command. */
 export interface PlacementResolution {
-	machine: PlacementMachineReference;
+	machine: PlacementMachineReference | PlacementOpaqueMachineReference;
 	env?: Record<string, string>;
 }
 
@@ -72,4 +89,60 @@ export function requirePlacementAdapter(provider: string | undefined): Placement
 	if (adapter) return adapter;
 	const registered = adapters.map((candidate) => `'${candidate.provider}'`).join(", ");
 	throw new Error(`No placement adapter for machine provider '${provider ?? String(provider)}'. Registered providers: ${registered || "none"}.`);
+}
+
+/**
+ * External adapter packages register through the installed owner's event bus: every extension
+ * has its own module root, so a direct import of this module could register into a foreign
+ * registry instance instead of the owner's. The listener mirrors the inspector model
+ * (`src/api/inspectors.ts`) and fills the request's `result` slot in place.
+ */
+export const PLACEMENT_REGISTER_EVENT = "pi-subagents:placement-register:v1";
+
+export interface PlacementRegistration {
+	dispose(): void;
+}
+
+export interface PlacementRegistrationRequest {
+	version: 1;
+	adapter: PlacementAdapterV1;
+	/** Insert ahead of a registered fallback provider (e.g. "herdr") so third-party adapters get first claim on machine names. */
+	before?: string;
+	result?: { ok: true; registration: PlacementRegistration } | { ok: false; error: Error };
+}
+
+/** Listen on an owner runtime's event bus and apply placement registration requests to this registry. Returns the unsubscribe. */
+export function registerPlacementEventListener(pi: Pick<ExtensionAPI, "events">): () => void {
+	/* oxlint-disable anti-slop/no-runtime-typeof -- This listener validates the untyped event-bus boundary, including callable adapter methods. */
+	const unsubscribe = pi.events.on(PLACEMENT_REGISTER_EVENT, (rawRequest) => {
+		if (!rawRequest || typeof rawRequest !== "object" || Array.isArray(rawRequest)) return;
+		// SAFETY: The envelope is an object; its version and adapter are validated below before storing callbacks.
+		const request = rawRequest as Partial<PlacementRegistrationRequest>;
+		if (request.result !== undefined) return;
+		try {
+			if (request.version !== 1) throw new Error(`Unsupported placement adapter registration version '${String(request.version)}'.`);
+			const adapter = request.adapter;
+			if (!adapter || typeof adapter !== "object" || Array.isArray(adapter)) throw new Error("Placement adapter must be an object.");
+			const provider = typeof adapter.provider === "string" ? adapter.provider : String(adapter.provider);
+			if (typeof adapter.createPlacedPiSession !== "function") throw new Error(`Placement adapter '${provider}' requires createPlacedPiSession().`);
+			if (adapter.resolveMachinePlacement !== undefined && typeof adapter.resolveMachinePlacement !== "function") throw new Error(`Placement adapter '${provider}' resolveMachinePlacement must be a function when provided.`);
+			registerPlacementAdapter(adapter as PlacementAdapterV1, { before: typeof request.before === "string" ? request.before : undefined });
+			let disposed = false;
+			request.result = {
+				ok: true,
+				registration: {
+					dispose() {
+						if (disposed) return;
+						disposed = true;
+						const index = adapters.indexOf(adapter as PlacementAdapterV1);
+						if (index !== -1 && adapters[index] === adapter) adapters.splice(index, 1);
+					},
+				},
+			};
+		} catch (error) {
+			request.result = { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+		}
+	});
+	/* oxlint-enable anti-slop/no-runtime-typeof */
+	return unsubscribe;
 }

@@ -22,7 +22,8 @@
     "./intercom-bridge": "./src/api/intercom-bridge.ts",
     "./child-tool-plan": "./src/api/child-tool-plan.ts",
     "./shared-types": "./src/api/shared-types.ts",
-    "./project-panes": "./src/api/project-panes.ts"
+    "./project-panes": "./src/api/project-panes.ts",
+    "./placement": "./src/api/placement.ts"
   },
   "repository": {
     "type": "git",
