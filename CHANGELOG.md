@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- With background subagents running, a manual compaction (`/compact`, RPC `compact` or an extension's `ctx.compact()`) no longer starts a turn when the parent was idle or stopped with Esc. Before, every manual compaction resumed the parent, so an extension that compacts on `agent_settled` made it answer "still waiting" each time. A compaction that cuts off a working parent still resumes it. A child result that arrives during a compaction now wakes the parent once the compaction ends, instead of starting a run while it is still compacting. Thanks to [@IdrisGit](https://github.com/IdrisGit) for #3253 and [@jyshowalter](https://github.com/jyshowalter) for the report. (#3252)
+
 ## [0.88.0] - 2026-11-10
 
 ### Highlights
