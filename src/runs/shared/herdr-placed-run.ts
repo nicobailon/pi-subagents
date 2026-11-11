@@ -11,6 +11,7 @@ import { herdrPaneHost, HerdrPlacedRunOwner } from "./herdr-pane-host.ts";
 import { encodeHerdrPiFrame, HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
 import { discoverPlacedBridgeManifest, type PlacedBridgeManifest, type PlacedRunOwner } from "./placed-run-owner.ts";
 import type { PlacementBridgeIdentity, PlacementPaneHost, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
+import { requirePlacementAdapter } from "./placement-registry.ts";
 import { RexPlacedRunOwner } from "./rex-pane-host.ts";
 import { ensureSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
 import { isRexLocalMachine } from "./rex-machine.ts";
@@ -169,7 +170,7 @@ async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSes
 	} catch (error) { await owner.cleanup(); throw error; }
 }
 
-function createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildSession> { return launch.machine?.provider === "rex" ? createRexPiSession(launch) : createHerdrPiSession(launch); }
+function createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildSession> { return requirePlacementAdapter(launch.machine?.provider).createPlacedPiSession(launch); }
 
 export function createPlacementAwareChildSessionFactory(local: ChildSessionFactory, createRemote: (launch: ChildSessionLaunch) => Promise<ChildSession> = createPlacedPiSession): ChildSessionFactory {
 	const remote = new Map<ChildSession, string | undefined>(); return { async create(launch) { if (!launch.machine) return local.create(launch); serializeHerdrPiLaunch(launch); const child = await createRemote(launch); remote.set(child, launch.parentSessionFile); return child; }, async dispose() { await Promise.allSettled([...remote.keys()].map((child) => child.dispose())); remote.clear(); await local.dispose(); }, async disposeForParent(parentSessionFile) { const matching = [...remote].filter(([, parent]) => parent === parentSessionFile).map(([child]) => child); await Promise.allSettled(matching.map((child) => child.dispose())); for (const child of matching) remote.delete(child); await local.disposeForParent(parentSessionFile); } };
