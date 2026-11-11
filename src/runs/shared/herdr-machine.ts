@@ -268,7 +268,7 @@ export function resolveMachinePlacement(input: ResolveHerdrMachinePlacementInput
 		const resolved = adapter.resolveMachinePlacement?.({ ...input, machine: requested, settings });
 		// Third-party machine references cross the registry as opaque objects (PlacementOpaqueMachineReference);
 		// the closed declared type keeps built-in consumers narrow while runtime dispatch stays provider-agnostic.
-		if (resolved) return { machine: resolved.machine as PlacementMachineReference, env: resolved.env };
+		if (resolved) return resolved.env === undefined ? { machine: resolved.machine as PlacementMachineReference } : { machine: resolved.machine as PlacementMachineReference, env: resolved.env };
 	}
 	throw new Error(`No placement adapter claimed machine '${requested}'. Registered providers: ${placementAdapters().map((adapter) => `'${adapter.provider}'`).join(", ") || "none"}.`);
 }

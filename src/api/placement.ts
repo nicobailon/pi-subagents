@@ -45,7 +45,7 @@ export {
 	discoverPlacedBridgeManifest,
 	removePlacedRuntimeDir,
 	type PlacedBridgeManifest,
-	type PlacedRunOwner,
+	PlacedRunOwner,
 } from "../runs/shared/placed-run-owner.ts";
 export {
 	BridgeChannel,
@@ -61,6 +61,8 @@ export { getPiSpawnCommand } from "../runs/shared/pi-spawn.ts";
 export type { ChildSession, ChildSessionLaunch } from "../runs/shared/child-session.ts";
 export type { PlacementMachineReference } from "../shared/types.ts";
 
+export { remoteMachineCwd, validateRemoteCwd } from "../runs/shared/herdr-machine.ts";
+export { safeRunId } from "../runs/shared/herdr-placed-run.ts";
 /** Register through the installed owner, even when each extension has its own module root: the request crosses the owner's event bus (PLACEMENT_REGISTER_EVENT) and lands in the runtime's in-process registry. */
 export function registerPlacementAdapter(pi: Pick<ExtensionAPI, "events">, adapter: PlacementAdapterV1, options: { before?: string } = {}): PlacementRegistration {
 	const request: PlacementRegistrationRequest = { version: 1, adapter, before: options.before };

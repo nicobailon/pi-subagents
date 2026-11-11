@@ -11,7 +11,7 @@ import { herdrPaneHost, HerdrPlacedRunOwner } from "./herdr-pane-host.ts";
 import { encodeHerdrPiFrame, HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
 import { discoverPlacedBridgeManifest, type PlacedBridgeManifest, type PlacedRunOwner } from "./placed-run-owner.ts";
 import type { PlacementBridgeIdentity, PlacementPaneHost, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
-import { requirePlacementAdapter } from "./placement-registry.ts";
+import { requirePlacementAdapter, type PlacementOpaqueMachineReference } from "./placement-registry.ts";
 import { RexPlacedRunOwner } from "./rex-pane-host.ts";
 import { ensureSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
 import { isRexLocalMachine } from "./rex-machine.ts";
@@ -35,7 +35,8 @@ export async function boundedHerdrReconnect(identity: HerdrRunIdentity, lastEvid
 	return { ok: false as const, reason: last };
 }
 
-function safeRunId(value: string | undefined): string { const prefix = value?.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 48) ?? "run"; return validateHerdrPiRunId(`${prefix}_${randomBytes(8).toString("hex")}`); }
+/** Sanitizes the runtime run id into a valid placed-run id: printable safe prefix plus a random suffix, so concurrent runs never share a runtime dir or bridge socket. */
+export function safeRunId(value: string | undefined): string { const prefix = value?.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 48) ?? "run"; return validateHerdrPiRunId(`${prefix}_${randomBytes(8).toString("hex")}`); }
 
 export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: string[]; resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false } } {
 	// Every child is handed a local session file path; only one that already exists (a fork or a
@@ -85,8 +86,8 @@ export class HerdrPiSession<C extends PlacementSockets = PlacementSockets> imple
 	readonly #listeners = new Set<(event: ChildSessionEvent) => void>(); #messages: AgentMessage[] = []; #sequence = 0; #disposed = false; #aborted = false; #initialGit?: HerdrRemoteGitStatus; #finalGit?: HerdrRemoteGitStatus;
 	readonly #operations = new Map<string, { resolve(): void; reject(error: Error): void; accepted: boolean; settled: boolean }>();
 	bridgeForward: { close(): Promise<void> }; bridge: BridgeChannel; readonly requestedTools: string[] | undefined; readonly model: string | undefined; #evidenceCursor = 0; #reconnecting?: Promise<void>; #reconnectFactory?: () => Promise<void>; #reconnectFailure?: Error;
-	#replyTimer?: NodeJS.Timeout; readonly #repliesInFlight = new Set<string>(); readonly supervisorDir: string | undefined; readonly runtime: ChildRuntimeConfig; readonly owner: PlacedRunOwner<C>;
-	constructor(owner: PlacedRunOwner<C>, bridgeForward: { close(): Promise<void> }, bridge: BridgeChannel, requestedTools: string[] | undefined, model: string | undefined, runtime: ChildRuntimeConfig, initialGit?: HerdrRemoteGitStatus) { this.owner = owner; this.bridgeForward = bridgeForward; this.bridge = bridge; this.requestedTools = requestedTools; this.model = model; this.runtime = runtime; this.supervisorDir = runtime.supervisorChannelDir; this.#initialGit = initialGit; bridge.adopt((frame) => this.#frame(frame)); if (this.supervisorDir) { this.#replyTimer = setInterval(() => this.#deliverSupervisorReplies(this.supervisorDir!), 50); this.#replyTimer.unref?.(); } }
+	#replyTimer?: NodeJS.Timeout; readonly #repliesInFlight = new Set<string>(); readonly supervisorDir: string | undefined; readonly runtime: ChildRuntimeConfig; readonly owner: PlacedRunOwner<C, PlacementMachineReference | PlacementOpaqueMachineReference>;
+	constructor(owner: PlacedRunOwner<C, PlacementMachineReference | PlacementOpaqueMachineReference>, bridgeForward: { close(): Promise<void> }, bridge: BridgeChannel, requestedTools: string[] | undefined, model: string | undefined, runtime: ChildRuntimeConfig, initialGit?: HerdrRemoteGitStatus) { this.owner = owner; this.bridgeForward = bridgeForward; this.bridge = bridge; this.requestedTools = requestedTools; this.model = model; this.runtime = runtime; this.supervisorDir = runtime.supervisorChannelDir; this.#initialGit = initialGit; bridge.adopt((frame) => this.#frame(frame)); if (this.supervisorDir) { this.#replyTimer = setInterval(() => this.#deliverSupervisorReplies(this.supervisorDir!), 50); this.#replyTimer.unref?.(); } }
 	// Runs on a timer, where a throw or an unhandled rejection exits Pi. A reply that can't be read or delivered stays
 	// on disk for the next tick, once its earlier delivery has settled; a lost transport reaches the session through the
 	// bridge failure.
@@ -149,9 +150,10 @@ export async function createRexPiSession(launch: ChildSessionLaunch): Promise<Ch
 }
 
 /** The host-neutral placed-Pi bridge engine. Adapter packages drive it with their own PlacedRunOwner; see src/api/placement.ts for the public surface. */
-export async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSessionLaunch, owner: PlacedRunOwner<C>, policy: ReturnType<typeof serializeHerdrPiLaunch>): Promise<ChildSession> {
-	const machine = owner.machine, runId = owner.runId, runtimeDir = owner.runtimeDir, connection = owner.connection;
-	try {
+export async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSessionLaunch, owner: PlacedRunOwner<C, PlacementMachineReference | PlacementOpaqueMachineReference>, policy: ReturnType<typeof serializeHerdrPiLaunch>): Promise<ChildSession> {
+		// Opaque adapter machines cross as objects; the closed cast only declares what the engine reads (id, cwd, target).
+		const machine = owner.machine as PlacementMachineReference, runId = owner.runId, runtimeDir = owner.runtimeDir, connection = owner.connection;
+		try {
 		let reconnectSession: { reconnect(): Promise<void> } | undefined; const agentName = `pi-${runId.slice(-20)}`;
 		const { owned, terminalId } = await owner.launch({ kind: "pi", name: agentName, args: policy.args, environment: { [HERDR_PI_MODE_ENV]: "1", [HERDR_PI_RUN_ENV]: runId, [HERDR_PI_RUNTIME_DIR_ENV]: runtimeDir } }, () => owner.subscribe(() => {}, () => void reconnectSession?.reconnect()));
 		const manifest = await discoverPlacedBridgeManifest(owner.access, runId, runtimeDir, "The placed Pi did not start the pi-subagents bridge, so its pane was closed. Start pi in a new pane on that machine to see why: it may wait on a prompt (such as a macOS folder-access prompt for the terminal app), exit at startup, or not load the same pi-subagents version as an extension."); if (manifest.protocol !== HERDR_PI_PROTOCOL || manifest.packageVersion !== packageJson.version) throw new Error(`Remote pi-subagents bridge version mismatch (remote ${manifest.packageVersion}, local ${packageJson.version}).`);
