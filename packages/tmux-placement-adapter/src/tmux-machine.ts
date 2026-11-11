@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { remoteMachineCwd, validateRemoteCwd, type PlacementResolveRequest, type PlacementResolution } from "../../../src/api/placement.ts";
 
 /** A tmux placement target: the parent's own tmux server (`machine: "tmux"`) or one reached over SSH from settings (`subagents.machines.<id>.tmux.ssh`). */
@@ -22,7 +23,10 @@ export function resolveTmuxMachinePlacement(request: PlacementResolveRequest): P
 	if (request.machine === TMUX_PROVIDER) {
 		if (ssh !== undefined) throw new Error(`Machine '${request.machine}' is reserved for local tmux placement; it must not also carry a tmux.ssh setting.`);
 		// target records provenance the placed-run journal shows: the parent's own machine.
-		return { machine: { provider: TMUX_PROVIDER, id: "local", target: "local", session: TMUX_SESSION_LABEL, socket: settings?.tmux?.socket, cwd: request.stepCwd ?? request.cwd } };
+		// The window's -c must be absolute on the parent's own machine: a relative step would resolve against the tmux server's cwd, not the repo.
+		const step = request.stepCwd?.trim();
+		const cwd = step && !path.isAbsolute(step) ? path.resolve(request.cwd, step) : step || request.cwd;
+		return { machine: { provider: TMUX_PROVIDER, id: "local", target: "local", session: TMUX_SESSION_LABEL, socket: settings?.tmux?.socket, cwd } };
 	}
 	if (ssh === undefined) return undefined;
 	return { machine: { provider: TMUX_PROVIDER, id: request.machine, target: ssh, session: TMUX_SESSION_LABEL, socket: settings?.tmux?.socket, cwd: validateRemoteCwd(remoteMachineCwd(request.stepCwd, settings?.cwd, request.machine), request.machine) } };
