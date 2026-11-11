@@ -17,7 +17,7 @@ describe("async compaction resume", () => {
 			import os from "node:os";
 			import path from "node:path";
 			import registerSubagentExtension from "./index.ts";
-			import { installCompactionInterruptionCapture } from "./src/extension/compaction-interruption.ts";
+			import { installCompactionInterruptionCapture } from "./src/shared/compaction-interruption.ts";
 			const handlers = new Map();
 			const events = { listeners: new Map(), on(name, handler) { this.listeners.set(name, handler); return () => this.listeners.delete(name); }, emit(name, payload) { this.listeners.get(name)?.(payload); } };
 			const sent = [];
@@ -165,7 +165,7 @@ describe("async compaction resume", () => {
 			sent.length = 0;
 			events.emit("subagent:async-started", { id: "running", sessionId: "stale-context-session", mode: "single", agent: "worker", asyncDir: "/tmp/pi-stale-context-running" });
 			stale = true;
-			for (const handler of handlers.get("session_compact")) await handler({ reason: "manual" });
+			for (const handler of handlers.get("session_compact")) await handler({ reason: "manual" }, ctx);
 			if (sent.some((entry) => entry.message?.customType === "subagent-compaction-resume")) throw new Error("resumed with stale UI context");
 			for (const handler of handlers.get("session_before_compact")) await handler({ reason: "threshold", signal: new AbortController().signal });
 			for (const handler of handlers.get("session_shutdown")) await handler();

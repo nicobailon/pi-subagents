@@ -31,6 +31,11 @@ export function installCompactionInterruptionCapture(sessionClass: { prototype: 
 	prototype.compact = compact;
 }
 
+/** A manual compaction of this session is in progress, until compact() returns. */
+export function compactionInProgress(sessionManager: object): boolean {
+	return compactions.has(sessionManager);
+}
+
 /** A manual compaction of this session that aborted an active run is in progress. */
 export function compactionInterruptedRun(sessionManager: object): boolean {
 	return compactions.get(sessionManager)?.interrupted === true;

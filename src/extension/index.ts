@@ -15,7 +15,7 @@ import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "..
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { recordSessionReplacement, recordSessionStart } from "../shared/session-succession.ts";
 import { createSessionSwitchGuard } from "./session-switch.ts";
-import { compactionInterruptedRun, installCompactionInterruptionCapture, takeCompactionAbort } from "./compaction-interruption.ts";
+import { compactionInProgress, compactionInterruptedRun, installCompactionInterruptionCapture, takeCompactionAbort } from "../shared/compaction-interruption.ts";
 import { reportSessionWarning } from "../shared/session-warnings.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { isStaleExtensionContextError, MODEL_ONLY_TOOL, withCachedUiContext } from "../shared/extension-context.ts";
@@ -1170,7 +1170,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	let compactionResumeTimer: ReturnType<typeof setTimeout> | undefined;
-	const cancelCompactionResume = () => { clearTimeout(compactionResumeTimer); compactionResumeTimer = undefined; };
+	let compactionInterruptedParent = false;
+	const cancelCompactionResume = () => {
+		clearTimeout(compactionResumeTimer);
+		compactionResumeTimer = undefined;
+		compactionInterruptedParent = false;
+	};
 
 	pi.on("agent_start", () => {
 		cancelCompactionResume();
@@ -1196,36 +1201,49 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (event.reason !== "manual") suspendWidgetsForCompaction();
 	});
 
-	// Only a manual compaction that cut off a working parent leaves it stopped; Pi never continues that run.
-	// Pi emits session_compact before it clears its compaction state. sendMessage's run path has no
-	// compaction guard (only prompt() refuses), so wait for the parent to go idle before the resume notice
-	// starts a run. A run that starts first cancels the pending resume.
-	pi.on("session_compact", (event, ctx) => {
+	// parentWake only appends wakes during a manual compaction. Once every overlapping compaction has ended, wake
+	// the parent once if a wake was deferred, or if a successful compaction cut off a working parent with
+	// background work (Pi never continues that run). Pi emits session_compact before it clears its compaction
+	// state, so wait until the session is idle and compact() has returned. A run that starts first cancels it.
+	const wakeAfterCompaction = (completed: boolean) => (event: { reason: string }, ctx: ExtensionContext) => {
 		if (event.reason !== "manual") return;
-		if (activeAsyncJobCount() === 0 || !withLastUiContext(() => true)) return;
-		if (!compactionInterruptedRun(ctx.sessionManager)) return;
-		cancelCompactionResume();
+		const sessionManager = ctx.sessionManager;
+		if (completed && compactionInterruptedRun(sessionManager)) compactionInterruptedParent = true;
+		if (compactionResumeTimer) return;
 		const sessionId = state.currentSessionId;
 		const deadline = Date.now() + COMPACTION_RESUME_DEADLINE_MS;
-		const resumeWhenIdle = () => {
-			if (state.currentSessionId !== sessionId || activeAsyncJobCount() === 0) return;
-			const idle = withLastUiContext((ctx) => ctx.isIdle());
-			if (idle === undefined) return;
-			if (!idle) {
-				if (Date.now() < deadline) compactionResumeTimer = setTimeout(resumeWhenIdle, COMPACTION_RESUME_POLL_MS);
+		const wakeWhenIdle = () => {
+			compactionResumeTimer = undefined;
+			if (state.currentSessionId !== sessionId) return;
+			let idle: boolean;
+			try {
+				idle = ctx.isIdle();
+			} catch {
+				return; // Replaced or reloaded: the new session's runtime owns its notices.
+			}
+			// Past the deadline the next compaction event polls again.
+			if (!idle || compactionInProgress(sessionManager)) {
+				if (Date.now() < deadline) compactionResumeTimer = setTimeout(wakeWhenIdle, COMPACTION_RESUME_POLL_MS);
 				return;
 			}
+			const interrupted = compactionInterruptedParent && activeAsyncJobCount() > 0 && withLastUiContext(() => true) === true;
+			compactionInterruptedParent = false;
+			if (!parentWake.takeDeferredWake() && !interrupted) return;
 			parentWake.sendMessage(
 				{
 					customType: "subagent-compaction-resume",
-					content: "Compaction is complete. Resume the parent task now; background subagent results will arrive separately when ready.",
+					content: interrupted
+						? "Compaction is complete. Resume the parent task now; background subagent results will arrive separately when ready."
+						: "Compaction is complete. Act on the background subagent notices above.",
 					display: false,
 				},
 				{ triggerTurn: true },
 			);
 		};
-		compactionResumeTimer = setTimeout(resumeWhenIdle, COMPACTION_RESUME_POLL_MS);
-	});
+		compactionResumeTimer = setTimeout(wakeWhenIdle, COMPACTION_RESUME_POLL_MS);
+	};
+	pi.on("session_compact", wakeAfterCompaction(true));
+	pi.on("session_compact_failed", wakeAfterCompaction(false));
 
 	pi.on("session_start", (event, ctx) => {
 		parentWake.bindSession(ctx);

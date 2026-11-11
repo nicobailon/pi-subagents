@@ -7,7 +7,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-work
 import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import registerSubagentExtension from "../../src/extension/index.ts";
-import { compactionInterruptedRun, installCompactionInterruptionCapture, takeCompactionAbort } from "../../src/extension/compaction-interruption.ts";
+import { compactionInterruptedRun, installCompactionInterruptionCapture, takeCompactionAbort } from "../../src/shared/compaction-interruption.ts";
 import { currentCompletionOwnerId } from "../../src/shared/completion-owner.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
 
@@ -43,6 +43,8 @@ type Scenario = {
 	checkpoint?: "settled" | "aborted-settled";
 	compactAfter?: boolean;
 	cancelFirstCompaction?: boolean;
+	/** A child fails while the first compaction runs. */
+	completionDuringCompaction?: boolean;
 	onCompactFailed?: (session: Awaited<ReturnType<typeof createAgentSession>>["session"]) => Promise<void>;
 };
 
@@ -61,6 +63,7 @@ async function runParent(scenario: Scenario) {
 			? fauxAssistantMessage(fauxToolCall("slow_tool", {}), { stopReason: "toolUse" })
 			: fauxAssistantMessage("Answered.")));
 	const prompts: string[] = [];
+	const runsWhileCompacting: string[] = [];
 	let compactions = 0;
 	let failures = 0;
 	let toolRuns = 0;
@@ -74,8 +77,13 @@ async function runParent(scenario: Scenario) {
 		extensionFactories: [registerSubagentExtension, (api) => {
 			api.registerProvider(faux.provider);
 			emit = (event, data) => api.events.emit(event, data);
-			api.on("before_agent_start", (event) => { prompts.push(event.messageType === "user" ? event.prompt : `custom:${event.message.customType}`); });
+			api.on("before_agent_start", (event) => {
+				const trigger = event.messageType === "user" ? event.prompt : `custom:${event.message.customType}`;
+				prompts.push(trigger);
+				if (session!.isCompacting) runsWhileCompacting.push(trigger);
+			});
 			api.on("session_before_compact", (event) => {
+				if (scenario.completionDuringCompaction && compactions + failures === 0) completeChild("early");
 				if (scenario.cancelFirstCompaction && compactions + failures === 0) return { cancel: true };
 				return { compaction: { summary: "Compacted.", firstKeptEntryId: event.preparation.firstKeptEntryId, tokensBefore: event.preparation.tokensBefore } };
 			});
@@ -97,6 +105,8 @@ async function runParent(scenario: Scenario) {
 		theme: new Proxy({}, { get: () => (...args: unknown[]) => String(args.at(-1) ?? "") }),
 	};
 	const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+	// A failed result skips the completion batch window.
+	const completeChild = (id: string) => emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { id, sessionId, completionOwnerId: currentCompletionOwnerId(), success: false, summary: "child needs the parent." });
 	try {
 		await resourceLoader.reload();
 		const modelRuntime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: path.join(agentDir, "models.json"), allowModelNetwork: false });
@@ -108,12 +118,11 @@ async function runParent(scenario: Scenario) {
 		await wait(600); // The resume polls every 50 ms until the parent is idle.
 		await session.waitForIdle();
 		const runsBeforeCompletion = [...prompts];
-		// A failed result skips the completion batch window.
-		emit(SUBAGENT_ASYNC_COMPLETE_EVENT, { id: "child", sessionId, completionOwnerId: currentCompletionOwnerId(), success: false, summary: "child needs the parent." });
+		if (!scenario.completionDuringCompaction) completeChild("child");
 		await wait(150);
 		await session.waitForIdle();
 		const notice = session.messages.find((message) => message.role === "custom" && String(message.content).includes("child needs the parent."));
-		return { runsBeforeCompletion, prompts, compactions, failures, completionHeld: /The user stopped the parent turn\./.test(String(notice?.content)) };
+		return { runsBeforeCompletion, prompts, runsWhileCompacting, compactions, failures, completionHeld: /The user stopped the parent turn\./.test(String(notice?.content)) };
 	} finally {
 		if (session) await (session.extensionRunner as unknown as { emit(event: unknown): Promise<unknown> }).emit({ type: "session_shutdown", reason: "quit" });
 		session?.dispose();
@@ -128,6 +137,28 @@ it("resumes a parent that ctx.compact() cut off mid-run, without holding later w
 	assert.deepEqual(result.runsBeforeCompletion, ["Start.", "custom:subagent-compaction-resume"]);
 	assert.equal(result.completionHeld, false);
 	assert.equal(result.prompts.at(-1), "custom:subagent-notify");
+});
+
+for (const stop of ["compact", "none"] as const) it(`defers a child's wake until ${stop === "compact" ? "an interrupting" : "an idle"} compaction ends, then wakes the parent once`, { timeout: 30_000 }, async () => {
+	const result = await runParent({ stop, checkpoint: stop === "none" ? "settled" : undefined, completionDuringCompaction: true });
+	assert.equal(result.compactions, 1);
+	assert.deepEqual(result.runsWhileCompacting, []);
+	assert.deepEqual(result.prompts, ["Start.", "custom:subagent-compaction-resume"]);
+	assert.equal(result.completionHeld, false);
+});
+
+it("wakes the parent once after a failed compaction deferred a child's wake", { timeout: 30_000 }, async () => {
+	const result = await runParent({
+		stop: "none",
+		checkpoint: "settled",
+		cancelFirstCompaction: true,
+		completionDuringCompaction: true,
+		// Pi is idle while it awaits session_compact_failed handlers, but compact() has not returned yet.
+		onCompactFailed: () => new Promise((resolve) => setTimeout(resolve, 200)),
+	});
+	assert.deepEqual([result.compactions, result.failures], [0, 1]);
+	assert.deepEqual(result.runsWhileCompacting, []);
+	assert.deepEqual(result.prompts, ["Start.", "custom:subagent-compaction-resume"]);
 });
 
 it("does not wake an idle parent that a checkpoint extension compacts", { timeout: 30_000 }, async () => {
