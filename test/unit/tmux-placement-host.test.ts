@@ -7,7 +7,7 @@ import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts"
 import { createEventBus } from "@earendil-works/pi-coding-agent";
 import { registerPlacementAdapter, registerPlacementEventListener, type PlacementAdapterV1 } from "../../src/api/placement.ts";
 import { localMachineAccess } from "../../src/runs/shared/local-machine-access.ts";
-import { closeOwnedTmuxPane, connectTmux, TmuxPlacedRunOwner, tmuxPaneHost } from "../../packages/tmux-placement-adapter/src/tmux-pane-host.ts";
+import { closeOwnedTmuxPane, connectTmux, openTmuxPlacedRun, tmuxPaneHost } from "../../packages/tmux-placement-adapter/src/tmux-pane-host.ts";
 import { resolveTmuxMachinePlacement } from "../../packages/tmux-placement-adapter/src/tmux-machine.ts";
 import type { ChildSession } from "../../src/runs/shared/child-session.ts";
 
@@ -179,12 +179,12 @@ describe("Tmux pane host", { skip: process.platform === "win32" }, () => {
 		fs.mkdirSync(path.join(dir, ".local", "bin"), { recursive: true });
 		fs.copyFileSync(bin, path.join(dir, ".local", "bin", "tmux"));
 		fs.chmodSync(path.join(dir, ".local", "bin", "tmux"), 0o755);
-		const owner = await TmuxPlacedRunOwner.create(machine, runId, { access: localMachineAccess({ env: { FAKE_TMUX_DIR: dir, HOME: dir } }) });
+		const context = await openTmuxPlacedRun(machine, runId, { access: localMachineAccess({ env: { FAKE_TMUX_DIR: dir, HOME: dir } }) });
 		try {
-			assert.match(path.basename(owner.runtimeDir), /^pi-subagents-herdr-[0-9a-f]{12}-/u);
-			assert.ok(Buffer.byteLength(path.join(owner.runtimeDir, "bridge.sock")) <= 103, owner.runtimeDir);
-		} finally { await owner.cleanup(); }
-		assert.equal(fs.existsSync(owner.runtimeDir), false);
+			assert.match(path.basename(context.runtimeDir), /^pi-subagents-herdr-[0-9a-f]{12}-/u);
+			assert.ok(Buffer.byteLength(path.join(context.runtimeDir, "bridge.sock")) <= 103, context.runtimeDir);
+		} finally { context.removeRuntime(); }
+		assert.equal(fs.existsSync(context.runtimeDir), false);
 	});
 });
 
@@ -196,7 +196,7 @@ describe("tmux machine resolution", () => {
 		const owner = { events: createEventBus() };
 		const disposeListener = registerPlacementEventListener(owner);
 		t.after(disposeListener);
-		const registration = registerPlacementAdapter(owner, { kind: "pi-subagents.placement-adapter", version: 1, provider: "tmux", resolveMachinePlacement: resolveTmuxMachinePlacement, async createPlacedPiSession() { return child; } } satisfies PlacementAdapterV1, { before: "herdr" });
+		const registration = registerPlacementAdapter(owner, { kind: "pi-subagents.placement-adapter", version: 1, provider: "tmux", resolveMachinePlacement: resolveTmuxMachinePlacement, async openPlacedRun() { throw new Error("unused in this test"); } } satisfies PlacementAdapterV1, { before: "herdr" });
 		const tmuxPlacement = resolveMachinePlacement({ machine: "teambox", cwd: dir, settings: { tmux: { ssh: "10.0.0.9" }, cwd: "~/dev" }, herdrBin: path.join(dir, "no-herdr") });
 		assert.equal(tmuxPlacement.machine.provider, "tmux");
 		const localPlacement = resolveMachinePlacement({ machine: "tmux", cwd: dir, herdrBin: path.join(dir, "no-herdr") });

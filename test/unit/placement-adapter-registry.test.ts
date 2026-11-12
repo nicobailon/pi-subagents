@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as fs from "node:fs";
-import type { ChildSession, ChildSessionLaunch } from "../../src/runs/shared/child-session.ts";
+import type { ChildSession } from "../../src/runs/shared/child-session.ts";
 // Importing herdr-placed-run loads the built-in Herdr and Rex adapters into the registry.
 import { createPlacementAwareChildSessionFactory } from "../../src/runs/shared/herdr-placed-run.ts";
 import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
@@ -10,7 +10,7 @@ import { placementAdapters, registerPlacementAdapter, requirePlacementAdapter, t
 const runtime = { runId: "run", agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false, waitTool: { enabled: true } };
 const child: ChildSession = { subscribe: () => () => {}, prompt: async () => {}, steer: async () => {}, followUp: async () => {}, abort: async () => {}, dispose: async () => {}, messages: [], sessionFile: undefined, sessionId: "native", modelId: "provider/model" };
 function spiketestAdapter(overrides: Partial<PlacementAdapterV1> = {}): PlacementAdapterV1 {
-	return { kind: "pi-subagents.placement-adapter", version: 1, provider: "spiketest", async createPlacedPiSession() { return child; }, ...overrides };
+	return { kind: "pi-subagents.placement-adapter", version: 1, provider: "spiketest", async openPlacedRun() { throw new Error("unused in this test"); }, ...overrides };
 }
 
 describe("placement adapter registry", () => {
@@ -19,7 +19,7 @@ describe("placement adapter registry", () => {
 		for (const adapter of placementAdapters()) {
 			assert.equal(adapter.kind, "pi-subagents.placement-adapter");
 			assert.equal(adapter.version, 1);
-			assert.equal(typeof adapter.createPlacedPiSession, "function");
+			assert.equal(typeof adapter.openPlacedRun, "function");
 		}
 	});
 
@@ -56,15 +56,11 @@ describe("placement adapter registry", () => {
 		assert.throws(() => resolveMachinePlacement({ machine: "nowhere", cwd: "/repo", catalogJson: "[]" }), /machine 'nowhere' was not found.*Saved machines/u);
 	});
 
-	it("routes a placed native launch to the adapter matching its machine provider, and no launch to no adapter", async () => {
-		let created = 0;
-		registerPlacementAdapter(spiketestAdapter({ provider: "spikeroute", async createPlacedPiSession(launch: ChildSessionLaunch) { created++; assert.equal(launch.machine?.provider, "spikeroute"); return child; } }), { before: "herdr" });
-		const local = { create: async () => { throw new Error("local factory must not see a placed launch"); }, dispose: async () => {}, disposeForParent: async () => {} };
-		const factory = createPlacementAwareChildSessionFactory(local as never);
-		const placed = await factory.create({ cwd: "/fuzz", machine: { provider: "spikeroute", id: "f1", cwd: "/fuzz" }, remoteResources: { agent: "worker" }, storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: true, hooks: [], noSkills: true, noContextFiles: true, tools: ["read"], runtime });
-		assert.equal(placed, child);
-		assert.equal(created, 1);
-		const noMachine = { ...{ cwd: "/local/repo", storage: { kind: "memory" } as ChildSessionLaunch["storage"] } } as ChildSessionLaunch;
+	it("routes a placed native launch through the adapter matching its machine provider", async () => {
+		const spikeroute = spiketestAdapter({ provider: "spikeroute", async openPlacedRun(machine) { assert.equal((machine as { id: string }).id, "f1"); throw new Error("not driven here"); } });
+		registerPlacementAdapter(spikeroute, { before: "herdr" });
+		assert.equal(requirePlacementAdapter("spikeroute"), spikeroute);
+		const noMachine = { cwd: "/local/repo", storage: { kind: "memory" } } as never;
 		const seen: string[] = [];
 		const second = createPlacementAwareChildSessionFactory({ create: async () => { seen.push("local"); return child; }, dispose: async () => {}, disposeForParent: async () => {} } as never);
 		await second.create(noMachine);

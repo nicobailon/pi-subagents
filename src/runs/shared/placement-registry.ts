@@ -1,5 +1,5 @@
 import type { PlacementMachineReference } from "../../shared/types.ts";
-import type { ChildSession, ChildSessionLaunch } from "./child-session.ts";
+import type { PlacementMachineAccess, PlacementPaneHost, PlacementSockets } from "./placement-host.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -9,9 +9,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
  * register through the same call at extension load.
  *
  * V1 contract: `resolveMachinePlacement` is consulted in registration order until one adapter
- * returns a placement; `createPlacedPiSession` is looked up by the launch's machine provider.
- * The placed-Pi bridge (version handshake, identity checks, evidence cursor) stays host-neutral
- * in the core; an adapter only owns panes and machine access.
+ * returns a placement; `openPlacedRun` is looked up by the launch's machine provider and hands
+ * back the host pieces (effective machine, pane host, connection, access, runtime dir), while
+ * the core assembles the run owner and drives the host-neutral placed-Pi bridge itself, so an
+ * adapter only owns panes and machine access.
  */
 
 export interface PlacementAdapterSettings {
@@ -58,6 +59,17 @@ export interface PlacementResolution {
 	env?: Record<string, string>;
 }
 
+/** What an opened run hands to the core: the concrete machine it connected against plus the host pieces the bridge engine needs. */
+export interface PlacementRunContext {
+	/** The effective machine reference after adapter-side resolution (remote cwd expansion, recorded session); the core builds the run owner against this one. */
+	machine: PlacementMachineReference | PlacementOpaqueMachineReference;
+	host: PlacementPaneHost<PlacementSockets>;
+	connection: PlacementSockets;
+	access: PlacementMachineAccess;
+	runtimeDir: string;
+	removeRuntime(): void;
+}
+
 export interface PlacementAdapterV1 {
 	kind: "pi-subagents.placement-adapter";
 	version: 1;
@@ -65,7 +77,8 @@ export interface PlacementAdapterV1 {
 	provider: string;
 	/** Return undefined to decline a machine name and let a later adapter resolve it. */
 	resolveMachinePlacement?(request: PlacementResolveRequest): PlacementResolution | undefined;
-	createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildSession>;
+	/** Open the host pieces for one placed run: connect (creating the adapter's session and window scaffolding as needed), resolve the effective machine, and provision the runtime directory. Fails closed — on any failure the adapter removes its own scaffolding before rethrowing. The core assembles the run owner and drives the bridge engine, so adapters never see launches or sessions. */
+	openPlacedRun(machine: PlacementOpaqueMachineReference, runId: string): Promise<PlacementRunContext>;
 }
 
 const adapters: PlacementAdapterV1[] = [];
@@ -124,7 +137,7 @@ export function registerPlacementEventListener(pi: Pick<ExtensionAPI, "events">)
 			const adapter = request.adapter;
 			if (!adapter || typeof adapter !== "object" || Array.isArray(adapter)) throw new Error("Placement adapter must be an object.");
 			const provider = typeof adapter.provider === "string" ? adapter.provider : String(adapter.provider);
-			if (typeof adapter.createPlacedPiSession !== "function") throw new Error(`Placement adapter '${provider}' requires createPlacedPiSession().`);
+			if (typeof adapter.openPlacedRun !== "function") throw new Error(`Placement adapter '${provider}' requires openPlacedRun().`);
 			if (adapter.resolveMachinePlacement !== undefined && typeof adapter.resolveMachinePlacement !== "function") throw new Error(`Placement adapter '${provider}' resolveMachinePlacement must be a function when provided.`);
 			registerPlacementAdapter(adapter as PlacementAdapterV1, { before: typeof request.before === "string" ? request.before : undefined });
 			let disposed = false;

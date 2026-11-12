@@ -3,11 +3,11 @@ import { PLACEMENT_REGISTER_EVENT, type PlacementAdapterV1, type PlacementRegist
 
 /**
  * Public placement surface for external adapter packages (tmux, zellij, …). An adapter package
- * implements a `PlacementPaneHost` over its terminal multiplexer, drives the host-neutral
- * bridge with a `PlacedRunOwner`, and registers a `PlacementAdapterV1` through
- * `registerPlacementAdapter(pi, adapter)` at extension load. Core stays provider-agnostic:
- * it never branches on a third-party provider, and third-party machine references cross the
- * registry as `PlacementOpaqueMachineReference`.
+ * implements a `PlacementPaneHost` over its terminal multiplexer, exposes `openPlacedRun` on its
+ * `PlacementAdapterV1` to connect and provision a run, and registers through
+ * `registerPlacementAdapter(pi, adapter)` at extension load. Core drives the host-neutral bridge
+ * engine itself: it stays provider-agnostic, never branches on a third-party provider, and
+ * third-party machine references cross the registry as `PlacementOpaqueMachineReference`.
  */
 export {
 	PLACEMENT_REGISTER_EVENT,
@@ -19,6 +19,7 @@ export {
 	type PlacementRegistrationRequest,
 	type PlacementResolveRequest,
 	type PlacementResolution,
+	type PlacementRunContext,
 } from "../runs/shared/placement-registry.ts";
 export {
 	herdrPaneAllocationKey,
@@ -45,24 +46,14 @@ export {
 	discoverPlacedBridgeManifest,
 	removePlacedRuntimeDir,
 	type PlacedBridgeManifest,
-	PlacedRunOwner,
 } from "../runs/shared/placed-run-owner.ts";
-export {
-	BridgeChannel,
-	HerdrPiSession,
-	serializeHerdrPiLaunch,
-	startPlacedPiSession,
-	type HerdrRunIdentity,
-	type HerdrRunSnapshot,
-} from "../runs/shared/herdr-placed-run.ts";
 export { remoteShellCommand, sshMachineAccess } from "../runs/shared/herdr-connection.ts";
+export type { HerdrRunIdentity } from "../runs/shared/herdr-placed-run.ts";
 export { localMachineAccess } from "../runs/shared/local-machine-access.ts";
 export { getPiSpawnCommand } from "../runs/shared/pi-spawn.ts";
-export type { ChildSession, ChildSessionLaunch } from "../runs/shared/child-session.ts";
 export type { PlacementMachineReference } from "../shared/types.ts";
 
 export { remoteMachineCwd, validateRemoteCwd } from "../runs/shared/herdr-machine.ts";
-export { safeRunId } from "../runs/shared/herdr-placed-run.ts";
 /** Register through the installed owner, even when each extension has its own module root: the request crosses the owner's event bus (PLACEMENT_REGISTER_EVENT) and lands in the runtime's in-process registry. */
 export function registerPlacementAdapter(pi: Pick<ExtensionAPI, "events">, adapter: PlacementAdapterV1, options: { before?: string } = {}): PlacementRegistration {
 	const request: PlacementRegistrationRequest = { version: 1, adapter, before: options.before };

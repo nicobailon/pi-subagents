@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import * as path from "node:path";
 import {
 	PLACED_MANIFEST_READ_SCRIPT,
-	PlacedRunOwner,
 	createPlacedRuntimeDir,
 	getPiSpawnCommand,
 	localMachineAccess,
@@ -18,6 +17,7 @@ import {
 	type PlacementOwnedPane,
 	type PlacementPaneHost,
 	type PlacementReconnectCheck,
+	type PlacementRunContext,
 	type PlacementSockets,
 } from "../../../src/api/placement.ts";
 import { isTmuxLocalMachine, TMUX_PROVIDER, TMUX_SESSION_LABEL, type TmuxMachineReference, type TmuxSshMachineReference } from "./tmux-machine.ts";
@@ -253,26 +253,23 @@ async function openTmuxWindow(connection: TmuxConnection, label: string, cwd: st
 	} catch (error) { return closeUntrackedTmuxWindow(connection, label, error instanceof Error ? error : new Error(String(error))); }
 }
 
-export class TmuxPlacedRunOwner extends PlacedRunOwner<TmuxConnection, TmuxMachineReference> {
-	private constructor(machine: TmuxMachineReference, runId: string, runtimeDir: string, connection: TmuxConnection, access: PlacementMachineAccess, host: PlacementPaneHost<TmuxConnection, TmuxPaneCandidate>, ownerRunId: string) { connection.ownerRunId = ownerRunId; super(machine, runId, runtimeDir, connection, host, access, () => removePlacedRuntimeDir(access, runtimeDir)); }
-	/** A tmux SSH owner's machine carries the resolved remote cwd, and its host reconnects only to the session recorded here. */
-	static async create(machine: TmuxMachineReference, runId: string, options: { access?: PlacementMachineAccess; sshAccess?: PlacementMachineAccess } = {}): Promise<TmuxPlacedRunOwner> {
-		// A short hash names the directory, matching the core placed-runtime naming, so bridge socket paths stay short.
-		const hash = createHash("sha256").update(runId).digest("hex").slice(0, 12);
-		if (isTmuxLocalMachine(machine)) {
-			const access = options.access ?? tmuxAccess();
-			const runtimeDir = await createPlacedRuntimeDir(access, hash);
-			try { return new TmuxPlacedRunOwner(machine, runId, runtimeDir, await connectTmux(machine, { access }), access, tmuxPaneHost, runId); }
-			catch (error) { try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "tmux owner creation failed and runtime cleanup also failed.", { cause: error }); } throw error; }
-		}
-		const access = options.sshAccess ?? tmuxSshAccess(machine);
-		const bin = await resolveTmuxBinary(access, machine);
-		const placed: TmuxSshMachineReference = { ...machine, cwd: await resolveRemoteCwd(access, machine) };
-		const session = TMUX_SESSION_LABEL;
-		await ensureTmuxSession({ access, bin, session, socket: placed.socket }, placed);
-		const host = { ...tmuxPaneHost, connect: (target: PlacementMachineReference | TmuxMachineReference) => connectTmux(target, { access, bin, session }) } satisfies PlacementPaneHost<TmuxConnection, TmuxPaneCandidate>;
+/** Open a tmux run: connect (recording the owning run id on the connection for close-time ownership proof), resolve the effective machine, and provision the runtime directory, removing the directory if any step fails. */
+export async function openTmuxPlacedRun(machine: TmuxMachineReference, runId: string, options: { access?: PlacementMachineAccess; sshAccess?: PlacementMachineAccess } = {}): Promise<PlacementRunContext> {
+	// A short hash names the directory, matching the core placed-runtime naming, so bridge socket paths stay short.
+	const hash = createHash("sha256").update(runId).digest("hex").slice(0, 12);
+	if (isTmuxLocalMachine(machine)) {
+		const access = options.access ?? tmuxAccess();
 		const runtimeDir = await createPlacedRuntimeDir(access, hash);
-		try { return new TmuxPlacedRunOwner(placed, runId, runtimeDir, await host.connect(placed), access, host, runId); }
-		catch (error) { try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "tmux owner creation failed and runtime cleanup also failed.", { cause: error }); } throw error; }
+		try { return { machine, host: tmuxPaneHost, connection: Object.assign(await connectTmux(machine, { access }), { ownerRunId: runId }), access, runtimeDir, removeRuntime: () => removePlacedRuntimeDir(access, runtimeDir) }; }
+		catch (error) { try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "tmux run failed to open and runtime cleanup also failed.", { cause: error }); } throw error; }
 	}
+	const access = options.sshAccess ?? tmuxSshAccess(machine);
+	const bin = await resolveTmuxBinary(access, machine);
+	const placed: TmuxSshMachineReference = { ...machine, cwd: await resolveRemoteCwd(access, machine) };
+	const session = TMUX_SESSION_LABEL;
+	await ensureTmuxSession({ access, bin, session, socket: placed.socket }, placed);
+	const host = { ...tmuxPaneHost, connect: (target: PlacementMachineReference | TmuxMachineReference) => connectTmux(target, { access, bin, session }) } satisfies PlacementPaneHost<TmuxConnection, TmuxPaneCandidate>;
+	const runtimeDir = await createPlacedRuntimeDir(access, hash);
+	try { return { machine: placed, host, connection: Object.assign(await host.connect(placed), { ownerRunId: runId }), access, runtimeDir, removeRuntime: () => removePlacedRuntimeDir(access, runtimeDir) }; }
+	catch (error) { try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "tmux run failed to open and runtime cleanup also failed.", { cause: error }); } throw error; }
 }

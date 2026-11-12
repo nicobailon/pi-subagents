@@ -1,4 +1,6 @@
-import { createHerdrPiSession, createRexPiSession } from "./herdr-placed-run.ts";
+import type { HerdrMachineReference, RexMachineReference } from "../../shared/types.ts";
+import { openHerdrPlacedRun } from "./herdr-pane-host.ts";
+import { openRexPlacedRun } from "./rex-pane-host.ts";
 import { resolveHerdrMachinePlacement, remoteMachineCwd, validateRemoteCwd, type ResolveHerdrMachinePlacementInput } from "./herdr-machine.ts";
 import { registerPlacementAdapter, type PlacementResolveRequest } from "./placement-registry.ts";
 import { REX_LOCAL_MACHINE, resolveRexLocalPlacement } from "./rex-machine.ts";
@@ -20,12 +22,12 @@ function resolveRexMachinePlacement(request: PlacementResolveRequest) {
 	return undefined;
 }
 
-registerPlacementAdapter({ kind: "pi-subagents.placement-adapter", version: 1, provider: "rex", createPlacedPiSession: createRexPiSession, resolveMachinePlacement: resolveRexMachinePlacement });
+registerPlacementAdapter({ kind: "pi-subagents.placement-adapter", version: 1, provider: "rex", openPlacedRun: (machine, runId) => openRexPlacedRun(machine as unknown as RexMachineReference, runId), resolveMachinePlacement: resolveRexMachinePlacement });
 
 registerPlacementAdapter({
 	kind: "pi-subagents.placement-adapter",
 	version: 1,
 	provider: "herdr",
-	createPlacedPiSession: createHerdrPiSession,
+	openPlacedRun: (machine, runId) => openHerdrPlacedRun(machine as unknown as HerdrMachineReference, runId),
 	resolveMachinePlacement: (request: PlacementResolveRequest) => resolveHerdrMachinePlacement(request as ResolveHerdrMachinePlacementInput),
 });

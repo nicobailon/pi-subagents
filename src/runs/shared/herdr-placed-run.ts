@@ -7,12 +7,11 @@ import packageJson from "../../../package.json" with { type: "json" };
 import type { HerdrRemoteGitStatus, PlacementMachineReference } from "../../shared/types.ts";
 import type { ChildSession, ChildSessionEvent, ChildSessionFactory, ChildSessionLaunch } from "./child-session.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
-import { herdrPaneHost, HerdrPlacedRunOwner } from "./herdr-pane-host.ts";
+import { herdrPaneHost } from "./herdr-pane-host.ts";
 import { encodeHerdrPiFrame, HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
-import { discoverPlacedBridgeManifest, type PlacedBridgeManifest, type PlacedRunOwner } from "./placed-run-owner.ts";
+import { discoverPlacedBridgeManifest, PlacedRunOwner, type PlacedBridgeManifest } from "./placed-run-owner.ts";
 import type { PlacementBridgeIdentity, PlacementPaneHost, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
 import { requirePlacementAdapter, type PlacementOpaqueMachineReference } from "./placement-registry.ts";
-import { RexPlacedRunOwner } from "./rex-pane-host.ts";
 import { ensureSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
 import { isRexLocalMachine } from "./rex-machine.ts";
 import { PLACED_RESTORE_UNSUPPORTED } from "./herdr-machine.ts";
@@ -135,21 +134,8 @@ export async function reconnectHerdrPiSession<C extends PlacementSockets>(sessio
 	await session.replaceTransport({ ...validated, paneId: result.paneId, cursor: result.cursor, state: result.state });
 }
 
-export async function createHerdrPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
-	if (!launch.machine) throw new Error("Pane-native Pi launch requires a saved machine.");
-	if (launch.machine.provider !== "herdr") throw new Error("Herdr pane-native Pi launch requires a Herdr saved machine.");
-	const policy = serializeHerdrPiLaunch(launch); const runId = safeRunId(launch.runtime.runId);
-	return startPlacedPiSession(launch, await HerdrPlacedRunOwner.create(launch.machine, runId), policy);
-}
 
-/** A Rex machine: the same bridge session, with the Rex pane host and local (`machine: "local"`) or SSH machine access. */
-export async function createRexPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
-	if (launch.machine?.provider !== "rex") throw new Error("Rex pane-native Pi launch requires a Rex machine.");
-	const policy = serializeHerdrPiLaunch(launch); const runId = safeRunId(launch.runtime.runId);
-	return startPlacedPiSession(launch, await RexPlacedRunOwner.create(launch.machine, runId), policy);
-}
-
-/** The host-neutral placed-Pi bridge engine. Adapter packages drive it with their own PlacedRunOwner; see src/api/placement.ts for the public surface. */
+/** The host-neutral placed-Pi bridge engine. The core assembles a `PlacedRunOwner` from an adapter's opened run and drives the bridge itself; adapters only open host pieces (see `openPlacedRun`). */
 export async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSessionLaunch, owner: PlacedRunOwner<C, PlacementMachineReference | PlacementOpaqueMachineReference>, policy: ReturnType<typeof serializeHerdrPiLaunch>): Promise<ChildSession> {
 		// Opaque adapter machines cross as objects; the closed cast only declares what the engine reads (id, cwd, target).
 		const machine = owner.machine as PlacementMachineReference, runId = owner.runId, runtimeDir = owner.runtimeDir, connection = owner.connection;
@@ -173,8 +159,15 @@ export async function startPlacedPiSession<C extends PlacementSockets>(launch: C
 	} catch (error) { await owner.cleanup(); throw error; }
 }
 
-function createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildSession> { return requirePlacementAdapter(launch.machine?.provider).createPlacedPiSession(launch); }
-
+/** Route the launch through the registry: the adapter opens its host pieces, the core assembles the owner and drives the bridge engine. */
+async function createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
+	const adapter = requirePlacementAdapter(launch.machine?.provider);
+	const runId = safeRunId(launch.runtime.runId);
+	const policy = serializeHerdrPiLaunch(launch);
+	const context = await adapter.openPlacedRun(launch.machine as unknown as PlacementOpaqueMachineReference, runId);
+	const owner = new PlacedRunOwner(context.machine, runId, context.runtimeDir, context.connection, context.host, context.access, context.removeRuntime);
+	return startPlacedPiSession(launch, owner, policy);
+}
 export function createPlacementAwareChildSessionFactory(local: ChildSessionFactory, createRemote: (launch: ChildSessionLaunch) => Promise<ChildSession> = createPlacedPiSession): ChildSessionFactory {
 	const remote = new Map<ChildSession, string | undefined>(); return { async create(launch) { if (!launch.machine) return local.create(launch); serializeHerdrPiLaunch(launch); const child = await createRemote(launch); remote.set(child, launch.parentSessionFile); return child; }, async dispose() { await Promise.allSettled([...remote.keys()].map((child) => child.dispose())); remote.clear(); await local.dispose(); }, async disposeForParent(parentSessionFile) { const matching = [...remote].filter(([, parent]) => parent === parentSessionFile).map(([child]) => child); await Promise.allSettled(matching.map((child) => child.dispose())); for (const child of matching) remote.delete(child); await local.disposeForParent(parentSessionFile); } };
 }
