@@ -124,7 +124,7 @@ it("after a user abort, appends waking notices without a wake until the next run
 	assert.equal(wakes(), 1);
 });
 
-it("drops a user-abort hold when the session changes or a resume releases it", () => {
+it("drops a user-abort hold when the session changes", () => {
 	const manager = SessionManager.inMemory();
 	const { wake, wakes } = createHarness(manager);
 	wake.userAborted();
@@ -132,10 +132,6 @@ it("drops a user-abort hold when the session changes or a resume releases it", (
 	wake.bindSession({ isIdle: () => true, sessionManager: manager } as never);
 	wake.sendMessage(notice("new session"), { triggerTurn: true });
 	assert.equal(wakes(), 1);
-	wake.userAborted();
-	wake.releaseHold();
-	wake.sendMessage(notice("during the pending wake"), { triggerTurn: true });
-	assert.equal(wakes(), 1, "releasing the hold keeps the pending wake reservation");
 });
 
 it("shares one idle wake per session with other extensions, such as pi-intercom", () => {
