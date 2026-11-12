@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- An extension that changes a workflow child's `task` in its `tool_call` handler for `subagent_launch` now changes what that child is told. Before, the change was dropped and the child got the original text, although Pi applies handler changes for every other tool. This covers workflow scripts, `parallel`, `tasks` and `chain`, including steps built from `{previous}`. Other fields and a resumed child's message still can't be changed.
 - With background subagents running, a manual compaction (`/compact`, RPC `compact` or an extension's `ctx.compact()`) no longer starts a turn when the parent was idle or stopped with Esc. Before, every manual compaction resumed the parent, so an extension that compacts on `agent_settled` made it answer "still waiting" each time. A compaction that cuts off a working parent still resumes it. A child result that arrives during a compaction now wakes the parent once the compaction ends, instead of starting a run while it is still compacting. Thanks to [@IdrisGit](https://github.com/IdrisGit) for #3253 and [@jyshowalter](https://github.com/jyshowalter) for the report. (#3252)
 
 ## [0.88.0] - 2026-11-10
