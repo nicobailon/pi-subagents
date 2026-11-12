@@ -83,7 +83,7 @@ describe("Tmux pane host", { skip: process.platform === "win32" }, () => {
 		const onPane: Array<unknown> = [];
 		const result = await tmuxPaneHost.launch(connection, machine, runId, "/tmp/unused", { kind: "pi", name: "pi", args: ["-p", "hi"], environment: { PI_TEST_MODE: "1" } }, async (owned) => { onPane.push(owned); });
 		const windowCall = calls().find((call) => call.startsWith("new-window "));
-		assert.match(windowCall ?? "", new RegExp(`new-window -d -t ${session}: -n ${label} -c /tmp -P -F #\\{pane_id\\} sh -c exec "\\$@" sh PI_TEST_MODE=1 /bin/echo -p hi$`, "u"));
+		assert.match(windowCall ?? "", new RegExp(`new-window -d -t ${session}: -n ${label} -c /tmp -P -F #\\{pane_id\\} sh -c exec /usr/bin/env "\\$@" sh PI_TEST_MODE=1 /bin/echo -p hi$`, "u"));
 		assert.deepEqual(calls().filter((call) => call.startsWith("set-window-option ")), [`set-window-option -t %1 automatic-rename off`]);
 		assert.deepEqual(calls().filter((call) => call.startsWith("set-option -p ")), [`set-option -p -t %1 @pi-subagents-owner ${runId}:400`]);
 		assert.deepEqual(onPane, [{ workspaceId: session, tabId: "%1", paneId: "%1" }]);
@@ -124,19 +124,24 @@ describe("Tmux pane host", { skip: process.platform === "win32" }, () => {
 	});
 
 	it("closes a present pane and reports closed only once the pane is gone", async () => {
-		const connection = await connect(); script("display", [0, 1]); script("killpane", [0]);
+		const connection = { ...await connect(), ownerRunId: runId };
+		fs.writeFileSync(path.join(dir, "display.out"), `%1|700|400|${runId}:400\n`);
+		script("display", [0, 0, 1]); script("killpane", [0]);
 		await closeOwnedTmuxPane(connection, { workspaceId: session, tabId: "%1", paneId: "%1" });
-		assert.deepEqual(calls().slice(1), [`display -p -t %1 -F #{pane_id}|#{pane_pid}|#{server_pid}|#{@pi-subagents-owner}`, `kill-pane -t %1`, `display -p -t %1 -F #{pane_id}|#{pane_pid}|#{server_pid}|#{@pi-subagents-owner}`]);
+		const paneFormat = `display -p -t %1 -F #{pane_id}|#{pane_pid}|#{server_pid}|#{@pi-subagents-owner}`;
+		assert.deepEqual(calls().slice(1), [paneFormat, paneFormat, `kill-pane -t %1`, paneFormat]);
 	});
 
 	it("treats an already-gone pane as closed without killing anything", async () => {
-		const connection = await connect(); script("display", [1]);
+		const connection = { ...await connect(), ownerRunId: runId }; script("display", [1]);
 		await closeOwnedTmuxPane(connection, { workspaceId: session, tabId: "%1", paneId: "%1" });
 		assert.equal(calls().some((call) => call.startsWith("kill-pane ")), false);
 	});
 
 	it("refuses to report closed while the pane still exists after kill", async () => {
-		const connection = await connect(); script("killpane", [0]);
+		const connection = { ...await connect(), ownerRunId: runId };
+		fs.writeFileSync(path.join(dir, "display.out"), `%1|700|400|${runId}:400\n`);
+		script("killpane", [0]);
 		await assert.rejects(closeOwnedTmuxPane(connection, { workspaceId: session, tabId: "%1", paneId: "%1" }), /still exists after kill/u);
 	});
 
@@ -144,6 +149,22 @@ describe("Tmux pane host", { skip: process.platform === "win32" }, () => {
 		const connection = await connect();
 		await assert.rejects(closeOwnedTmuxPane(connection, { workspaceId: "other", tabId: "%1", paneId: "%1" }), /different tmux session/u);
 		assert.equal(calls().length, 1);
+	});
+
+	it("refuses to close when the connection carries no run id or the marker does not match", async () => {
+		const noProof = await connect();
+		await assert.rejects(closeOwnedTmuxPane(noProof, { workspaceId: session, tabId: "%1", paneId: "%1" }), /carries no run id/u);
+		assert.equal(calls().some((call) => call.startsWith("kill-pane ")), false);
+		const mismatched = { ...await connect(), ownerRunId: "another-run" };
+		fs.writeFileSync(path.join(dir, "display.out"), `%1|700|400|someone-else:400\n`);
+		script("display", [0]);
+		await assert.rejects(closeOwnedTmuxPane(mismatched, { workspaceId: session, tabId: "%1", paneId: "%1" }), /does not match run another-run/u);
+		assert.equal(calls().some((call) => call.startsWith("kill-pane ")), false);
+		const staleServer = { ...await connect(), ownerRunId: runId };
+		fs.writeFileSync(path.join(dir, "display.out"), `%1|700|401|${runId}:400\n`);
+		script("display", [0]);
+		await assert.rejects(closeOwnedTmuxPane(staleServer, { workspaceId: session, tabId: "%1", paneId: "%1" }), /another tmux server lifetime/u);
+		assert.equal(calls().some((call) => call.startsWith("kill-pane ")), false);
 	});
 
 	it("sends prompts as literal text followed by Enter", async () => {

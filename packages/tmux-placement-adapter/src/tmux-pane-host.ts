@@ -32,7 +32,10 @@ const TMUX_PANE_FORMAT = `#{pane_id}|#{pane_pid}|#{server_pid}|#{${TMUX_OWNER_OP
 interface TmuxRecord { paneId: string; panePid: number; serverPid: string; ownerMarker: string }
 
 interface TmuxEndpoint { access: PlacementMachineAccess; bin: string; socket?: string; session: string }
-export interface TmuxConnection extends TmuxEndpoint, PlacementSockets {}
+export interface TmuxConnection extends TmuxEndpoint, PlacementSockets {
+	/** The run id whose panes this connection may close; stamped by the owner that created the connection. Falsy means cleanup refuses. */
+	ownerRunId?: string;
+}
 export interface TmuxPaneCandidate { present: boolean; panePid?: number; serverPid?: string; ownerMarker?: string; bridgePid?: number }
 
 function asTmuxMachine(machine: PlacementMachineReference | TmuxMachineReference): TmuxMachineReference { if ((machine as { provider?: string }).provider !== TMUX_PROVIDER) throw new Error("The tmux pane host only places runs on tmux machines."); return machine as unknown as TmuxMachineReference; }
@@ -166,7 +169,10 @@ async function closeUntrackedTmuxWindow(connection: TmuxConnection, label: strin
 /** Ownership is the pane's never-reused-in-a-server-lifetime id, paired with the server pid recorded at launch in the pane's owner option. */
 export async function closeOwnedTmuxPane(connection: TmuxConnection, owned: PlacementOwnedPane): Promise<void> {
 	if (owned.workspaceId !== connection.session) throw new Error("Refusing tmux cleanup: the owned pane belongs to a different tmux session.");
+	if (connection.ownerRunId === undefined) throw new Error("Refusing tmux cleanup: the connection carries no run id to prove pane ownership.");
 	if (!(await panePresent(connection, owned.paneId))) return;
+	const record = await readPaneRecord(connection, owned.paneId, "close");
+	if (record.ownerMarker !== `${connection.ownerRunId}:${record.serverPid}`) throw new Error(`Refusing tmux cleanup: pane ${owned.paneId}'s ownership marker ${record.ownerMarker || "(unset)"} does not match run ${connection.ownerRunId} and server pid ${record.serverPid}; the pane may belong to another run or another tmux server lifetime.`);
 	const killed = await runTmux(connection, ["kill-pane", "-t", owned.paneId], "kill-pane");
 	if (!tmuxGone(killed)) requireTmuxSuccess(killed, "kill-pane");
 	for (let poll = 0; poll < TMUX_CLOSE_POLLS; poll++) {
@@ -239,7 +245,7 @@ export const tmuxPaneHost = {
 /** Opens the run's window and returns its single pane id; on any failure, closes the window the server may have opened before rethrowing. */
 async function openTmuxWindow(connection: TmuxConnection, label: string, cwd: string, argv: string[]): Promise<string> {
 	try {
-		const created = await runTmux(connection, ["new-window", "-d", "-t", `${connection.session}:`, "-n", label, "-c", cwd, "-P", "-F", "#{pane_id}", "sh", "-c", 'exec "$@"', "sh", ...argv], "new-window");
+		const created = await runTmux(connection, ["new-window", "-d", "-t", `${connection.session}:`, "-n", label, "-c", cwd, "-P", "-F", "#{pane_id}", "sh", "-c", 'exec /usr/bin/env "$@"', "sh", ...argv], "new-window");
 		requireTmuxSuccess(created, "new-window");
 		const paneId = created.stdout.trim().split("\n").at(-1)?.trim() ?? "";
 		if (!/^%\d+$/u.test(paneId)) throw new Error(`tmux new-window did not return a pane id: ${created.stdout.trim().slice(0, 512)}`);
@@ -248,7 +254,7 @@ async function openTmuxWindow(connection: TmuxConnection, label: string, cwd: st
 }
 
 export class TmuxPlacedRunOwner extends PlacedRunOwner<TmuxConnection, TmuxMachineReference> {
-	private constructor(machine: TmuxMachineReference, runId: string, runtimeDir: string, connection: TmuxConnection, access: PlacementMachineAccess, host: PlacementPaneHost<TmuxConnection, TmuxPaneCandidate>) { super(machine, runId, runtimeDir, connection, host, access, () => removePlacedRuntimeDir(access, runtimeDir)); }
+	private constructor(machine: TmuxMachineReference, runId: string, runtimeDir: string, connection: TmuxConnection, access: PlacementMachineAccess, host: PlacementPaneHost<TmuxConnection, TmuxPaneCandidate>, ownerRunId: string) { connection.ownerRunId = ownerRunId; super(machine, runId, runtimeDir, connection, host, access, () => removePlacedRuntimeDir(access, runtimeDir)); }
 	/** A tmux SSH owner's machine carries the resolved remote cwd, and its host reconnects only to the session recorded here. */
 	static async create(machine: TmuxMachineReference, runId: string, options: { access?: PlacementMachineAccess; sshAccess?: PlacementMachineAccess } = {}): Promise<TmuxPlacedRunOwner> {
 		// A short hash names the directory, matching the core placed-runtime naming, so bridge socket paths stay short.
@@ -256,7 +262,7 @@ export class TmuxPlacedRunOwner extends PlacedRunOwner<TmuxConnection, TmuxMachi
 		if (isTmuxLocalMachine(machine)) {
 			const access = options.access ?? tmuxAccess();
 			const runtimeDir = await createPlacedRuntimeDir(access, hash);
-			try { return new TmuxPlacedRunOwner(machine, runId, runtimeDir, await connectTmux(machine, { access }), access, tmuxPaneHost); }
+			try { return new TmuxPlacedRunOwner(machine, runId, runtimeDir, await connectTmux(machine, { access }), access, tmuxPaneHost, runId); }
 			catch (error) { try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "tmux owner creation failed and runtime cleanup also failed.", { cause: error }); } throw error; }
 		}
 		const access = options.sshAccess ?? tmuxSshAccess(machine);
@@ -266,7 +272,7 @@ export class TmuxPlacedRunOwner extends PlacedRunOwner<TmuxConnection, TmuxMachi
 		await ensureTmuxSession({ access, bin, session, socket: placed.socket }, placed);
 		const host = { ...tmuxPaneHost, connect: (target: PlacementMachineReference | TmuxMachineReference) => connectTmux(target, { access, bin, session }) } satisfies PlacementPaneHost<TmuxConnection, TmuxPaneCandidate>;
 		const runtimeDir = await createPlacedRuntimeDir(access, hash);
-		try { return new TmuxPlacedRunOwner(placed, runId, runtimeDir, await host.connect(placed), access, host); }
+		try { return new TmuxPlacedRunOwner(placed, runId, runtimeDir, await host.connect(placed), access, host, runId); }
 		catch (error) { try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "tmux owner creation failed and runtime cleanup also failed.", { cause: error }); } throw error; }
 	}
 }
