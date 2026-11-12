@@ -6534,8 +6534,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										inheritedNestedRoute(deps)?.rootRunId,
 									);
 									preparedChildParams = childRequest;
-									const launchRefusal = await approveWorkflowChildLaunch(ctx, () => workflowChildLaunchArgs(workflowRunId, key, childRequest, childParams.agent, parentCwd, discoverWorkflowAgents), workflowSignal);
-									if (launchRefusal) return buildRequestedModeError(childRequest, launchRefusal);
+									const approval = await approveWorkflowChildLaunch(ctx, () => workflowChildLaunchArgs(workflowRunId, key, childRequest, childParams.agent, parentCwd, discoverWorkflowAgents), workflowSignal);
+									if ("refusal" in approval) return buildRequestedModeError(childRequest, approval.refusal);
+									// Assigned in place: the WeakMaps below are keyed on this object. A resume's task is its message, which stays as sent.
+									if (approval.task !== undefined && childRequest.action !== "resume") childRequest.task = approval.task;
 									if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 									if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
 									workflowLaunchObservers.set(childRequest, (launch) => {
@@ -6826,8 +6828,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								inheritedNestedRoute(deps)?.rootRunId,
 							);
 							preparedChildParams = childRequest;
-							const launchRefusal = await approveWorkflowChildLaunch(ctx, () => workflowChildLaunchArgs(foregroundWorkflowRunId, key, childRequest, childParams.agent, ctx.cwd, discoverWorkflowAgents), workflowSignal);
-							if (launchRefusal) return buildRequestedModeError(childRequest, launchRefusal);
+							const approval = await approveWorkflowChildLaunch(ctx, () => workflowChildLaunchArgs(foregroundWorkflowRunId, key, childRequest, childParams.agent, ctx.cwd, discoverWorkflowAgents), workflowSignal);
+							if ("refusal" in approval) return buildRequestedModeError(childRequest, approval.refusal);
+							if (approval.task !== undefined && childRequest.action !== "resume") childRequest.task = approval.task;
 							if (workflowUsageBudget.budget) workflowOwnedUsageBudgets.set(childRequest, workflowUsageBudget.budget);
 							if (workflowRequiredExtensions) workflowRetainedRequiredExtensions.set(childRequest, workflowRequiredExtensions);
 							if (delegatedWorkflowPermit) {
