@@ -31,7 +31,7 @@ interface RexEndpoint { access: PlacementMachineAccess; bin: string; session: st
 export interface RexConnection extends RexEndpoint, PlacementSockets {}
 export interface RexPaneCandidate { present: boolean; foregroundPid?: number; bridgePid?: number }
 
-function asRexMachine(machine: PlacementMachineReference): RexMachineReference { if (machine.provider !== "rex") throw new Error("The Rex pane host only places runs on Rex machines."); return machine; }
+export function asRexMachine(machine: PlacementMachineReference): RexMachineReference { if (machine.provider !== "rex") throw new Error("The Rex pane host only places runs on Rex machines."); return machine as RexMachineReference; }
 
 /** Runs one rex command on the pane machine with --autostart=false, the recorded server, and no inherited Rex selectors; exit 4 always throws. */
 async function runRex(endpoint: Pick<RexEndpoint, "access" | "bin" | "server">, args: string[], what: string): Promise<PlacementCommandResult & { status: number }> {

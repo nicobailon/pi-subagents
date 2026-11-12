@@ -1796,6 +1796,8 @@ export interface HerdrMachineReference {
 	cwd: string;
 	/** False: the child edits the remote machine's disk, so local git evidence is dropped. */
 	localDisk: false;
+	/** True: herdr saved machines opt in to hosting external-CLI writers (claude/codex adapters). */
+	externalCli?: boolean;
 }
 
 /** `machine: "local"`: a Rex pane in the parent's own Rex session on this machine. `session` is the Rex session id and `server` the Rex server address, both recorded in the parent at resolution time; `cwd` is the local launch directory. */
@@ -1807,6 +1809,8 @@ export interface RexLocalMachineReference {
 	cwd: string;
 	/** True when a placed child reads and writes this machine's own disk, so local git evidence and launch-cwd preflight apply. */
 	localDisk: true;
+	/** Rex panes do not host external-CLI writers. */
+	externalCli?: false;
 }
 
 /** A Rex machine reached over SSH, named in user settings (`subagents.machines.<id>.rex.ssh`). The pane opens in that machine's Rex session labeled `subagents`, found or created at launch and recorded with the run; `cwd` is the directory on that machine. */
@@ -1816,13 +1820,29 @@ export interface RexSshMachineReference {
 	target: string;
 	cwd: string;
 	/** False: the child edits the remote machine's disk, so local git evidence is dropped. */
+	/** False: the child edits the remote machine's disk, so local git evidence is dropped. */
 	localDisk: false;
+	/** Rex panes do not host external-CLI writers. */
+	externalCli?: false;
 }
 
 export type RexMachineReference = RexLocalMachineReference | RexSshMachineReference;
 
-/** Where a placed native Pi child runs. */
-export type PlacementMachineReference = HerdrMachineReference | RexMachineReference;
+/** A third-party placement target. Core reads only `provider`, `id`, `cwd`, `target` and the capability fields (`localDisk`, `externalCli`); everything else belongs to the adapter that resolved it. */
+export interface PlacementOpaqueMachineReference {
+	provider: string;
+	/** The adapter's own machine id; `local` is reserved for rex panes on the parent. */
+	id: string;
+	cwd: string;
+	/** True when a placed child reads and writes this machine's own disk, so local git evidence and launch-cwd preflight apply. Required: every adapter must answer the disk question for its machines. */
+	localDisk: boolean;
+	/** Remote host target; local machines omit it. The bridge reports it in run identity. */
+	target?: string;
+	[key: string]: unknown;
+}
+
+/** Where a placed native Pi child runs: a builtin herdr or rex machine, or a third-party adapter's opaque target. */
+export type PlacementMachineReference = HerdrMachineReference | RexMachineReference | PlacementOpaqueMachineReference;
 
 export interface ExternalCliMachineStatus extends HerdrMachineReference {
 	remoteGit?: HerdrRemoteGitStatus;

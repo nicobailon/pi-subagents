@@ -7,7 +7,7 @@ import type { ChildSession } from "../../src/runs/shared/child-session.ts";
 // Importing herdr-placed-run loads the built-in Herdr and Rex adapters into the registry.
 import { createPlacementAwareChildSessionFactory } from "../../src/runs/shared/herdr-placed-run.ts";
 import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
-import { placementAdapters, placementEditsLocalDisk, registerPlacementAdapter, requirePlacementAdapter, type PlacementAdapterV1 } from "../../src/runs/shared/placement-registry.ts";
+import { placementAdapters, placementEditsLocalDisk, placementSupportsExternalCli, registerPlacementAdapter, requirePlacementAdapter, type PlacementAdapterV1 } from "../../src/runs/shared/placement-registry.ts";
 
 const runtime = { runId: "run", agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false, waitTool: { enabled: true } };
 const child: ChildSession = { subscribe: () => () => {}, prompt: async () => {}, steer: async () => {}, followUp: async () => {}, abort: async () => {}, dispose: async () => {}, messages: [], sessionFile: undefined, sessionId: "native", modelId: "provider/model" };
@@ -41,7 +41,7 @@ describe("placement adapter registry", () => {
 	it("falls through the registry to the herdr catalog for unclaimed names", () => {
 		const catalog = JSON.stringify([{ id: "m1", target: "remote.example", enabled: true }]);
 		const resolved = resolveMachinePlacement({ machine: "m1", cwd: "/repo", stepCwd: "/remote/repo", catalogJson: catalog });
-		assert.deepEqual(resolved.machine, { provider: "herdr", id: "m1", target: "remote.example", localDisk: false, cwd: "/remote/repo" });
+		assert.deepEqual(resolved.machine, { provider: "herdr", id: "m1", target: "remote.example", localDisk: false, externalCli: true, cwd: "/remote/repo" });
 	});
 
 	it("keeps 'local' reserved for rex panes and rejects a rex ssh entry named local", () => {
@@ -64,11 +64,15 @@ describe("placement adapter registry", () => {
 		process.env.REX_BIN_DIR = binDir;
 		try {
 			assert.equal(placementEditsLocalDisk(resolveMachinePlacement({ machine: "local", cwd: binDir }).machine), true);
+			assert.equal(placementSupportsExternalCli(resolveMachinePlacement({ machine: "local", cwd: binDir }).machine), false);
 		} finally {
 			fs.rmSync(binDir, { recursive: true, force: true });
 			for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
 		}
 		assert.equal(placementEditsLocalDisk(resolveMachinePlacement({ machine: "lab", cwd: "/repo", settings: { rex: { ssh: "lab.example" }, cwd: "/remote/root" } }).machine), false);
+		// The external-CLI capability rides the same field answer: herdr machines opt in, everything else stays out.
+		assert.equal(placementSupportsExternalCli(resolveMachinePlacement({ machine: "m1", cwd: "/repo", stepCwd: "/remote/repo", catalogJson: catalog }).machine), true);
+		assert.equal(placementSupportsExternalCli(undefined), false);
 		assert.equal(placementEditsLocalDisk(undefined), false);
 	});
 

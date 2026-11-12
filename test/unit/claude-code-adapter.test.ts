@@ -211,7 +211,7 @@ describe("Claude Code adapter", () => {
 	});
 
 	it("names no launch command for a run on a Herdr saved machine, which runs the remote adapter binary", async () => {
-		const machine = { provider: "herdr" as const, id: "mini", target: "mini", cwd: "/srv/repo" };
+		const machine = { provider: "herdr" as const, id: "mini", target: "mini", cwd: "/srv/repo", externalCli: true };
 		const runner = { type: "external-cli" as const, adapter: "claude-code-writer" as const, command: "/opt/wrappers/claude-verify" };
 		assert.deepEqual(resolveExternalCliRunnerStatus({ ...runner, machine }).safetySource, { measured: false });
 

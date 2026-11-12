@@ -11,7 +11,7 @@ import { herdrPaneHost } from "./herdr-pane-host.ts";
 import { encodeHerdrPiFrame, HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
 import { discoverPlacedBridgeManifest, PlacedRunOwner, type PlacedBridgeManifest } from "./placed-run-owner.ts";
 import type { PlacementBridgeIdentity, PlacementPaneHost, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
-import { requirePlacementAdapter, type PlacementOpaqueMachineReference } from "./placement-registry.ts";
+import { requirePlacementAdapter } from "./placement-registry.ts";
 import { ensureSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
 import { PLACED_RESTORE_UNSUPPORTED } from "./herdr-machine.ts";
 
@@ -84,8 +84,8 @@ export class HerdrPiSession<C extends PlacementSockets = PlacementSockets> imple
 	readonly #listeners = new Set<(event: ChildSessionEvent) => void>(); #messages: AgentMessage[] = []; #sequence = 0; #disposed = false; #aborted = false; #initialGit?: HerdrRemoteGitStatus; #finalGit?: HerdrRemoteGitStatus;
 	readonly #operations = new Map<string, { resolve(): void; reject(error: Error): void; accepted: boolean; settled: boolean }>();
 	bridgeForward: { close(): Promise<void> }; bridge: BridgeChannel; readonly requestedTools: string[] | undefined; readonly model: string | undefined; #evidenceCursor = 0; #reconnecting?: Promise<void>; #reconnectFactory?: () => Promise<void>; #reconnectFailure?: Error;
-	#replyTimer?: NodeJS.Timeout; readonly #repliesInFlight = new Set<string>(); readonly supervisorDir: string | undefined; readonly runtime: ChildRuntimeConfig; readonly owner: PlacedRunOwner<C, PlacementMachineReference | PlacementOpaqueMachineReference>;
-	constructor(owner: PlacedRunOwner<C, PlacementMachineReference | PlacementOpaqueMachineReference>, bridgeForward: { close(): Promise<void> }, bridge: BridgeChannel, requestedTools: string[] | undefined, model: string | undefined, runtime: ChildRuntimeConfig, initialGit?: HerdrRemoteGitStatus) { this.owner = owner; this.bridgeForward = bridgeForward; this.bridge = bridge; this.requestedTools = requestedTools; this.model = model; this.runtime = runtime; this.supervisorDir = runtime.supervisorChannelDir; this.#initialGit = initialGit; bridge.adopt((frame) => this.#frame(frame)); if (this.supervisorDir) { this.#replyTimer = setInterval(() => this.#deliverSupervisorReplies(this.supervisorDir!), 50); this.#replyTimer.unref?.(); } }
+	#replyTimer?: NodeJS.Timeout; readonly #repliesInFlight = new Set<string>(); readonly supervisorDir: string | undefined; readonly runtime: ChildRuntimeConfig; readonly owner: PlacedRunOwner<C>;
+	constructor(owner: PlacedRunOwner<C>, bridgeForward: { close(): Promise<void> }, bridge: BridgeChannel, requestedTools: string[] | undefined, model: string | undefined, runtime: ChildRuntimeConfig, initialGit?: HerdrRemoteGitStatus) { this.owner = owner; this.bridgeForward = bridgeForward; this.bridge = bridge; this.requestedTools = requestedTools; this.model = model; this.runtime = runtime; this.supervisorDir = runtime.supervisorChannelDir; this.#initialGit = initialGit; bridge.adopt((frame) => this.#frame(frame)); if (this.supervisorDir) { this.#replyTimer = setInterval(() => this.#deliverSupervisorReplies(this.supervisorDir!), 50); this.#replyTimer.unref?.(); } }
 	// Runs on a timer, where a throw or an unhandled rejection exits Pi. A reply that can't be read or delivered stays
 	// on disk for the next tick, once its earlier delivery has settled; a lost transport reaches the session through the
 	// bridge failure.
@@ -135,9 +135,9 @@ export async function reconnectHerdrPiSession<C extends PlacementSockets>(sessio
 
 
 /** The host-neutral placed-Pi bridge engine. The core assembles a `PlacedRunOwner` from an adapter's opened run and drives the bridge itself; adapters only open host pieces (see `openPlacedRun`). */
-export async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSessionLaunch, owner: PlacedRunOwner<C, PlacementMachineReference | PlacementOpaqueMachineReference>, policy: ReturnType<typeof serializeHerdrPiLaunch>): Promise<ChildSession> {
+export async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSessionLaunch, owner: PlacedRunOwner<C>, policy: ReturnType<typeof serializeHerdrPiLaunch>): Promise<ChildSession> {
 		// Opaque adapter machines cross as objects; the closed cast only declares what the engine reads (id, cwd, target).
-		const machine = owner.machine as PlacementMachineReference, runId = owner.runId, runtimeDir = owner.runtimeDir, connection = owner.connection;
+		const machine = owner.machine, runId = owner.runId, runtimeDir = owner.runtimeDir, connection = owner.connection;
 		try {
 		let reconnectSession: { reconnect(): Promise<void> } | undefined; const agentName = `pi-${runId.slice(-20)}`;
 		const { owned, terminalId } = await owner.launch({ kind: "pi", name: agentName, args: policy.args, environment: { [HERDR_PI_MODE_ENV]: "1", [HERDR_PI_RUN_ENV]: runId, [HERDR_PI_RUNTIME_DIR_ENV]: runtimeDir } }, () => owner.subscribe(() => {}, () => void reconnectSession?.reconnect()));
@@ -160,10 +160,12 @@ export async function startPlacedPiSession<C extends PlacementSockets>(launch: C
 
 /** Route the launch through the registry: the adapter opens its host pieces, the core assembles the owner and drives the bridge engine. */
 async function createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
-	const adapter = requirePlacementAdapter(launch.machine?.provider);
+	const machine = launch.machine;
+	if (!machine) throw new Error("A placed launch requires a resolved machine reference.");
+	const adapter = requirePlacementAdapter(machine.provider);
 	const runId = safeRunId(launch.runtime.runId);
 	const policy = serializeHerdrPiLaunch(launch);
-	const context = await adapter.openPlacedRun(launch.machine as unknown as PlacementOpaqueMachineReference, runId);
+	const context = await adapter.openPlacedRun(machine, runId);
 	const owner = new PlacedRunOwner(context.machine, runId, context.runtimeDir, context.connection, context.host, context.access, context.removeRuntime);
 	return startPlacedPiSession(launch, owner, policy);
 }

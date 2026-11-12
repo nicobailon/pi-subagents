@@ -12,6 +12,7 @@ import { PLACEMENT_REGISTER_EVENT, placementEditsLocalDisk, type PlacementAdapte
 export {
 	PLACEMENT_REGISTER_EVENT,
 	placementEditsLocalDisk,
+	placementSupportsExternalCli,
 	registerPlacementEventListener,
 	type PlacementAdapterSettings,
 	type PlacementAdapterV1,

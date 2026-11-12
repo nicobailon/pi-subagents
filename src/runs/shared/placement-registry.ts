@@ -1,4 +1,4 @@
-import type { PlacementMachineReference } from "../../shared/types.ts";
+import type { PlacementMachineReference, PlacementOpaqueMachineReference } from "../../shared/types.ts";
 import type { PlacementMachineAccess, PlacementPaneHost, PlacementSockets } from "./placement-host.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -38,38 +38,30 @@ export interface PlacementResolveRequest {
 }
 
 /**
- * A third-party adapter's own machine reference shape. Core carries it opaquely across the
- * registry boundary: `provider`, `id`, `cwd`, and `target` are the fields the placed-Pi bridge
- * reads (launch identity, journal, reconnect identity); every other field belongs to the
- * adapter, and the core never branches on a third-party provider. Adapters rehydrate their own
- * reference shape from `launch.machine` with a cast at their own boundary.
- */
-export interface PlacementOpaqueMachineReference {
-	provider: string;
-	id: string;
-	cwd: string;
-	localDisk: boolean;
-	/** Remote host target; local machines omit it. The bridge reports it in run identity. */
-	target?: string;
-	[key: string]: unknown;
+/** A third-party adapter's own machine reference shape, carried opaquely by the core. Defined in `shared/types.ts` and re-exported here as part of the adapter contract. */
+export type { PlacementOpaqueMachineReference };
+
+
+/** The two provider-free questions core asks about a machine: does a placed child on it read and write the parent's disk (`localDisk`), and does it opt in to hosting external-CLI writers (`externalCli`)? Adapters answer through the fields; core never compares providers. */
+export function placementEditsLocalDisk(machine: PlacementMachineReference | undefined): boolean {
+	return machine?.localDisk === true;
 }
 
-
-/** The one provider-free question core asks about a machine: does a placed child on it read and write the parent's disk? Adapters answer through `localDisk`; core never compares providers. */
-export function placementEditsLocalDisk(machine: PlacementMachineReference | PlacementOpaqueMachineReference | undefined): boolean {
-	return machine?.localDisk === true;
+/** True when the machine opts in to hosting external-CLI writers (claude/codex adapters) — currently a herdr saved-machine contract. */
+export function placementSupportsExternalCli(machine: PlacementMachineReference | undefined): boolean {
+	return machine?.externalCli === true;
 }
 
 /** A resolved `machine` value with the optional settings env exported in front of the remote command. */
 export interface PlacementResolution {
-	machine: PlacementMachineReference | PlacementOpaqueMachineReference;
+	machine: PlacementMachineReference;
 	env?: Record<string, string>;
 }
 
 /** What an opened run hands to the core: the concrete machine it connected against plus the host pieces the bridge engine needs. */
 export interface PlacementRunContext {
 	/** The effective machine reference after adapter-side resolution (remote cwd expansion, recorded session); the core builds the run owner against this one. */
-	machine: PlacementMachineReference | PlacementOpaqueMachineReference;
+	machine: PlacementMachineReference;
 	host: PlacementPaneHost<PlacementSockets>;
 	connection: PlacementSockets;
 	access: PlacementMachineAccess;
@@ -85,7 +77,7 @@ export interface PlacementAdapterV1 {
 	/** Return undefined to decline a machine name and let a later adapter resolve it. */
 	resolveMachinePlacement?(request: PlacementResolveRequest): PlacementResolution | undefined;
 	/** Open the host pieces for one placed run: connect (creating the adapter's session and window scaffolding as needed), resolve the effective machine, and provision the runtime directory. Fails closed — on any failure the adapter removes its own scaffolding before rethrowing. The core assembles the run owner and drives the bridge engine, so adapters never see launches or sessions. */
-	openPlacedRun(machine: PlacementOpaqueMachineReference, runId: string): Promise<PlacementRunContext>;
+	openPlacedRun(machine: PlacementMachineReference, runId: string): Promise<PlacementRunContext>;
 }
 
 const adapters: PlacementAdapterV1[] = [];

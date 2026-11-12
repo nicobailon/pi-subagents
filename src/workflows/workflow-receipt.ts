@@ -122,10 +122,11 @@ const EXTERNAL_CLI_CAPABILITIES = {
 function parseExternalCliMachine(value: unknown, label: string): void {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label}.machine must be an object.`);
 	const machine = value as Record<string, unknown>;
-	const unknownMachine = Object.keys(machine).filter((field) => !["provider", "id", "label", "target", "session", "cwd", "remoteGit"].includes(field));
+	const unknownMachine = Object.keys(machine).filter((field) => !["provider", "id", "label", "target", "session", "cwd", "externalCli", "remoteGit"].includes(field));
 	if (unknownMachine.length > 0) throw new Error(`${label}.machine has unsupported fields: ${unknownMachine.join(", ")}.`);
 	if (machine.provider !== "herdr" || typeof machine.id !== "string" || !machine.id.trim() || typeof machine.target !== "string" || !machine.target.trim() || typeof machine.cwd !== "string" || !machine.cwd.trim()) throw new Error(`${label}.machine is invalid.`);
 	for (const field of ["label", "session"] as const) if (machine[field] !== undefined && (typeof machine[field] !== "string" || !machine[field].trim())) throw new Error(`${label}.machine.${field} is invalid.`);
+	if (machine.externalCli !== undefined && machine.externalCli !== true) throw new Error(`${label}.machine.externalCli is invalid.`);
 	if (machine.remoteGit === undefined) return;
 	if (!machine.remoteGit || typeof machine.remoteGit !== "object" || Array.isArray(machine.remoteGit)) throw new Error(`${label}.machine.remoteGit must be an object.`);
 	const remoteGit = machine.remoteGit as Record<string, unknown>;

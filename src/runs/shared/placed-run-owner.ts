@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { PlacementOpaqueMachineReference } from "./placement-registry.ts";
 import type { PlacementMachineReference } from "../../shared/types.ts";
 import type { HerdrRunIdentity, HerdrRunSnapshot } from "./herdr-placed-run.ts";
 import type { PlacementCommandOptions, PlacementLaunchRequest, PlacementMachineAccess, PlacementOwnedPane, PlacementPaneHost, PlacementSockets, PlacementStartOptions } from "./placement-host.ts";
@@ -30,7 +29,7 @@ export function removePlacedRuntimeDir(access: PlacementMachineAccess, runtimeDi
 
 /** The single private owner for allocation shared by every pane-native backend projection. */
 // M admits opaque machine references: third-party adapter machines cross the bridge engine untyped, builtins stay closed-typed.
-export class PlacedRunOwner<C extends PlacementSockets, M extends PlacementMachineReference | PlacementOpaqueMachineReference = PlacementMachineReference> {
+export class PlacedRunOwner<C extends PlacementSockets, M extends PlacementMachineReference = PlacementMachineReference> {
 	readonly machine: M; readonly runId: string; readonly runtimeDir: string; connection: C; readonly host: PlacementPaneHost<C>; readonly access: PlacementMachineAccess;
 	owned?: PlacementOwnedPane; terminalId?: string; agentName?: string; startedArgv?: string[]; identity?: HerdrRunIdentity; #unsubscribe = () => {}; #snapshot: HerdrRunSnapshot = { connection: "connected", state: "ready", revision: 0 }; #cleanupPromise?: Promise<void>; readonly #removeRuntime: () => void;
 	constructor(machine: M, runId: string, runtimeDir: string, connection: C, host: PlacementPaneHost<C>, access: PlacementMachineAccess, removeRuntime: () => void = () => removePlacedRuntimeDir(access, runtimeDir)) { this.machine = machine; this.runId = runId; this.runtimeDir = runtimeDir; this.connection = connection; this.#removeRuntime = removeRuntime; this.host = host; this.access = access; }
@@ -39,7 +38,7 @@ export class PlacedRunOwner<C extends PlacementSockets, M extends PlacementMachi
 	async subscribe(listener: (event: unknown) => void, disconnected: (error: Error) => void): Promise<void> { const observed = this.connection, paneId = this.owned?.paneId; let adopted = false, candidateLost: Error | undefined; if (!paneId) throw new Error("Herdr status subscription requires a provisioned pane."); const unsubscribe = await this.host.subscribe(observed, paneId, (event) => { this.observeEvent(event); listener(event); }, (error) => { if (!adopted) { candidateLost ??= error; return; } if (!this.markConnectionUnknown(observed)) return; disconnected(error); }); if (candidateLost) { unsubscribe(); throw candidateLost; } this.#unsubscribe = unsubscribe; adopted = true; }
 	/** Create the owned pane and start the agent in one host step; onPane runs once the pane exists and before the agent starts. */
 	async launch(request: PlacementLaunchRequest, onPane: (owned: PlacementOwnedPane) => Promise<void>, options: PlacementStartOptions = {}): Promise<{ owned: PlacementOwnedPane; terminalId: string; argv: string[] }> {
-		const { owned, terminalId } = await this.host.launch(this.connection, this.machine as PlacementMachineReference, this.runId, this.runtimeDir, request, async (pane) => { this.owned = pane; await onPane(pane); }, options), argv = [request.kind, ...request.args]; this.agentName = request.name; this.terminalId = terminalId; this.startedArgv = argv; return { owned, terminalId, argv };
+		const { owned, terminalId } = await this.host.launch(this.connection, this.machine, this.runId, this.runtimeDir, request, async (pane) => { this.owned = pane; await onPane(pane); }, options), argv = [request.kind, ...request.args]; this.agentName = request.name; this.terminalId = terminalId; this.startedArgv = argv; return { owned, terminalId, argv };
 	}
 	journal(identity: HerdrRunIdentity): void { this.identity = identity; this.#snapshot = { ...this.#snapshot, identity }; const journalDir = path.join(getAgentDir(), "pi-subagents", "herdr-run-journal"); fs.mkdirSync(journalDir, { recursive: true, mode: 0o700 }); fs.writeFileSync(path.join(journalDir, `${this.runId}.json`), JSON.stringify({ version: 1, identity, state: "ready", updatedAt: Date.now() }), { mode: 0o600, flag: "wx" }); }
 	get snapshot(): HerdrRunSnapshot { return this.#snapshot; }

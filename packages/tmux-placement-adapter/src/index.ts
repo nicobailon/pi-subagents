@@ -3,8 +3,8 @@ import {
 	type PlacementAdapterV1,
 	type PlacementRegistration,
 } from "../../../src/api/placement.ts";
-import { resolveTmuxMachinePlacement, TMUX_PROVIDER, type TmuxMachineReference } from "./tmux-machine.ts";
-import { openTmuxPlacedRun } from "./tmux-pane-host.ts";
+import { resolveTmuxMachinePlacement, TMUX_PROVIDER } from "./tmux-machine.ts";
+import { asTmuxMachine, openTmuxPlacedRun } from "./tmux-pane-host.ts";
 
 /**
  * The tmux placement adapter: resolves `machine: "tmux"` and `subagents.machines.<id>.tmux.ssh` machines to tmux
@@ -16,7 +16,7 @@ export function tmuxPlacementAdapter(): PlacementAdapterV1 {
 		version: 1,
 		provider: TMUX_PROVIDER,
 		resolveMachinePlacement: resolveTmuxMachinePlacement,
-		openPlacedRun: (machine, runId) => openTmuxPlacedRun(machine as unknown as TmuxMachineReference, runId),
+		openPlacedRun: (machine, runId) => openTmuxPlacedRun(asTmuxMachine(machine), runId),
 	};
 }
 

@@ -83,7 +83,7 @@ describe("Herdr machine placement", () => {
 	describe("resolution", () => {
 		it("resolves by profile id first, then by unique label, and normalizes the saved default session", () => {
 			const byLabel = resolveHerdrMachinePlacement({ machine: "workmac", cwd: tempProject, catalogJson: catalog, settings: { cwd: "/home/nico/proj" } });
-			assert.deepEqual(byLabel, { machine: { provider: "herdr", id: machine.id, label: "workmac", target: machine.target, localDisk: false, cwd: machine.cwd } });
+			assert.deepEqual(byLabel, { machine: { provider: "herdr", id: machine.id, label: "workmac", target: machine.target, localDisk: false, externalCli: true, cwd: machine.cwd } });
 			const byId = resolveHerdrMachinePlacement({ machine: machine.id, cwd: tempProject, catalogJson: catalog, settings: { cwd: "/home/nico/proj" } });
 			assert.deepEqual(byId.machine, byLabel.machine);
 			assert.equal(herdrPaneAllocationKey(byLabel.machine.target, byLabel.machine.session, byLabel.machine.cwd), herdrPaneAllocationKey(byId.machine.target, byId.machine.session, byId.machine.cwd));

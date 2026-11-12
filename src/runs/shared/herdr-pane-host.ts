@@ -47,7 +47,7 @@ export async function provisionHerdrPane(client: HerdrRpcClient, cwd: string, ru
 }
 
 function provisionHerdrOwnedPane(connection: HerdrForwardedConnection, machine: HerdrMachineReference, runId: string, runtimeDir: string, environment?: Record<string, string>): Promise<PlacementOwnedPane> { return provisionHerdrPane(connection.client, machine.cwd, runId, runtimeDir, environment, herdrPaneAllocationKey(machine.target, connection.endpoint.session, machine.cwd)); }
-function asHerdrMachine(machine: PlacementMachineReference): HerdrMachineReference { if (machine.provider !== "herdr") throw new Error("The Herdr pane host only places runs on Herdr saved machines."); return machine; }
+export function asHerdrMachine(machine: PlacementMachineReference): HerdrMachineReference { if (machine.provider !== "herdr") throw new Error("The Herdr pane host only places runs on Herdr saved machines."); return machine as HerdrMachineReference; }
 
 async function startHerdrAgent(connection: HerdrForwardedConnection, owned: PlacementOwnedPane, kind: PlacementAgentKind, name: string, args: string[], options: PlacementStartOptions = {}): Promise<{ terminalId: string; paneId: string }> {
 	const clock = options.clock ?? { now: () => Date.now(), wait: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)) }, deadline = clock.now() + (options.timeoutMs ?? 5_000), pollMs = options.pollMs ?? 50;

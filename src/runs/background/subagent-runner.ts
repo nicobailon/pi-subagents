@@ -154,7 +154,7 @@ import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
 import { resolveCursorAgentLaunch } from "../shared/cursor-agent-adapter.ts";
 import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { formatHerdrMachineHint, prepareHerdrMachineExternalCliRun } from "../shared/herdr-machine.ts";
-import { placementEditsLocalDisk } from "../shared/placement-registry.ts";
+import { placementEditsLocalDisk, placementSupportsExternalCli } from "../shared/placement-registry.ts";
 import { HerdrExternalNeedsAttentionError, createHerdrExternalAdapter, prepareInternalHerdrExternalAdapter, type HerdrExternalAdapterId, type HerdrExternalResult } from "../shared/herdr-external-adapters.ts";
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
@@ -920,11 +920,12 @@ export async function runSingleStepInner(
 			return omitUndefinedProperties({ agent: step.agent, context: step.context, output: message, error: message, exitCode: 1, stopped: stopped || undefined, timedOut: stopped ? undefined : true });
 		}
 		if (step.machine) {
-			if (step.machine.provider !== "herdr") throw new Error("Rex supports native Pi children only.");
-			const runner = resolveExternalCliRunnerStatus({ ...step.runner, machine: step.machine });
+			// The externalCli field opts the machine into the herdr external-CLI writer contract; core never compares providers here.
+			if (!placementSupportsExternalCli(step.machine)) throw new Error("External-CLI writers run only on machines that opt in to herdr external runs.");
+			const runner = resolveExternalCliRunnerStatus({ ...step.runner, machine: step.machine as HerdrMachineReference });
 			const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 			const placedRunId = `${ctx.id}-${ctx.flatIndex}`;
-			const session = await prepareInternalHerdrExternalAdapter({ adapter: step.runner.adapter as HerdrExternalAdapterId, machine: step.machine, runId: placedRunId }, {});
+			const session = await prepareInternalHerdrExternalAdapter({ adapter: step.runner.adapter as HerdrExternalAdapterId, machine: step.machine as HerdrMachineReference, runId: placedRunId }, {});
 			let timedOut = false, stopped = false, retain = false;
 			const evidenceInput = { runId: placedRunId, requestId: `prompt-${ctx.flatIndex}`, task: buildExternalCliPrompt(step.systemPrompt ?? "", task), cwd: externalCwd, nativeSessionId: session.launch.nativeSessionId };
 			let resolveInterruption!: (value: "timeout" | "stop") => void, rejectInterruption!: (error: unknown) => void;
@@ -1594,7 +1595,7 @@ type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
 
 function externalRunnerStatus(runner: SubagentStep["runner"], machine: SubagentStep["machine"]): ExternalCliRunnerStatus | ExternalJobRunnerStatus | undefined {
 	if (runner?.type === "external-cli") {
-		return resolveExternalCliRunnerStatus(machine?.provider === "herdr" ? { ...runner, machine } : runner);
+		return resolveExternalCliRunnerStatus(placementSupportsExternalCli(machine) ? { ...runner, machine: machine as HerdrMachineReference } : runner);
 	}
 	if (runner?.type === "external-job") {
 		return {

@@ -38,7 +38,7 @@ export interface TmuxConnection extends TmuxEndpoint, PlacementSockets {
 }
 export interface TmuxPaneCandidate { present: boolean; panePid?: number; serverPid?: string; ownerMarker?: string; bridgePid?: number }
 
-function asTmuxMachine(machine: PlacementMachineReference | TmuxMachineReference): TmuxMachineReference { if ((machine as { provider?: string }).provider !== TMUX_PROVIDER) throw new Error("The tmux pane host only places runs on tmux machines."); return machine as unknown as TmuxMachineReference; }
+export function asTmuxMachine(machine: PlacementMachineReference | TmuxMachineReference): TmuxMachineReference { if ((machine as { provider?: string }).provider !== TMUX_PROVIDER) throw new Error("The tmux pane host only places runs on tmux machines."); return machine as unknown as TmuxMachineReference; }
 
 /** Local tmux calls run with the parent's environment except TMPDIR: the bridge runtime lives under /tmp so the socket path fits the unix socket limit. */
 function tmuxAccess(): PlacementMachineAccess { return localMachineAccess({ env: { ...process.env, TMPDIR: "/tmp" } }); }
