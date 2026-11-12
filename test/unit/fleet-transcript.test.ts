@@ -4,8 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { renderFleetTranscript } from "../../src/tui/fleet-transcript.ts";
 import { readFleetTranscript } from "../../src/shared/fleet-transcript-reader.ts";
+
+initTheme("dark");
 
 const theme = {
 	fg: (_name: string, text: string) => text,
@@ -125,11 +128,12 @@ describe("Fleet inspector structured transcript", () => {
 			assert.ok(compact.some((line) => line.includes("const answer: number = 42;") && line.includes("x to expand")));
 
 			const expanded = renderFleetTranscript(transcript, 52, theme as never, markdownTheme, { expandedTools: true });
-			assert.ok(expanded.some((line) => line.includes("$ npm test")));
-			assert.ok(expanded.some((line) => line.includes("line 1")));
-			assert.ok(expanded.some((line) => line.includes("read src/a.ts")));
-			assert.ok(expanded.some((line) => line.includes("const answer: number = 42;")));
-			assert.ok(expanded.some((line) => line.includes("x to collapse")));
+			const expandedText = expanded.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+			assert.ok(expandedText.includes("$ npm test"));
+			assert.ok(expandedText.includes("line 1"));
+			assert.ok(expandedText.includes("read src/a.ts"));
+			assert.ok(expandedText.includes("const answer: number = 42;"));
+			assert.ok(expandedText.includes("x to collapse"));
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

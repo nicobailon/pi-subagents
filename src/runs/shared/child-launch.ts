@@ -40,6 +40,8 @@ import { DEFAULT_WAIT_TOOL_NAME, waitToolName } from "../../shared/wait-tool-nam
 
 /** Environment variable pi-mcp-adapter reads for the tools a child may expose. */
 export const MCP_DIRECT_TOOLS_ENV = "MCP_DIRECT_TOOLS";
+/** Runner run identity exposed to child extensions for request/receipt correlation. */
+export const PI_SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 
 /**
  * The parts of the launching executor's own child runtime that a child it
@@ -166,6 +168,8 @@ function inheritedCapabilityCeiling(inherited: InheritedChildRuntime | undefined
 function childProcessEnv(input: BuildInProcessChildLaunchInput, toolPlan: PiLaunchToolPlan): Record<string, string | undefined> {
 	const env: Record<string, string | undefined> = {};
 	env[PI_SUBAGENT_EXTENSION_BINDINGS_ENV] = encodeExtensionBindings(input.extensionBindings);
+	// A placed remote Pi session does not share this Runner process environment.
+	if (input.runId && !input.machine) env[PI_SUBAGENT_RUN_ID_ENV] = input.runId;
 	// Selectors resolved against Pi's built-in MCP never reach an adapter.
 	if (toolPlan.builtinMcpTools) env[MCP_DIRECT_TOOLS_ENV] = "__none__";
 	else if (!toolPlan.capabilityCeiling && input.mcpDirectTools?.length) env[MCP_DIRECT_TOOLS_ENV] = input.mcpDirectTools.join(",");

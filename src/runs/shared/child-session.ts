@@ -228,6 +228,26 @@ function createRequiredChildExtensionIdentity(requiredPaths: ReadonlySet<string>
 	};
 }
 
+function extensionPathFileIdentity(extensionPath: string, cwd: string): string | undefined {
+	const normalized = extensionPath.replace(PI_UNICODE_SPACES, " ");
+	if (!path.isAbsolute(normalized) && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(normalized)) return undefined;
+	return childExtensionFileIdentity(path.resolve(cwd, normalized));
+}
+
+/** Keep the required spelling when Pi's Unicode-space normalization makes an optional alias load the same file. */
+function filterRequiredExtensionAliases(extensionPaths: readonly string[], requiredPaths: ReadonlySet<string>, cwd: string): string[] {
+	const requiredIdentities = new Set([...requiredPaths].map(childExtensionFileIdentity).filter((identity): identity is string => identity !== undefined));
+	if (requiredIdentities.size === 0) return [...extensionPaths];
+	const retainedRequired = new Set<string>();
+	return extensionPaths.filter((extensionPath) => {
+		const identity = extensionPathFileIdentity(extensionPath, cwd);
+		if (identity === undefined || !requiredIdentities.has(identity)) return true;
+		if (!requiredPaths.has(extensionPath) || retainedRequired.has(identity)) return false;
+		retainedRequired.add(identity);
+		return true;
+	});
+}
+
 /** The prompt runtime filters parent-only context before ambient extensions inspect
  *  the child prompt, and the boundary hook appends the child boundary after every
  *  extension has added its prompt sections. Every other extension keeps its order. */
@@ -565,6 +585,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				})) }]
 				: [];
 			const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
+			const childExtensionPaths = filterRequiredExtensionAliases(launch.extensionPaths, requiredPaths, launch.cwd);
 			const requiredExtensionIdentity = createRequiredChildExtensionIdentity(requiredPaths);
 			const resolvedExtensionPaths = new Map<string, string>();
 			// Pi reports failures by source path, without resolvedPath. A source Pi never loaded is classified by the
@@ -584,7 +605,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				noPromptTemplates: true,
 				noThemes: true,
 				noContextFiles: launch.noContextFiles,
-				additionalExtensionPaths: builtinMcp ? [...launch.extensionPaths, "builtin:mcp"] : launch.extensionPaths,
+				additionalExtensionPaths: builtinMcp ? [...childExtensionPaths, "builtin:mcp"] : childExtensionPaths,
 				extensionFactories: [...launch.hooks, ...(commands ? [{ name: "pi-subagents:commands", factory: (api: ExtensionAPI) => {
 					api.registerTool(commands.wrap(pi.createBashTool(launch.cwd, { commandPrefix: settingsManager.getShellCommandPrefix(), shellPath: settingsManager.getShellPath() }) as unknown as ToolDefinition));
 					api.registerTool(commands.tool());
@@ -616,7 +637,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 			};
 			let inheritedProviders = new Set<string>();
 			const openSession = async () => {
-				if (!resetExtensionCacheOnReload(loader) && (launch.ambientExtensions || launch.extensionPaths.length)) launch.onExtensionError?.({ extensionPath: "<loader>", event: "load", error: new Error("pi's extension cache reset is unavailable; extensions loaded into this child share module state with other sessions in this process.") });
+				if (!resetExtensionCacheOnReload(loader) && (launch.ambientExtensions || childExtensionPaths.length)) launch.onExtensionError?.({ extensionPath: "<loader>", event: "load", error: new Error("pi's extension cache reset is unavailable; extensions loaded into this child share module state with other sessions in this process.") });
 				await loader.reload();
 				if (requiredPaths.size > 0) for (const extension of loader.getExtensions().extensions) resolvedExtensionPaths.set(extension.path, extension.resolvedPath);
 				const loadErrors = requiredPaths.size > 0

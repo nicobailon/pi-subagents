@@ -27,7 +27,8 @@ describe("foreign workflow tool steering (separate processes)", () => {
 		ctx.sessionManager.getSessionFile = () => sessionFile;
 		ctx.sessionManager.getSessionId = () => "different-runtime-id-in-owner";
 		const state: any = { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null };
-		const executor = createSubagentExecutor({ pi: { events: createEventBus(), getSessionName: () => undefined }, state, config: {}, asyncByDefault: false, tempArtifactsDir: tempDir, getSubagentSessionRoot: () => tempDir, expandTilde: p => p, discoverAgents: () => ({ agents: [makeAgent("worker")] }) });
+		const parentNotifications: unknown[] = [];
+		const executor = createSubagentExecutor({ pi: { events: createEventBus(), getSessionName: () => undefined, sendMessage: (message: unknown) => parentNotifications.push(message) }, state, config: {}, asyncByDefault: false, tempArtifactsDir: tempDir, getSubagentSessionRoot: () => tempDir, expandTilde: p => p, discoverAgents: () => ({ agents: [makeAgent("worker")] }) });
 		const launch = await executor.execute("owner", { workflowScript: 'return await runs.run("A", { agent: "worker", task: "Wait" });', async: true, mission: false }, new AbortController().signal, undefined, ctx);
 		assert.notEqual(launch.isError, true, JSON.stringify(launch));
 		const runId = launch.details.asyncId!;
@@ -57,6 +58,7 @@ describe("foreign workflow tool steering (separate processes)", () => {
 			assert.deepEqual(fs.readdirSync(steerRequestsDir(dir)), []);
 			fs.writeFileSync(release, "go");
 			await waitForAsyncState(runId, s => s.state === "complete", 10000);
+			assert.ok(parentNotifications.length > 0, "the parent runtime receives the incremental child completion notification");
 			const terminal = await hostB(sessionFile, { dir }, "terminal");
 			assert.equal(terminal.result.isError, true);
 			assert.match(terminal.result.content[0].text, /not running or queued/);

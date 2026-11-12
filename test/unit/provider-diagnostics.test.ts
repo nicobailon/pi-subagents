@@ -21,9 +21,11 @@ describe("provider diagnostics", () => {
 		for (const text of ["HTTP 429 insufficient_quota", "HTTP 429 billing required", "HTTP 429 quota exceeded", "HTTP 429 account limit exceeded", "429 credit exhausted", "HTTP 429 credits exhausted", "429 balance is depleted", "429 insufficient credits", "429 subscription_sharing_usage_limit_exceeded", "429 GoUsageLimitError", "429 FreeUsageLimitError", "429 Monthly usage limit reached", "429 available balance required"]) {
 			assert.equal(observeProviderDiagnostics(undefined, errorEvent(text), 10)?.lastError?.kind, "unknown", text);
 		}
-		for (const text of ["overloaded", "HTTP 503 service unavailable", "fetch failed", "request id 42901 failed"]) {
+		for (const text of ["overloaded", "HTTP 503 service unavailable", "fetch failed"]) {
 			assert.equal(observeProviderDiagnostics(undefined, errorEvent(text), 10)?.lastError?.kind, "transient_other", text);
 		}
+		// Pi's retry classifier deliberately excludes status-like digits embedded in identifiers.
+		assert.equal(observeProviderDiagnostics(undefined, errorEvent("request id 42901 failed"), 10)?.lastError?.kind, "unknown");
 		for (const text of [undefined, "", "Unauthorized", "Unrecognized failure"]) {
 			assert.equal(observeProviderDiagnostics(undefined, errorEvent(text), 10)?.lastError?.kind, "unknown", text);
 		}

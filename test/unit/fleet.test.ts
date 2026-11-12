@@ -2223,11 +2223,14 @@ describe("native subagent fleet", () => {
 			fs.utimesSync(transcriptPath, fixedTime, fixedTime);
 			tickAndRender();
 			const before = fs.statSync(transcriptPath, { bigint: true });
-			fs.writeFileSync(transcriptPath, fs.readFileSync(transcriptPath, "utf-8").replace("second appended answer", "second replaced answer"));
-			fs.utimesSync(transcriptPath, fixedTime, fixedTime);
+			const replacementPath = path.join(root, "transcript-replacement.jsonl");
+			fs.writeFileSync(replacementPath, fs.readFileSync(transcriptPath, "utf-8").replace("second appended answer", "second replaced answer"));
+			fs.utimesSync(replacementPath, fixedTime, fixedTime);
+			fs.renameSync(replacementPath, transcriptPath);
 			const after = fs.statSync(transcriptPath, { bigint: true });
 			assert.deepEqual([after.size, after.mtimeNs], [before.size, before.mtimeNs]);
-			assert.ok(tickAndRender().some((line) => line.includes("second replaced answer")), "a same-size, same-mtime rewrite shows on the next tick");
+			assert.notEqual(after.ino, before.ino, "replacement exercises inode-based invalidation independent of ctime resolution");
+			assert.ok(tickAndRender().some((line) => line.includes("second replaced answer")), "a same-size, same-mtime replacement shows on the next tick");
 
 			const opens = transcriptOpens;
 			component.invalidate();
