@@ -43,7 +43,7 @@ fi
 exit "$code"
 `;
 const session = "pi-subagents";
-const machine = { provider: "tmux", id: "local", target: "local", session, cwd: "/tmp" };
+const machine = { provider: "tmux", id: "local", target: "local", localDisk: true, session, cwd: "/tmp" };
 const runId = "run_0123456789abcdef";
 const label = `subagent-${runId.slice(-8)}`;
 function withEnv(values: Record<string, string>): () => void {
@@ -200,13 +200,13 @@ describe("tmux machine resolution", () => {
 		const tmuxPlacement = resolveMachinePlacement({ machine: "teambox", cwd: dir, settings: { tmux: { ssh: "10.0.0.9" }, cwd: "~/dev" }, herdrBin: path.join(dir, "no-herdr") });
 		assert.equal(tmuxPlacement.machine.provider, "tmux");
 		const localPlacement = resolveMachinePlacement({ machine: "tmux", cwd: dir, herdrBin: path.join(dir, "no-herdr") });
-		assert.deepEqual(localPlacement.machine, { provider: "tmux", id: "local", target: "local", session, socket: undefined, cwd: dir });
+		assert.deepEqual(localPlacement.machine, { provider: "tmux", id: "local", target: "local", localDisk: true, session, socket: undefined, cwd: dir });
 		registration.dispose();
 		assert.throws(() => resolveMachinePlacement({ machine: "teambox", cwd: dir, settings: { tmux: { ssh: "10.0.0.9" }, cwd: "~/dev" }, herdrBin: path.join(dir, "no-herdr") }), /Herdr CLI .* was not found/u);
 	});
 	it("claims machine 'tmux' for local placement and a settings tmux.ssh entry for remote placement", () => {
-		assert.deepEqual(resolveTmuxMachinePlacement({ machine: "tmux", cwd: dir, stepCwd: "repo", settings: {} }), { machine: { provider: "tmux", id: "local", target: "local", session, socket: undefined, cwd: path.join(dir, "repo") } });
-		assert.deepEqual(resolveTmuxMachinePlacement({ machine: "teambox", cwd: dir, stepCwd: "packages/api", settings: { tmux: { ssh: "10.0.0.9", socket: "/tmp/tmux-0" }, cwd: "~/dev" } }), { machine: { provider: "tmux", id: "teambox", target: "10.0.0.9", session, socket: "/tmp/tmux-0", cwd: "~/dev/packages/api" } });
+		assert.deepEqual(resolveTmuxMachinePlacement({ machine: "tmux", cwd: dir, stepCwd: "repo", settings: {} }), { machine: { provider: "tmux", id: "local", target: "local", localDisk: true, session, socket: undefined, cwd: path.join(dir, "repo") } });
+		assert.deepEqual(resolveTmuxMachinePlacement({ machine: "teambox", cwd: dir, stepCwd: "packages/api", settings: { tmux: { ssh: "10.0.0.9", socket: "/tmp/tmux-0" }, cwd: "~/dev" } }), { machine: { provider: "tmux", id: "teambox", target: "10.0.0.9", localDisk: false, session, socket: "/tmp/tmux-0", cwd: "~/dev/packages/api" } });
 		assert.equal(resolveTmuxMachinePlacement({ machine: "teambox", cwd: dir, settings: {} }), undefined);
 		assert.throws(() => resolveTmuxMachinePlacement({ machine: "tmux", cwd: dir, settings: { tmux: { ssh: "10.0.0.9" } } }), /reserved for local tmux placement/u);
 	});

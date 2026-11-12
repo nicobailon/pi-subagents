@@ -1786,7 +1786,7 @@ export interface HerdrRemoteGitStatus {
 	dirty?: boolean;
 }
 
-/** A Herdr saved SSH machine resolved for one launch. `cwd` is the directory on that machine. */
+/** A Herdr saved SSH machine resolved for one launch. `cwd` is the directory on that machine. A placed child never edits the parent's disk, so `localDisk` is always false here. */
 export interface HerdrMachineReference {
 	provider: "herdr";
 	id: string;
@@ -1794,6 +1794,8 @@ export interface HerdrMachineReference {
 	target: string;
 	session?: string;
 	cwd: string;
+	/** False: the child edits the remote machine's disk, so local git evidence is dropped. */
+	localDisk: false;
 }
 
 /** `machine: "local"`: a Rex pane in the parent's own Rex session on this machine. `session` is the Rex session id and `server` the Rex server address, both recorded in the parent at resolution time; `cwd` is the local launch directory. */
@@ -1803,6 +1805,8 @@ export interface RexLocalMachineReference {
 	session: string;
 	server?: string;
 	cwd: string;
+	/** True when a placed child reads and writes this machine's own disk, so local git evidence and launch-cwd preflight apply. */
+	localDisk: true;
 }
 
 /** A Rex machine reached over SSH, named in user settings (`subagents.machines.<id>.rex.ssh`). The pane opens in that machine's Rex session labeled `subagents`, found or created at launch and recorded with the run; `cwd` is the directory on that machine. */
@@ -1811,6 +1815,8 @@ export interface RexSshMachineReference {
 	id: string;
 	target: string;
 	cwd: string;
+	/** False: the child edits the remote machine's disk, so local git evidence is dropped. */
+	localDisk: false;
 }
 
 export type RexMachineReference = RexLocalMachineReference | RexSshMachineReference;

@@ -13,7 +13,6 @@ import { discoverPlacedBridgeManifest, PlacedRunOwner, type PlacedBridgeManifest
 import type { PlacementBridgeIdentity, PlacementPaneHost, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
 import { requirePlacementAdapter, type PlacementOpaqueMachineReference } from "./placement-registry.ts";
 import { ensureSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
-import { isRexLocalMachine } from "./rex-machine.ts";
 import { PLACED_RESTORE_UNSUPPORTED } from "./herdr-machine.ts";
 
 export interface HerdrRunIdentity { runId: string; machineId: string; target: string; session: string | null; workspaceId: string; tabId: string; paneId: string; terminalId: string; agentName: string; nativeSessionId: string; cwd: string; runtimeDir: string }
@@ -153,7 +152,7 @@ export async function startPlacedPiSession<C extends PlacementSockets>(launch: C
 		const missingRequired = (launch.runtime.requiredTools ?? []).filter((tool) => !(configured.tools as unknown[]).includes(tool));
 		if (missingRequired.length) throw new Error(`Remote Pi agent '${policy.resources.agent}' did not activate required tools: ${missingRequired.join(", ")}.`);
 		if (launch.model && configured.model !== launch.model.split(":")[0]) throw new Error(`Remote Pi model '${launch.model}' did not resolve to the requested provider/model.`);
-		const identity: HerdrRunIdentity = { runId, machineId: machine.id, target: isRexLocalMachine(machine) ? machine.id : machine.target, session: owner.host.sessionOf(connection), workspaceId: owned.workspaceId, tabId: owned.tabId, paneId: owned.paneId, terminalId, agentName, nativeSessionId: manifest.nativeSessionId, cwd: machine.cwd, runtimeDir };
+		const identity: HerdrRunIdentity = { runId, machineId: machine.id, target: "target" in machine && machine.target ? machine.target : machine.id, session: owner.host.sessionOf(connection), workspaceId: owned.workspaceId, tabId: owned.tabId, paneId: owned.paneId, terminalId, agentName, nativeSessionId: manifest.nativeSessionId, cwd: machine.cwd, runtimeDir };
 		owner.journal(identity);
 		const session = new HerdrPiSession(owner, bridgeForward, bridge, (configured.tools as string[] | undefined), typeof ready.model === "string" ? ready.model : undefined, launch.runtime, ready.initialGit as HerdrRemoteGitStatus | undefined); reconnectSession = session; session.armReconnect(() => reconnectHerdrPiSession(session, launch)); return session;
 	} catch (error) { await owner.cleanup(); throw error; }

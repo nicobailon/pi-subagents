@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PLACEMENT_REGISTER_EVENT, type PlacementAdapterV1, type PlacementRegistration, type PlacementRegistrationRequest } from "../runs/shared/placement-registry.ts";
+import { PLACEMENT_REGISTER_EVENT, placementEditsLocalDisk, type PlacementAdapterV1, type PlacementRegistration, type PlacementRegistrationRequest } from "../runs/shared/placement-registry.ts";
 
 /**
  * Public placement surface for external adapter packages (tmux, zellij, …). An adapter package
@@ -11,6 +11,7 @@ import { PLACEMENT_REGISTER_EVENT, type PlacementAdapterV1, type PlacementRegist
  */
 export {
 	PLACEMENT_REGISTER_EVENT,
+	placementEditsLocalDisk,
 	registerPlacementEventListener,
 	type PlacementAdapterSettings,
 	type PlacementAdapterV1,

@@ -255,6 +255,7 @@ export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacement
 			target: validateTarget(selected.target, requested),
 			...(selected.session && selected.session !== "default" ? { session: selected.session } : {}),
 			cwd: validateRemoteCwd(cwd, requested),
+			localDisk: false,
 		},
 		...(settings?.env ? { env: settings.env } : {}),
 	};

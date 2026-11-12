@@ -48,9 +48,16 @@ export interface PlacementOpaqueMachineReference {
 	provider: string;
 	id: string;
 	cwd: string;
+	localDisk: boolean;
 	/** Remote host target; local machines omit it. The bridge reports it in run identity. */
 	target?: string;
 	[key: string]: unknown;
+}
+
+
+/** The one provider-free question core asks about a machine: does a placed child on it read and write the parent's disk? Adapters answer through `localDisk`; core never compares providers. */
+export function placementEditsLocalDisk(machine: PlacementMachineReference | PlacementOpaqueMachineReference | undefined): boolean {
+	return machine?.localDisk === true;
 }
 
 /** A resolved `machine` value with the optional settings env exported in front of the remote command. */

@@ -2,8 +2,8 @@ import * as path from "node:path";
 import { remoteMachineCwd, validateRemoteCwd, type PlacementResolveRequest, type PlacementResolution } from "../../../src/api/placement.ts";
 
 /** A tmux placement target: the parent's own tmux server (`machine: "tmux"`) or one reached over SSH from settings (`subagents.machines.<id>.tmux.ssh`). */
-export interface TmuxLocalMachineReference { provider: "tmux"; id: "local"; session: string; socket?: string; cwd: string; [key: string]: unknown }
-export interface TmuxSshMachineReference { provider: "tmux"; id: string; target: string; session: string; socket?: string; cwd: string; [key: string]: unknown }
+export interface TmuxLocalMachineReference { provider: "tmux"; id: "local"; session: string; socket?: string; localDisk: boolean; cwd: string; [key: string]: unknown }
+export interface TmuxSshMachineReference { provider: "tmux"; id: string; target: string; session: string; socket?: string; localDisk: boolean; cwd: string; [key: string]: unknown }
 export type TmuxMachineReference = TmuxLocalMachineReference | TmuxSshMachineReference;
 
 export const TMUX_PROVIDER = "tmux";
@@ -26,8 +26,8 @@ export function resolveTmuxMachinePlacement(request: PlacementResolveRequest): P
 		// The window's -c must be absolute on the parent's own machine: a relative step would resolve against the tmux server's cwd, not the repo.
 		const step = request.stepCwd?.trim();
 		const cwd = step && !path.isAbsolute(step) ? path.resolve(request.cwd, step) : step || request.cwd;
-		return { machine: { provider: TMUX_PROVIDER, id: "local", target: "local", session: TMUX_SESSION_LABEL, socket: settings?.tmux?.socket, cwd } };
+		return { machine: { provider: TMUX_PROVIDER, id: "local", target: "local", session: TMUX_SESSION_LABEL, socket: settings?.tmux?.socket, cwd, localDisk: true } };
 	}
 	if (ssh === undefined) return undefined;
-	return { machine: { provider: TMUX_PROVIDER, id: request.machine, target: ssh, session: TMUX_SESSION_LABEL, socket: settings?.tmux?.socket, cwd: validateRemoteCwd(remoteMachineCwd(request.stepCwd, settings?.cwd, request.machine), request.machine) } };
+	return { machine: { provider: TMUX_PROVIDER, id: request.machine, target: ssh, session: TMUX_SESSION_LABEL, socket: settings?.tmux?.socket, cwd: validateRemoteCwd(remoteMachineCwd(request.stepCwd, settings?.cwd, request.machine), request.machine), localDisk: false } };
 }

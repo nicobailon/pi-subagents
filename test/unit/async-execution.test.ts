@@ -98,7 +98,7 @@ describe("async runner execution", () => {
 		assert.ok("steps" in built, "error" in built ? built.error : undefined);
 		const step = built.steps[0];
 		assert.ok(step && "machine" in step);
-		assert.deepEqual(step.machine, { provider: "rex", id: "local", session: "session:parent-1", server: "unix:///tmp/parent-rex.sock", cwd: bin });
+		assert.deepEqual(step.machine, { provider: "rex", id: "local", session: "session:parent-1", server: "unix:///tmp/parent-rex.sock", localDisk: true, cwd: bin });
 	});
 
 	it("uses supplied discovery context for missing async agents", () => {

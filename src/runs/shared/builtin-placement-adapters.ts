@@ -18,7 +18,7 @@ function resolveRexMachinePlacement(request: PlacementResolveRequest) {
 		if (settings?.rex) throw new Error("Machine 'local' is reserved for a Rex pane on this machine; give the Rex SSH host in subagents.machines.local.rex another name.");
 		return { machine: resolveRexLocalPlacement({ cwd, stepCwd, env }) };
 	}
-	if (settings?.rex) return { machine: { provider: "rex" as const, id: machine, target: settings.rex.ssh, cwd: validateRemoteCwd(remoteMachineCwd(stepCwd, settings.cwd, machine), machine) } };
+	if (settings?.rex) return { machine: { provider: "rex" as const, id: machine, target: settings.rex.ssh, cwd: validateRemoteCwd(remoteMachineCwd(stepCwd, settings.cwd, machine), machine), localDisk: false } };
 	return undefined;
 }
 

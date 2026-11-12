@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ChildSession } from "../../src/runs/shared/child-session.ts";
 // Importing herdr-placed-run loads the built-in Herdr and Rex adapters into the registry.
 import { createPlacementAwareChildSessionFactory } from "../../src/runs/shared/herdr-placed-run.ts";
 import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
-import { placementAdapters, registerPlacementAdapter, requirePlacementAdapter, type PlacementAdapterV1 } from "../../src/runs/shared/placement-registry.ts";
+import { placementAdapters, placementEditsLocalDisk, registerPlacementAdapter, requirePlacementAdapter, type PlacementAdapterV1 } from "../../src/runs/shared/placement-registry.ts";
 
 const runtime = { runId: "run", agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false, waitTool: { enabled: true } };
 const child: ChildSession = { subscribe: () => () => {}, prompt: async () => {}, steer: async () => {}, followUp: async () => {}, abort: async () => {}, dispose: async () => {}, messages: [], sessionFile: undefined, sessionId: "native", modelId: "provider/model" };
@@ -33,13 +35,13 @@ describe("placement adapter registry", () => {
 
 	it("resolves a rex ssh machine from settings through the registry", () => {
 		const resolved = resolveMachinePlacement({ machine: "lab", cwd: "/repo", stepCwd: "sub", settings: { rex: { ssh: "lab.example" }, cwd: "/remote/root" } });
-		assert.deepEqual(resolved.machine, { provider: "rex", id: "lab", target: "lab.example", cwd: "/remote/root/sub" });
+		assert.deepEqual(resolved.machine, { provider: "rex", id: "lab", target: "lab.example", localDisk: false, cwd: "/remote/root/sub" });
 	});
 
 	it("falls through the registry to the herdr catalog for unclaimed names", () => {
 		const catalog = JSON.stringify([{ id: "m1", target: "remote.example", enabled: true }]);
 		const resolved = resolveMachinePlacement({ machine: "m1", cwd: "/repo", stepCwd: "/remote/repo", catalogJson: catalog });
-		assert.deepEqual(resolved.machine, { provider: "herdr", id: "m1", target: "remote.example", cwd: "/remote/repo" });
+		assert.deepEqual(resolved.machine, { provider: "herdr", id: "m1", target: "remote.example", localDisk: false, cwd: "/remote/repo" });
 	});
 
 	it("keeps 'local' reserved for rex panes and rejects a rex ssh entry named local", () => {
@@ -47,9 +49,27 @@ describe("placement adapter registry", () => {
 	});
 
 	it("lets a registered adapter claim a machine name the built-ins decline", () => {
-		registerPlacementAdapter(spiketestAdapter({ resolveMachinePlacement: ({ machine }) => machine === "fuzzbox" ? { machine: { provider: "spiketest", id: machine, cwd: "/fuzz" } } : undefined }), { before: "herdr" });
+		registerPlacementAdapter(spiketestAdapter({ resolveMachinePlacement: ({ machine }) => machine === "fuzzbox" ? { machine: { provider: "spiketest", id: machine, localDisk: true, cwd: "/fuzz" } } : undefined }), { before: "herdr" });
 		const resolved = resolveMachinePlacement({ machine: "fuzzbox", cwd: "/repo", settings: {} });
-		assert.deepEqual(resolved.machine, { provider: "spiketest", id: "fuzzbox", cwd: "/fuzz" });
+		assert.deepEqual(resolved.machine, { provider: "spiketest", id: "fuzzbox", localDisk: true, cwd: "/fuzz" });
+	});
+
+	it("answers the local-disk question without comparing providers", () => {
+		const catalog = JSON.stringify([{ id: "m1", target: "remote.example", enabled: true }]);
+		assert.equal(placementEditsLocalDisk(resolveMachinePlacement({ machine: "m1", cwd: "/repo", stepCwd: "/remote/repo", catalogJson: catalog }).machine), false);
+		const previous = { REX_SESSION: process.env.REX_SESSION, REX_BIN_DIR: process.env.REX_BIN_DIR, PATH: process.env.PATH };
+		const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "placement-disk-"));
+		fs.writeFileSync(path.join(binDir, "rex"), `#!/bin/sh\nfor arg in "$@"; do case "$arg" in %*) printf '{"session_id":"%s"}' "$arg" ;; esac; done\nexit 0\n`, { mode: 0o755 });
+		process.env.REX_SESSION = "%test";
+		process.env.REX_BIN_DIR = binDir;
+		try {
+			assert.equal(placementEditsLocalDisk(resolveMachinePlacement({ machine: "local", cwd: binDir }).machine), true);
+		} finally {
+			fs.rmSync(binDir, { recursive: true, force: true });
+			for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+		}
+		assert.equal(placementEditsLocalDisk(resolveMachinePlacement({ machine: "lab", cwd: "/repo", settings: { rex: { ssh: "lab.example" }, cwd: "/remote/root" } }).machine), false);
+		assert.equal(placementEditsLocalDisk(undefined), false);
 	});
 
 	it("throws an actionable error when no adapter claims the machine", () => {

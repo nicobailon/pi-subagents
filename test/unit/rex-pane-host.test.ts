@@ -132,7 +132,7 @@ describe("machine 'local' resolution", { skip: process.platform === "win32" }, (
 
 	it("records the parent's confirmed Rex session, server and real launch directory without reading the Herdr catalog", () => {
 		const placement = resolveMachinePlacement({ machine: "local", cwd: dir, stepCwd: "repo", env: insideRex, herdrBin: path.join(dir, "no-herdr") });
-		assert.deepEqual(placement, { machine: { provider: "rex", id: "local", session, server: "unix:///tmp/fake-rex.sock", cwd: path.join(dir, "repo") } });
+		assert.deepEqual(placement, { machine: { provider: "rex", id: "local", session, server: "unix:///tmp/fake-rex.sock", localDisk: true, cwd: path.join(dir, "repo") } });
 		assert.deepEqual(fs.readFileSync(path.join(dir, "calls"), "utf8").trim().split("\n"), [`--autostart=false -S unix:///tmp/fake-rex.sock session inspect ${session} --json`]);
 		assert.equal(fs.readFileSync(path.join(dir, "selectors"), "utf8").trim(), "unset unset unset");
 	});
