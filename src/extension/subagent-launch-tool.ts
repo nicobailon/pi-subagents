@@ -47,7 +47,11 @@ export async function approveWorkflowChildLaunch(ctx: ExtensionContext, describe
 	if (!toolCtx.tools.some((tool) => tool.name === SUBAGENT_LAUNCH_TOOL)) return {};
 	const args = describe();
 	const outcome = await toolCtx.executeTool(SUBAGENT_LAUNCH_TOOL, args, { signal });
-	if (!outcome.isError) return { task: (outcome.result.details as { task?: string } | undefined)?.task };
+	if (!outcome.isError) {
+		// Pi doesn't validate the input again after a handler changes it.
+		const task = (outcome.result.details as { task?: unknown } | undefined)?.task;
+		return { task: typeof task === "string" ? task : undefined };
+	}
 	const reason = outcome.result.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n").trim();
 	return { refusal: `Workflow child '${args.key}' was not started: the ${SUBAGENT_LAUNCH_TOOL} call was refused${reason ? `: ${reason}` : "."}` };
 }
