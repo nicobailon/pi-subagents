@@ -171,7 +171,8 @@ function childProcessEnv(input: BuildInProcessChildLaunchInput, toolPlan: PiLaun
 	else if (!toolPlan.capabilityCeiling && input.mcpDirectTools?.length) env[MCP_DIRECT_TOOLS_ENV] = input.mcpDirectTools.join(",");
 	else if (toolPlan.capabilityCeiling && toolPlan.effectiveMcpSelections.length && !toolPlan.capabilityCeiling.denyExtensions) {
 		env[MCP_DIRECT_TOOLS_ENV] = toolPlan.effectiveMcpSelections.map((selection) => selection.selector).join(",");
-	} else env[MCP_DIRECT_TOOLS_ENV] = "__none__";
+	} else if (input.tools === undefined && !toolPlan.capabilityCeiling) env[MCP_DIRECT_TOOLS_ENV] = undefined;
+	else env[MCP_DIRECT_TOOLS_ENV] = "__none__";
 	return env;
 }
 
