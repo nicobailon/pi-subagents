@@ -6,7 +6,7 @@ import { Type } from "typebox";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import packageJson from "../../package.json" with { type: "json" };
-import { encodeHerdrPiFrame, HERDR_PI_MAX_FRAME_BYTES, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "../runs/shared/herdr-pi-protocol.ts";
+import { encodeHerdrPiFrame, HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES, HERDR_PI_MAX_FRAME_BYTES, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "../runs/shared/herdr-pi-protocol.ts";
 import { discoverAgents } from "../agents/agents.ts";
 import { buildSkillInjection, resolveSkills } from "../agents/skills.ts";
 import { buildAgentMemoryInjection } from "../agents/agent-memory.ts";
@@ -159,11 +159,15 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 					if (frame.type === "supervisor-delivered" && typeof frame.requestId === "string") { const entry = supervisor.get(frame.requestId); if (!entry || entry.reason !== "progress_update") throw new Error("Unknown supervisor delivery acknowledgement."); supervisor.delete(frame.requestId); entry.resolve("delivered"); continue; }
 					if (frame.type === "configure") {
 						if (configured || typeof frame.requestId !== "string" || !frame.resources || typeof frame.resources !== "object") throw new Error("Invalid or duplicate bridge configuration.");
-						const resources = frame.resources as { agent?: unknown; skills?: unknown; toolCeiling?: unknown; reads?: unknown };
+						const resources = frame.resources as { agent?: unknown; skills?: unknown; toolCeiling?: unknown; reads?: unknown; acceptancePrompt?: unknown };
 						const invalidSkills = resources.skills !== undefined && (!Array.isArray(resources.skills) || resources.skills.some((name) => typeof name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(name)));
 						const invalidReads = resources.reads !== undefined && resources.reads !== false && (!Array.isArray(resources.reads) || resources.reads.some((name) => typeof name !== "string"));
 						if (typeof resources.agent !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(resources.agent) || invalidSkills || invalidReads) throw new Error("Remote logical resource names are invalid.");
-						const resolved = resolveRemoteHerdrResources(process.cwd(), { agent: resources.agent, ...(resources.skills ? { skills: resources.skills as string[] } : {}), ...(resources.toolCeiling ? { toolCeiling: resources.toolCeiling as string[] } : {}), ...(resources.reads !== undefined ? { reads: resources.reads as string[] | false } : {}) }, context ? pi.getActiveTools() : []); resolvedSystemPrompt = resolved.systemPrompt; resolvedContextPolicy = resolved;
+						const acceptancePrompt = resources.acceptancePrompt;
+						if (acceptancePrompt !== undefined && (typeof acceptancePrompt !== "string" || Buffer.byteLength(acceptancePrompt) > HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES)) throw new Error("Bridge acceptance instructions are invalid or too large.");
+						const resolved = resolveRemoteHerdrResources(process.cwd(), { agent: resources.agent, ...(resources.skills ? { skills: resources.skills as string[] } : {}), ...(resources.toolCeiling ? { toolCeiling: resources.toolCeiling as string[] } : {}), ...(resources.reads !== undefined ? { reads: resources.reads as string[] | false } : {}) }, context ? pi.getActiveTools() : []); resolvedContextPolicy = resolved;
+						// Appended after the remote agent's own prompt, as a local child's system prompt carries it.
+						resolvedSystemPrompt = acceptancePrompt ? `${resolved.systemPrompt}\n${acceptancePrompt}` : resolved.systemPrompt;
 						// A local child gets watchdog_diff from the prompt runtime, which a placed child never loads.
 						if (resolved.tools.includes(WATCHDOG_DIFF_TOOL_NAME) && !pi.getAllTools().some((tool) => tool.name === WATCHDOG_DIFF_TOOL_NAME)) pi.registerTool(createWatchdogDiffTool(captureWatchdogDiffBaseline(process.cwd()), { workingTreeAtLaunch: true }));
 						pi.setActiveTools(resolved.tools); const acknowledged = context ? pi.getActiveTools() : []; const missing = resolved.tools.filter((tool) => !acknowledged.includes(tool)), extra = acknowledged.filter((tool) => !resolved.tools.includes(tool));

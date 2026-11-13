@@ -66,6 +66,8 @@ export interface BuildInProcessChildLaunchInput {
 	machine?: PlacementMachineReference;
 	remoteSkillNames?: string[];
 	remoteReads?: string[] | false;
+	/** Acceptance instructions already folded into `systemPrompt`; a placed child gets only these, since it builds the rest from its own agent file. */
+	acceptancePrompt?: string;
 	parentSessionId?: string;
 	/** The launching session's file; a new child session records it as its parent. */
 	parentSessionFile?: string;
@@ -334,7 +336,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		cwd: input.cwd,
 		...(input.machine ? { machine: input.machine } : {}),
 		...(input.projectTrusted !== undefined ? { projectTrusted: input.projectTrusted } : {}),
-		...(input.machine ? { remoteResources: { agent: input.childAgentName, ...(input.remoteSkillNames ? { skills: input.remoteSkillNames } : {}), ...(input.remoteReads !== undefined ? { reads: input.remoteReads } : {}), ...(toolPlan.explicitToolAllowlist ? { toolCeiling: [...toolPlan.effectiveToolAllowlist] } : toolPlan.capabilityCeiling?.allowedTools ? { toolCeiling: [...toolPlan.capabilityCeiling.allowedTools] } : {}) } } : {}),
+		...(input.machine ? { remoteResources: { agent: input.childAgentName, ...(input.remoteSkillNames ? { skills: input.remoteSkillNames } : {}), ...(input.remoteReads !== undefined ? { reads: input.remoteReads } : {}), ...(toolPlan.explicitToolAllowlist ? { toolCeiling: [...toolPlan.effectiveToolAllowlist] } : toolPlan.capabilityCeiling?.allowedTools ? { toolCeiling: [...toolPlan.capabilityCeiling.allowedTools] } : {}), ...(input.acceptancePrompt ? { acceptancePrompt: input.acceptancePrompt } : {}) } } : {}),
 		storage: childStorage(input),
 		...(input.parentSessionFile ? { parentSessionFile: input.parentSessionFile } : {}),
 		...(input.model ? { model: input.model } : {}),
