@@ -4,7 +4,7 @@ import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { TuiAltScreen, TuiMainScreen, visibleWidth, type Component, type TuiMouseEvent, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { Container, TuiAltScreen, TuiMainScreen, visibleWidth, type Component, type TuiMouseEvent, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
 import { registerInspector } from "../../src/api/inspectors.ts";
 import { getInspectorPlugins, registerInspectorEventListener } from "../../src/inspectors/plugins.ts";
@@ -1481,6 +1481,58 @@ describe("native subagent fleet", () => {
 				} finally { overlay.hide(); component.dispose(); tui.stop(); }
 			}
 		} finally { fs.rmSync(root, { recursive: true, force: true }); }
+	});
+
+	it("stays out of the way of an inline dialog that takes focus, then returns with its selection", () => {
+		const state = stateForTest();
+		for (const agent of ["alpha", "beta"]) state.foregroundControls.set(agent, { runId: agent, mode: "single", startedAt: 1, updatedAt: 1, currentAgent: agent, currentIndex: 0 });
+		const writes: string[] = [];
+		const terminal = {
+			rows: 40, columns: 120, kittyProtocolActive: false,
+			start(handler: (data: string) => void) { input = handler; }, stop() {}, async drainInput() {},
+			write(data: string) { writes.push(data); }, moveBy() {}, hideCursor() {}, showCursor() {},
+			clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {}, setProgramStatus() {},
+		};
+		let input: (data: string) => void = () => {};
+		const tui = new TuiMainScreen(terminal);
+		let closed = 0;
+		const editor: Component = { render: () => ["editor"], invalidate() {}, handleInput() {} };
+		const promptKeys: string[] = [];
+		const prompt: Component = { render: () => ["Allow bash? (y) yes (n) no · esc deny"], invalidate() {}, handleInput(data) { promptKeys.push(data); } };
+		// Pi mounts inline dialogs in the editor slot: clear it, add the dialog, focus it, and swap back when done.
+		const slot = new Container();
+		slot.addChild(editor);
+		tui.addChild(slot);
+		tui.setFocus(editor);
+		tui.start();
+		// Like ctx.ui.custom: the fleet is built while the editor has focus, then shown as an overlay.
+		const component = new SubagentFleetComponent(tui, theme as never, state, () => { closed++; }, { refreshMs: 60_000, markdownTheme });
+		const overlay = tui.showOverlay(component, { width: 100, anchor: "center" });
+		const frame = () => { writes.length = 0; tui.renderNow(); return writes.join(""); };
+		try {
+			assert.match(frame(), /Subagent fleet inspector/);
+			// A fullscreen click on the editor focuses the fleet's own preFocus; no dialog opened, so stay drawn.
+			tui.setFocus(editor);
+			assert.match(component.render(100).join("\n"), /Subagent fleet inspector/);
+			input("j");
+			const selectedRow = component.render(100)[1]!;
+			assert.match(selectedRow, /beta/);
+
+			slot.clear(); slot.addChild(prompt); tui.setFocus(prompt);
+			const covered = frame();
+			assert.match(covered, /Allow bash\?/);
+			assert.doesNotMatch(covered, /Subagent fleet inspector/);
+			input("q"); input("\x1b");
+			assert.deepEqual(promptKeys, ["q", "\x1b"]);
+			assert.equal(closed, 0);
+
+			slot.clear(); slot.addChild(editor); tui.setFocus(editor);
+			assert.equal(overlay.isFocused(), true);
+			assert.match(frame(), /Subagent fleet inspector/);
+			assert.equal(component.render(100)[1], selectedRow);
+			input("q");
+			assert.equal(closed, 1);
+		} finally { overlay.hide(); component.dispose(); tui.stop(); }
 	});
 
 	it("records long-transcript cache and render-request counters", (t) => {
