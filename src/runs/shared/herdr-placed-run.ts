@@ -11,7 +11,7 @@ import { herdrPaneHost } from "./herdr-pane-host.ts";
 import { encodeHerdrPiFrame, HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
 import { discoverPlacedBridgeManifest, PlacedRunOwner, type PlacedBridgeManifest } from "./placed-run-owner.ts";
 import type { PlacementBridgeIdentity, PlacementPaneHost, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
-import { requirePlacementAdapter } from "./placement-registry.ts";
+import { placementEditsLocalDisk, requirePlacementAdapter } from "./placement-registry.ts";
 import { ensureSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
 import { PLACED_RESTORE_UNSUPPORTED } from "./herdr-machine.ts";
 
@@ -36,12 +36,18 @@ export async function boundedHerdrReconnect(identity: HerdrRunIdentity, lastEvid
 /** Sanitizes the runtime run id into a valid placed-run id: printable safe prefix plus a random suffix, so concurrent runs never share a runtime dir or bridge socket. */
 export function safeRunId(value: string | undefined): string { const prefix = value?.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 48) ?? "run"; return validateHerdrPiRunId(`${prefix}_${randomBytes(8).toString("hex")}`); }
 
-export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: string[]; resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false } } {
+/**
+ * Builds the launch contract a pane-native child can honour. A machine that edits this disk already holds the
+ * parent's configuration, so the child loads it itself and the pane never receives extension paths, bindings, or
+ * a process environment; only a machine that does not edit this disk has to refuse a launch that carries them.
+ */
+export function serializeHerdrPiLaunch(launch: ChildSessionLaunch, options: { localDisk?: boolean } = {}): { args: string[]; resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false } } {
+	const localDisk = options.localDisk === true;
 	// Every child is handed a local session file path; only one that already exists (a fork or a
 	// resumed transcript) asks the pane to restore history. A fresh child's path is never written.
 	if (launch.storage.kind === "file" && fs.existsSync(launch.storage.sessionFile)) throw new Error(PLACED_RESTORE_UNSUPPORTED);
-	if (launch.extensionPaths.length || launch.requiredExtensions?.length) throw new Error("Pane-native remote Pi cannot transfer local extension paths; install/configure pi-subagents on the remote machine.");
-	if (launch.processEnv && Object.values(launch.processEnv).some((value) => value !== undefined && value !== "__none__")) throw new Error("Pane-native remote Pi cannot transfer local bindings, MCP selections, or process environment.");
+	if (!localDisk && (launch.extensionPaths.length || launch.requiredExtensions?.length)) throw new Error("Pane-native remote Pi cannot transfer local extension paths; install/configure pi-subagents on the remote machine.");
+	if (!localDisk && launch.processEnv && Object.values(launch.processEnv).some((value) => value !== undefined && value !== "__none__")) throw new Error("Pane-native remote Pi cannot transfer local bindings, MCP selections, or process environment.");
 	if (launch.runtime.nestedRoute || launch.runtime.fanoutChild || launch.runtime.depth > 1) throw new Error("Nested delegation from a pane-native remote Pi is not supported.");
 	if (launch.excludeTools?.length || launch.runtime.permissions || launch.runtime.toolBudget || launch.runtime.requiredExtensions || launch.runtime.mcpDirectTools?.length) throw new Error("Pane-native remote Pi cannot yet represent exclusions, permission rules, tool budgets, MCP direct tools, or required-extension contracts; remove machine placement.");
 	const resources = launch.remoteResources;
@@ -164,11 +170,11 @@ async function createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildS
 	if (!machine) throw new Error("A placed launch requires a resolved machine reference.");
 	const adapter = requirePlacementAdapter(machine.provider);
 	const runId = safeRunId(launch.runtime.runId);
-	const policy = serializeHerdrPiLaunch(launch);
+	const policy = serializeHerdrPiLaunch(launch, { localDisk: placementEditsLocalDisk(machine) });
 	const context = await adapter.openPlacedRun(machine, runId);
 	const owner = new PlacedRunOwner(context.machine, runId, context.runtimeDir, context.connection, context.host, context.access, context.removeRuntime);
 	return startPlacedPiSession(launch, owner, policy);
 }
 export function createPlacementAwareChildSessionFactory(local: ChildSessionFactory, createRemote: (launch: ChildSessionLaunch) => Promise<ChildSession> = createPlacedPiSession): ChildSessionFactory {
-	const remote = new Map<ChildSession, string | undefined>(); return { async create(launch) { if (!launch.machine) return local.create(launch); serializeHerdrPiLaunch(launch); const child = await createRemote(launch); remote.set(child, launch.parentSessionFile); return child; }, async dispose() { await Promise.allSettled([...remote.keys()].map((child) => child.dispose())); remote.clear(); await local.dispose(); }, async disposeForParent(parentSessionFile) { const matching = [...remote].filter(([, parent]) => parent === parentSessionFile).map(([child]) => child); await Promise.allSettled(matching.map((child) => child.dispose())); for (const child of matching) remote.delete(child); await local.disposeForParent(parentSessionFile); } };
+	const remote = new Map<ChildSession, string | undefined>(); return { async create(launch) { if (!launch.machine) return local.create(launch); serializeHerdrPiLaunch(launch, { localDisk: placementEditsLocalDisk(launch.machine) }); const child = await createRemote(launch); remote.set(child, launch.parentSessionFile); return child; }, async dispose() { await Promise.allSettled([...remote.keys()].map((child) => child.dispose())); remote.clear(); await local.dispose(); }, async disposeForParent(parentSessionFile) { const matching = [...remote].filter(([, parent]) => parent === parentSessionFile).map(([child]) => child); await Promise.allSettled(matching.map((child) => child.dispose())); for (const child of matching) remote.delete(child); await local.disposeForParent(parentSessionFile); } };
 }
