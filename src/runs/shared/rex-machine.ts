@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { HerdrLocalMachineReference, PlacementMachineReference, RexLocalMachineReference } from "../../shared/types.ts";
 
-/** `machine: "local"` is reserved: this machine, in a Rex pane of the parent's own Rex session. It never consults the Herdr catalog. */
+/** `machine: "local"` is reserved: this machine, in a new tab of the Herdr or Rex session this Pi runs in. It never consults the Herdr catalog. */
 export const REX_LOCAL_MACHINE = "local";
 /** Rex CLI exit codes: 3 means the target is gone, 4 means the server is unreachable (state unknown, never "gone"). */
 export const REX_EXIT_GONE = 3, REX_EXIT_UNREACHABLE = 4;

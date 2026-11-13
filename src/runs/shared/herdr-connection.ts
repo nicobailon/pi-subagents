@@ -35,7 +35,7 @@ function canonicalHerdrSession(session: string | null | undefined): string | nul
  * Points herdr at a recorded local server only: the calling process's own pane selectors (a background runner started from
  * another pane) never choose it. A named session's server reports its name only when HERDR_SESSION says it (herdr 0.9.5).
  */
-export function herdrLocalEnv(socket: string, session: string | null | undefined, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function herdrLocalEnv(socket: string, session: string | null | undefined, source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const { HERDR_SESSION: _session, HERDR_CLIENT_SOCKET_PATH: _client, HERDR_PANE_ID: _pane, HERDR_ENV: _env, HERDR_SOCKET_PATH: _socket, ...env } = source;
 	const selected = canonicalHerdrSession(session);
 	return { ...env, HERDR_SOCKET_PATH: socket, ...(selected ? { HERDR_SESSION: selected } : {}) };

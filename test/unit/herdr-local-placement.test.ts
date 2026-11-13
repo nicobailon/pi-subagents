@@ -6,12 +6,11 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import registerHerdrPiBridge from "../../src/extension/herdr-pi-bridge.ts";
 import type { ChildSessionLaunch } from "../../src/runs/shared/child-session.ts";
-import { formatHerdrMachineRunnerUnsupported, resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
+import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
 import { HerdrPlacedRunOwner } from "../../src/runs/shared/herdr-pane-host.ts";
 import { HERDR_PI_MODE_ENV, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV } from "../../src/runs/shared/herdr-pi-protocol.ts";
 import { createHerdrPiSession, HerdrPiSession } from "../../src/runs/shared/herdr-placed-run.ts";
 import { withHerdrPaneAllocationLock } from "../../src/runs/shared/placement-host.ts";
-import { editsLocalDisk } from "../../src/runs/shared/rex-machine.ts";
 import type { HerdrLocalMachineReference } from "../../src/shared/types.ts";
 
 // A fake `herdr`: records its argv and Herdr selectors, reports the server at $HERDR_SOCKET_PATH (or $FAKE_HERDR_REPORT) with
@@ -142,19 +141,5 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_PANE_ID: "w9:p9" }, settings: {} }), /did not return it: herdr pane get w9:p9 exited with code 1: pane not found/u);
 		for (const env of [{ PATH: "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION is not set\)/u);
 		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: herdrPane, settings: { rex: { ssh: "host" } } }), /Machine 'local' is reserved/u);
-	});
-
-	it("admits only native Pi children on machine 'local'", () => {
-		assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "local", agentName: "worker" }), undefined);
-		assert.equal(formatHerdrMachineRunnerUnsupported({ machine: "local", agentName: "claude", runnerType: "external-cli", adapter: "claude-code" }), "Agent 'claude' requested machine 'local', but machine 'local' runs native Pi children only. Remove the machine or use a native Pi agent.");
-		assert.match(formatHerdrMachineRunnerUnsupported({ machine: "local", agentName: "worker", worktree: true }) ?? "", /managed worktrees cannot be combined/u);
-	});
-
-	it("counts only references without an SSH target as editing this machine's disk", () => {
-		assert.equal(editsLocalDisk({ provider: "herdr", id: "local", socket: "/tmp/h.sock", cwd: "/repo" }), true);
-		assert.equal(editsLocalDisk({ provider: "rex", id: "local", session: "session:s", cwd: "/repo" }), true);
-		assert.equal(editsLocalDisk({ provider: "herdr", id: "m1", target: "host", cwd: "/remote" }), false);
-		assert.equal(editsLocalDisk({ provider: "rex", id: "workmac", target: "host", cwd: "/remote" }), false);
-		assert.equal(editsLocalDisk(undefined), false);
 	});
 });

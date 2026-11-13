@@ -135,7 +135,7 @@ export async function reconnectHerdrPiSession<C extends PlacementSockets>(sessio
 }
 
 export async function createHerdrPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
-	if (!launch.machine) throw new Error("Pane-native Pi launch requires a saved machine.");
+	if (!launch.machine) throw new Error("Pane-native Pi launch requires a machine.");
 	if (launch.machine.provider !== "herdr") throw new Error("Herdr pane-native Pi launch requires a Herdr machine.");
 	const policy = serializeHerdrPiLaunch(launch); const runId = safeRunId(launch.runtime.runId);
 	return startPlacedPiSession(launch, await HerdrPlacedRunOwner.create(launch.machine, runId), policy);

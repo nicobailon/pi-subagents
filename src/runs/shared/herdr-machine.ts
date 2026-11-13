@@ -269,7 +269,7 @@ function runLocalHerdr(bin: string, args: string[], env: NodeJS.ProcessEnv): str
 }
 
 /** Resolves `machine: "local"` inside a Herdr pane: records the server drawing this Pi (confirmed to know this pane) and the real launch directory. */
-export function resolveHerdrLocalPlacement(input: { cwd: string; stepCwd?: string; env?: NodeJS.ProcessEnv; herdrBin?: string }): HerdrLocalMachineReference {
+function resolveHerdrLocalPlacement(input: { cwd: string; stepCwd?: string; env?: NodeJS.ProcessEnv; herdrBin?: string }): HerdrLocalMachineReference {
 	if (process.platform === "win32") throw new Error("Machine 'local' runs the child in a Herdr pane, which is not supported on Windows.");
 	const env = input.env ?? process.env, paneId = env.HERDR_PANE_ID!.trim(), bin = input.herdrBin ?? env.HERDR_BIN ?? "herdr";
 	let endpoint: ReturnType<typeof parseHerdrEndpoint>;
@@ -308,18 +308,13 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 }): string | undefined {
 	if (input.machine === undefined) return undefined;
 	const name = input.machine.trim();
-	if (name === REX_LOCAL_MACHINE) {
-		if (input.runnerType !== undefined && input.runnerType !== "pi") return `Agent '${input.agentName}' requested machine 'local', but machine 'local' runs native Pi children only. Remove the machine or use a native Pi agent.`;
-		if (input.worktree === true) return `Agent '${input.agentName}' requested machine 'local', but managed worktrees cannot be combined with machine placement.`;
-		if (process.platform === "win32") return "Machine 'local' runs the child in a Herdr or Rex pane, which is not supported on Windows.";
-		return undefined;
-	}
+	const local = name === REX_LOCAL_MACHINE;
 	let rex: boolean;
-	try { rex = userRexMachine(name); } catch (error) { return error instanceof Error ? error.message : String(error); }
+	try { rex = local || userRexMachine(name); } catch (error) { return error instanceof Error ? error.message : String(error); }
 	if (rex) {
-		if (input.runnerType !== undefined && input.runnerType !== "pi") return `Agent '${input.agentName}' requested machine '${name}', but Rex supports native Pi children only. Remove the machine or use a native Pi agent.`;
+		if (input.runnerType !== undefined && input.runnerType !== "pi") return `Agent '${input.agentName}' requested machine '${name}', but ${local ? "machine 'local' runs" : "Rex supports"} native Pi children only. Remove the machine or use a native Pi agent.`;
 		if (input.worktree === true) return `Agent '${input.agentName}' requested machine '${name}', but managed worktrees cannot be combined with machine placement.`;
-		if (process.platform === "win32") return `Machine '${name}' runs the child in a Rex pane, which is not supported on Windows.`;
+		if (process.platform === "win32") return `Machine '${name}' runs the child in ${local ? "a Herdr or Rex pane" : "a Rex pane"}, which is not supported on Windows.`;
 		return undefined;
 	}
 	if (input.runnerType !== undefined && input.runnerType !== "pi" && input.runnerType !== "external-cli") {

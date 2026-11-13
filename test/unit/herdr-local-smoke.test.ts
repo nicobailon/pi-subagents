@@ -29,16 +29,17 @@ describe("Herdr local placement against a private Herdr server and a real Pi", {
 		// The pane shell finds this pi first: it loads only this worktree's pi-subagents, so the bridge version matches.
 		fs.writeFileSync(path.join(bin, "pi"), `#!/bin/sh\nexec ${JSON.stringify(piBin)} -ne -e ${JSON.stringify(path.join(worktree, "index.ts"))} --session-dir ${JSON.stringify(path.join(scratch, "sessions"))} "$@"\n`, { mode: 0o755 });
 		fs.writeFileSync(path.join(bin, "ssh"), `#!/bin/sh\ntouch ${JSON.stringify(path.join(scratch, "ssh-called"))}\nexit 99\n`, { mode: 0o755 });
-		const privateEnv: NodeJS.ProcessEnv = { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, HOME: realHome, USER: os.userInfo().username, TMPDIR: "/tmp", SHELL: "/bin/sh", TERM: "xterm-256color", XDG_CONFIG_HOME: path.join(scratch, "cfg"), XDG_STATE_HOME: path.join(scratch, "state"), HERDR_SESSION: SESSION };
+		const privateEnv: NodeJS.ProcessEnv = { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, HOME: realHome, USER: os.userInfo().username, TMPDIR: "/tmp", SHELL: "/bin/sh", TERM: "xterm-256color", XDG_CONFIG_HOME: path.join(scratch, "cfg"), XDG_STATE_HOME: path.join(scratch, "state"), HERDR_SESSION: SESSION, HERDR_SOCKET_PATH: socket };
 		const herdr = (args: string[]) => spawnSync(herdrBin!, args, { encoding: "utf8", env: privateEnv, timeout: 15_000 });
 		const serverProcess = spawn(herdrBin!, ["--session", SESSION, "server"], { env: privateEnv, stdio: "ignore", detached: true });
 		const processKeys = ["PATH", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HERDR_SESSION", "HERDR_SOCKET_PATH", "HERDR_PANE_ID", "HERDR_ENV", "HERDR_CLIENT_SOCKET_PATH", "HERDR_BIN"] as const;
 		const previous = processKeys.map((name) => process.env[name]);
-		let serverStopped = false;
+		// `herdr server stop` is sent only once the private server is proven to be the one answering; before that only the spawned process is killed.
+		let serverStopped = false, isolated = false;
 		const stopServer = async () => {
 			if (serverStopped) return; serverStopped = true;
-			herdr(["server", "stop"]);
-			if (serverProcess.exitCode === null) await new Promise<void>((resolve) => { const timer = setTimeout(() => { serverProcess.kill("SIGKILL"); resolve(); }, 5_000); serverProcess.once("exit", () => { clearTimeout(timer); resolve(); }); });
+			if (isolated) herdr(["server", "stop"]); else serverProcess.kill("SIGTERM");
+			if (serverProcess.exitCode === null && serverProcess.signalCode === null) await new Promise<void>((resolve) => { const timer = setTimeout(() => { serverProcess.kill("SIGKILL"); resolve(); }, 5_000); serverProcess.once("exit", () => { clearTimeout(timer); resolve(); }); });
 		};
 		try {
 			let status: { running?: boolean; socket?: string; session?: string | null } = {};
@@ -47,6 +48,7 @@ describe("Herdr local placement against a private Herdr server and a real Pi", {
 			assert.equal(status.socket, socket, `private Herdr server is not isolated: ${JSON.stringify(status)}`);
 			assert.equal(status.running, true, "private Herdr server did not start");
 			assert.equal(status.session, SESSION);
+			isolated = true;
 			log(`private server ${socket}, session ${status.session}`);
 
 			const project = fs.realpathSync(fs.mkdtempSync(path.join(scratch, "project-")));
@@ -88,6 +90,8 @@ describe("Herdr local placement against a private Herdr server and a real Pi", {
 			assert.equal(fs.existsSync(identity.runtimeDir), false);
 			assert.equal(fs.existsSync(path.join(scratch, "ssh-called")), false, "no ssh was started");
 			await factory.dispose();
+			await stopServer();
+			assert.equal(fs.existsSync(socket), false, "the private server's socket is gone after teardown");
 		} finally {
 			processKeys.forEach((name, index) => { const value = previous[index]; if (value === undefined) delete process.env[name]; else process.env[name] = value; });
 			await stopServer();
