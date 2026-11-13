@@ -96,6 +96,7 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		assert.throws(() => serializeHerdrPiLaunch({ ...clean, runtime: { ...runtime, nestedRoute: { rootRunId: "r", eventSink: "/local/events", controlInbox: "/local/control", capabilityToken: "SECRET" } } }), /Nested delegation/u);
 		assert.throws(() => serializeHerdrPiLaunch({ ...clean, processEnv: { MCP_DIRECT_TOOLS: "local-server" } }), /bindings, MCP selections, or process environment/u);
 		assert.throws(() => serializeHerdrPiLaunch({ ...clean, runtime: { ...runtime, permissions: { rules: { bash: "deny" } } as never } }), /permission rules/u);
+		assert.throws(() => serializeHerdrPiLaunch({ ...clean, runtime: { ...runtime, structuredOutput: { schema: { type: "object" } } as never } }), /outputSchema/u);
 	});
 
 	it("launches a fresh placed child that was given a local session path, and refuses one that would restore a transcript", () => {
