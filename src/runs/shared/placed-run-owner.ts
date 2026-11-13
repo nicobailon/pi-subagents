@@ -9,8 +9,11 @@ export interface PlacedBridgeManifest { socketPath: string; nativeSessionId: str
 /** Prints `$1/manifest.json` when it is a regular file, never through a symlink. */
 export const PLACED_MANIFEST_READ_SCRIPT = 'p="$1/manifest.json"; test -f "$p" && test ! -L "$p" && cat "$p"';
 
-export async function discoverPlacedBridgeManifest(access: PlacementMachineAccess, runId: string, runtimeDir: string, missing = "The placed Pi's pi-subagents bridge manifest is not in its runtime directory; the Pi may have exited."): Promise<PlacedBridgeManifest> {
-	for (let attempt = 0; attempt < 100; attempt++) {
+/** How long a placed launch waits for the child's bridge manifest; a heavy ambient extension set needs a minute, a broken child is reported by the pane check instead. */
+const PLACED_MANIFEST_DEADLINE_MS = 60_000;
+export async function discoverPlacedBridgeManifest(access: PlacementMachineAccess, runId: string, runtimeDir: string, missing = "The placed Pi's pi-subagents bridge manifest is not in its runtime directory; the Pi may have exited.", deadlineMs = PLACED_MANIFEST_DEADLINE_MS): Promise<PlacedBridgeManifest> {
+	const deadline = Date.now() + deadlineMs;
+	for (;;) {
 		const result = await access.runAsync(access.shellCommand(PLACED_MANIFEST_READ_SCRIPT, [runtimeDir]), { timeout: 5_000, maxBuffer: 64 * 1024 });
 		if (result.error) throw new Error(`Remote bridge manifest discovery failed: ${result.error.message}`, { cause: result.error });
 		if (result.status === 0 && result.stdout.trim()) {
@@ -19,6 +22,7 @@ export async function discoverPlacedBridgeManifest(access: PlacementMachineAcces
 			if (p.runId !== runId || typeof p.socketPath !== "string" || path.posix.dirname(p.socketPath) !== runtimeDir || typeof p.nativeSessionId !== "string" || typeof p.packageVersion !== "string" || typeof p.protocol !== "number") throw new Error("Remote bridge manifest identity is incomplete or outside its owned runtime directory.");
 			return { socketPath: p.socketPath, nativeSessionId: p.nativeSessionId, packageVersion: p.packageVersion, protocol: p.protocol };
 		}
+		if (Date.now() >= deadline) break;
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 	throw new Error(missing);
