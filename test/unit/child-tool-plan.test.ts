@@ -261,6 +261,43 @@ describe("child tool plan declared tools", () => {
 });
 
 describe("production launch path keeps declared child tools", () => {
+	it("keeps adapter direct tools ambient when the child has no tool allowlist", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-ambient-mcp-"));
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = cwd;
+		try {
+			const base = {
+				host: "runner" as const,
+				cwd,
+				childAgentName: "worker",
+				childIndex: 0,
+				sessionEnabled: false,
+				inheritProjectContext: false,
+				inheritGlobalContext: false,
+				inheritSkills: false,
+			};
+			const directTool = "mcp__long_server__echo";
+			const ambient = buildInProcessChildLaunch(base);
+			assert.equal(Object.hasOwn(ambient.session.processEnv ?? {}, "MCP_DIRECT_TOOLS"), true);
+			assert.equal(ambient.session.processEnv?.MCP_DIRECT_TOOLS, undefined);
+			assert.equal(ambient.session.tools, undefined);
+
+			const restricted = buildInProcessChildLaunch({ ...base, excludeTools: [directTool] });
+			assert.equal(Object.hasOwn(restricted.session.processEnv ?? {}, "MCP_DIRECT_TOOLS"), true);
+			assert.equal(restricted.session.processEnv?.MCP_DIRECT_TOOLS, undefined);
+			assert.deepEqual(restricted.session.excludeTools, [directTool]);
+
+			const explicit = buildInProcessChildLaunch({ ...base, tools: ["read"] });
+			assert.equal(explicit.session.processEnv?.MCP_DIRECT_TOOLS, "__none__");
+			const ceiling = buildInProcessChildLaunch({ ...base, capabilityCeiling: { version: 1, allowedTools: ["read"], denyExtensions: false, sources: ["test"] } });
+			assert.equal(ceiling.session.processEnv?.MCP_DIRECT_TOOLS, "__none__");
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("buildInProcessChildLaunch requires every declared tool from the child registry", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-launch-builtins-"));
 		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
