@@ -676,7 +676,8 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					await session.bindExtensions({
 						mode: "print",
 						onError: (error) => {
-							if (binding && isRequiredSource(error.extensionPath)) requiredStartupErrors.push(`${error.extensionPath} (${error.event}): ${error.error}`);
+							// Pi's unconnected-MCP-server report means the server's tools are outside this child's tool contract, which the child can run without.
+							if (binding && error.event !== "register_mcp_server" && isRequiredSource(error.extensionPath)) requiredStartupErrors.push(`${error.extensionPath} (${error.event}): ${error.error}`);
 							launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error });
 						},
 					});

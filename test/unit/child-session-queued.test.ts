@@ -191,12 +191,12 @@ describe("default factory queued-message probe", () => {
 		assert.equal(modelResolved, false);
 	});
 
-	it("rejects a child whose required extension fails during session_start, but not one whose ordinary extension does", async () => {
+	it("rejects a child whose required extension fails during session_start, but not one whose ordinary extension does or whose MCP server nothing connects", async () => {
 		const requiredPath = "/tmp/required-policy.mjs";
 		const ordinaryPath = "/tmp/ordinary.mjs";
 		const reported: string[] = [];
 		const lifecycle: string[] = [];
-		const createFactory = (failingPath: string) => createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
+		const createFactory = (failingPath: string, event = "session_start", error = "policy init failed") => createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
 			ModelRuntime: { create: async () => ({ refresh: async () => {} }) },
 			SettingsManager: { create: () => ({}) },
 			DefaultResourceLoader: class { async reload() {} getExtensions() { return { extensions: [{ path: requiredPath, resolvedPath: requiredPath }, { path: ordinaryPath, resolvedPath: ordinaryPath }], errors: [], runtime: { pendingProviderRegistrations: [], pendingNativeProviderRegistrations: [] } }; } },
@@ -204,7 +204,7 @@ describe("default factory queued-message probe", () => {
 			resolveCliModel: () => ({}),
 			createAgentSession: async () => ({
 				session: {
-					bindExtensions: async ({ onError }: { onError: (error: { extensionPath: string; event: string; error: string }) => void }) => { onError({ extensionPath: failingPath, event: "session_start", error: "policy init failed" }); },
+					bindExtensions: async ({ onError }: { onError: (error: { extensionPath: string; event: string; error: string }) => void }) => { onError({ extensionPath: failingPath, event, error }); },
 					dispose() { lifecycle.push("dispose"); },
 					extensionRunner: { hasHandlers: (event: string) => event === "session_shutdown", emit: async ({ type }: { type: string }) => { lifecycle.push(type); } },
 					subscribe: () => () => {},
@@ -213,11 +213,12 @@ describe("default factory queued-message probe", () => {
 				},
 			}),
 		}) as unknown as PiCodingAgentModule });
-		const launch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [requiredPath, ordinaryPath], requiredExtensions: [{ id: "policy", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, onExtensionError: ({ extensionPath, event }) => { if (event === "session_start") reported.push(extensionPath); }, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] } satisfies ChildSessionLaunch;
+		const launch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [requiredPath, ordinaryPath], requiredExtensions: [{ id: "policy", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, onExtensionError: ({ extensionPath, event }) => { if (extensionPath !== "<loader>") reported.push(`${extensionPath} ${event}`); }, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] } satisfies ChildSessionLaunch;
 		await assert.rejects(() => createFactory(requiredPath).create(launch), /Required child extension failed during startup: \/tmp\/required-policy\.mjs \(session_start\): policy init failed/);
 		assert.deepEqual(lifecycle, ["session_shutdown", "dispose"]);
 		assert.ok(await createFactory(ordinaryPath).create(launch));
-		assert.deepEqual(reported, [requiredPath, ordinaryPath]);
+		assert.ok(await createFactory(requiredPath, "register_mcp_server", 'MCP server "demo" is registered, but no loaded extension connects MCP servers').create(launch));
+		assert.deepEqual(reported, [`${requiredPath} session_start`, `${ordinaryPath} session_start`, `${requiredPath} register_mcp_server`]);
 	});
 
 	it("reports no queued messages for an agent-less wrapped session", async () => {
