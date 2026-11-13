@@ -52,6 +52,13 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 	const runId = validateHerdrPiRunId(process.env[HERDR_PI_RUN_ENV]);
 	const runDir = process.env[HERDR_PI_RUNTIME_DIR_ENV];
 	if (!runDir || !path.isAbsolute(runDir) || fs.lstatSync(runDir).isSymbolicLink()) throw new Error("Herdr bridge runtime directory was not authoritatively provisioned.");
+	// Pi can load the same extension twice in one child (a package that also arrives as a dependency), and a second
+	// load would unlink the live socket and the manifest while only the first instance ever sees session_start.
+	// One bridge per runtime directory: a distinct directory is a distinct placed run.
+	const bridgeLoads = Symbol.for("pi-subagents.herdr-bridges");
+	const loads = ((globalThis as unknown as Record<symbol, Set<string>>)[bridgeLoads] ??= new Set<string>());
+	if (loads.has(runDir)) return;
+	loads.add(runDir);
 	fs.chmodSync(runDir, 0o700);
 	const socketPath = path.join(runDir, "bridge.sock");
 	const manifestPath = path.join(runDir, "manifest.json");
@@ -132,7 +139,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		send({ type: "event", requestId: activeRequestId, event: { ...event, message }, nativeSessionId });
 	});
 	on("agent_settled", (_event, ctx) => { const requestId = activeRequestId; send({ type: "settled", requestId, nativeSessionId, idle: ctx.isIdle(), pending: ctx.hasPendingMessages(), finalAssistant, finalGit: gitEvidence(process.cwd()) }); if (ctx.isIdle() && !ctx.hasPendingMessages()) activeRequestId = undefined; });
-	on("session_shutdown", () => { server.close(); client?.destroy(); try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {} });
+	on("session_shutdown", () => { loads.delete(runDir); server.close(); client?.destroy(); try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {} });
 
 	const server = net.createServer((socket) => {
 		if (client && !client.destroyed) { socket.destroy(); return; }
