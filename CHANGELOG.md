@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A subagent placed in a Herdr or Rex pane (`machine`) no longer ends as failed when it did its job. It now gets the same instructions for reporting its result as other subagents. Before, it never saw them, so it could not write the acceptance report and every run under the default acceptance was rejected. Thanks to [@mystery4f](https://github.com/mystery4f) for the report in #3263.
+
 ## [0.88.1] - 2026-11-12
 
 ### Highlights

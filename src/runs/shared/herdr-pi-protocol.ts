@@ -2,6 +2,7 @@ import * as path from "node:path";
 
 export const HERDR_PI_PROTOCOL = 1;
 export const HERDR_PI_MAX_FRAME_BYTES = 1024 * 1024;
+export const HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES = 256 * 1024;
 export const HERDR_PI_MODE_ENV = "PI_SUBAGENTS_HERDR_BRIDGE";
 export const HERDR_PI_RUN_ENV = "PI_SUBAGENTS_HERDR_RUN_ID";
 export const HERDR_PI_RUNTIME_DIR_ENV = "PI_SUBAGENTS_HERDR_RUNTIME_DIR";
