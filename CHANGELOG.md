@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- A subagent with `outputSchema` placed in a Herdr or Rex pane is now refused before any pane opens, with a message saying placed subagents can't return structured output yet. Before, it started, could never call `structured_output`, and failed at the end with an error telling it to call a tool it didn't have.
 - Subagents placed in a Herdr or Rex pane now report their tool calls. Status, the fleet view and results show their tool count and current tool, per-tool timeouts apply to them, and time spent waiting on your answer no longer counts against their `timeoutMs`. Before, the parent saw none of a placed subagent's tool calls, so it showed 0 tools, a stuck tool was never stopped, and a wait on your answer used up the subagent's time. Thanks to [@mystery4f](https://github.com/mystery4f) for the report in #3263.
 - A subagent placed in a Herdr or Rex pane (`machine`) no longer ends as failed when it did its job. It now gets the same instructions for reporting its result as other subagents. Before, it never saw them, so it could not write the acceptance report and every run under the default acceptance was rejected. Thanks to [@mystery4f](https://github.com/mystery4f) for the report in #3263.
 
