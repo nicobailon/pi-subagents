@@ -52,9 +52,8 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 	const runId = validateHerdrPiRunId(process.env[HERDR_PI_RUN_ENV]);
 	const runDir = process.env[HERDR_PI_RUNTIME_DIR_ENV];
 	if (!runDir || !path.isAbsolute(runDir) || fs.lstatSync(runDir).isSymbolicLink()) throw new Error("Herdr bridge runtime directory was not authoritatively provisioned.");
-	// Pi can load the same extension twice in one child (a package that also arrives as a dependency), and a second
-	// load would unlink the live socket and the manifest while only the first instance ever sees session_start.
-	// One bridge per runtime directory: a distinct directory is a distinct placed run.
+	// An in-process SDK session (createAgentSession without a resourceLoader) runs this factory again in the same child; that
+	// instance never sees session_start, and unlinking and rebinding here would cut the live bridge. A distinct directory is a distinct placed run.
 	const bridgeLoads = Symbol.for("pi-subagents.herdr-bridges");
 	const loads = ((globalThis as unknown as Record<symbol, Set<string>>)[bridgeLoads] ??= new Set<string>());
 	if (loads.has(runDir)) return;

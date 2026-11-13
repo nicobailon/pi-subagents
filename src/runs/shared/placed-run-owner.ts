@@ -9,8 +9,8 @@ export interface PlacedBridgeManifest { socketPath: string; nativeSessionId: str
 /** Prints `$1/manifest.json` when it is a regular file, never through a symlink. */
 export const PLACED_MANIFEST_READ_SCRIPT = 'p="$1/manifest.json"; test -f "$p" && test ! -L "$p" && cat "$p"';
 
-/** How long a placed launch waits for the child's bridge manifest; a heavy ambient extension set needs a minute, a broken child is reported by the pane check instead. */
-const PLACED_MANIFEST_DEADLINE_MS = 60_000;
+/** A child with many extensions took about 12 s to write its manifest; a child stuck on a startup prompt holds its pane until this deadline. */
+const PLACED_MANIFEST_DEADLINE_MS = 30_000;
 export async function discoverPlacedBridgeManifest(access: PlacementMachineAccess, runId: string, runtimeDir: string, missing = "The placed Pi's pi-subagents bridge manifest is not in its runtime directory; the Pi may have exited.", deadlineMs = PLACED_MANIFEST_DEADLINE_MS): Promise<PlacedBridgeManifest> {
 	const deadline = Date.now() + deadlineMs;
 	for (;;) {
