@@ -1496,7 +1496,6 @@ describe("native subagent fleet", () => {
 		let input: (data: string) => void = () => {};
 		const tui = new TuiMainScreen(terminal);
 		let closed = 0;
-		const component = new SubagentFleetComponent(tui, theme as never, state, () => { closed++; }, { refreshMs: 60_000, markdownTheme });
 		const editor: Component = { render: () => ["editor"], invalidate() {}, handleInput() {} };
 		const promptKeys: string[] = [];
 		const prompt: Component = { render: () => ["Allow bash? (y) yes (n) no · esc deny"], invalidate() {}, handleInput(data) { promptKeys.push(data); } };
@@ -1506,10 +1505,15 @@ describe("native subagent fleet", () => {
 		tui.addChild(slot);
 		tui.setFocus(editor);
 		tui.start();
+		// Like ctx.ui.custom: the fleet is built while the editor has focus, then shown as an overlay.
+		const component = new SubagentFleetComponent(tui, theme as never, state, () => { closed++; }, { refreshMs: 60_000, markdownTheme });
 		const overlay = tui.showOverlay(component, { width: 100, anchor: "center" });
 		const frame = () => { writes.length = 0; tui.renderNow(); return writes.join(""); };
 		try {
 			assert.match(frame(), /Subagent fleet inspector/);
+			// A fullscreen click on the editor focuses the fleet's own preFocus; no dialog opened, so stay drawn.
+			tui.setFocus(editor);
+			assert.match(component.render(100).join("\n"), /Subagent fleet inspector/);
 			input("j");
 			const selectedRow = component.render(100)[1]!;
 			assert.match(selectedRow, /beta/);

@@ -82,6 +82,7 @@ type Theme = ExtensionContext["ui"]["theme"];
 type FleetTui = {
 	terminal?: { rows: number };
 	requestRender(): void;
+	getFocusedComponent?(): Component | null;
 };
 type AsyncStep = AsyncRunSummary["steps"][number];
 
@@ -835,6 +836,8 @@ export class SubagentFleetComponent implements Component, Focusable {
 	private disposed = false;
 	// Undefined until a TUI first focuses the overlay, so a fleet rendered outside one still draws.
 	private hasFocus: boolean | undefined;
+	// The component focused when the fleet opened (the overlay's preFocus).
+	private readonly openedOver: Component | null | undefined;
 	private refreshTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly refreshMs: number;
 	private readonly tui: FleetTui;
@@ -853,6 +856,7 @@ export class SubagentFleetComponent implements Component, Focusable {
 		options: FleetViewOptions = {},
 	) {
 		this.tui = tui;
+		this.openedOver = tui.getFocusedComponent?.();
 		this.viewport = new FleetViewport(() => this.tui.requestRender());
 		this.theme = theme;
 		this.markdownTheme = options.markdownTheme ?? getMarkdownTheme();
@@ -1390,8 +1394,9 @@ export class SubagentFleetComponent implements Component, Focusable {
 	render(width: number): string[] {
 		// An inline dialog that took focus (a permission prompt, select, confirm) sits under this overlay and
 		// would be covered while it owns the keys. Hiding the overlay through its handle would cancel the
-		// TUI's focus restore, so draw nothing until the TUI gives focus back.
-		if (this.hasFocus === false) {
+		// TUI's focus restore, so draw nothing until the TUI gives focus back. Focus moving to the component the
+		// fleet opened over (a fullscreen click on the editor) shows no dialog, and the next key returns to the fleet.
+		if (this.hasFocus === false && this.tui.getFocusedComponent?.() !== this.openedOver) {
 			this.renderedLayout = undefined;
 			return [];
 		}
