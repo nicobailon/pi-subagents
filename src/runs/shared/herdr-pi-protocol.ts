@@ -39,11 +39,14 @@ export class HerdrPiFrameDecoder {
 	#buffer = Buffer.alloc(0);
 	push(chunk: Buffer): HerdrPiFrame[] {
 		this.#buffer = Buffer.concat([this.#buffer, chunk]);
-		if (this.#buffer.byteLength > HERDR_PI_MAX_FRAME_BYTES) throw new Error(`Herdr Pi frame exceeds ${HERDR_PI_MAX_FRAME_BYTES} bytes.`);
 		const frames: HerdrPiFrame[] = [];
 		for (;;) {
 			const newline = this.#buffer.indexOf(10);
-			if (newline < 0) break;
+			if (newline < 0) {
+				if (this.#buffer.byteLength >= HERDR_PI_MAX_FRAME_BYTES) throw new Error(`Herdr Pi frame exceeds ${HERDR_PI_MAX_FRAME_BYTES} bytes.`);
+				break;
+			}
+			if (newline >= HERDR_PI_MAX_FRAME_BYTES) throw new Error(`Herdr Pi frame exceeds ${HERDR_PI_MAX_FRAME_BYTES} bytes.`);
 			const line = this.#buffer.subarray(0, newline);
 			this.#buffer = this.#buffer.subarray(newline + 1);
 			let value: unknown;

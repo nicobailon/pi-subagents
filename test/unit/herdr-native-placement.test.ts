@@ -41,6 +41,12 @@ function mockBridgeSockets(): { sockets: EventEmitter[]; restore(): void } {
 const eventFrame = (cursor: number) => encodeHerdrPiFrame({ protocol: 1, runId: "run_12345678", type: "event", cursor, nativeSessionId: "native", event: { type: "tool_execution_start", toolName: "read", args: { path: `file-${cursor}` } } });
 
 describe("pane-native Herdr placement public contracts", { skip: process.platform === "win32" }, () => {
+	it("decodes two near-cap frames that arrive in one read, and refuses one over the cap", () => {
+		const frame = (pad: number) => encodeHerdrPiFrame({ protocol: 1, runId: "run_decoder01", type: "event", pad: "x".repeat(pad) });
+		const near = frame(HERDR_PI_MAX_FRAME_BYTES - 200);
+		assert.equal(new HerdrPiFrameDecoder().push(Buffer.concat([near, near])).length, 2);
+		assert.throws(() => new HerdrPiFrameDecoder().push(Buffer.concat([near.subarray(0, -1), Buffer.from("x".repeat(400))])), /exceeds/u);
+	});
 	it("preserves explicit default versus named endpoint identity", () => {
 		assert.equal(parseHerdrEndpoint(JSON.stringify({ socket: "/tmp/herdr.sock", session: null, version: "0.9.0", protocol: 22, running: true, compatible: true })).session, null);
 		assert.equal(parseHerdrEndpoint(JSON.stringify({ socket: "/tmp/herdr.sock", session: null, version: "0.9.0", protocol: 22, running: true, compatible: true }), "default").session, null);
