@@ -43,6 +43,27 @@ function boundedToolArgs(args: unknown): unknown {
 	return Buffer.byteLength(JSON.stringify(shortened)) <= TOOL_ARGS_FRAME_BUDGET ? shortened : {};
 }
 
+// Leaves room under HERDR_PI_MAX_FRAME_BYTES for the frame around the message. A read image alone can be 4.5 MB of base64.
+const MESSAGE_FRAME_BUDGET = HERDR_PI_MAX_FRAME_BYTES - 64 * 1024;
+const fitsMessageBudget = (value: unknown) => Buffer.byteLength(JSON.stringify(value)) <= MESSAGE_FRAME_BUDGET;
+const omittedText = (what: string, bytes: number) => `[${what} omitted by the pi-subagents bridge: ${bytes} bytes over its frame limit]`;
+/** Shrinks only a message that would not fit one bridge frame; dropped images and text leave a marker in their place. */
+function boundedMessage(message: AgentMessage | undefined): AgentMessage | undefined {
+	if (!message || fitsMessageBudget(message)) return message;
+	const record = message as unknown as Record<string, unknown>;
+	const content = Array.isArray(record.content) ? record.content.map((block: Record<string, unknown>) => {
+		if (block.type === "image") return { type: "text", text: omittedText(`Image (${String(block.mimeType)})`, Buffer.byteLength(String(block.data))) };
+		if (block.type === "text" && typeof block.text === "string" && block.text.length > 65_536) return { type: "text", text: `${block.text.slice(0, 65_536)}\n${omittedText("The rest of this text", Buffer.byteLength(block.text.slice(65_536)))}` };
+		if (block.type === "thinking" && typeof block.thinking === "string") return { type: "thinking", thinking: block.thinking.length > 4096 ? `${block.thinking.slice(0, 4096)}\n${omittedText("The rest of this thinking", Buffer.byteLength(block.thinking.slice(4096)))}` : block.thinking };
+		if (block.type === "toolCall") return { ...block, arguments: boundedToolArgs(block.arguments) };
+		return block;
+	}) : record.content;
+	const shrunk = { ...record, content, details: undefined };
+	if (fitsMessageBudget(shrunk)) return shrunk as unknown as AgentMessage;
+	const kept = Object.fromEntries(["role", "toolCallId", "toolName", "isError", "api", "provider", "model", "usage", "stopReason", "timestamp"].filter((key) => key in record).map((key) => [key, record[key]]));
+	return { ...kept, ...(typeof record.errorMessage === "string" ? { errorMessage: record.errorMessage.slice(0, 4096) } : {}), content: [{ type: "text", text: omittedText("This message", Buffer.byteLength(JSON.stringify(message))) }] } as unknown as AgentMessage;
+}
+
 export function resolveRemoteHerdrResources(cwd: string, resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false }, remoteDefaultTools: string[] = []): { agent: string; skills: string[]; tools: string[]; systemPrompt: string; inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean } {
 	if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(resources.agent) || resources.skills?.some((name) => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(name)) || resources.toolCeiling?.some((name) => !/^[A-Za-z0-9_-]{1,64}$/u.test(name)) || (resources.reads !== undefined && resources.reads !== false && (!Array.isArray(resources.reads) || resources.reads.some((name) => typeof name !== "string")))) throw new Error("Remote logical resource names are invalid.");
 	const discovered = discoverAgents(cwd, "both").agents.filter((agent) => agent.name === resources.agent || agent.aliases?.includes(resources.agent));
@@ -79,7 +100,8 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 	const supervisor = new Map<string, { reason: "need_decision" | "interview_request" | "progress_update"; resolve(answer: string): void; reject(error: Error): void }>();
 	let evidenceCursor = 0; let journalBytes = 0; const journal: HerdrPiFrame[] = [];
 	const send = (frame: { type: string; [key: string]: unknown }) => {
-		const record = { protocol: HERDR_PI_PROTOCOL, runId, ...frame, cursor: ++evidenceCursor } as HerdrPiFrame; const size = Buffer.byteLength(JSON.stringify(record)); journal.push(record); journalBytes += size; while (journal.length > 512 || journalBytes > 8 * 1024 * 1024) { const removed = journal.shift(); if (removed) journalBytes -= Buffer.byteLength(JSON.stringify(removed)); }
+		// Checked before journaling: the journal replays on every reconnect, where an unencodable record would end this Pi.
+		const record = { protocol: HERDR_PI_PROTOCOL, runId, ...frame, cursor: evidenceCursor + 1 } as HerdrPiFrame; const size = Buffer.byteLength(JSON.stringify(record)); if (size >= HERDR_PI_MAX_FRAME_BYTES) throw new Error(`pi-subagents bridge frame '${frame.type}' is ${size} bytes, over the ${HERDR_PI_MAX_FRAME_BYTES}-byte limit.`); evidenceCursor = record.cursor as number; journal.push(record); journalBytes += size; while (journal.length > 512 || journalBytes > 8 * 1024 * 1024) { const removed = journal.shift(); if (removed) journalBytes -= Buffer.byteLength(JSON.stringify(removed)); }
 		if (!client || client.destroyed) return;
 		client.write(encodeHerdrPiFrame(record));
 	};
@@ -136,7 +158,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		send({ type: "ready", packageVersion: packageJson.version, nativeSessionId, sessionFile: ctx.sessionManager?.getSessionFile?.(), cwd: process.cwd(), tools: pi.getActiveTools(), model: ctx.model?.provider && ctx.model.id ? `${ctx.model.provider}/${ctx.model.id}` : undefined, configured, activeRequestId, evidenceCursor, evidenceFloor: journal[0]?.cursor ?? evidenceCursor + 1, initialGit: gitEvidence(process.cwd()) });
 	});
 	on("message_end", (event) => {
-		const message = event.message as AgentMessage | undefined;
+		const message = boundedMessage(event.message as AgentMessage | undefined);
 		if (message?.role === "assistant") finalAssistant = message;
 		send({ type: "event", requestId: activeRequestId, event: { ...event, message }, nativeSessionId });
 	});
