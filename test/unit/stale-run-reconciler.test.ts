@@ -672,7 +672,7 @@ describe("async stale-run reconciliation", () => {
 				runnerProcessInstanceId: "runner-current-step-1",
 				reason: "process-tree-unverified", resumeDisposition: "non-resumable",
 			} as const;
-			const repaired = reconcileAsyncRun(asyncDir, { resultsDir, now: () => 2000 }, () => {
+			const repaired = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => { throw errno("ESRCH"); }, now: () => 2000 }, () => {
 				fs.writeFileSync(path.join(asyncDir, "process-terminal.json"), JSON.stringify(observedTerminal), "utf-8");
 				writeStatus(asyncDir, {
 					...staleStatus,
@@ -759,7 +759,7 @@ describe("async stale-run reconciliation", () => {
 					results: [{ agent: "worker", success: false, error: "child failure" }],
 				}), "utf-8");
 
-				const repaired = reconcileAsyncRun(asyncDir, { resultsDir, now: () => 2000 });
+				const repaired = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => { throw errno("ESRCH"); }, now: () => 2000 });
 				assert.equal(repaired.status?.error, fixture.expected);
 			}
 		} finally {
@@ -917,6 +917,45 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(result.repaired, true);
 			assert.equal(result.status?.state, "complete");
 			assert.equal(JSON.parse(fs.readFileSync(resultPath, "utf-8")).summary, "already done");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("leaves a live runner's status alone between its result write and its final status write", () => {
+		const root = tempRoot("pi-stale-live-runner-result-");
+		try {
+			const runId = "run-live-runner-result";
+			const asyncDir = path.join(root, runId);
+			const resultsDir = path.join(root, "results");
+			const pendingProof = { version: 1, state: "pending", runId, runnerProcessInstanceId: "runner-live" };
+			initializeProcessTerminal(asyncDir, runId, "runner-live");
+			writeStatus(asyncDir, {
+				lifecycleArtifactVersion: 3,
+				runId,
+				mode: "single",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1500,
+				processTerminal: pendingProof,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+			fs.mkdirSync(resultsDir, { recursive: true });
+			fs.writeFileSync(path.join(resultsDir, `${runId}.json`), JSON.stringify({ id: runId, success: true, state: "complete" }), "utf-8");
+
+			const live = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => true, pidNamespaceScope: () => undefined, now: () => 2000 });
+			assert.equal(live.repaired, false);
+			assert.equal(live.status?.state, "running");
+			const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+			assert.equal(persisted.state, "running");
+			assert.deepEqual(persisted.processTerminal, pendingProof);
+			assert.equal(readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId: "runner-live" })?.state, "pending");
+
+			// The same pid alive in another pid namespace is not this runner.
+			const otherNamespace = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => true, pidNamespaceScope: () => "linux-pidns:4026531836", now: () => 2000 });
+			assert.equal(otherNamespace.repaired, true);
+			assert.equal(otherNamespace.status?.state, "complete");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
