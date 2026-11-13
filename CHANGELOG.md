@@ -5,7 +5,7 @@
 ### Fixed
 
 - A subagent placed in a Herdr or Rex pane no longer fails to start when another extension in that pane opens its own Pi session at startup. Before, the pane was closed with "did not start the pi-subagents bridge" or the launch timed out, because loading pi-subagents a second time in the same Pi cut the connection to the first copy. Thanks to [@mystery4f](https://github.com/mystery4f) for finding and fixing this in #3263.
-- A subagent placed in a Herdr or Rex pane now gets 30 seconds to start, however slow the connection to that machine is. Before, the parent gave up after 100 checks (about 6 seconds when the pane is on the same machine), so a Pi with many extensions was closed as "did not start the pi-subagents bridge" while it was still loading. Thanks to [@mystery4f](https://github.com/mystery4f) for finding and fixing this in #3263.
+- A subagent placed in a Herdr or Rex pane now gets 30 seconds to start. Before, the parent gave up after 100 checks, about 6 seconds for a Rex pane on this machine, so a Pi with many extensions was closed as "did not start the pi-subagents bridge" while it was still loading. Thanks to [@mystery4f](https://github.com/mystery4f) for finding and fixing this in #3263.
 - When a subagent in a Herdr pane fails after its Pi started, for example on a version mismatch or a missing required tool, the error now says why. Before, it could say only "Could not remove the exact owned remote runtime directory", because the closing Pi had already removed that folder. Thanks to [@mystery4f](https://github.com/mystery4f) for finding and fixing this in #3263.
 
 ## [0.88.1] - 2026-11-12
