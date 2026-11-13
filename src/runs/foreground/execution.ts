@@ -402,6 +402,7 @@ async function runSingleAttempt(
 		machine: options.machine,
 		remoteSkillNames: options.skills ?? agent.skills,
 		remoteReads: options.remoteReads,
+		acceptancePrompt: shared.acceptancePrompt,
 		extensionBindings: options.extensionBindings,
 		requiredExtensions: options.requiredExtensions,
 		sessionEnabled: shared.sessionEnabled,

@@ -8,7 +8,7 @@ import type { HerdrRemoteGitStatus, PlacementMachineReference } from "../../shar
 import type { ChildSession, ChildSessionEvent, ChildSessionFactory, ChildSessionLaunch } from "./child-session.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import { herdrPaneHost, HerdrPlacedRunOwner } from "./herdr-pane-host.ts";
-import { encodeHerdrPiFrame, HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
+import { encodeHerdrPiFrame, HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES, HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
 import { discoverPlacedBridgeManifest, type PlacedBridgeManifest, type PlacedRunOwner } from "./placed-run-owner.ts";
 import type { PlacementBridgeIdentity, PlacementPaneHost, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
 import { RexPlacedRunOwner } from "./rex-pane-host.ts";
@@ -36,7 +36,7 @@ export async function boundedHerdrReconnect(identity: HerdrRunIdentity, lastEvid
 
 function safeRunId(value: string | undefined): string { const prefix = value?.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 48) ?? "run"; return validateHerdrPiRunId(`${prefix}_${randomBytes(8).toString("hex")}`); }
 
-export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: string[]; resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false } } {
+export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: string[]; resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false; acceptancePrompt?: string } } {
 	// Every child is handed a local session file path; only one that already exists (a fork or a
 	// resumed transcript) asks the pane to restore history. A fresh child's path is never written.
 	if (launch.storage.kind === "file" && fs.existsSync(launch.storage.sessionFile)) throw new Error(PLACED_RESTORE_UNSUPPORTED);
@@ -46,11 +46,12 @@ export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: stri
 	if (launch.excludeTools?.length || launch.runtime.permissions || launch.runtime.toolBudget || launch.runtime.requiredExtensions || launch.runtime.mcpDirectTools?.length) throw new Error("Pane-native remote Pi cannot yet represent exclusions, permission rules, tool budgets, MCP direct tools, or required-extension contracts; remove machine placement.");
 	const resources = launch.remoteResources;
 	if (!resources || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(resources.agent) || resources.skills?.some((name) => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(name)) || resources.toolCeiling?.some((name) => !/^[A-Za-z0-9_-]{1,64}$/u.test(name)) || (resources.reads !== undefined && resources.reads !== false && resources.reads.some((read) => typeof read !== "string" || Buffer.byteLength(read) > 4096))) throw new Error("Pane-native remote resources require bounded logical agent, skill, tool, and read names.");
+	if (resources.acceptancePrompt !== undefined && Buffer.byteLength(resources.acceptancePrompt) > HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES) throw new Error(`Pane-native remote Pi acceptance instructions exceed ${HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES} bytes; shorten the acceptance criteria or remove machine placement.`);
 	const args: string[] = [];
 	if (launch.noSkills) args.push("--no-skills", "--no-prompt-templates");
 	if (launch.noContextFiles) args.push("--no-context-files");
 	if (launch.model) args.push("--model", launch.model);
-	return { args, resources: { agent: resources.agent, ...(resources.skills ? { skills: [...resources.skills] } : {}), ...(resources.toolCeiling ? { toolCeiling: [...resources.toolCeiling] } : {}), ...(resources.reads !== undefined ? { reads: resources.reads === false ? false : [...resources.reads] } : {}) } };
+	return { args, resources: { agent: resources.agent, ...(resources.skills ? { skills: [...resources.skills] } : {}), ...(resources.toolCeiling ? { toolCeiling: [...resources.toolCeiling] } : {}), ...(resources.reads !== undefined ? { reads: resources.reads === false ? false : [...resources.reads] } : {}), ...(resources.acceptancePrompt ? { acceptancePrompt: resources.acceptancePrompt } : {}) } };
 }
 
 export class BridgeChannel {
@@ -61,7 +62,7 @@ export class BridgeChannel {
 	get failed() { return this.#failed; }
 	adopt(listener: (frame: HerdrPiFrame) => void): HerdrPiFrame[] { this.#adopted = true; this.listeners.add(listener); return this.frames.splice(0); }
 	wait(type: string, requestId: string): Promise<HerdrPiFrame> { return new Promise((resolve, reject) => this.waiters.set(`${type}:${requestId}`, { resolve, reject })); }
-	configure(resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false }) { const requestId = `cfg_${randomBytes(6).toString("hex")}`; const waiting = this.wait("configured", requestId); this.socket.write(encodeHerdrPiFrame({ protocol: HERDR_PI_PROTOCOL, runId: this.runId, type: "configure", requestId, resources })); return waiting; }
+	configure(resources: ReturnType<typeof serializeHerdrPiLaunch>["resources"]) { const requestId = `cfg_${randomBytes(6).toString("hex")}`; const waiting = this.wait("configured", requestId); this.socket.write(encodeHerdrPiFrame({ protocol: HERDR_PI_PROTOCOL, runId: this.runId, type: "configure", requestId, resources })); return waiting; }
 	supervisorDelivered(requestId: string) { this.socket.write(encodeHerdrPiFrame({ protocol: HERDR_PI_PROTOCOL, runId: this.runId, type: "supervisor-delivered", requestId })); }
 	prepare(requestId: string, operation: string, text?: string, supervisorId?: string, supervisorError?: string) { const waiting = this.wait("prepared", requestId); this.socket.write(encodeHerdrPiFrame({ protocol: HERDR_PI_PROTOCOL, runId: this.runId, type: "prepare", requestId, operation, ...(text !== undefined ? { text } : {}), ...(supervisorId ? { supervisorId } : {}), ...(supervisorError !== undefined ? { error: supervisorError } : {}) })); return waiting; }
 	close() { this.socket.destroy(); }

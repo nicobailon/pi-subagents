@@ -245,6 +245,24 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		finally { for (const socket of sockets) socket.destroy(); handlers.get("session_shutdown")?.(); old.mode === undefined ? delete process.env[HERDR_PI_MODE_ENV] : process.env[HERDR_PI_MODE_ENV] = old.mode; old.run === undefined ? delete process.env[HERDR_PI_RUN_ENV] : process.env[HERDR_PI_RUN_ENV] = old.run; old.dir === undefined ? delete process.env[HERDR_PI_RUNTIME_DIR_ENV] : process.env[HERDR_PI_RUNTIME_DIR_ENV] = old.dir; fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 
+	it("gives a placed child the parent's acceptance instructions in its system prompt", async () => {
+		let placedLaunch: ChildSessionLaunch | undefined;
+		const factory: ChildSessionFactory = { async create(value) { placedLaunch = value; const listeners = new Set<(event: any) => void>(); return { ...child, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); }, async prompt() { const message = { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } }; for (const listener of listeners) listener({ type: "message_end", message }); for (const listener of listeners) listener({ type: "agent_settled" }); } }; }, async dispose() {} };
+		await runSync(process.cwd(), [makeAgent("worker")], "worker", "inspect", { machine: { ...machine, cwd: os.tmpdir() }, cwd: os.tmpdir(), childSessionFactory: factory });
+		const resources = serializeHerdrPiLaunch(placedLaunch!).resources;
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pha-")); const old = { mode: process.env[HERDR_PI_MODE_ENV], run: process.env[HERDR_PI_RUN_ENV], dir: process.env[HERDR_PI_RUNTIME_DIR_ENV] }; process.env[HERDR_PI_MODE_ENV] = "1"; process.env[HERDR_PI_RUN_ENV] = "run_accept001"; process.env[HERDR_PI_RUNTIME_DIR_ENV] = dir; const handlers = new Map<string, Function>(); let socket: net.Socket | undefined;
+		let activeTools = ["read", "bash"]; const pi = { registerTool() {}, registerCommand() {}, on(name: string, handler: Function) { handlers.set(name, handler); }, getAllTools: () => activeTools.map((name) => ({ name })), getActiveTools: () => [...activeTools], setActiveTools(value: string[]) { activeTools = [...value]; } };
+		try {
+			registerHerdrPiBridge(pi as never); handlers.get("session_start")?.({}, { sessionManager: { getSessionId: () => "native", getSessionFile: () => "/remote/session" }, isIdle: () => true, hasPendingMessages: () => false });
+			socket = net.createConnection(path.join(dir, "bridge.sock")); const decoder = new HerdrPiFrameDecoder(); const frames: any[] = []; socket.on("data", (chunk) => frames.push(...decoder.push(chunk))); await new Promise<void>((resolve) => socket!.once("connect", resolve));
+			socket.write(encodeHerdrPiFrame({ protocol: 1, runId: "run_accept001", type: "configure", requestId: "cfg", resources: { ...resources, toolCeiling: ["read"] } })); await new Promise((resolve) => setTimeout(resolve, 50));
+			assert.ok(frames.some((frame) => frame.type === "configured"));
+			const prompt = (handlers.get("before_agent_start")?.({ systemPrompt: "BASE" }) as { systemPrompt: string }).systemPrompt;
+			assert.match(prompt, /## Acceptance Contract\nAcceptance level: attested/u);
+			assert.match(prompt, /```acceptance-report/u);
+		} finally { socket?.destroy(); handlers.get("session_shutdown")?.(); old.mode === undefined ? delete process.env[HERDR_PI_MODE_ENV] : process.env[HERDR_PI_MODE_ENV] = old.mode; old.run === undefined ? delete process.env[HERDR_PI_RUN_ENV] : process.env[HERDR_PI_RUN_ENV] = old.run; old.dir === undefined ? delete process.env[HERDR_PI_RUNTIME_DIR_ENV] : process.env[HERDR_PI_RUNTIME_DIR_ENV] = old.dir; fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+
 	for (const reason of ["need_decision", "interview_request", "successful_reply", "ask_after_idle_channel_cleanup"] as const) {
 		it(`preserves ${reason} through the shared Herdr/Rex supervisor file relay and bridge`, { timeout: 10_000 }, async () => {
 			// Short prefix: the bridge socket lives under this dir, and macOS caps Unix socket paths at 104 bytes.
