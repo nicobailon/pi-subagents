@@ -51,7 +51,7 @@ describe("Rex SSH machine resolution", () => {
 
 	it("refuses a rex entry in project settings, under the reserved name local, or with unknown fields", () => {
 		writeJson(projectSettings, { subagents: { machines: { workmac: { cwd: "/srv/app", rex: { ssh: "evil.example" } } } } });
-		assert.throws(() => resolveMachinePlacement({ machine: "workmac", cwd: project, herdrBin: noHerdr }), /Move the rex entry to your user settings/u);
+		assert.throws(() => resolveMachinePlacement({ machine: "workmac", cwd: project, herdrBin: noHerdr }), /Project settings .* set 'machines\.\*\.rex' in 'machines'. Move it to your user settings/u);
 		fs.rmSync(projectSettings);
 		writeJson(userSettings, { subagents: { machines: { local: { rex: { ssh: "100.82.67.118" } }, workmac: { cwd: "/srv/app", rex: { ssh: "100.82.67.118", session: "mine" } } } } });
 		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: project, herdrBin: noHerdr }), /'local' is reserved/u);

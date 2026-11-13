@@ -187,9 +187,11 @@ function machineSettingsFrom(settings: Record<string, unknown>, keys: readonly s
 			throw new Error(`Subagent settings in '${filePath}' have invalid 'machines.${key}.env'; expected an object of string values keyed by variable name.`);
 		}
 		entry.env = { ...(record.env as Record<string, string>) };
-		if (Object.keys(entry.env).length > 0) {
-			throw new Error(`Subagent settings in '${filePath}' set 'machines.${key}.env'. Saved-machine runs use the remote Herdr/Pi environment; configure credentials and environment on '${key}' and remove the local env map.`);
-		}
+	}
+	// Adapter-declared keys (tmux, zellij, ...) flow through opaquely; each host adapter validates its own shape.
+	for (const [name, value] of Object.entries(record)) {
+		if (name === "cwd" || name === "env" || name === "rex") continue;
+		(entry as MachineSettingsEntry & Record<string, unknown>)[name] = value;
 	}
 	if (record.rex !== undefined) {
 		const rex = record.rex, ssh = rex && typeof rex === "object" && !Array.isArray(rex) && Object.keys(rex).every((field) => field === "ssh") ? (rex as Record<string, unknown>).ssh : undefined;
@@ -199,13 +201,14 @@ function machineSettingsFrom(settings: Record<string, unknown>, keys: readonly s
 	return entry;
 }
 
-/** Project settings beat user settings, field by field; the entry may be keyed by label, id, or the typed selector. Only user settings may name a Rex SSH host, so a cloned repo never chooses where a task runs. */
+/** Project settings beat user settings, field by field; the entry may be keyed by label, id, or the typed selector. Adapter-declared keys pass through opaquely, and only user settings may set them (cwd excepted), so a cloned repo never chooses where a task runs. */
 function readMachineSettings(cwd: string, keys: readonly string[]): MachineSettingsEntry | undefined {
 	const userPath = path.join(getAgentDir(), "settings.json");
 	const projectPath = path.join(getProjectConfigDir(findProjectRootForSettings(cwd)), "settings.json");
 	const user = machineSettingsFrom(readJsonObject(userPath), keys, userPath);
 	const project = projectPath === userPath ? undefined : machineSettingsFrom(readJsonObject(projectPath), keys, projectPath);
-	if (project?.rex) throw new Error(`Project settings '${projectPath}' set a Rex SSH host in 'machines'. Move the rex entry to your user settings '${userPath}'; only user settings choose which host a task runs on.`);
+	const projectExtras = project ? Object.keys(project).filter((name) => name !== "cwd") : [];
+	if (projectExtras.length > 0) throw new Error(`Project settings '${projectPath}' set ${projectExtras.map((name) => `'machines.*.${name}'`).join(", ")} in 'machines'. Move ${projectExtras.length > 1 ? "them" : "it"} to your user settings '${userPath}'; only user settings choose how a task reaches a machine.`);
 	if (!user && !project) return undefined;
 	return { ...user, ...project };
 }

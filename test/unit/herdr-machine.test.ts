@@ -8,8 +8,10 @@ import {
 	formatHerdrMachineRunnerUnsupported,
 	prepareHerdrMachineExternalCliRun,
 	resolveHerdrMachinePlacement,
+	resolveMachinePlacement,
 	shellQuote,
 } from "../../src/runs/shared/herdr-machine.ts";
+import { registerPlacementAdapter, type PlacementAdapterV1 } from "../../src/runs/shared/placement-registry.ts";
 import type { HerdrMachineReference } from "../../src/shared/types.ts";
 import { herdrPaneAllocationKey } from "../../src/runs/shared/placement-host.ts";
 import { connectHerdrMachine, decodeHerdrJsonLine, discoverHerdrEndpoint, hardenedSshEnv, herdrSshArgs, HERDR_REMOTE_PATH, HERDR_SSH_BASE, runHerdrRemoteCommandAsync, sshMachineAccess } from "../../src/runs/shared/herdr-connection.ts";
@@ -126,9 +128,42 @@ describe("Herdr machine placement", () => {
 			writeJson(path.join(tempProject, ".pi", "settings.json"), { subagents: { machines: { [machine.id]: { cwd: "/project/root" } } } });
 			const nested = path.join(tempProject, "nested", "dir");
 			fs.mkdirSync(nested, { recursive: true });
-			assert.throws(() => resolveHerdrMachinePlacement({ machine: "workmac", cwd: nested, catalogJson: catalog }), /configure credentials and environment.*remov/iu);
+			assert.throws(() => resolveHerdrMachinePlacement({ machine: "workmac", cwd: nested, catalogJson: catalog }), /remove machines\.workmac\.env and configure/iu);
 			writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), { subagents: { machines: { workmac: { cwd: "/user/root" } } } });
 			assert.equal(resolveHerdrMachinePlacement({ machine: "workmac", cwd: nested, catalogJson: catalog }).machine.cwd, "/project/root");
+		});
+
+		it("passes adapter-declared machine settings from user settings through to the claiming adapter", () => {
+			writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), { subagents: { machines: { pipebox: { cwd: "/user/root", env: { FOO: "1" }, tmux: { ssh: "u@host" } } } } });
+			let seen: Record<string, unknown> | undefined;
+			const pipe: PlacementAdapterV1 = {
+				kind: "pi-subagents.placement-adapter",
+				version: 1,
+				provider: "pipesettle",
+				resolveMachinePlacement: (request) => {
+					if (request.machine !== "pipebox") return undefined;
+					seen = request.settings as Record<string, unknown>;
+					return { machine: { provider: "pipesettle", id: request.machine, localDisk: true, cwd: "/user/root" }, env: seen?.env as Record<string, string> };
+				},
+				async openPlacedRun() { throw new Error("unused"); },
+			};
+			registerPlacementAdapter(pipe, { before: "herdr" });
+			try {
+				const resolved = resolveMachinePlacement({ machine: "pipebox", cwd: tempProject, stepCwd: "/abs/place" });
+				assert.deepEqual(seen, { cwd: "/user/root", env: { FOO: "1" }, tmux: { ssh: "u@host" } });
+				assert.deepEqual(resolved.env, { FOO: "1" });
+				assert.equal(resolved.machine.cwd, "/user/root");
+			} finally {
+				writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {});
+			}
+		});
+
+		it("refuses adapter-declared machine settings from project settings", () => {
+			writeJson(path.join(tempProject, ".pi", "settings.json"), { subagents: { machines: { workmac: { cwd: "/project/root", tmux: { ssh: "u@host" } } } } });
+			assert.throws(
+				() => resolveHerdrMachinePlacement({ machine: "workmac", cwd: tempProject, catalogJson: catalog }),
+				/Project settings .* set 'machines\.\*\.tmux' in 'machines'\. Move it to your user settings .*; only user settings choose how a task reaches a machine\./u,
+			);
 		});
 
 		it("rejects malformed machine settings instead of ignoring them", () => {
