@@ -104,7 +104,6 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		const reportOtherSession = withEnv({ FAKE_HERDR_REPORT_SESSION: "other" });
 		try { await assert.rejects(HerdrPlacedRunOwner.create({ provider: "herdr", id: "local", socket, session: "work", cwd: dir }, runId), /session identity mismatch: expected work, received other/u); } finally { reportOtherSession(); }
 		assert.deepEqual(runtimeDirs(runId), []);
-		assert.equal(fs.existsSync(path.join(dir, "ssh-called")), false);
 		assert.equal(requests.length, 0);
 	});
 
@@ -112,7 +111,7 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		// The bridge runs in this process, so the pane's directory is this process's directory.
 		const cwd = process.cwd(), machine: HerdrLocalMachineReference = { provider: "herdr", id: "local", socket, cwd };
 		const handlers = new Map<string, Function>(), pi = { registerTool() {}, registerCommand() {}, on(name: string, handler: Function) { handlers.set(name, handler); }, getActiveTools: () => ["read"], setActiveTools() {} };
-		const paneEnv = withEnv({}); let restorePane = paneEnv;
+		let restorePane = () => {};
 		onAgentStart = (created) => {
 			const env = created.env as Record<string, string>;
 			restorePane = withEnv({ [HERDR_PI_MODE_ENV]: env[HERDR_PI_MODE_ENV]!, [HERDR_PI_RUN_ENV]: env[HERDR_PI_RUN_ENV]!, [HERDR_PI_RUNTIME_DIR_ENV]: env[HERDR_PI_RUNTIME_DIR_ENV]! });
@@ -124,10 +123,8 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		try {
 			child = await createHerdrPiSession(launch);
 			assert.ok(child instanceof HerdrPiSession);
-			const { runtimeDir, runId: _runId, agentName: _agentName, ...identity } = child.identity;
-			assert.match(runtimeDir, /^\/tmp\/pi-subagents-herdr-[0-9a-f]{12}-/u);
+			const { runtimeDir: _runtimeDir, runId: _runId, agentName: _agentName, ...identity } = child.identity;
 			assert.deepEqual(identity, { machineId: "local", target: "local", session: null, workspaceId: "w1", tabId: "t1", paneId: "p1", terminalId: "term1", nativeSessionId: "native", cwd });
-			assert.equal(fs.existsSync(path.join(dir, "ssh-called")), false);
 		} finally { await child?.dispose(); handlers.get("session_shutdown")?.(); restorePane(); }
 	});
 

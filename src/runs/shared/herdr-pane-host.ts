@@ -62,9 +62,8 @@ async function connectLocalHerdrMachine(machine: HerdrLocalMachineReference): Pr
 	return { endpoint, socketPath: machine.socket, client: new SocketRpcClient(machine.socket), forwardRemoteSocket: sockets.forwardRemoteSocket, close: sockets.close };
 }
 
-/** Herdr-local runtime directories go under /tmp: the bridge socket path inside a macOS TMPDIR exceeds the unix socket path limit. */
-function herdrLocalAccess(): PlacementMachineAccess { return localMachineAccess({ env: { ...process.env, TMPDIR: "/tmp" } }); }
-function herdrAccess(machine: HerdrPlacementMachine): PlacementMachineAccess { return "target" in machine ? sshMachineAccess(machine) : herdrLocalAccess(); }
+/** Local runtime directories go under /tmp: the bridge socket path inside a macOS TMPDIR exceeds the unix socket path limit. */
+function herdrAccess(machine: HerdrPlacementMachine): PlacementMachineAccess { return "target" in machine ? sshMachineAccess(machine) : localMachineAccess({ env: { ...process.env, TMPDIR: "/tmp" } }); }
 
 async function startHerdrAgent(connection: HerdrForwardedConnection, owned: PlacementOwnedPane, kind: PlacementAgentKind, name: string, args: string[], options: PlacementStartOptions = {}): Promise<{ terminalId: string; paneId: string }> {
 	const clock = options.clock ?? { now: () => Date.now(), wait: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)) }, deadline = clock.now() + (options.timeoutMs ?? 5_000), pollMs = options.pollMs ?? 50;

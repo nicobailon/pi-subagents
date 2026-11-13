@@ -269,9 +269,9 @@ function runLocalHerdr(bin: string, args: string[], env: NodeJS.ProcessEnv): str
 }
 
 /** Resolves `machine: "local"` inside a Herdr pane: records the server drawing this Pi (confirmed to know this pane) and the real launch directory. */
-function resolveHerdrLocalPlacement(input: { cwd: string; stepCwd?: string; env?: NodeJS.ProcessEnv; herdrBin?: string }): HerdrLocalMachineReference {
+function resolveHerdrLocalPlacement(input: { cwd: string; stepCwd?: string; env: NodeJS.ProcessEnv; herdrBin?: string }): HerdrLocalMachineReference {
 	if (process.platform === "win32") throw new Error("Machine 'local' runs the child in a Herdr pane, which is not supported on Windows.");
-	const env = input.env ?? process.env, paneId = env.HERDR_PANE_ID!.trim(), bin = input.herdrBin ?? env.HERDR_BIN ?? "herdr";
+	const env = input.env, paneId = env.HERDR_PANE_ID!.trim(), bin = input.herdrBin ?? env.HERDR_BIN ?? "herdr";
 	let endpoint: ReturnType<typeof parseHerdrEndpoint>;
 	try { endpoint = parseHerdrEndpoint(runLocalHerdr(bin, ["status", "server", "--json"], env), env.HERDR_SESSION); } catch (error) { throw new Error(`Machine 'local' could not confirm this pane's Herdr server: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
 	let pane: unknown;
