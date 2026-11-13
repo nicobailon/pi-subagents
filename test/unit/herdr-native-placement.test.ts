@@ -356,6 +356,21 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		}
 	});
 
+	// An in-process SDK session in the child loads the extension again and may start (and end) its own session; the first session to start owns the bridge.
+	for (const starts of [["native"], ["native", "sdk"], ["sdk"]]) it(`gives the bridge to the first session that starts when the extension loads twice (${starts.join(", then ")} starts)`, { skip: process.platform === "win32" }, async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-twice-")); const old = { mode: process.env[HERDR_PI_MODE_ENV], run: process.env[HERDR_PI_RUN_ENV], dir: process.env[HERDR_PI_RUNTIME_DIR_ENV] }; process.env[HERDR_PI_MODE_ENV] = "1"; process.env[HERDR_PI_RUN_ENV] = "run_twice001"; process.env[HERDR_PI_RUNTIME_DIR_ENV] = dir; let socket: net.Socket | undefined;
+		const fakePi = () => { const handlers = new Map<string, Function>(); return { handlers, pi: { registerTool() {}, registerCommand() {}, on(name: string, handler: Function) { handlers.set(name, handler); }, getActiveTools: () => ["read"], setActiveTools() {} } }; };
+		const loads = { native: fakePi(), sdk: fakePi() }, ctx = (id: string) => ({ sessionManager: { getSessionId: () => id, getSessionFile: () => `/remote/${id}` }, isIdle: () => true, hasPendingMessages: () => false });
+		try {
+			registerHerdrPiBridge(loads.native.pi as never); registerHerdrPiBridge(loads.sdk.pi as never);
+			for (const id of starts) loads[id as keyof typeof loads].handlers.get("session_start")?.({}, ctx(id));
+			if (starts.length > 1) loads.sdk.handlers.get("session_shutdown")?.();
+			assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8")).nativeSessionId, starts[0]);
+			socket = net.createConnection(path.join(dir, "bridge.sock")); const decoder = new HerdrPiFrameDecoder(); const frames: any[] = []; socket.on("data", (chunk) => frames.push(...decoder.push(chunk))); await new Promise<void>((resolve) => socket!.once("connect", resolve)); await new Promise((resolve) => setTimeout(resolve, 30));
+			assert.equal(frames.find((frame) => frame.type === "ready")?.nativeSessionId, starts[0]);
+		} finally { socket?.destroy(); loads.sdk.handlers.get("session_shutdown")?.(); loads.native.handlers.get("session_shutdown")?.(); old.mode === undefined ? delete process.env[HERDR_PI_MODE_ENV] : process.env[HERDR_PI_MODE_ENV] = old.mode; old.run === undefined ? delete process.env[HERDR_PI_RUN_ENV] : process.env[HERDR_PI_RUN_ENV] = old.run; old.dir === undefined ? delete process.env[HERDR_PI_RUNTIME_DIR_ENV] : process.env[HERDR_PI_RUNTIME_DIR_ENV] = old.dir; fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+
 	it("leaves the remote operator's APPEND_SYSTEM.md out of the child's prompt", { skip: process.platform === "win32" }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-append-")); const old = { mode: process.env[HERDR_PI_MODE_ENV], run: process.env[HERDR_PI_RUN_ENV], dir: process.env[HERDR_PI_RUNTIME_DIR_ENV] }; process.env[HERDR_PI_MODE_ENV] = "1"; process.env[HERDR_PI_RUN_ENV] = "run_append01"; process.env[HERDR_PI_RUNTIME_DIR_ENV] = dir; const handlers = new Map<string, Function>(); let socket: net.Socket | undefined;
 		const pi = { registerTool() {}, registerCommand() {}, on(name: string, handler: Function) { handlers.set(name, handler); }, getActiveTools: () => ["read"], setActiveTools() {} };
