@@ -388,6 +388,25 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		} finally { socket?.destroy(); handlers.get("session_shutdown")?.(); old.mode === undefined ? delete process.env[HERDR_PI_MODE_ENV] : process.env[HERDR_PI_MODE_ENV] = old.mode; old.run === undefined ? delete process.env[HERDR_PI_RUN_ENV] : process.env[HERDR_PI_RUN_ENV] = old.run; old.dir === undefined ? delete process.env[HERDR_PI_RUNTIME_DIR_ENV] : process.env[HERDR_PI_RUNTIME_DIR_ENV] = old.dir; fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 
+	it("forwards a placed child's tool calls to the parent session, keeping oversized args under the frame cap", { skip: process.platform === "win32" }, async () => {
+		// Short prefix: the bridge socket lives under this dir, and macOS caps Unix socket paths at 104 bytes.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pte-")); const old = { mode: process.env[HERDR_PI_MODE_ENV], run: process.env[HERDR_PI_RUN_ENV], dir: process.env[HERDR_PI_RUNTIME_DIR_ENV] }; process.env[HERDR_PI_MODE_ENV] = "1"; process.env[HERDR_PI_RUN_ENV] = "run_toolevt01"; process.env[HERDR_PI_RUNTIME_DIR_ENV] = dir; const handlers = new Map<string, Function>(); let bridge: BridgeChannel | undefined; let session: HerdrPiSession | undefined;
+		const pi = { registerTool() {}, registerCommand() {}, on(name: string, handler: Function) { handlers.set(name, handler); }, getActiveTools: () => ["read", "write"], setActiveTools() {} };
+		try {
+			registerHerdrPiBridge(pi as never); handlers.get("session_start")?.({}, { sessionManager: { getSessionId: () => "native", getSessionFile: () => "/remote/session" }, model: { provider: "p", id: "m" }, isIdle: () => true, hasPendingMessages: () => false });
+			bridge = new BridgeChannel(path.join(dir, "bridge.sock"), "run_toolevt01"); await bridge.configure({ agent: "worker", toolCeiling: ["read", "write"] });
+			const identity: HerdrRunIdentity = { runId: "run_toolevt01", machineId: "m1", target: "remote", session: null, workspaceId: "w", tabId: "t", paneId: "p", terminalId: "term", agentName: "pi-tools", nativeSessionId: "native", cwd: process.cwd(), runtimeDir: dir };
+			session = new HerdrPiSession({ identity, machine, connection: {}, host: { async prompt() {} }, async cleanup() {} } as unknown as HerdrPlacedRunOwner, { async close() {} }, bridge, ["read", "write"], "p/m", runtime);
+			const events: any[] = []; session.subscribe((event) => events.push(event));
+			handlers.get("tool_execution_start")?.({ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: { path: "src/a.ts" } }, {});
+			handlers.get("tool_execution_end")?.({ type: "tool_execution_end", toolCallId: "c1", toolName: "read", result: { content: [] }, isError: false }, {});
+			handlers.get("tool_execution_start")?.({ type: "tool_execution_start", toolCallId: "c2", toolName: "write", args: { path: "big.txt", content: "x".repeat(2 * HERDR_PI_MAX_FRAME_BYTES) } }, {});
+			const deadline = Date.now() + 5_000; while (events.length < 3) { assert.ok(Date.now() < deadline, "tool events reach the parent session"); await new Promise((resolve) => setTimeout(resolve, 10)); }
+			assert.deepEqual(events.slice(0, 2), [{ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: { path: "src/a.ts" } }, { type: "tool_execution_end", toolCallId: "c1", toolName: "read", isError: false }]);
+			assert.equal(events[2].toolName, "write"); assert.equal(events[2].args.path, "big.txt"); assert.ok(events[2].args.content.length < HERDR_PI_MAX_FRAME_BYTES);
+		} finally { await session?.dispose(); bridge?.close(); handlers.get("session_shutdown")?.(); old.mode === undefined ? delete process.env[HERDR_PI_MODE_ENV] : process.env[HERDR_PI_MODE_ENV] = old.mode; old.run === undefined ? delete process.env[HERDR_PI_RUN_ENV] : process.env[HERDR_PI_RUN_ENV] = old.run; old.dir === undefined ? delete process.env[HERDR_PI_RUNTIME_DIR_ENV] : process.env[HERDR_PI_RUNTIME_DIR_ENV] = old.dir; fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+
 	it("frames correlated bridge data and fails closed on malformed, partial, or oversized evidence", () => {
 		const decoder = new HerdrPiFrameDecoder(); const encoded = encodeHerdrPiFrame({ protocol: 1, runId: "run_12345678", type: "settled", requestId: "q1", idle: true, pending: false });
 		assert.deepEqual(decoder.push(encoded)[0], { protocol: 1, runId: "run_12345678", type: "settled", requestId: "q1", idle: true, pending: false });
