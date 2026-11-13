@@ -672,7 +672,7 @@ describe("async stale-run reconciliation", () => {
 				runnerProcessInstanceId: "runner-current-step-1",
 				reason: "process-tree-unverified", resumeDisposition: "non-resumable",
 			} as const;
-			const repaired = reconcileAsyncRun(asyncDir, { resultsDir, now: () => 2000 }, () => {
+			const repaired = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => { throw errno("ESRCH"); }, now: () => 2000 }, () => {
 				fs.writeFileSync(path.join(asyncDir, "process-terminal.json"), JSON.stringify(observedTerminal), "utf-8");
 				writeStatus(asyncDir, {
 					...staleStatus,
@@ -759,7 +759,7 @@ describe("async stale-run reconciliation", () => {
 					results: [{ agent: "worker", success: false, error: "child failure" }],
 				}), "utf-8");
 
-				const repaired = reconcileAsyncRun(asyncDir, { resultsDir, now: () => 2000 });
+				const repaired = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => { throw errno("ESRCH"); }, now: () => 2000 });
 				assert.equal(repaired.status?.error, fixture.expected);
 			}
 		} finally {
