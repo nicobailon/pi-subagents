@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
-import type { HerdrMachineReference, PlacementMachineReference } from "../../shared/types.ts";
-import { connectHerdrMachine, sshMachineAccess, type HerdrForwardedConnection, type HerdrRpcClient } from "./herdr-connection.ts";
+import type { HerdrLocalMachineReference, HerdrMachineReference, PlacementMachineReference } from "../../shared/types.ts";
+import { connectHerdrMachine, parseHerdrEndpoint, runBoundedCommand, SocketRpcClient, sshMachineAccess, type HerdrForwardedConnection, type HerdrRpcClient } from "./herdr-connection.ts";
 import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { HERDR_PI_MODE_ENV, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV } from "./herdr-pi-protocol.ts";
+import { localMachineAccess } from "./local-machine-access.ts";
 import { createPlacedRuntimeDir, discoverPlacedBridgeManifest, PlacedRunOwner, removePlacedRuntimeDir, type PlacedBridgeManifest } from "./placed-run-owner.ts";
-import { herdrPaneAllocationKey, withHerdrPaneAllocationLock, type PlacementAgentKind, type PlacementBridgeIdentity, type PlacementEvidenceProof, type PlacementOwnedPane, type PlacementPaneHost, type PlacementPromptOptions, type PlacementReconnectCheck, type PlacementRunState, type PlacementStartOptions } from "./placement-host.ts";
+import { herdrPaneAllocationKey, withHerdrPaneAllocationLock, type PlacementAgentKind, type PlacementBridgeIdentity, type PlacementEvidenceProof, type PlacementMachineAccess, type PlacementOwnedPane, type PlacementPaneHost, type PlacementPromptOptions, type PlacementReconnectCheck, type PlacementRunState, type PlacementStartOptions } from "./placement-host.ts";
+
+/** A Herdr saved SSH machine or `machine: "local"` in the parent's own Herdr session. */
+export type HerdrPlacementMachine = HerdrMachineReference | HerdrLocalMachineReference;
 
 export interface HerdrPaneCandidate { endpoint: { session: string | null; protocol: number; version: string }; agents: Array<{ terminal_id?: string; pane_id?: string; agent_status?: string }> }
 export interface HerdrReconnectCandidate extends HerdrPaneCandidate { bridge: PlacementBridgeIdentity }
@@ -45,8 +49,30 @@ export async function provisionHerdrPane(client: HerdrRpcClient, cwd: string, ru
 	});
 }
 
-function provisionHerdrOwnedPane(connection: HerdrForwardedConnection, machine: HerdrMachineReference, runId: string, runtimeDir: string, environment?: Record<string, string>): Promise<PlacementOwnedPane> { return provisionHerdrPane(connection.client, machine.cwd, runId, runtimeDir, environment, herdrPaneAllocationKey(machine.target, connection.endpoint.session, machine.cwd)); }
-function asHerdrMachine(machine: PlacementMachineReference): HerdrMachineReference { if (machine.provider !== "herdr") throw new Error("The Herdr pane host only places runs on Herdr saved machines."); return machine; }
+function provisionHerdrOwnedPane(connection: HerdrForwardedConnection, machine: HerdrPlacementMachine, runId: string, runtimeDir: string, environment?: Record<string, string>): Promise<PlacementOwnedPane> { return provisionHerdrPane(connection.client, machine.cwd, runId, runtimeDir, environment, "target" in machine ? herdrPaneAllocationKey(machine.target, connection.endpoint.session, machine.cwd) : JSON.stringify(["local", machine.socket, connection.endpoint.session, machine.cwd])); }
+function asHerdrMachine(machine: PlacementMachineReference): HerdrPlacementMachine { if (machine.provider !== "herdr") throw new Error("The Herdr pane host only places runs on Herdr machines."); return machine; }
+
+/** Points herdr at the recorded server only: the calling process's own pane selectors (a background runner started from another pane) never choose it. */
+export function herdrLocalEnv(socket: string, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	const { HERDR_SESSION: _session, HERDR_CLIENT_SOCKET_PATH: _client, HERDR_PANE_ID: _pane, HERDR_ENV: _env, HERDR_SOCKET_PATH: _socket, ...env } = source;
+	return { ...env, HERDR_SOCKET_PATH: socket };
+}
+
+/** `machine: "local"` in Herdr: the recorded server on this machine, confirmed by socket and session, reached without SSH. */
+export async function connectLocalHerdrMachine(machine: HerdrLocalMachineReference, options: { herdrBin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<HerdrForwardedConnection> {
+	if (process.platform === "win32") throw new Error("Machine 'local' runs the child in a Herdr pane, which is not supported on Windows.");
+	const env = options.env ?? process.env, result = await runBoundedCommand(options.herdrBin ?? env.HERDR_BIN ?? "herdr", ["status", "server", "--json"], { env: herdrLocalEnv(machine.socket, env), timeout: 15_000 });
+	if (result.error) throw new Error(`Local Herdr discovery failed: ${result.error.message}`, { cause: result.error });
+	if (result.status !== 0) throw new Error(`Local Herdr discovery failed with code ${result.status}: ${(result.stderr || result.stdout).trim().slice(0, 512)}`);
+	const endpoint = parseHerdrEndpoint(result.stdout, machine.session);
+	if (endpoint.socket !== machine.socket) throw new Error(`Local Herdr server identity mismatch: expected socket ${machine.socket}, received ${endpoint.socket}.`);
+	const sockets = localMachineAccess({ env }).openSockets();
+	return { endpoint, socketPath: machine.socket, client: new SocketRpcClient(machine.socket), forwardRemoteSocket: sockets.forwardRemoteSocket, close: sockets.close };
+}
+
+/** Herdr-local runtime directories go under /tmp: the bridge socket path inside a macOS TMPDIR exceeds the unix socket path limit. */
+function herdrLocalAccess(): PlacementMachineAccess { return localMachineAccess({ env: { ...process.env, TMPDIR: "/tmp" } }); }
+function herdrAccess(machine: HerdrPlacementMachine): PlacementMachineAccess { return "target" in machine ? sshMachineAccess(machine) : herdrLocalAccess(); }
 
 async function startHerdrAgent(connection: HerdrForwardedConnection, owned: PlacementOwnedPane, kind: PlacementAgentKind, name: string, args: string[], options: PlacementStartOptions = {}): Promise<{ terminalId: string; paneId: string }> {
 	const clock = options.clock ?? { now: () => Date.now(), wait: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)) }, deadline = clock.now() + (options.timeoutMs ?? 5_000), pollMs = options.pollMs ?? 50;
@@ -67,7 +93,7 @@ async function closeOwnedHerdrPane(connection: HerdrForwardedConnection, owned: 
 
 /** Herdr pane host: Herdr RPC over the SSH-forwarded Herdr socket. Ownership is the Herdr terminal_id/pane_id pair; run state comes from agent_status. */
 export const herdrPaneHost = {
-	connect(machine) { return connectHerdrMachine(asHerdrMachine(machine)); },
+	connect(machine) { const herdr = asHerdrMachine(machine); return "target" in herdr ? connectHerdrMachine(herdr) : connectLocalHerdrMachine(herdr); },
 	sessionOf(connection) { return connection.endpoint.session; },
 	async launch(connection, machine, runId, runtimeDir, request, onPane, options) { const owned = await provisionHerdrOwnedPane(connection, asHerdrMachine(machine), runId, runtimeDir, request.environment); await onPane(owned); const { terminalId } = await startHerdrAgent(connection, owned, request.kind, request.name, request.args, options); return { owned, terminalId }; },
 	async prompt(connection, identity, text, options: PlacementPromptOptions = {}) {
@@ -90,10 +116,14 @@ export function discoverBridgeManifest(machine: HerdrMachineReference, runId: st
 export function createRemoteRuntimeDir(machine: HerdrMachineReference, runId: string, options: { sshBin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> { return createPlacedRuntimeDir(sshMachineAccess(machine, options), runId); }
 export function removeRemoteRuntimeDir(machine: HerdrMachineReference, runtimeDir: string, options: { sshBin?: string; env?: NodeJS.ProcessEnv } = {}): void { removePlacedRuntimeDir(sshMachineAccess(machine, options), runtimeDir); }
 
-/** The placed-run owner bound to Herdr and SSH access, plus the separate provision and start steps the external CLI adapters use. */
-export class HerdrPlacedRunOwner extends PlacedRunOwner<HerdrForwardedConnection, HerdrMachineReference> {
-	private constructor(machine: HerdrMachineReference, runId: string, runtimeDir: string, connection: HerdrForwardedConnection, removeRuntime?: () => void) { super(machine, runId, runtimeDir, connection, herdrPaneHost, sshMachineAccess(machine), removeRuntime); }
-	static async create(machine: HerdrMachineReference, runId: string, beforePane?: (owner: HerdrPlacedRunOwner) => void | Promise<void>): Promise<HerdrPlacedRunOwner> { const runtimeDir = await createRemoteRuntimeDir(machine, runId); let connection: HerdrForwardedConnection | undefined; try { connection = await herdrPaneHost.connect(machine); const owner = new HerdrPlacedRunOwner(machine, runId, runtimeDir, connection); await beforePane?.(owner); return owner; } catch (error) { const cleanupErrors: unknown[] = []; try { await connection?.close(); } catch (cleanupError) { cleanupErrors.push(cleanupError); } try { removeRemoteRuntimeDir(machine, runtimeDir); } catch (cleanupError) { cleanupErrors.push(cleanupError); } if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], "Herdr owner creation failed and cleanup also failed.", { cause: error }); throw error; } }
+/** The placed-run owner bound to Herdr and its machine access (SSH, or this machine for `local`), plus the separate provision and start steps the external CLI adapters use. */
+export class HerdrPlacedRunOwner<M extends HerdrPlacementMachine = HerdrMachineReference> extends PlacedRunOwner<HerdrForwardedConnection, M> {
+	private constructor(machine: M, runId: string, runtimeDir: string, connection: HerdrForwardedConnection, removeRuntime?: () => void) { super(machine, runId, runtimeDir, connection, herdrPaneHost, herdrAccess(machine), removeRuntime); }
+	static async create<M extends HerdrPlacementMachine>(machine: M, runId: string, beforePane?: (owner: HerdrPlacedRunOwner<M>) => void | Promise<void>): Promise<HerdrPlacedRunOwner<M>> {
+		// Locally a short hash names the directory, so /tmp/pi-subagents-herdr-<hash>-XXXXXXXX/bridge.sock fits the 103-byte macOS socket path limit for any run id.
+		const access = herdrAccess(machine), runtimeDir = await createPlacedRuntimeDir(access, "target" in machine ? runId : createHash("sha256").update(runId).digest("hex").slice(0, 12)); let connection: HerdrForwardedConnection | undefined;
+		try { connection = await herdrPaneHost.connect(machine); const owner = new HerdrPlacedRunOwner(machine, runId, runtimeDir, connection); await beforePane?.(owner); return owner; } catch (error) { const cleanupErrors: unknown[] = []; try { await connection?.close(); } catch (cleanupError) { cleanupErrors.push(cleanupError); } try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { cleanupErrors.push(cleanupError); } if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], "Herdr owner creation failed and cleanup also failed.", { cause: error }); throw error; }
+	}
 	async provision(environment?: Record<string, string>): Promise<PlacementOwnedPane> { this.owned = await provisionHerdrOwnedPane(this.connection, this.machine, this.runId, this.runtimeDir, environment); return this.owned; }
 	async start(kind: PlacementAgentKind, name: string, args: string[], options: PlacementStartOptions = {}): Promise<{ terminalId: string; paneId: string; argv: string[] }> {
 		if (!this.owned) throw new Error("Herdr placement owner has not provisioned its pane.");

@@ -2,15 +2,17 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { PlacementMachineReference, RexLocalMachineReference } from "../../shared/types.ts";
+import type { HerdrLocalMachineReference, PlacementMachineReference, RexLocalMachineReference } from "../../shared/types.ts";
 
 /** `machine: "local"` is reserved: this machine, in a Rex pane of the parent's own Rex session. It never consults the Herdr catalog. */
 export const REX_LOCAL_MACHINE = "local";
 /** Rex CLI exit codes: 3 means the target is gone, 4 means the server is unreachable (state unknown, never "gone"). */
 export const REX_EXIT_GONE = 3, REX_EXIT_UNREACHABLE = 4;
 
-/** A `local` child edits this machine's disk; every other placed child edits the remote one. */
+/** A Rex pane in the parent's own Rex session; the other Rex reference is an SSH machine. */
 export function isRexLocalMachine(machine: PlacementMachineReference | undefined): machine is RexLocalMachineReference { return machine?.provider === "rex" && !("target" in machine); }
+/** A placed child without an SSH `target` (Rex or Herdr `local`) edits this machine's disk; every other placed child edits the remote one. */
+export function editsLocalDisk(machine: PlacementMachineReference | undefined): machine is RexLocalMachineReference | HerdrLocalMachineReference { return machine !== undefined && !("target" in machine); }
 /** The Rex server bundle's CLI, relative to the home directory. */
 export const REX_BUNDLE_BIN = "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex";
 export const REX_CALL_TIMEOUT_MS = 15_000, REX_MAX_OUTPUT = 1024 * 1024;

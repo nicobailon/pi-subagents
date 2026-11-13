@@ -1815,8 +1815,17 @@ export interface RexSshMachineReference {
 
 export type RexMachineReference = RexLocalMachineReference | RexSshMachineReference;
 
-/** Where a placed native Pi child runs. */
-export type PlacementMachineReference = HerdrMachineReference | RexMachineReference;
+/** `machine: "local"` inside a Herdr pane: a tab in the parent's own Herdr session on this machine, reached over its local socket. `socket` and `session` are recorded in the parent at resolution time; `cwd` is the real local launch directory. */
+export interface HerdrLocalMachineReference {
+	provider: "herdr";
+	id: "local";
+	socket: string;
+	session?: string;
+	cwd: string;
+}
+
+/** Where a placed native Pi child runs. A reference without `target` is on this machine. */
+export type PlacementMachineReference = HerdrMachineReference | HerdrLocalMachineReference | RexMachineReference;
 
 export interface ExternalCliMachineStatus extends HerdrMachineReference {
 	remoteGit?: HerdrRemoteGitStatus;
