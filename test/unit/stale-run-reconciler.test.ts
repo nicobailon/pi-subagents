@@ -921,4 +921,42 @@ describe("async stale-run reconciliation", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
+
+	it("leaves a live runner's status alone between its result write and its final status write", () => {
+		const root = tempRoot("pi-stale-live-runner-result-");
+		try {
+			const runId = "run-live-runner-result";
+			const asyncDir = path.join(root, runId);
+			const resultsDir = path.join(root, "results");
+			const pendingProof = { version: 1, state: "pending", runId, runnerProcessInstanceId: "runner-live" };
+			initializeProcessTerminal(asyncDir, runId, "runner-live");
+			writeStatus(asyncDir, {
+				lifecycleArtifactVersion: 3,
+				runId,
+				mode: "single",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1500,
+				processTerminal: pendingProof,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+			fs.mkdirSync(resultsDir, { recursive: true });
+			fs.writeFileSync(path.join(resultsDir, `${runId}.json`), JSON.stringify({ id: runId, success: true, state: "complete" }), "utf-8");
+
+			const live = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => true, now: () => 2000 });
+			assert.equal(live.repaired, false);
+			assert.equal(live.status?.state, "running");
+			const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+			assert.equal(persisted.state, "running");
+			assert.deepEqual(persisted.processTerminal, pendingProof);
+			assert.equal(readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId: "runner-live" })?.state, "pending");
+
+			const gone = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => { throw errno("ESRCH"); }, now: () => 2000 });
+			assert.equal(gone.repaired, true);
+			assert.equal(gone.status?.state, "complete");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
 });

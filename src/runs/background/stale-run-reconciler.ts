@@ -504,8 +504,20 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 	const existingResultPath = effectiveStatus.sessionId
 		? resultPayloadPathForSessionRun(resultsDir, effectiveStatus.sessionId, runId) ?? (regularFileExists(resultPath) ? resultPath : undefined)
 		: regularFileExists(resultPath) ? resultPath : undefined;
+	const staleAfterMs = options.staleAlivePidMs ?? 24 * 60 * 60 * 1000;
+	const lastUpdate = effectiveStatus.lastUpdate ?? effectiveStatus.startedAt;
+	const runnerLiveness = (pid: number): PidLiveness => checkRecordedPidLiveness({ pid, pidNamespaceScope: effectiveStatus.pidNamespaceScope, bootId: effectiveStatus.bootId }, {
+		kill: options.kill,
+		observedScope: options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope(),
+		observedBootId: options.bootId ? options.bootId() : currentBootId(),
+	});
 	if (existingResultPath) {
-		const terminalStatus = effectiveStatus.state === "running" || effectiveStatus.state === "queued"
+		// A live runner writes its result before its final status; repairing in that window would replace
+		// its pending exit proof with a placeholder. Only a confirmed-alive pid defers: a result is better
+		// evidence than an unprobeable pid. A workflow's pid is its host Pi process, which outlives the workflow.
+		const runnerStillFinishing = effectiveStatus.state === "running" && effectiveStatus.mode !== "workflow" && typeof effectiveStatus.pid === "number"
+			&& now - lastUpdate <= staleAfterMs && runnerLiveness(effectiveStatus.pid) === "alive";
+		const terminalStatus = (effectiveStatus.state === "running" || effectiveStatus.state === "queued") && !runnerStillFinishing
 			? terminalStatusFromResult(effectiveStatus, existingResultPath, now)
 			: undefined;
 		if (terminalStatus) {
@@ -547,14 +559,8 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 		}
 	}
 
-	const liveness = checkRecordedPidLiveness({ pid: effectiveStatus.pid, pidNamespaceScope: effectiveStatus.pidNamespaceScope, bootId: effectiveStatus.bootId }, {
-		kill: options.kill,
-		observedScope: options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope(),
-		observedBootId: options.bootId ? options.bootId() : currentBootId(),
-	});
+	const liveness = runnerLiveness(effectiveStatus.pid);
 	if (liveness !== "dead") {
-		const staleAfterMs = options.staleAlivePidMs ?? 24 * 60 * 60 * 1000;
-		const lastUpdate = effectiveStatus.lastUpdate ?? effectiveStatus.startedAt;
 		if (now - lastUpdate <= staleAfterMs) return { status: status ?? null, repaired: false, resultPath };
 		const probe = liveness === "alive" ? "is still live" : "cannot be probed from this process";
 		const message = `Async runner PID ${effectiveStatus.pid} ${probe}; status has not updated for ${now - lastUpdate}ms, so stale-run reconciliation marked the run failed because PID ownership is unverified.`;
