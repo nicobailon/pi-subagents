@@ -34,6 +34,15 @@ function gitEvidence(cwd: string): Record<string, unknown> | undefined {
 	return { ...(head.status === 0 ? { head: head.stdout.trim() } : {}), ...(branch.status === 0 ? { branch: branch.stdout.trim() } : {}), dirty: Boolean(dirty.stdout.trim()) };
 }
 
+const TOOL_ARGS_FRAME_BUDGET = 64 * 1024;
+// A frame over HERDR_PI_MAX_FRAME_BYTES throws on write and on every journal replay, so oversized args (a whole file
+// for write) keep only short top-level scalars: the path, command and supervisor reason are what the parent reads.
+function boundedToolArgs(args: unknown): unknown {
+	if (!args || typeof args !== "object" || Array.isArray(args) || Buffer.byteLength(JSON.stringify(args)) <= TOOL_ARGS_FRAME_BUDGET) return args;
+	const shortened = Object.fromEntries(Object.entries(args).flatMap(([key, value]): [string, unknown][] => typeof value === "string" ? [[key, value.slice(0, 4096)]] : typeof value === "number" || typeof value === "boolean" ? [[key, value]] : []));
+	return Buffer.byteLength(JSON.stringify(shortened)) <= TOOL_ARGS_FRAME_BUDGET ? shortened : {};
+}
+
 export function resolveRemoteHerdrResources(cwd: string, resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false }, remoteDefaultTools: string[] = []): { agent: string; skills: string[]; tools: string[]; systemPrompt: string; inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean } {
 	if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(resources.agent) || resources.skills?.some((name) => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(name)) || resources.toolCeiling?.some((name) => !/^[A-Za-z0-9_-]{1,64}$/u.test(name)) || (resources.reads !== undefined && resources.reads !== false && (!Array.isArray(resources.reads) || resources.reads.some((name) => typeof name !== "string")))) throw new Error("Remote logical resource names are invalid.");
 	const discovered = discoverAgents(cwd, "both").agents.filter((agent) => agent.name === resources.agent || agent.aliases?.includes(resources.agent));
@@ -131,6 +140,10 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		if (message?.role === "assistant") finalAssistant = message;
 		send({ type: "event", requestId: activeRequestId, event: { ...event, message }, nativeSessionId });
 	});
+	// The parent counts tools, arms per-tool timeouts and pauses its run timeout on a supervisor wait from these events.
+	// The result itself arrives as the toolResult message_end, so the end event carries no result.
+	on("tool_execution_start", (event) => send({ type: "event", requestId: activeRequestId, event: { type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: boundedToolArgs(event.args) }, nativeSessionId }));
+	on("tool_execution_end", (event) => send({ type: "event", requestId: activeRequestId, event: { type: "tool_execution_end", toolCallId: event.toolCallId, toolName: event.toolName, isError: event.isError }, nativeSessionId }));
 	on("agent_settled", (_event, ctx) => { const requestId = activeRequestId; send({ type: "settled", requestId, nativeSessionId, idle: ctx.isIdle(), pending: ctx.hasPendingMessages(), finalAssistant, finalGit: gitEvidence(process.cwd()) }); if (ctx.isIdle() && !ctx.hasPendingMessages()) activeRequestId = undefined; });
 	on("session_shutdown", () => { server.close(); client?.destroy(); try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {} });
 
