@@ -61,12 +61,12 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 	const runId = validateHerdrPiRunId(process.env[HERDR_PI_RUN_ENV]);
 	const runDir = process.env[HERDR_PI_RUNTIME_DIR_ENV];
 	if (!runDir || !path.isAbsolute(runDir) || fs.lstatSync(runDir).isSymbolicLink()) throw new Error("Herdr bridge runtime directory was not authoritatively provisioned.");
-	fs.chmodSync(runDir, 0o700);
 	const socketPath = path.join(runDir, "bridge.sock");
 	const manifestPath = path.join(runDir, "manifest.json");
-	for (const candidate of [socketPath, manifestPath]) {
-		try { const stat = fs.lstatSync(candidate); if (stat.isSymbolicLink()) throw new Error(`Refusing symlink at '${candidate}'.`); fs.rmSync(candidate, { force: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-	}
+	// An in-process SDK session (createAgentSession without a resourceLoader) runs this factory again in the same child and may
+	// start its own session, so the factory touches no files: the first session to start claims the runtime directory for the process.
+	const claims = ((globalThis as unknown as Record<symbol, Set<string>>)[Symbol.for("pi-subagents.herdr-bridge-claims")] ??= new Set<string>());
+	let claimed = false;
 	let client: net.Socket | undefined;
 	let context: BridgeContext | undefined;
 	let nativeSessionId: string | undefined;
@@ -130,8 +130,15 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		return resolvedSystemPrompt && resolvedContextPolicy ? { systemPrompt: `${rewriteSubagentPrompt(typeof event.systemPrompt === "string" ? event.systemPrompt : "", { inheritProjectContext: resolvedContextPolicy.inheritProjectContext, inheritGlobalContext: resolvedContextPolicy.inheritGlobalContext, inheritSkills: resolvedContextPolicy.inheritSkills })}\n\n<active_agent name=${JSON.stringify(resolvedContextPolicy.agent)}/>\n\n${resolvedSystemPrompt}` } : undefined;
 	});
 	on("session_start", (_event, ctx) => {
+		if (claimed || claims.has(runDir)) return;
 		context = ctx; nativeSessionId = sessionId(ctx);
 		if (!nativeSessionId) throw new Error("Pane-native Pi bridge requires a persisted native session identity.");
+		claims.add(runDir); claimed = true;
+		fs.chmodSync(runDir, 0o700);
+		for (const candidate of [socketPath, manifestPath]) {
+			try { const stat = fs.lstatSync(candidate); if (stat.isSymbolicLink()) throw new Error(`Refusing symlink at '${candidate}'.`); fs.rmSync(candidate, { force: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+		}
+		server.listen(socketPath, () => { fs.chmodSync(socketPath, 0o600); });
 		fs.writeFileSync(manifestPath, JSON.stringify({ protocol: HERDR_PI_PROTOCOL, packageVersion: packageJson.version, runId, socketPath, nativeSessionId, pid: process.pid }), { mode: 0o600, flag: "wx" });
 		send({ type: "ready", packageVersion: packageJson.version, nativeSessionId, sessionFile: ctx.sessionManager?.getSessionFile?.(), cwd: process.cwd(), tools: pi.getActiveTools(), model: ctx.model?.provider && ctx.model.id ? `${ctx.model.provider}/${ctx.model.id}` : undefined, configured, activeRequestId, evidenceCursor, evidenceFloor: journal[0]?.cursor ?? evidenceCursor + 1, initialGit: gitEvidence(process.cwd()) });
 	});
@@ -145,7 +152,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 	on("tool_execution_start", (event) => send({ type: "event", requestId: activeRequestId, event: { type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: boundedToolArgs(event.args) }, nativeSessionId }));
 	on("tool_execution_end", (event) => send({ type: "event", requestId: activeRequestId, event: { type: "tool_execution_end", toolCallId: event.toolCallId, toolName: event.toolName, isError: event.isError }, nativeSessionId }));
 	on("agent_settled", (_event, ctx) => { const requestId = activeRequestId; send({ type: "settled", requestId, nativeSessionId, idle: ctx.isIdle(), pending: ctx.hasPendingMessages(), finalAssistant, finalGit: gitEvidence(process.cwd()) }); if (ctx.isIdle() && !ctx.hasPendingMessages()) activeRequestId = undefined; });
-	on("session_shutdown", () => { server.close(); client?.destroy(); try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {} });
+	on("session_shutdown", () => { if (!claimed) return; claimed = false; claims.delete(runDir); server.close(); client?.destroy(); try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {} });
 
 	const server = net.createServer((socket) => {
 		if (client && !client.destroyed) { socket.destroy(); return; }
@@ -189,5 +196,4 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		socket.on("close", () => { if (client === socket) client = undefined; });
 		if (context && nativeSessionId) send({ type: "ready", packageVersion: packageJson.version, nativeSessionId, sessionFile: context.sessionManager?.getSessionFile?.(), cwd: process.cwd(), tools: pi.getActiveTools(), model: context.model?.provider && context.model.id ? `${context.model.provider}/${context.model.id}` : undefined, configured, activeRequestId, evidenceCursor, evidenceFloor: journal[0]?.cursor ?? evidenceCursor + 1, initialGit: gitEvidence(process.cwd()) });
 	});
-	server.listen(socketPath, () => { fs.chmodSync(socketPath, 0o600); });
 }
