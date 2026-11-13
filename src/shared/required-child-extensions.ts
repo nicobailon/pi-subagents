@@ -96,6 +96,29 @@ export function assertRequiredChildExtensionsAdmitted(snapshots: ReadonlyArray<R
 	if (route) throw new Error(`Agent '${launch.agent}' cannot run on ${route}: the host requires child extensions (${ids.join(", ")}) for every runner, and only local native Pi children load them.`);
 }
 
+function childExtensionFileIdentity(extensionPath: string): string | undefined {
+	if (!path.isAbsolute(extensionPath)) return undefined;
+	try {
+		const stat = fs.statSync(extensionPath, { bigint: true });
+		return stat.isFile() ? `${stat.dev}:${stat.ino}` : undefined;
+	} catch { return undefined; }
+}
+
+/** Maps a path to the identity of the required extension file it names, or undefined. A required path that can't be stat'ed matches only its own spelling. */
+export function createRequiredChildExtensionIdentity(requiredPaths: Iterable<string>): (extensionPath: string) => string | undefined {
+	const aliases = new Map([...requiredPaths].map((extensionPath) => [extensionPath, childExtensionFileIdentity(extensionPath) ?? extensionPath]));
+	const identities = new Set(aliases.values());
+	return (extensionPath) => {
+		const known = aliases.get(extensionPath);
+		if (known !== undefined) return known;
+		const identity = childExtensionFileIdentity(extensionPath);
+		if (identity === undefined || !identities.has(identity)) return undefined;
+		// Retain the alias even if the extension removes its file before reporting a failure.
+		aliases.set(extensionPath, identity);
+		return identity;
+	};
+}
+
 export function hasMandatoryRequiredChildExtensions(snapshot: RequiredChildExtensionSnapshot | undefined): snapshot is RequiredChildExtensionSnapshot {
 	return snapshot?.some((entry) => entry.requireForAllRunners) === true;
 }

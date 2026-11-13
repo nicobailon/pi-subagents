@@ -69,7 +69,7 @@ export interface McpRuntimeSnapshotHost {
 	getAllTools?(): readonly McpHostToolInfo[];
 	getCommands?(): readonly { name: string; sourceInfo: { path: string } }[];
 	/** Pi 0.99: servers extensions added with `pi.registerMcpServer()`. */
-	getMcpServers?(): readonly { name: string }[];
+	getMcpServers?(): readonly { name: string; extensionPath: string }[];
 }
 
 /** A `pi.getAllTools()` entry; `exposure` and `namespace` exist only from Pi 0.99. */
@@ -208,11 +208,12 @@ export function formatUnresolvedBuiltinMcpSelectors(agentName: string | undefine
 
 /**
  * Selected servers that only an extension registered, which a child without ambient extensions
- * never has. A server of the same name in an `mcp.json` the child reads takes precedence; like Pi,
- * the project file is read only when the project is trusted.
+ * never has unless the registering extension is one the child loads (`loadedByChild`). A server of
+ * the same name in an `mcp.json` the child reads takes precedence; like Pi, the project file is read
+ * only when the project is trusted.
  */
-export function extensionOnlyMcpServers(selections: readonly ResolvedMcpDirectToolSelection[], host: McpRuntimeSnapshotHost, cwd: string, projectTrusted: boolean): string[] {
-	const registered = new Set(host.getMcpServers?.().map(({ name }) => name));
+export function extensionOnlyMcpServers(selections: readonly ResolvedMcpDirectToolSelection[], host: McpRuntimeSnapshotHost, cwd: string, projectTrusted: boolean, loadedByChild: (extensionPath: string) => boolean): string[] {
+	const registered = new Set(host.getMcpServers?.().filter(({ extensionPath }) => !loadedByChild(extensionPath)).map(({ name }) => name));
 	const servers = [...new Set(selections.map(({ selector }) => selector.split("/")[0]!))].filter((server) => registered.has(server));
 	if (servers.length === 0) return [];
 	const files = [path.join(getAgentDir(), "mcp.json"), ...(projectTrusted ? [path.join(cwd, ".pi", "mcp.json")] : [])];
