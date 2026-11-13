@@ -506,16 +506,19 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 		: regularFileExists(resultPath) ? resultPath : undefined;
 	const staleAfterMs = options.staleAlivePidMs ?? 24 * 60 * 60 * 1000;
 	const lastUpdate = effectiveStatus.lastUpdate ?? effectiveStatus.startedAt;
+	const observedScope = options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope();
 	const runnerLiveness = (pid: number): PidLiveness => checkRecordedPidLiveness({ pid, pidNamespaceScope: effectiveStatus.pidNamespaceScope, bootId: effectiveStatus.bootId }, {
 		kill: options.kill,
-		observedScope: options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope(),
+		observedScope,
 		observedBootId: options.bootId ? options.bootId() : currentBootId(),
 	});
 	if (existingResultPath) {
 		// A live runner writes its result before its final status; repairing in that window would replace
 		// its pending exit proof with a placeholder. Only a confirmed-alive pid defers: a result is better
-		// evidence than an unprobeable pid. A workflow's pid is its host Pi process, which outlives the workflow.
+		// evidence than an unprobeable pid, and a pid from another pid namespace can be alive here as an unrelated
+		// process. A workflow's pid is its host Pi process, which outlives the workflow.
 		const runnerStillFinishing = effectiveStatus.state === "running" && effectiveStatus.mode !== "workflow" && typeof effectiveStatus.pid === "number"
+			&& effectiveStatus.pidNamespaceScope === observedScope
 			&& now - lastUpdate <= staleAfterMs && runnerLiveness(effectiveStatus.pid) === "alive";
 		const terminalStatus = (effectiveStatus.state === "running" || effectiveStatus.state === "queued") && !runnerStillFinishing
 			? terminalStatusFromResult(effectiveStatus, existingResultPath, now)

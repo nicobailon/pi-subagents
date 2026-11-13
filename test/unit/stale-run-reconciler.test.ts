@@ -944,7 +944,7 @@ describe("async stale-run reconciliation", () => {
 			fs.mkdirSync(resultsDir, { recursive: true });
 			fs.writeFileSync(path.join(resultsDir, `${runId}.json`), JSON.stringify({ id: runId, success: true, state: "complete" }), "utf-8");
 
-			const live = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => true, now: () => 2000 });
+			const live = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => true, pidNamespaceScope: () => undefined, now: () => 2000 });
 			assert.equal(live.repaired, false);
 			assert.equal(live.status?.state, "running");
 			const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
@@ -952,9 +952,10 @@ describe("async stale-run reconciliation", () => {
 			assert.deepEqual(persisted.processTerminal, pendingProof);
 			assert.equal(readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId: "runner-live" })?.state, "pending");
 
-			const gone = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => { throw errno("ESRCH"); }, now: () => 2000 });
-			assert.equal(gone.repaired, true);
-			assert.equal(gone.status?.state, "complete");
+			// The same pid alive in another pid namespace is not this runner.
+			const otherNamespace = reconcileAsyncRun(asyncDir, { resultsDir, kill: () => true, pidNamespaceScope: () => "linux-pidns:4026531836", now: () => 2000 });
+			assert.equal(otherNamespace.repaired, true);
+			assert.equal(otherNamespace.status?.state, "complete");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
