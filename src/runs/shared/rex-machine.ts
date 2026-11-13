@@ -59,7 +59,7 @@ export function resolveRexLocalPlacement(input: { cwd: string; stepCwd?: string;
 	let cwd: string;
 	try { cwd = fs.realpathSync(requested); } catch (error) { throw new Error(`Machine 'local' cwd does not exist: ${requested}.`, { cause: error }); }
 	if (!fs.statSync(cwd).isDirectory()) throw new Error(`Machine 'local' cwd is not a directory: ${requested}.`);
-	const machine: RexLocalMachineReference = { provider: "rex", id: REX_LOCAL_MACHINE, session, cwd };
+	const machine: RexLocalMachineReference = { provider: "rex", id: REX_LOCAL_MACHINE, session, cwd, localDisk: true };
 	if (server) machine.server = server;
 	return machine;
 }

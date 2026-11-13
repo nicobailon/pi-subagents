@@ -106,7 +106,7 @@ describe("injectSingleOutputInstruction", () => {
 			assert.match(output, /Return the complete artifact in your final response\./);
 			assert.doesNotMatch(output, /Write your findings to/);
 		}
-		const local = injectSingleOutputInstruction("Analyze this", "/tmp/report.md", { tools: ["read", "write"] }, { provider: "rex", id: "local", session: "session:s", cwd: "/repo" });
+		const local = injectSingleOutputInstruction("Analyze this", "/tmp/report.md", { tools: ["read", "write"] }, { provider: "rex", id: "local", session: "session:s", localDisk: true, cwd: "/repo" });
 		assert.match(local, /Write your findings to exactly this path: \/tmp\/report.md/);
 	});
 });

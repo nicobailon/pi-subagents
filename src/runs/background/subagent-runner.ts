@@ -154,7 +154,7 @@ import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
 import { resolveCursorAgentLaunch } from "../shared/cursor-agent-adapter.ts";
 import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { formatHerdrMachineHint, prepareHerdrMachineExternalCliRun } from "../shared/herdr-machine.ts";
-import { isRexLocalMachine } from "../shared/rex-machine.ts";
+import { placementEditsLocalDisk, placementSupportsExternalCli } from "../shared/placement-registry.ts";
 import { HerdrExternalNeedsAttentionError, createHerdrExternalAdapter, prepareInternalHerdrExternalAdapter, type HerdrExternalAdapterId, type HerdrExternalResult } from "../shared/herdr-external-adapters.ts";
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
@@ -920,11 +920,12 @@ export async function runSingleStepInner(
 			return omitUndefinedProperties({ agent: step.agent, context: step.context, output: message, error: message, exitCode: 1, stopped: stopped || undefined, timedOut: stopped ? undefined : true });
 		}
 		if (step.machine) {
-			if (step.machine.provider !== "herdr") throw new Error("Rex supports native Pi children only.");
-			const runner = resolveExternalCliRunnerStatus({ ...step.runner, machine: step.machine });
+			// The externalCli field opts the machine into the herdr external-CLI writer contract; core never compares providers here.
+			if (!placementSupportsExternalCli(step.machine)) throw new Error("External-CLI writers run only on machines that opt in to herdr external runs.");
+			const runner = resolveExternalCliRunnerStatus({ ...step.runner, machine: step.machine as HerdrMachineReference });
 			const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
 			const placedRunId = `${ctx.id}-${ctx.flatIndex}`;
-			const session = await prepareInternalHerdrExternalAdapter({ adapter: step.runner.adapter as HerdrExternalAdapterId, machine: step.machine, runId: placedRunId }, {});
+			const session = await prepareInternalHerdrExternalAdapter({ adapter: step.runner.adapter as HerdrExternalAdapterId, machine: step.machine as HerdrMachineReference, runId: placedRunId }, {});
 			let timedOut = false, stopped = false, retain = false;
 			const evidenceInput = { runId: placedRunId, requestId: `prompt-${ctx.flatIndex}`, task: buildExternalCliPrompt(step.systemPrompt ?? "", task), cwd: externalCwd, nativeSessionId: session.launch.nativeSessionId };
 			let resolveInterruption!: (value: "timeout" | "stop") => void, rejectInterruption!: (error: unknown) => void;
@@ -1065,7 +1066,7 @@ export async function runSingleStepInner(
 
 	const effectiveCwd = step.cwd ?? ctx.cwd;
 	// A placed child's cwd is a directory on its machine; only machine 'local' shares this disk.
-	const cwdError = step.machine && !isRexLocalMachine(step.machine) ? undefined : preflightLaunchCwd(step.requestedCwd ?? effectiveCwd, effectiveCwd);
+	const cwdError = step.machine && !placementEditsLocalDisk(step.machine) ? undefined : preflightLaunchCwd(step.requestedCwd ?? effectiveCwd, effectiveCwd);
 	if (cwdError) return { agent: step.agent, output: cwdError, error: cwdError, exitCode: 1, context: step.context };
 	if (step.context === "fork" && step.sessionFile && fs.existsSync(step.sessionFile)) {
 		alignForkedSessionCwd(step.sessionFile, effectiveCwd);
@@ -1084,7 +1085,7 @@ export async function runSingleStepInner(
 	let toolBudgetBlocked = false;
 	let actualLaunchContractDigest = step.launchContractDigest;
 	// A machine 'local' child edits this disk, so its local Git evidence is authoritative, as for an unplaced run.
-	const mutationSnapshot = step.machine && !isRexLocalMachine(step.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, cwd: step.cwd ?? ctx.cwd, dirtyFiles: [], fingerprints: {}, unavailable: "Local Git evidence is not authoritative for a pane-native remote run." } : snapshotTrackedMutations(step.cwd ?? ctx.cwd);
+	const mutationSnapshot = step.machine && !placementEditsLocalDisk(step.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, cwd: step.cwd ?? ctx.cwd, dirtyFiles: [], fingerprints: {}, unavailable: "Local Git evidence is not authoritative for a pane-native remote run." } : snapshotTrackedMutations(step.cwd ?? ctx.cwd);
 	let finalMutationEvidence = await collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 
 	let contextOverflow = false;
@@ -1304,7 +1305,7 @@ export async function runSingleStepInner(
 			? TRUNCATED_RESPONSE_ERROR
 			: undefined;
 		const remoteGitChanged = run.nativeMachine?.initialGit && run.nativeMachine.finalGit ? run.nativeMachine.initialGit.head !== run.nativeMachine.finalGit.head || run.nativeMachine.initialGit.dirty !== run.nativeMachine.finalGit.dirty : undefined;
-		const mutationEvidence = run.nativeMachine && !isRexLocalMachine(step.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : await collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
+		const mutationEvidence = run.nativeMachine && !placementEditsLocalDisk(step.machine) ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : await collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 		finalMutationEvidence = mutationEvidence;
 		const mutationAttemptObserved = run.observedMutationAttempt === true || mutationEvidence.attemptedMutation === true;
 		// Validated structured output is persistable file content even when the final text is only
@@ -1594,7 +1595,7 @@ type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
 
 function externalRunnerStatus(runner: SubagentStep["runner"], machine: SubagentStep["machine"]): ExternalCliRunnerStatus | ExternalJobRunnerStatus | undefined {
 	if (runner?.type === "external-cli") {
-		return resolveExternalCliRunnerStatus(machine?.provider === "herdr" ? { ...runner, machine } : runner);
+		return resolveExternalCliRunnerStatus(placementSupportsExternalCli(machine) ? { ...runner, machine: machine as HerdrMachineReference } : runner);
 	}
 	if (runner?.type === "external-job") {
 		return {

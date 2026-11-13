@@ -8,6 +8,7 @@ import { persistRunnerStartupFailure } from "./runner-startup-failure.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { primeBootId } from "./boot-id.ts";
 import type { DefaultChildSessionFactoryOptions } from "../shared/child-session.ts";
+import { loadPlacementAdapterModules } from "../shared/placement-adapter-modules.ts";
 import type { SubagentRunConfig } from "./subagent-runner.ts";
 
 export type { SubagentRunConfig } from "./subagent-runner.ts";
@@ -172,6 +173,8 @@ export async function runConfiguredSubagent(rawConfig: unknown, options: RunnerB
 				});
 			}
 		}
+		// Placement adapters live in Pi extensions the parent loaded; this process imports them by module URL instead.
+		await loadPlacementAdapterModules();
 		const { loadExecutionModule, ...executionOptions } = options;
 		const testExecutionModule = process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE;
 		const execution = await (loadExecutionModule?.() ?? (testExecutionModule ? import(testExecutionModule) : import("./subagent-runner.ts")));

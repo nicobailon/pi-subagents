@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { localMachineAccess } from "../../src/runs/shared/local-machine-access.ts";
 import { formatHerdrMachineRunnerUnsupported, resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
-import { closeOwnedRexPane, connectRex, rexPaneHost, RexPlacedRunOwner } from "../../src/runs/shared/rex-pane-host.ts";
+import { closeOwnedRexPane, connectRex, openRexPlacedRun, rexPaneHost } from "../../src/runs/shared/rex-pane-host.ts";
 import type { RexMachineReference } from "../../src/shared/types.ts";
 
 // A fake `rex` on disk: it logs its argv, prints <kind>.out when present, and exits with the next scripted code for each command kind.
@@ -108,7 +108,7 @@ describe("Rex pane host exit codes and cleanup", { skip: process.platform === "w
 		assert.equal(runId.length, 65);
 		let runtimeDir = "";
 		try {
-			const owner = await RexPlacedRunOwner.create(machine, runId); runtimeDir = owner.runtimeDir;
+			const context = await openRexPlacedRun(machine, runId); runtimeDir = context.runtimeDir;
 			try {
 				const socketPath = path.join(runtimeDir, "bridge.sock");
 				assert.ok(Buffer.byteLength(socketPath) <= 103, socketPath);
@@ -116,7 +116,7 @@ describe("Rex pane host exit codes and cleanup", { skip: process.platform === "w
 				const server = net.createServer();
 				await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketPath, resolve); });
 				await new Promise((resolve) => server.close(resolve));
-			} finally { await owner.cleanup(); }
+			} finally { context.removeRuntime(); }
 		} finally { restore(); }
 		assert.equal(fs.existsSync(runtimeDir), false);
 	});
@@ -132,7 +132,7 @@ describe("machine 'local' resolution", { skip: process.platform === "win32" }, (
 
 	it("records the parent's confirmed Rex session, server and real launch directory without reading the Herdr catalog", () => {
 		const placement = resolveMachinePlacement({ machine: "local", cwd: dir, stepCwd: "repo", env: insideRex, herdrBin: path.join(dir, "no-herdr") });
-		assert.deepEqual(placement, { machine: { provider: "rex", id: "local", session, server: "unix:///tmp/fake-rex.sock", cwd: path.join(dir, "repo") } });
+		assert.deepEqual(placement, { machine: { provider: "rex", id: "local", session, server: "unix:///tmp/fake-rex.sock", localDisk: true, cwd: path.join(dir, "repo") } });
 		assert.deepEqual(fs.readFileSync(path.join(dir, "calls"), "utf8").trim().split("\n"), [`--autostart=false -S unix:///tmp/fake-rex.sock session inspect ${session} --json`]);
 		assert.equal(fs.readFileSync(path.join(dir, "selectors"), "utf8").trim(), "unset unset unset");
 	});

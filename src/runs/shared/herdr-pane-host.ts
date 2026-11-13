@@ -5,6 +5,7 @@ import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { HERDR_PI_MODE_ENV, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV } from "./herdr-pi-protocol.ts";
 import { createPlacedRuntimeDir, discoverPlacedBridgeManifest, PlacedRunOwner, removePlacedRuntimeDir, type PlacedBridgeManifest } from "./placed-run-owner.ts";
 import { herdrPaneAllocationKey, withHerdrPaneAllocationLock, type PlacementAgentKind, type PlacementBridgeIdentity, type PlacementEvidenceProof, type PlacementOwnedPane, type PlacementPaneHost, type PlacementPromptOptions, type PlacementReconnectCheck, type PlacementRunState, type PlacementStartOptions } from "./placement-host.ts";
+import type { PlacementRunContext } from "./placement-registry.ts";
 
 export interface HerdrPaneCandidate { endpoint: { session: string | null; protocol: number; version: string }; agents: Array<{ terminal_id?: string; pane_id?: string; agent_status?: string }> }
 export interface HerdrReconnectCandidate extends HerdrPaneCandidate { bridge: PlacementBridgeIdentity }
@@ -46,7 +47,7 @@ export async function provisionHerdrPane(client: HerdrRpcClient, cwd: string, ru
 }
 
 function provisionHerdrOwnedPane(connection: HerdrForwardedConnection, machine: HerdrMachineReference, runId: string, runtimeDir: string, environment?: Record<string, string>): Promise<PlacementOwnedPane> { return provisionHerdrPane(connection.client, machine.cwd, runId, runtimeDir, environment, herdrPaneAllocationKey(machine.target, connection.endpoint.session, machine.cwd)); }
-function asHerdrMachine(machine: PlacementMachineReference): HerdrMachineReference { if (machine.provider !== "herdr") throw new Error("The Herdr pane host only places runs on Herdr saved machines."); return machine; }
+export function asHerdrMachine(machine: PlacementMachineReference): HerdrMachineReference { if (machine.provider !== "herdr") throw new Error("The Herdr pane host only places runs on Herdr saved machines."); return machine as HerdrMachineReference; }
 
 async function startHerdrAgent(connection: HerdrForwardedConnection, owned: PlacementOwnedPane, kind: PlacementAgentKind, name: string, args: string[], options: PlacementStartOptions = {}): Promise<{ terminalId: string; paneId: string }> {
 	const clock = options.clock ?? { now: () => Date.now(), wait: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)) }, deadline = clock.now() + (options.timeoutMs ?? 5_000), pollMs = options.pollMs ?? 50;
@@ -98,5 +99,21 @@ export class HerdrPlacedRunOwner extends PlacedRunOwner<HerdrForwardedConnection
 	async start(kind: PlacementAgentKind, name: string, args: string[], options: PlacementStartOptions = {}): Promise<{ terminalId: string; paneId: string; argv: string[] }> {
 		if (!this.owned) throw new Error("Herdr placement owner has not provisioned its pane.");
 		const { terminalId, paneId } = await startHerdrAgent(this.connection, this.owned, kind, name, args, options), argv = [kind, ...args]; this.agentName = name; this.terminalId = terminalId; this.startedArgv = argv; return { terminalId, paneId, argv };
+	}
+}
+
+/** Open a Herdr run for the bridge engine: connect, provision the runtime directory, and remove it if any step fails. */
+export async function openHerdrPlacedRun(machine: HerdrMachineReference, runId: string): Promise<PlacementRunContext> {
+	const runtimeDir = await createRemoteRuntimeDir(machine, runId);
+	let connection: HerdrForwardedConnection | undefined;
+	try {
+		connection = await herdrPaneHost.connect(machine);
+		return { machine, host: herdrPaneHost, connection, access: sshMachineAccess(machine), runtimeDir, removeRuntime: () => removeRemoteRuntimeDir(machine, runtimeDir) };
+	} catch (error) {
+		const cleanupErrors: unknown[] = [];
+		try { await connection?.close(); } catch (cleanupError) { cleanupErrors.push(cleanupError); }
+		try { removeRemoteRuntimeDir(machine, runtimeDir); } catch (cleanupError) { cleanupErrors.push(cleanupError); }
+		if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], "Herdr run failed to open and cleanup also failed.", { cause: error });
+		throw error;
 	}
 }

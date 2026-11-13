@@ -5,7 +5,10 @@ import type { ExternalProcessStatus, HerdrMachineReference, PlacementMachineRefe
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS, type CodeOwnedExternalCliAdapterId } from "./external-cli-contract.ts";
 import type { runExternalCli } from "./external-cli-runner.ts";
-import { REX_LOCAL_MACHINE, resolveRexLocalPlacement } from "./rex-machine.ts";
+import { REX_LOCAL_MACHINE } from "./rex-machine.ts";
+import { placementAdapters } from "./placement-registry.ts";
+// Registers the built-in Herdr and Rex placement adapters (see placement-registry.ts) so any process importing the resolver has them.
+import "./builtin-placement-adapters.ts";
 export { shellQuoteRemote as shellQuote } from "./herdr-connection.ts";
 
 /**
@@ -91,7 +94,7 @@ function isRemoteAbsolute(value: string): boolean {
 	return value.startsWith("/") || value === "~" || value.startsWith("~/");
 }
 
-function validateRemoteCwd(value: string, requested: string): string {
+export function validateRemoteCwd(value: string, requested: string): string {
 	const cwd = value.trim();
 	if (!isRemoteAbsolute(cwd)) throw new Error(`Herdr machine '${requested}' cwd must be an absolute POSIX path or start with '~': ${JSON.stringify(cwd)}.`);
 	if (CONTROL_CHARS.test(cwd)) throw new Error(`Herdr machine '${requested}' cwd contains control characters.`);
@@ -184,9 +187,11 @@ function machineSettingsFrom(settings: Record<string, unknown>, keys: readonly s
 			throw new Error(`Subagent settings in '${filePath}' have invalid 'machines.${key}.env'; expected an object of string values keyed by variable name.`);
 		}
 		entry.env = { ...(record.env as Record<string, string>) };
-		if (Object.keys(entry.env).length > 0) {
-			throw new Error(`Subagent settings in '${filePath}' set 'machines.${key}.env'. Saved-machine runs use the remote Herdr/Pi environment; configure credentials and environment on '${key}' and remove the local env map.`);
-		}
+	}
+	// Adapter-declared keys (tmux, zellij, ...) flow through opaquely; each host adapter validates its own shape.
+	for (const [name, value] of Object.entries(record)) {
+		if (name === "cwd" || name === "env" || name === "rex") continue;
+		(entry as MachineSettingsEntry & Record<string, unknown>)[name] = value;
 	}
 	if (record.rex !== undefined) {
 		const rex = record.rex, ssh = rex && typeof rex === "object" && !Array.isArray(rex) && Object.keys(rex).every((field) => field === "ssh") ? (rex as Record<string, unknown>).ssh : undefined;
@@ -196,13 +201,14 @@ function machineSettingsFrom(settings: Record<string, unknown>, keys: readonly s
 	return entry;
 }
 
-/** Project settings beat user settings, field by field; the entry may be keyed by label, id, or the typed selector. Only user settings may name a Rex SSH host, so a cloned repo never chooses where a task runs. */
+/** Project settings beat user settings, field by field; the entry may be keyed by label, id, or the typed selector. Adapter-declared keys pass through opaquely, and only user settings may set them (cwd excepted), so a cloned repo never chooses where a task runs. */
 function readMachineSettings(cwd: string, keys: readonly string[]): MachineSettingsEntry | undefined {
 	const userPath = path.join(getAgentDir(), "settings.json");
 	const projectPath = path.join(getProjectConfigDir(findProjectRootForSettings(cwd)), "settings.json");
 	const user = machineSettingsFrom(readJsonObject(userPath), keys, userPath);
 	const project = projectPath === userPath ? undefined : machineSettingsFrom(readJsonObject(projectPath), keys, projectPath);
-	if (project?.rex) throw new Error(`Project settings '${projectPath}' set a Rex SSH host in 'machines'. Move the rex entry to your user settings '${userPath}'; only user settings choose which host a task runs on.`);
+	const projectExtras = project ? Object.keys(project).filter((name) => name !== "cwd") : [];
+	if (projectExtras.length > 0) throw new Error(`Project settings '${projectPath}' set ${projectExtras.map((name) => `'machines.*.${name}'`).join(", ")} in 'machines'. Move ${projectExtras.length > 1 ? "them" : "it"} to your user settings '${userPath}'; only user settings choose how a task reaches a machine.`);
 	if (!user && !project) return undefined;
 	return { ...user, ...project };
 }
@@ -224,7 +230,7 @@ function findProjectRootForSettings(cwd: string): string {
 }
 
 /** The child's cwd on a remote machine: an absolute launch cwd, or the launch cwd under the machine's configured root. */
-function remoteMachineCwd(stepCwd: string | undefined, root: string | undefined, name: string): string {
+export function remoteMachineCwd(stepCwd: string | undefined, root: string | undefined, name: string): string {
 	const step = stepCwd?.trim();
 	if (step && isRemoteAbsolute(step)) return step;
 	if (!root) throw new Error(`No root for ${name} in this repo. Set subagents.machines.${name}.cwd in .pi/settings.json or pass an absolute cwd on that machine.`);
@@ -250,23 +256,24 @@ export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacement
 			id: selected.id,
 			...(selected.label ? { label: selected.label } : {}),
 			target: validateTarget(selected.target, requested),
+			externalCli: true,
 			...(selected.session && selected.session !== "default" ? { session: selected.session } : {}),
 			cwd: validateRemoteCwd(cwd, requested),
+			localDisk: false,
 		},
 		...(settings?.env ? { env: settings.env } : {}),
 	};
 }
 
-/** `local` resolves to a Rex pane on this machine; a name with a `rex` entry in user settings to a Rex pane on that SSH host; any other value to a Herdr saved machine. */
+/** Registered placement adapters resolve the machine name in order (Rex reserved names and settings first, then the Herdr catalog fallback); the core holds no provider branches. */
 export function resolveMachinePlacement(input: ResolveHerdrMachinePlacementInput): MachinePlacement {
 	const requested = validateMachineName(input.machine);
 	const settings = input.settings ?? readMachineSettings(input.cwd, [requested]);
-	if (requested === REX_LOCAL_MACHINE) {
-		if (settings?.rex) throw new Error("Machine 'local' is reserved for a Rex pane on this machine; give the Rex SSH host in subagents.machines.local.rex another name.");
-		return { machine: resolveRexLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env: input.env }) };
+	for (const adapter of placementAdapters()) {
+		const resolved = adapter.resolveMachinePlacement?.({ ...input, machine: requested, settings });
+		if (resolved) return resolved.env === undefined ? { machine: resolved.machine } : { machine: resolved.machine, env: resolved.env };
 	}
-	if (settings?.rex) return { machine: { provider: "rex", id: requested, target: settings.rex.ssh, cwd: validateRemoteCwd(remoteMachineCwd(input.stepCwd, settings.cwd, requested), requested) } };
-	return resolveHerdrMachinePlacement(input);
+	throw new Error(`No placement adapter claimed machine '${requested}'. Registered providers: ${placementAdapters().map((adapter) => `'${adapter.provider}'`).join(", ") || "none"}.`);
 }
 
 /** A placed Pi keeps its transcript on the pane's machine, so it can't start from a local one. */

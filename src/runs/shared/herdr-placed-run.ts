@@ -7,13 +7,12 @@ import packageJson from "../../../package.json" with { type: "json" };
 import type { HerdrRemoteGitStatus, PlacementMachineReference } from "../../shared/types.ts";
 import type { ChildSession, ChildSessionEvent, ChildSessionFactory, ChildSessionLaunch } from "./child-session.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
-import { herdrPaneHost, HerdrPlacedRunOwner } from "./herdr-pane-host.ts";
+import { herdrPaneHost } from "./herdr-pane-host.ts";
 import { encodeHerdrPiFrame, HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
-import { discoverPlacedBridgeManifest, type PlacedBridgeManifest, type PlacedRunOwner } from "./placed-run-owner.ts";
+import { discoverPlacedBridgeManifest, PlacedRunOwner, type PlacedBridgeManifest } from "./placed-run-owner.ts";
 import type { PlacementBridgeIdentity, PlacementPaneHost, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
-import { RexPlacedRunOwner } from "./rex-pane-host.ts";
+import { placementEditsLocalDisk, requirePlacementAdapter } from "./placement-registry.ts";
 import { ensureSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
-import { isRexLocalMachine } from "./rex-machine.ts";
 import { PLACED_RESTORE_UNSUPPORTED } from "./herdr-machine.ts";
 
 export interface HerdrRunIdentity { runId: string; machineId: string; target: string; session: string | null; workspaceId: string; tabId: string; paneId: string; terminalId: string; agentName: string; nativeSessionId: string; cwd: string; runtimeDir: string }
@@ -34,14 +33,21 @@ export async function boundedHerdrReconnect(identity: HerdrRunIdentity, lastEvid
 	return { ok: false as const, reason: last };
 }
 
-function safeRunId(value: string | undefined): string { const prefix = value?.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 48) ?? "run"; return validateHerdrPiRunId(`${prefix}_${randomBytes(8).toString("hex")}`); }
+/** Sanitizes the runtime run id into a valid placed-run id: printable safe prefix plus a random suffix, so concurrent runs never share a runtime dir or bridge socket. */
+export function safeRunId(value: string | undefined): string { const prefix = value?.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 48) ?? "run"; return validateHerdrPiRunId(`${prefix}_${randomBytes(8).toString("hex")}`); }
 
-export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: string[]; resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false } } {
+/**
+ * Builds the launch contract a pane-native child can honour. A machine that edits this disk already holds the
+ * parent's configuration, so the child loads it itself and the pane never receives extension paths, bindings, or
+ * a process environment; only a machine that does not edit this disk has to refuse a launch that carries them.
+ */
+export function serializeHerdrPiLaunch(launch: ChildSessionLaunch, options: { localDisk?: boolean } = {}): { args: string[]; resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false } } {
+	const localDisk = options.localDisk === true;
 	// Every child is handed a local session file path; only one that already exists (a fork or a
 	// resumed transcript) asks the pane to restore history. A fresh child's path is never written.
 	if (launch.storage.kind === "file" && fs.existsSync(launch.storage.sessionFile)) throw new Error(PLACED_RESTORE_UNSUPPORTED);
-	if (launch.extensionPaths.length || launch.requiredExtensions?.length) throw new Error("Pane-native remote Pi cannot transfer local extension paths; install/configure pi-subagents on the remote machine.");
-	if (launch.processEnv && Object.values(launch.processEnv).some((value) => value !== undefined && value !== "__none__")) throw new Error("Pane-native remote Pi cannot transfer local bindings, MCP selections, or process environment.");
+	if (!localDisk && (launch.extensionPaths.length || launch.requiredExtensions?.length)) throw new Error("Pane-native remote Pi cannot transfer local extension paths; install/configure pi-subagents on the remote machine.");
+	if (!localDisk && launch.processEnv && Object.values(launch.processEnv).some((value) => value !== undefined && value !== "__none__")) throw new Error("Pane-native remote Pi cannot transfer local bindings, MCP selections, or process environment.");
 	if (launch.runtime.nestedRoute || launch.runtime.fanoutChild || launch.runtime.depth > 1) throw new Error("Nested delegation from a pane-native remote Pi is not supported.");
 	if (launch.excludeTools?.length || launch.runtime.permissions || launch.runtime.toolBudget || launch.runtime.requiredExtensions || launch.runtime.mcpDirectTools?.length) throw new Error("Pane-native remote Pi cannot yet represent exclusions, permission rules, tool budgets, MCP direct tools, or required-extension contracts; remove machine placement.");
 	const resources = launch.remoteResources;
@@ -133,23 +139,12 @@ export async function reconnectHerdrPiSession<C extends PlacementSockets>(sessio
 	await session.replaceTransport({ ...validated, paneId: result.paneId, cursor: result.cursor, state: result.state });
 }
 
-export async function createHerdrPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
-	if (!launch.machine) throw new Error("Pane-native Pi launch requires a saved machine.");
-	if (launch.machine.provider !== "herdr") throw new Error("Herdr pane-native Pi launch requires a Herdr saved machine.");
-	const policy = serializeHerdrPiLaunch(launch); const runId = safeRunId(launch.runtime.runId);
-	return startPlacedPiSession(launch, await HerdrPlacedRunOwner.create(launch.machine, runId), policy);
-}
 
-/** A Rex machine: the same bridge session, with the Rex pane host and local (`machine: "local"`) or SSH machine access. */
-export async function createRexPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
-	if (launch.machine?.provider !== "rex") throw new Error("Rex pane-native Pi launch requires a Rex machine.");
-	const policy = serializeHerdrPiLaunch(launch); const runId = safeRunId(launch.runtime.runId);
-	return startPlacedPiSession(launch, await RexPlacedRunOwner.create(launch.machine, runId), policy);
-}
-
-async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSessionLaunch, owner: PlacedRunOwner<C>, policy: ReturnType<typeof serializeHerdrPiLaunch>): Promise<ChildSession> {
-	const machine = owner.machine, runId = owner.runId, runtimeDir = owner.runtimeDir, connection = owner.connection;
-	try {
+/** The host-neutral placed-Pi bridge engine. The core assembles a `PlacedRunOwner` from an adapter's opened run and drives the bridge itself; adapters only open host pieces (see `openPlacedRun`). */
+export async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSessionLaunch, owner: PlacedRunOwner<C>, policy: ReturnType<typeof serializeHerdrPiLaunch>): Promise<ChildSession> {
+		// Opaque adapter machines cross as objects; the closed cast only declares what the engine reads (id, cwd, target).
+		const machine = owner.machine, runId = owner.runId, runtimeDir = owner.runtimeDir, connection = owner.connection;
+		try {
 		let reconnectSession: { reconnect(): Promise<void> } | undefined; const agentName = `pi-${runId.slice(-20)}`;
 		const { owned, terminalId } = await owner.launch({ kind: "pi", name: agentName, args: policy.args, environment: { [HERDR_PI_MODE_ENV]: "1", [HERDR_PI_RUN_ENV]: runId, [HERDR_PI_RUNTIME_DIR_ENV]: runtimeDir } }, () => owner.subscribe(() => {}, () => void reconnectSession?.reconnect()));
 		const manifest = await discoverPlacedBridgeManifest(owner.access, runId, runtimeDir, "The placed Pi did not start the pi-subagents bridge, so its pane was closed. Start pi in a new pane on that machine to see why: it may wait on a prompt (such as a macOS folder-access prompt for the terminal app), exit at startup, or not load the same pi-subagents version as an extension."); if (manifest.protocol !== HERDR_PI_PROTOCOL || manifest.packageVersion !== packageJson.version) throw new Error(`Remote pi-subagents bridge version mismatch (remote ${manifest.packageVersion}, local ${packageJson.version}).`);
@@ -163,14 +158,23 @@ async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSes
 		const missingRequired = (launch.runtime.requiredTools ?? []).filter((tool) => !(configured.tools as unknown[]).includes(tool));
 		if (missingRequired.length) throw new Error(`Remote Pi agent '${policy.resources.agent}' did not activate required tools: ${missingRequired.join(", ")}.`);
 		if (launch.model && configured.model !== launch.model.split(":")[0]) throw new Error(`Remote Pi model '${launch.model}' did not resolve to the requested provider/model.`);
-		const identity: HerdrRunIdentity = { runId, machineId: machine.id, target: isRexLocalMachine(machine) ? machine.id : machine.target, session: owner.host.sessionOf(connection), workspaceId: owned.workspaceId, tabId: owned.tabId, paneId: owned.paneId, terminalId, agentName, nativeSessionId: manifest.nativeSessionId, cwd: machine.cwd, runtimeDir };
+		const identity: HerdrRunIdentity = { runId, machineId: machine.id, target: "target" in machine && machine.target ? machine.target : machine.id, session: owner.host.sessionOf(connection), workspaceId: owned.workspaceId, tabId: owned.tabId, paneId: owned.paneId, terminalId, agentName, nativeSessionId: manifest.nativeSessionId, cwd: machine.cwd, runtimeDir };
 		owner.journal(identity);
 		const session = new HerdrPiSession(owner, bridgeForward, bridge, (configured.tools as string[] | undefined), typeof ready.model === "string" ? ready.model : undefined, launch.runtime, ready.initialGit as HerdrRemoteGitStatus | undefined); reconnectSession = session; session.armReconnect(() => reconnectHerdrPiSession(session, launch)); return session;
 	} catch (error) { await owner.cleanup(); throw error; }
 }
 
-function createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildSession> { return launch.machine?.provider === "rex" ? createRexPiSession(launch) : createHerdrPiSession(launch); }
-
+/** Route the launch through the registry: the adapter opens its host pieces, the core assembles the owner and drives the bridge engine. */
+async function createPlacedPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
+	const machine = launch.machine;
+	if (!machine) throw new Error("A placed launch requires a resolved machine reference.");
+	const adapter = requirePlacementAdapter(machine.provider);
+	const runId = safeRunId(launch.runtime.runId);
+	const policy = serializeHerdrPiLaunch(launch, { localDisk: placementEditsLocalDisk(machine) });
+	const context = await adapter.openPlacedRun(machine, runId);
+	const owner = new PlacedRunOwner(context.machine, runId, context.runtimeDir, context.connection, context.host, context.access, context.removeRuntime);
+	return startPlacedPiSession(launch, owner, policy);
+}
 export function createPlacementAwareChildSessionFactory(local: ChildSessionFactory, createRemote: (launch: ChildSessionLaunch) => Promise<ChildSession> = createPlacedPiSession): ChildSessionFactory {
-	const remote = new Map<ChildSession, string | undefined>(); return { async create(launch) { if (!launch.machine) return local.create(launch); serializeHerdrPiLaunch(launch); const child = await createRemote(launch); remote.set(child, launch.parentSessionFile); return child; }, async dispose() { await Promise.allSettled([...remote.keys()].map((child) => child.dispose())); remote.clear(); await local.dispose(); }, async disposeForParent(parentSessionFile) { const matching = [...remote].filter(([, parent]) => parent === parentSessionFile).map(([child]) => child); await Promise.allSettled(matching.map((child) => child.dispose())); for (const child of matching) remote.delete(child); await local.disposeForParent(parentSessionFile); } };
+	const remote = new Map<ChildSession, string | undefined>(); return { async create(launch) { if (!launch.machine) return local.create(launch); serializeHerdrPiLaunch(launch, { localDisk: placementEditsLocalDisk(launch.machine) }); const child = await createRemote(launch); remote.set(child, launch.parentSessionFile); return child; }, async dispose() { await Promise.allSettled([...remote.keys()].map((child) => child.dispose())); remote.clear(); await local.dispose(); }, async disposeForParent(parentSessionFile) { const matching = [...remote].filter(([, parent]) => parent === parentSessionFile).map(([child]) => child); await Promise.allSettled(matching.map((child) => child.dispose())); for (const child of matching) remote.delete(child); await local.disposeForParent(parentSessionFile); } };
 }

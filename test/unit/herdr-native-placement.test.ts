@@ -98,6 +98,14 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		assert.throws(() => serializeHerdrPiLaunch({ ...clean, runtime: { ...runtime, permissions: { rules: { bash: "deny" } } as never } }), /permission rules/u);
 	});
 
+	it("lets a local-disk machine load its own configuration instead of transferring local resources", () => {
+		const clean = launch(true);
+		const wire = serializeHerdrPiLaunch({ ...clean, extensionPaths: ["/local/private.ts"], processEnv: { MCP_DIRECT_TOOLS: "local-server" } }, { localDisk: true });
+		assert.deepEqual(wire.args, serializeHerdrPiLaunch(clean).args);
+		assert.doesNotMatch(JSON.stringify(wire), /local\/private|MCP_DIRECT_TOOLS/u);
+		assert.throws(() => serializeHerdrPiLaunch({ ...clean, extensionPaths: ["/local/private.ts"] }, { localDisk: false }), /cannot transfer local extension paths/u);
+	});
+
 	it("launches a fresh placed child that was given a local session path, and refuses one that would restore a transcript", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "placed-session-"));
 		try {

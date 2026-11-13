@@ -9,8 +9,11 @@ export interface PlacedBridgeManifest { socketPath: string; nativeSessionId: str
 /** Prints `$1/manifest.json` when it is a regular file, never through a symlink. */
 export const PLACED_MANIFEST_READ_SCRIPT = 'p="$1/manifest.json"; test -f "$p" && test ! -L "$p" && cat "$p"';
 
-export async function discoverPlacedBridgeManifest(access: PlacementMachineAccess, runId: string, runtimeDir: string, missing = "The placed Pi's pi-subagents bridge manifest is not in its runtime directory; the Pi may have exited."): Promise<PlacedBridgeManifest> {
-	for (let attempt = 0; attempt < 100; attempt++) {
+/** How long a placed launch waits for the child's bridge manifest; a heavy ambient extension set needs a minute, a broken child is reported by the pane check instead. */
+const PLACED_MANIFEST_DEADLINE_MS = 60_000;
+export async function discoverPlacedBridgeManifest(access: PlacementMachineAccess, runId: string, runtimeDir: string, missing = "The placed Pi's pi-subagents bridge manifest is not in its runtime directory; the Pi may have exited.", deadlineMs = PLACED_MANIFEST_DEADLINE_MS): Promise<PlacedBridgeManifest> {
+	const deadline = Date.now() + deadlineMs;
+	for (;;) {
 		const result = await access.runAsync(access.shellCommand(PLACED_MANIFEST_READ_SCRIPT, [runtimeDir]), { timeout: 5_000, maxBuffer: 64 * 1024 });
 		if (result.error) throw new Error(`Remote bridge manifest discovery failed: ${result.error.message}`, { cause: result.error });
 		if (result.status === 0 && result.stdout.trim()) {
@@ -19,19 +22,23 @@ export async function discoverPlacedBridgeManifest(access: PlacementMachineAcces
 			if (p.runId !== runId || typeof p.socketPath !== "string" || path.posix.dirname(p.socketPath) !== runtimeDir || typeof p.nativeSessionId !== "string" || typeof p.packageVersion !== "string" || typeof p.protocol !== "number") throw new Error("Remote bridge manifest identity is incomplete or outside its owned runtime directory.");
 			return { socketPath: p.socketPath, nativeSessionId: p.nativeSessionId, packageVersion: p.packageVersion, protocol: p.protocol };
 		}
+		if (Date.now() >= deadline) break;
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 	throw new Error(missing);
 }
 
 export async function createPlacedRuntimeDir(access: PlacementMachineAccess, runId: string): Promise<string> { const result = await access.runAsync(access.shellCommand("umask 077; mktemp -d \"${TMPDIR:-/tmp}/pi-subagents-herdr-$1-XXXXXXXX\"", [runId]), { timeout: 10_000, maxBuffer: 4096 }); if (result.error) throw new Error(`Could not provision a run-private remote bridge runtime directory: ${result.error.message}`, { cause: result.error }); const value = result.stdout.trim(); if (result.status !== 0 || !path.posix.isAbsolute(value) || value.includes("\n")) throw new Error("Could not provision a run-private remote bridge runtime directory."); return value; }
-export function removePlacedRuntimeDir(access: PlacementMachineAccess, runtimeDir: string): void { const result = access.run(access.shellCommand("p=$1; case \"${p##*/}\" in pi-subagents-herdr-*) test -d \"$p\" && test ! -L \"$p\" && rm -rf -- \"$p\";; *) exit 64;; esac", [runtimeDir]), { timeout: 10_000, maxBuffer: 4096 }); if (result.status !== 0 || result.stdout) throw new Error(`Could not remove the exact owned remote runtime directory: ${String(result.stderr).slice(0, 512)}`); }
+// Already-gone counts as removed: the placed child deletes its own runtime directory on session
+// shutdown (herdr-pi-bridge), so the parent's cleanup races it and must tolerate losing.
+export function removePlacedRuntimeDir(access: PlacementMachineAccess, runtimeDir: string): void { const result = access.run(access.shellCommand("p=$1; case \"${p##*/}\" in pi-subagents-herdr-*) test ! -e \"$p\" && exit 0; test -d \"$p\" && test ! -L \"$p\" && rm -rf -- \"$p\";; *) exit 64;; esac", [runtimeDir]), { timeout: 10_000, maxBuffer: 4096 }); if (result.status !== 0 || result.stdout) throw new Error(`Could not remove the exact owned remote runtime directory: ${String(result.stderr).slice(0, 512)}`); }
 
 /** The single private owner for allocation shared by every pane-native backend projection. */
+// M admits opaque machine references: third-party adapter machines cross the bridge engine untyped, builtins stay closed-typed.
 export class PlacedRunOwner<C extends PlacementSockets, M extends PlacementMachineReference = PlacementMachineReference> {
 	readonly machine: M; readonly runId: string; readonly runtimeDir: string; connection: C; readonly host: PlacementPaneHost<C>; readonly access: PlacementMachineAccess;
 	owned?: PlacementOwnedPane; terminalId?: string; agentName?: string; startedArgv?: string[]; identity?: HerdrRunIdentity; #unsubscribe = () => {}; #snapshot: HerdrRunSnapshot = { connection: "connected", state: "ready", revision: 0 }; #cleanupPromise?: Promise<void>; readonly #removeRuntime: () => void;
-	protected constructor(machine: M, runId: string, runtimeDir: string, connection: C, host: PlacementPaneHost<C>, access: PlacementMachineAccess, removeRuntime: () => void = () => removePlacedRuntimeDir(access, runtimeDir)) { this.machine = machine; this.runId = runId; this.runtimeDir = runtimeDir; this.connection = connection; this.#removeRuntime = removeRuntime; this.host = host; this.access = access; }
+	constructor(machine: M, runId: string, runtimeDir: string, connection: C, host: PlacementPaneHost<C>, access: PlacementMachineAccess, removeRuntime: () => void = () => removePlacedRuntimeDir(access, runtimeDir)) { this.machine = machine; this.runId = runId; this.runtimeDir = runtimeDir; this.connection = connection; this.#removeRuntime = removeRuntime; this.host = host; this.access = access; }
 	observeEvent(event: unknown): void { const data = this.host.paneEvent(event, this.#snapshot.state); if (data && (!this.terminalId || data.terminalId === this.terminalId || data.paneId === this.owned?.paneId)) this.#snapshot = { ...this.#snapshot, revision: this.#snapshot.revision + 1, state: data.state }; }
 	markConnectionUnknown(observed: C): boolean { if (this.connection !== observed) return false; this.#snapshot = { ...this.#snapshot, connection: "unknown", state: "unknown", revision: this.#snapshot.revision + 1 }; return true; }
 	async subscribe(listener: (event: unknown) => void, disconnected: (error: Error) => void): Promise<void> { const observed = this.connection, paneId = this.owned?.paneId; let adopted = false, candidateLost: Error | undefined; if (!paneId) throw new Error("Herdr status subscription requires a provisioned pane."); const unsubscribe = await this.host.subscribe(observed, paneId, (event) => { this.observeEvent(event); listener(event); }, (error) => { if (!adopted) { candidateLost ??= error; return; } if (!this.markConnectionUnknown(observed)) return; disconnected(error); }); if (candidateLost) { unsubscribe(); throw candidateLost; } this.#unsubscribe = unsubscribe; adopted = true; }
