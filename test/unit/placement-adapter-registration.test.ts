@@ -28,7 +28,10 @@ describe("external placement adapter registration", () => {
 		t.after(registerPlacementEventListener(consumer));
 		assert.throws(() => registerPlacementAdapter(consumer, spiketestAdapter({ version: 2 as never })), /version/u);
 		assert.throws(() => registerPlacementAdapter(consumer, { ...spiketestAdapter(), openPlacedRun: undefined as never }), /openPlacedRun/u);
-		assert.throws(() => registerPlacementAdapter(consumer, spiketestAdapter(), { before: "nosuch" }), /unknown provider/u);
+		// Extension load order is not controllable, so a `before` target that has not registered yet defers the preference.
+		const deferred = registerPlacementAdapter(consumer, spiketestAdapter(), { before: "nosuch" });
+		t.after(() => deferred.dispose());
+		assert.equal(placementAdapters().at(-1)?.provider, "spiketest", "an unknown before-target defers the preference and appends");
 		assert.throws(() => registerPlacementAdapter(consumer, spiketestAdapter({ provider: "Bad Id" })), /provider id/u);
 	});
 

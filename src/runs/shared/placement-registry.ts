@@ -78,9 +78,13 @@ export interface PlacementAdapterV1 {
 	resolveMachinePlacement?(request: PlacementResolveRequest): PlacementResolution | undefined;
 	/** Open the host pieces for one placed run: connect (creating the adapter's session and window scaffolding as needed), resolve the effective machine, and provision the runtime directory. Fails closed — on any failure the adapter removes its own scaffolding before rethrowing. The core assembles the run owner and drives the bridge engine, so adapters never see launches or sessions. */
 	openPlacedRun(machine: PlacementMachineReference, runId: string): Promise<PlacementRunContext>;
+	/** Module that exports `registerPlacementAdapters(register)`, so a process that cannot load Pi extensions (the async runner) can load this adapter. Adapters that only ever run inside the Pi host may omit it. */
+	moduleUrl?: string;
 }
 
 const adapters: PlacementAdapterV1[] = [];
+/** Adapters whose `before` target had not registered yet; moved ahead of it when it appears (extension load order is not ours to control). */
+const deferredBefore = new Map<string, string>();
 
 export function registerPlacementAdapter(adapter: PlacementAdapterV1, options: { /** Insert ahead of a registered fallback provider (e.g. "herdr") so third-party adapters get first claim on machine names. */ before?: string } = {}): void {
 	if (adapter.kind !== "pi-subagents.placement-adapter") throw new Error(`Placement adapter '${adapter.provider}' must declare kind 'pi-subagents.placement-adapter'.`);
@@ -88,8 +92,20 @@ export function registerPlacementAdapter(adapter: PlacementAdapterV1, options: {
 	if (typeof adapter.provider !== "string" || !/^[a-z][a-z0-9_-]{0,31}$/u.test(adapter.provider)) throw new Error(`Placement adapter provider id must match /^[a-z][a-z0-9_-]{0,31}$/: ${JSON.stringify(adapter.provider)}.`);
 	if (adapters.some((existing) => existing.provider === adapter.provider)) throw new Error(`A placement adapter for provider '${adapter.provider}' is already registered.`);
 	const index = options.before ? adapters.findIndex((existing) => existing.provider === options.before) : -1;
-	if (options.before && index === -1) throw new Error(`Cannot register placement adapter '${adapter.provider}' before unknown provider '${options.before}'.`);
+	if (options.before && index === -1) deferredBefore.set(adapter.provider, options.before);
 	adapters.splice(index === -1 ? adapters.length : index, 0, adapter);
+	for (const [deferred, target] of deferredBefore) {
+		if (target !== adapter.provider) continue;
+		const moving = adapters.findIndex((existing) => existing.provider === deferred);
+		if (moving === -1) {
+			deferredBefore.delete(deferred);
+			continue;
+		}
+		const [item] = adapters.splice(moving, 1);
+		if (!item) continue;
+		adapters.splice(adapters.findIndex((existing) => existing.provider === adapter.provider), 0, item);
+		deferredBefore.delete(deferred);
+	}
 }
 
 export function placementAdapters(): readonly PlacementAdapterV1[] {

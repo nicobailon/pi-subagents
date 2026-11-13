@@ -7,7 +7,7 @@ import type { ChildSession } from "../../src/runs/shared/child-session.ts";
 // Importing herdr-placed-run loads the built-in Herdr and Rex adapters into the registry.
 import { createPlacementAwareChildSessionFactory } from "../../src/runs/shared/herdr-placed-run.ts";
 import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
-import { placementAdapters, placementEditsLocalDisk, placementSupportsExternalCli, registerPlacementAdapter, requirePlacementAdapter, type PlacementAdapterV1 } from "../../src/runs/shared/placement-registry.ts";
+import { placementAdapters, placementEditsLocalDisk, placementSupportsExternalCli, registerPlacementAdapter, requirePlacementAdapter, type PlacementAdapterSettings, type PlacementAdapterV1 } from "../../src/runs/shared/placement-registry.ts";
 
 const runtime = { runId: "run", agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false, waitTool: { enabled: true } };
 const child: ChildSession = { subscribe: () => () => {}, prompt: async () => {}, steer: async () => {}, followUp: async () => {}, abort: async () => {}, dispose: async () => {}, messages: [], sessionFile: undefined, sessionId: "native", modelId: "provider/model" };
@@ -52,6 +52,21 @@ describe("placement adapter registry", () => {
 		registerPlacementAdapter(spiketestAdapter({ resolveMachinePlacement: ({ machine }) => machine === "fuzzbox" ? { machine: { provider: "spiketest", id: machine, localDisk: true, cwd: "/fuzz" } } : undefined }), { before: "herdr" });
 		const resolved = resolveMachinePlacement({ machine: "fuzzbox", cwd: "/repo", settings: {} });
 		assert.deepEqual(resolved.machine, { provider: "spiketest", id: "fuzzbox", localDisk: true, cwd: "/fuzz" });
+	});
+
+	it("hands adapter-declared machine settings and env to the claiming adapter opaquely", () => {
+		let seen: unknown;
+		registerPlacementAdapter(spiketestAdapter({
+			provider: "stubpipe",
+			resolveMachinePlacement: (request) => {
+				if (request.machine !== "pipetest") return undefined;
+				seen = request.settings;
+				return { machine: { provider: "stubpipe", id: request.machine, localDisk: true, cwd: "/fuzz" }, env: (request.settings as { env?: Record<string, string> })?.env };
+			},
+		}), { before: "herdr" });
+		const resolved = resolveMachinePlacement({ machine: "pipetest", cwd: "/repo", settings: { cwd: "/repo", env: { FOO: "1" }, tmux: { ssh: "u@host" } } as PlacementAdapterSettings });
+		assert.deepEqual(seen, { cwd: "/repo", env: { FOO: "1" }, tmux: { ssh: "u@host" } });
+		assert.deepEqual(resolved.env, { FOO: "1" });
 	});
 
 	it("answers the local-disk question without comparing providers", () => {
