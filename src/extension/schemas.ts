@@ -245,7 +245,7 @@ const SubagentParamProperties = {
 	usageBudget: Type.Optional(UsageBudgetOverride),
 	agentScope: Type.Optional(Type.String({ description: "user/project/both (default); project wins collisions." })),
 	cwd: Type.Optional(Type.String({ description: "Execution/project-pane directory." })),
-	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label (runs an external CLI agent), a Rex host named in settings (runs a Pi child), or \"local\" (a Pi child in a Rex pane here). On another machine, cwd is a directory there." })),
+	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label (runs an external CLI agent), a Rex host named in settings (runs a Pi child), or \"local\" (a Pi child in a new tab of the Herdr or Rex session this Pi runs in). On another machine, cwd is a directory there." })),
 	requireLauncher: Type.Optional(Type.Object({
 		name: Type.String({ pattern: RUNNER_LAUNCHER_NAME_PATTERN.source }),
 		definitionDigest: Type.String({ pattern: "^[0-9a-f]{64}$" }),

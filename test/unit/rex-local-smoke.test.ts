@@ -29,7 +29,8 @@ const log = (line: string) => process.stdout.write(`[rex-smoke] ${line}\n`);
 describe("Rex local placement against a private Rex server and a real Pi", { skip }, () => {
 	it("launches a background Pi tab, completes one bridge prompt round trip, and proves the block gone on dispose", { timeout: 180_000 }, async () => {
 		const scratch = fs.mkdtempSync("/tmp/rxs."), socket = path.join(scratch, "s.sock"), server = `unix://${socket}`, serverEnv = { ...rexCommandEnv(), HOME: realHome };
-		for (const name of Object.keys(serverEnv)) if (name.startsWith("PI_")) delete serverEnv[name];
+		// HERDR_* too: run from a Herdr pane, `local` would resolve to Herdr.
+		for (const name of Object.keys(serverEnv)) if (name.startsWith("PI_") || name.startsWith("HERDR_")) delete serverEnv[name];
 		fs.writeFileSync(path.join(scratch, "c.lua"), "");
 		const rex = (args: string[]) => spawnSync(rexBin!, ["--autostart=false", "-S", server, ...args], { encoding: "utf8", env: serverEnv, timeout: 15_000 });
 		const serverProcess = spawn(rexBin!, ["--autostart=false", "server", "run", "--listen", server, "--state-dir", path.join(scratch, "st"), "--config", path.join(scratch, "c.lua")], { env: serverEnv, stdio: "ignore", detached: true });

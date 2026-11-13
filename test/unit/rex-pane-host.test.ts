@@ -138,7 +138,7 @@ describe("machine 'local' resolution", { skip: process.platform === "win32" }, (
 	});
 
 	it("fails closed outside Rex, for a session the server does not know, and when the server is unreachable", () => {
-		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: parentEnv() }), /not running inside Rex/u);
+		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: parentEnv() }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex/u);
 		assert.equal(fs.existsSync(path.join(dir, "calls")), false);
 		script([3]); assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: insideRex }), /does not know session/u);
 		fs.rmSync(path.join(dir, "session.n")); script([4]); assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: insideRex }), /unreachable/u);

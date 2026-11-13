@@ -269,6 +269,8 @@ A custom agent file that shadows a bundled agent replaces the bundled definition
 
 Native Pi and the six code-owned Claude Code, Codex, and Cursor profiles can run on a Herdr machine (`herdr machine add <target> --label <name>`). Herdr owns each visible agent process in a fresh no-focus pane; SSH is used only as bounded transport for Herdr RPC and ownership checks. Herdr's catalog is the host allowlist; raw ssh targets are rejected.
 
+For a pane on this machine you don't need a saved machine: run Pi inside Herdr and use `machine: "local"`.
+
 `machine` is a top-level frontmatter key, a settings override (`subagents.agentOverrides.<agent>.machine`, project beats user, `false` clears a pin), and a launch option on the `subagent` tool, workflow `runs.run`, chain, parallel, and dynamic-fanout steps. The launch option wins. Placement survives `subagent({ action: "disable" })`, `reset`, and model profile switches.
 
 `cwd` means the directory on that machine when a machine is set. An absolute path or `~/...` is used as given; a relative path joins the repo's configured machine root; with no cwd the root is used; with no root the launch fails closed naming the setting:
@@ -288,13 +290,15 @@ Placed external profiles are one-shot and stop-only: they cannot steer, resume, 
 
 pi-subagents never clones, pulls, or checks out on the machine. Generic `external-cli` commands and managed worktrees are rejected before launch; saved-machine placement accepts native Pi and only the six code-owned external profiles.
 
-## Running a Pi child in a Rex pane on this machine
+## Running a Pi child in a new tab on this machine (Rex or Herdr)
 
-`machine: "local"` runs a native Pi child as a visible Pi in a new background tab of your own Rex session, labeled `subagent-<run id tail>`. It works wherever `machine` works: frontmatter, settings overrides, the `subagent` tool, workflow `runs.run`, chain, parallel, and dynamic-fanout steps. `local` is reserved and never looks in the Herdr catalog. The parent Pi must run inside Rex: with no `REX_SESSION`, or a session the Rex server does not confirm, the launch fails before anything starts.
+`machine: "local"` runs a native Pi child as a visible Pi in a new background tab of the terminal this Pi runs in, labeled `subagent-<run id tail>`. Inside Rex, that is a tab in your Rex session. Inside a Herdr pane (`HERDR_ENV=1` and `HERDR_PANE_ID` set), it is a tab in your own Herdr session, reached over the local Herdr socket with no saved machine and no SSH. When both are set (Herdr running inside a Rex tab), Herdr wins, because the Herdr pane is where Pi is drawn. Outside both, or when the Rex or Herdr server does not confirm this Pi's session or pane, the launch fails before anything starts. `local` is reserved and never looks in the Herdr catalog. It works wherever `machine` works: frontmatter, settings overrides, the `subagent` tool, workflow `runs.run`, chain, parallel, and dynamic-fanout steps.
 
-The parent drives the child through the same bridge as a Herdr-placed Pi: prompt, steer, follow-up, abort, `contact_supervisor`, and results. The child Pi loads pi-subagents from its own extensions, so it must be installed at the same version. `cwd` is a directory on this machine; a relative path joins the launch directory. pi-subagents finds `rex` in `$REX_BIN_DIR`, then on `PATH`, then in the Rex server app.
+The parent drives the child through the same bridge as a Herdr-placed Pi: prompt, steer, follow-up, abort, `contact_supervisor`, and results. The child Pi loads pi-subagents from its own extensions, so it must be installed at the same version. `cwd` is a directory on this machine; a relative path joins the launch directory. In Herdr, the tab opens in the workspace whose pane is already in that directory, otherwise in a no-focus `pi-subagents-…` workspace. In Rex, pi-subagents finds `rex` in `$REX_BIN_DIR`, then on `PATH`, then in the Rex server app; in Herdr, it runs `herdr` from `$HERDR_BIN` or `PATH`.
 
 A finished child keeps its tab open, with the idle Pi, until you close it; an aborted or stopped child's tab is closed. Limits: native Pi only (Claude Code, Codex, Cursor, and generic `external-cli` agents are rejected), fresh context only, and the same restrictions as a Herdr-placed Pi (no local extension paths, process environment, nested delegation, permission rules, or tool budgets).
+
+A `local` child edits this machine's disk, so in either terminal it gets the same local cwd check, Git evidence and output-file handling as a child without `machine`.
 
 ## Running a Pi child in a Rex pane on another Mac
 

@@ -31,6 +31,15 @@ export function decodeHerdrJsonLine(line: Buffer): unknown { try { return JSON.p
 export function shellQuoteRemote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 export function remoteShellCommand(script: string, args: string[] = []): string { return `sh -c ${shellQuoteRemote(`PATH="${HERDR_REMOTE_PATH}"; export PATH; ${script}`)} sh${args.map((arg) => ` ${shellQuoteRemote(arg)}`).join("")}`; }
 function canonicalHerdrSession(session: string | null | undefined): string | null { return session && session !== "default" ? session : null; }
+/**
+ * Points herdr at a recorded local server only: the calling process's own pane selectors (a background runner started from
+ * another pane) never choose it. A named session's server reports its name only when HERDR_SESSION says it (herdr 0.9.5).
+ */
+export function herdrLocalEnv(socket: string, session: string | null | undefined, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	const { HERDR_SESSION: _session, HERDR_CLIENT_SOCKET_PATH: _client, HERDR_PANE_ID: _pane, HERDR_ENV: _env, HERDR_SOCKET_PATH: _socket, ...env } = source;
+	const selected = canonicalHerdrSession(session);
+	return { ...env, HERDR_SOCKET_PATH: socket, ...(selected ? { HERDR_SESSION: selected } : {}) };
+}
 function sshEnvCommand(session: string | undefined, command: string): string { const selected = canonicalHerdrSession(session), assignment = selected ? ` HERDR_SESSION=${shellQuoteRemote(selected)}` : ""; return `/usr/bin/env -u HERDR_SOCKET_PATH -u HERDR_SESSION${assignment} ${remoteShellCommand(command)}`; }
 
 export function runHerdrRemoteCommand(machine: SshTarget, command: string, options: { sshBin?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number } = {}) { return spawnSync(options.sshBin ?? "ssh", [...herdrSshArgs(options.env), machine.target, command], { encoding: "utf8", env: hardenedSshEnv(options.env), timeout: options.timeout ?? 15_000, maxBuffer: options.maxBuffer ?? MAX_DISCOVERY_BYTES, windowsHide: true }); }

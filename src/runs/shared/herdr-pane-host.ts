@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { HerdrLocalMachineReference, HerdrMachineReference, PlacementMachineReference } from "../../shared/types.ts";
-import { connectHerdrMachine, parseHerdrEndpoint, runBoundedCommand, SocketRpcClient, sshMachineAccess, type HerdrForwardedConnection, type HerdrRpcClient } from "./herdr-connection.ts";
+import { connectHerdrMachine, herdrLocalEnv, parseHerdrEndpoint, runBoundedCommand, SocketRpcClient, sshMachineAccess, type HerdrForwardedConnection, type HerdrRpcClient } from "./herdr-connection.ts";
 import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { HERDR_PI_MODE_ENV, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV } from "./herdr-pi-protocol.ts";
 import { localMachineAccess } from "./local-machine-access.ts";
@@ -52,16 +52,10 @@ export async function provisionHerdrPane(client: HerdrRpcClient, cwd: string, ru
 function provisionHerdrOwnedPane(connection: HerdrForwardedConnection, machine: HerdrPlacementMachine, runId: string, runtimeDir: string, environment?: Record<string, string>): Promise<PlacementOwnedPane> { return provisionHerdrPane(connection.client, machine.cwd, runId, runtimeDir, environment, "target" in machine ? herdrPaneAllocationKey(machine.target, connection.endpoint.session, machine.cwd) : JSON.stringify(["local", machine.socket, connection.endpoint.session, machine.cwd])); }
 function asHerdrMachine(machine: PlacementMachineReference): HerdrPlacementMachine { if (machine.provider !== "herdr") throw new Error("The Herdr pane host only places runs on Herdr machines."); return machine; }
 
-/** Points herdr at the recorded server only: the calling process's own pane selectors (a background runner started from another pane) never choose it. */
-export function herdrLocalEnv(socket: string, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-	const { HERDR_SESSION: _session, HERDR_CLIENT_SOCKET_PATH: _client, HERDR_PANE_ID: _pane, HERDR_ENV: _env, HERDR_SOCKET_PATH: _socket, ...env } = source;
-	return { ...env, HERDR_SOCKET_PATH: socket };
-}
-
 /** `machine: "local"` in Herdr: the recorded server on this machine, confirmed by socket and session, reached without SSH. */
 export async function connectLocalHerdrMachine(machine: HerdrLocalMachineReference, options: { herdrBin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<HerdrForwardedConnection> {
 	if (process.platform === "win32") throw new Error("Machine 'local' runs the child in a Herdr pane, which is not supported on Windows.");
-	const env = options.env ?? process.env, result = await runBoundedCommand(options.herdrBin ?? env.HERDR_BIN ?? "herdr", ["status", "server", "--json"], { env: herdrLocalEnv(machine.socket, env), timeout: 15_000 });
+	const env = options.env ?? process.env, result = await runBoundedCommand(options.herdrBin ?? env.HERDR_BIN ?? "herdr", ["status", "server", "--json"], { env: herdrLocalEnv(machine.socket, machine.session, env), timeout: 15_000 });
 	if (result.error) throw new Error(`Local Herdr discovery failed: ${result.error.message}`, { cause: result.error });
 	if (result.status !== 0) throw new Error(`Local Herdr discovery failed with code ${result.status}: ${(result.stderr || result.stdout).trim().slice(0, 512)}`);
 	const endpoint = parseHerdrEndpoint(result.stdout, machine.session);

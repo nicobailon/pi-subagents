@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- From a Pi running inside a Herdr pane, `machine: "local"` now opens the subagent in a new tab of your own Herdr session, with no saved machine or SSH. Before, `local` worked only inside Rex, and placing a child in Herdr on the same machine meant a saved machine and SSH to yourself. When Herdr runs inside a Rex tab, the Herdr session wins, and outside both terminals `local` fails before anything starts. Thanks to [@mystery4f](https://github.com/mystery4f) for #3266.
+
 ### Fixed
 
 - A subagent with `outputSchema` placed in a Herdr or Rex pane is now refused before any pane opens, with a message saying placed subagents can't return structured output yet. Before, it started, could never call `structured_output`, and failed at the end with an error telling it to call a tool it didn't have.
