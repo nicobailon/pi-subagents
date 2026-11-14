@@ -82,8 +82,10 @@ describe("async runner execution", () => {
 	it("resolves machine 'local' to the parent's Rex session at the async step call site", { skip: process.platform === "win32" ? "Rex placement is POSIX-only" : undefined }, (t) => {
 		const bin = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "rex-bin-")));
 		fs.writeFileSync(path.join(bin, "rex"), "#!/bin/sh\ncase \"$*\" in *\" session inspect session:parent-1 \"*) echo '{\"session_id\":\"session:parent-1\"}';; *) exit 9;; esac\n", { mode: 0o755 });
-		const names = ["REX_BIN_DIR", "REX_SESSION", "REX_SERVER", "HERDR_BIN"] as const, previous = names.map((name) => process.env[name]);
+		const names = ["REX_BIN_DIR", "REX_SESSION", "REX_SERVER", "HERDR_BIN", "HERDR_ENV", "HERDR_PANE_ID"] as const, previous = names.map((name) => process.env[name]);
 		Object.assign(process.env, { REX_BIN_DIR: bin, REX_SESSION: "session:parent-1", REX_SERVER: "unix:///tmp/parent-rex.sock", HERDR_BIN: path.join(bin, "no-herdr") });
+		// Run from a Herdr pane, `local` would resolve to Herdr.
+		delete process.env.HERDR_ENV; delete process.env.HERDR_PANE_ID;
 		t.after(() => {
 			names.forEach((name, index) => { const value = previous[index]; if (value === undefined) delete process.env[name]; else process.env[name] = value; });
 			fs.rmSync(bin, { recursive: true, force: true });

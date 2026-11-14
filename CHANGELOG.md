@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- From a Pi running inside a Herdr pane, `machine: "local"` now opens the subagent in a new tab of your own Herdr session, with no saved machine or SSH. Before, `local` worked only inside Rex, and placing a child in Herdr on the same machine meant a saved machine and SSH to yourself. When Herdr runs inside a Rex tab, the Herdr session wins, and outside both terminals `local` fails before anything starts. Thanks to [@mystery4f](https://github.com/mystery4f) for #3266.
+
 ### Fixed
 
 - A subagent placed in a Herdr or Rex pane no longer loses a large message or crashes when the parent reconnects. Before, a message too big to send to the parent in one piece, such as a screenshot it read or a very large file it wrote, never reached the parent, and the next time the parent reconnected to that pane the subagent's Pi crashed. Now the parent gets the message shortened: images and very long text are replaced by a note saying what was left out, and very long tool arguments are cut. Two large messages sent back to back also no longer break the connection.
@@ -268,7 +272,7 @@
 ### Added
 
 - Background workflows cut off by Pi exiting, crashing or reloading now resume on their own when you reopen or reload their session within a day, and steps that already finished are not run again. You can also resume one yourself with `subagent({ action: "resume", id })`, or set `autoResume: false` to resume them only by hand. A stopped workflow is resumed only once, and its notice says how it resumed. If you start a new Pi in the same folder instead, it tells you which session to reopen. See [docs/workflows.md](docs/workflows.md).
-- `machine: "local"` runs a native Pi child in a new background tab of your own Rex session, with the same controls as a Herdr-placed Pi child: prompts, steering, follow-ups, abort, `contact_supervisor` and results. The launch fails if the parent Pi is not running inside Rex, and Claude Code, Codex, Cursor and generic `external-cli` agents are rejected. A finished child's tab stays open until you close it; an aborted or stopped child's tab is closed. See [docs/agents.md](docs/agents.md#running-a-pi-child-in-a-rex-pane-on-this-machine).
+- `machine: "local"` runs a native Pi child in a new background tab of your own Rex session, with the same controls as a Herdr-placed Pi child: prompts, steering, follow-ups, abort, `contact_supervisor` and results. The launch fails if the parent Pi is not running inside Rex, and Claude Code, Codex, Cursor and generic `external-cli` agents are rejected. A finished child's tab stays open until you close it; an aborted or stopped child's tab is closed. See [docs/agents.md](docs/agents.md#running-a-pi-child-in-a-new-tab-on-this-machine-rex-or-herdr).
 - A native Pi child can also run in a Rex tab on another Mac over SSH. Name the Mac in your user settings with `subagents.machines.<name>.rex.ssh`, then pass `machine: "<name>"`. The child opens in that Mac's `subagents` Rex session, which is created the first time it is needed. These machines do not need Herdr, and project settings cannot name a Rex host. See [docs/agents.md](docs/agents.md#running-a-pi-child-in-a-rex-pane-on-another-mac).
 
 ### Changed

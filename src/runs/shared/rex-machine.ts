@@ -2,15 +2,17 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { PlacementMachineReference, RexLocalMachineReference } from "../../shared/types.ts";
+import type { HerdrLocalMachineReference, PlacementMachineReference, RexLocalMachineReference } from "../../shared/types.ts";
 
-/** `machine: "local"` is reserved: this machine, in a Rex pane of the parent's own Rex session. It never consults the Herdr catalog. */
+/** `machine: "local"` is reserved: this machine, in a new tab of the Herdr or Rex session this Pi runs in. It never consults the Herdr catalog. */
 export const REX_LOCAL_MACHINE = "local";
 /** Rex CLI exit codes: 3 means the target is gone, 4 means the server is unreachable (state unknown, never "gone"). */
 export const REX_EXIT_GONE = 3, REX_EXIT_UNREACHABLE = 4;
 
-/** A `local` child edits this machine's disk; every other placed child edits the remote one. */
+/** A Rex pane in the parent's own Rex session; the other Rex reference is an SSH machine. */
 export function isRexLocalMachine(machine: PlacementMachineReference | undefined): machine is RexLocalMachineReference { return machine?.provider === "rex" && !("target" in machine); }
+/** A placed child without an SSH `target` (Rex or Herdr `local`) edits this machine's disk; every other placed child edits the remote one. */
+export function editsLocalDisk(machine: PlacementMachineReference | undefined): machine is RexLocalMachineReference | HerdrLocalMachineReference { return machine !== undefined && !("target" in machine); }
 /** The Rex server bundle's CLI, relative to the home directory. */
 export const REX_BUNDLE_BIN = "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex";
 export const REX_CALL_TIMEOUT_MS = 15_000, REX_MAX_OUTPUT = 1024 * 1024;
@@ -53,13 +55,18 @@ export function resolveRexLocalPlacement(input: { cwd: string; stepCwd?: string;
 	if (result.status === REX_EXIT_UNREACHABLE) throw new Error("Machine 'local' needs the Rex server, but it is unreachable.");
 	if (result.status !== 0) throw new Error(`rex session inspect exited with code ${result.status}: ${(result.stderr || result.stdout).trim().slice(0, 512)}`);
 	if (!sessionConfirmed(result.stdout, session)) throw new Error(`The Rex server did not confirm session ${session}.`);
-	const stepCwd = input.stepCwd?.trim();
-	const home = stepCwd === "~" || stepCwd?.startsWith("~/") ? path.join(os.homedir(), stepCwd.slice(1)) : undefined;
-	const requested = home ?? (stepCwd ? path.resolve(input.cwd, stepCwd) : input.cwd);
+	const machine: RexLocalMachineReference = { provider: "rex", id: REX_LOCAL_MACHINE, session, cwd: resolveLocalLaunchCwd(input.cwd, input.stepCwd) };
+	if (server) machine.server = server;
+	return machine;
+}
+
+/** The real launch directory of a `local` child: `stepCwd` is absolute, `~`, or relative to the parent's launch directory `cwd`. */
+export function resolveLocalLaunchCwd(parentCwd: string, stepCwd: string | undefined): string {
+	const step = stepCwd?.trim();
+	const home = step === "~" || step?.startsWith("~/") ? path.join(os.homedir(), step.slice(1)) : undefined;
+	const requested = home ?? (step ? path.resolve(parentCwd, step) : parentCwd);
 	let cwd: string;
 	try { cwd = fs.realpathSync(requested); } catch (error) { throw new Error(`Machine 'local' cwd does not exist: ${requested}.`, { cause: error }); }
 	if (!fs.statSync(cwd).isDirectory()) throw new Error(`Machine 'local' cwd is not a directory: ${requested}.`);
-	const machine: RexLocalMachineReference = { provider: "rex", id: REX_LOCAL_MACHINE, session, cwd };
-	if (server) machine.server = server;
-	return machine;
+	return cwd;
 }
