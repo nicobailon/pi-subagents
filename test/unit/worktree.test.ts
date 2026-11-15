@@ -23,6 +23,7 @@ import {
 	WorktreeSetupError,
 	type WorktreeSetup,
 } from "../../src/runs/shared/worktree.ts";
+import { formatParallelHandoffReference, writeParallelHandoffGroup } from "../../src/runs/shared/parallel-handoff.ts";
 
 const require = createRequire(import.meta.url);
 const fsCjs = require("node:fs") as typeof fs;
@@ -1067,6 +1068,47 @@ process.stdout.write("corrupt external diff output\\n");
 			assert.equal(cleanup.state, "complete");
 			assert.equal(fs.existsSync(worktreePath), false);
 			setup = undefined;
+		} finally {
+			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
+			cleanupRepo(repoDir);
+		}
+	});
+
+	it("keeps a branch whose commits are on no other ref and reports it in the handoff", async () => {
+		const repoDir = createRepo("pi-worktree-kept-branch-");
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = await createWorktrees(repoDir, "kept-branch", 2);
+			const [only, landed] = setup.worktrees as [WorktreeSetup["worktrees"][number], WorktreeSetup["worktrees"][number]];
+			const commit = (worktreePath: string, name: string): string => {
+				fs.writeFileSync(path.join(worktreePath, name), `${name}\n`, "utf-8");
+				git(worktreePath, ["add", name]);
+				git(worktreePath, ["commit", "-m", name]);
+				return git(worktreePath, ["rev-parse", "HEAD"]);
+			};
+			const onlyTip = commit(only.path, "only.txt");
+			git(repoDir, ["branch", "landed-copy", commit(landed.path, "landed.txt")]);
+			const diffs = diffWorktrees(setup, ["worker", "worker"], path.join(repoDir, "artifacts", "patches"));
+			const handoff = {
+				manifestPath: path.join(repoDir, "artifacts", "handoff.json"), runId: "run-kept", mode: "parallel" as const, source: "foreground" as const,
+				cwd: repoDir, stepIndex: 0, flatStartIndex: 0, setup, diffs,
+				results: [{ agent: "worker", status: "completed" as const, summary: "done" }, { agent: "worker", status: "completed" as const, summary: "done" }],
+			};
+			writeParallelHandoffGroup(handoff);
+
+			const cleanup = cleanupWorktrees(setup, { kind: "preserve", capturedDiffs: diffs, handoffManifestPath: handoff.manifestPath });
+			setup = undefined;
+			assert.equal(cleanup.state, "complete");
+			assert.deepEqual(cleanup.tasks.map(({ worktreeRemoved, branchRemoved, keptBranchTip, preserved, errors }) => ({ worktreeRemoved, branchRemoved, keptBranchTip, preserved, errors })), [
+				{ worktreeRemoved: true, branchRemoved: false, keptBranchTip: onlyTip, preserved: undefined, errors: undefined },
+				{ worktreeRemoved: true, branchRemoved: true, keptBranchTip: undefined, preserved: undefined, errors: undefined },
+			]);
+			assert.equal(git(repoDir, ["rev-parse", `refs/heads/${only.branch}`]), onlyTip);
+			assert.equal(git(repoDir, ["branch", "--list", landed.branch]), "");
+
+			const reference = writeParallelHandoffGroup({ ...handoff, cleanup });
+			assert.equal(reference.cleanupState, "complete");
+			assert.ok(formatParallelHandoffReference(reference).includes(`Kept branch ${only.branch} at ${onlyTip.slice(0, 12)}: its commits are on no other branch.`));
 		} finally {
 			if (setup) cleanupWorktrees(setup, { kind: "setup-rollback" });
 			cleanupRepo(repoDir);
