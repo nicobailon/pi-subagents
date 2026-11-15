@@ -23,6 +23,7 @@ import type {
 } from "./worktree.ts";
 import { cleanupWorktrees, isWorktreeCleanupTaskDone, withWorktreeTransaction } from "./worktree.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "./lane-metadata.ts";
+import { formatKeptBranchLines } from "./kept-branch-text.ts";
 
 export interface ParallelHandoffResult {
 	agent: string;
@@ -726,7 +727,7 @@ export function writeWorktreeSetupHandoff(input: Omit<Parameters<typeof writePar
 export function formatParallelHandoffReference(reference: ParallelHandoffReference): string {
 	return [
 		`Worktree handoff: ${reference.path} (${reference.childCount} children, ${reference.changedPatches} changed patches, cleanup ${reference.cleanupState})`,
-		...(reference.keptBranches ?? []).map(({ branch, tip }) => `Kept branch ${branch} at ${tip.slice(0, 12)}: its commits are on no other branch.`),
+		...formatKeptBranchLines(reference.keptBranches ?? []),
 	].join("\n");
 }
 

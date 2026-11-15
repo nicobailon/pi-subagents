@@ -21,6 +21,7 @@ import { COMPLETION_ACTION, type ParentWake } from "../../shared/parent-wake.ts"
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { capSummaryOutputs } from "../shared/single-output.ts";
+import { formatKeptBranchLines, parseKeptBranchLines, readKeptBranches, type KeptBranch } from "../shared/kept-branch-text.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
 import { describeWorkflowResume } from "../../workflows/workflow-resume-claim.ts";
 import { isReusableWorkflowStopCause } from "../../workflows/workflow-stop-cause.ts";
@@ -65,6 +66,8 @@ export interface SubagentNotifyDetails {
 	sessionLabel?: string;
 	sessionValue?: string;
 	handoffPath?: string;
+	/** Branches worktree cleanup kept because their commits are on no other ref. */
+	keptBranches?: KeptBranch[];
 	/** Present when a durable schedule launched the run. */
 	scheduleOrigin?: ScheduleOrigin;
 	watchdogBlockers?: SubagentNotifyWatchdogBlocker[];
@@ -388,6 +391,7 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 		...(watchdogLines.length ? ["", ...watchdogLines] : []),
 		details.handoffPath ? "" : undefined,
 		details.handoffPath ? `Parallel handoff: ${details.handoffPath}` : undefined,
+		...(details.handoffPath ? formatKeptBranchLines(details.keptBranches ?? []) : []),
 		correlationLines.length && !details.handoffPath ? "" : undefined,
 		...correlationLines,
 		sessionLine ? "" : undefined,
@@ -472,6 +476,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	const resultEnd = firstMetadataIndex > 0 && body[firstMetadataIndex - 1]?.trim() === "" ? firstMetadataIndex - 1 : firstMetadataIndex;
 	const resultPreview = body.slice(0, resultEnd).join("\n").trim() || "(no output)";
 	const handoffPath = handoffIndex >= 0 ? body[handoffIndex]!.slice("Parallel handoff: ".length).trim() : undefined;
+	const keptBranches = handoffIndex >= 0 ? parseKeptBranchLines(body.slice(handoffIndex + 1)) : [];
 	const workflowRunId = workflowRunIndex >= 0 ? body[workflowRunIndex]!.slice("Workflow run: ".length).trim() : undefined;
 	const childRuns = childRunsIndex >= 0
 		? body[childRunsIndex]!.slice("Child runs: ".length).split(", ").map((part) => {
@@ -501,6 +506,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 		...(workflowReceiptPath ? { workflowReceiptPath } : {}),
 		resultPreview,
 		...(handoffPath ? { handoffPath } : {}),
+		...(keptBranches.length ? { keptBranches } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),
 		...(resumeNotice ? { resumeNotice } : {}),
 		...(childRuns?.length ? { childRuns } : {}),
@@ -521,7 +527,7 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 		if (detail.workflowReceiptPath) blocks.push(`Workflow receipt: ${detail.workflowReceiptPath}`);
 		blocks.push(formatResultPreview(detail));
 		blocks.push(...formatWatchdogBlockerLines(detail));
-		if (detail.handoffPath) blocks.push(`Parallel handoff: ${detail.handoffPath}`);
+		if (detail.handoffPath) blocks.push(`Parallel handoff: ${detail.handoffPath}`, ...formatKeptBranchLines(detail.keptBranches ?? []));
 		blocks.push(...formatCorrelationLines(detail));
 		if (sessionLine) blocks.push(sessionLine);
 		blocks.push("");
@@ -742,9 +748,10 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 			: undefined;
 
 	const parallelHandoff = result.parallelHandoff && typeof result.parallelHandoff === "object"
-		? result.parallelHandoff as { path?: unknown }
+		? result.parallelHandoff as { path?: unknown; keptBranches?: unknown }
 		: undefined;
 	const handoffPath = typeof parallelHandoff?.path === "string" ? parallelHandoff.path : undefined;
+	const keptBranches = readKeptBranches(parallelHandoff?.keptBranches);
 	const receipt = result.workflowReceipt;
 	const receiptPath = receipt && typeof receipt === "object" && !Array.isArray(receipt)
 		? (receipt as Record<string, unknown>).path : undefined;
@@ -860,6 +867,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 		resultPreview: watchdogConcerns.length ? `${resultPreview}\n\nHigh-importance watchdog concerns:\n${watchdogConcerns.map((warning) => `- ${warning}`).join("\n")}` : resultPreview,
 		...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
 		...(handoffPath ? { handoffPath } : {}),
+		...(handoffPath && keptBranches.length ? { keptBranches } : {}),
 		...(rawRunId ? { runId: rawRunId } : {}),
 		...(workflowRunId ? { workflowRunId } : {}),
 		...(resumeNotice ? { resumeNotice } : {}),
