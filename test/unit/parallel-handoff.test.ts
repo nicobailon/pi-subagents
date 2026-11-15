@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+	formatParallelHandoffError,
 	formatParallelHandoffReference,
 	formatStoredParallelHandoffCleanup,
 	readParallelHandoffManifest,
@@ -560,5 +561,11 @@ describe("parallel handoff", () => {
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
+	});
+	it("says where unapplied patches are and what a partial cleanup left behind", () => {
+		const reference = { version: 1 as const, path: "/run/handoff.json", groupCount: 1, childCount: 1 };
+		assert.equal(formatParallelHandoffReference({ ...reference, changedPatches: 1, cleanupState: "complete" }), "Worktree handoff: /run/handoff.json (1 children, 1 changed patches, cleanup complete); the work is in groups[].children[].patch, not applied to this checkout");
+		assert.equal(formatParallelHandoffReference({ ...reference, changedPatches: 0, cleanupState: "partial" }), "Worktree handoff: /run/handoff.json (1 children, 0 changed patches, cleanup partial); groups[].cleanup.tasks[] (reason, errors) says what stayed behind");
+		assert.equal(formatParallelHandoffError(new Error("EACCES")), "Worktree handoff unavailable: EACCES; check `git worktree list` for worktrees left behind");
 	});
 });
