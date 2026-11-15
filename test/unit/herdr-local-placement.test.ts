@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import registerHerdrPiBridge from "../../src/extension/herdr-pi-bridge.ts";
 import type { ChildSessionLaunch } from "../../src/runs/shared/child-session.ts";
 import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
-import { HERDR_REMOTE_PATH, sshMachineAccess } from "../../src/runs/shared/herdr-connection.ts";
 import { localMachineAccess } from "../../src/runs/shared/local-machine-access.ts";
 import { HerdrPlacedRunOwner } from "../../src/runs/shared/herdr-pane-host.ts";
 import { HERDR_PI_MODE_ENV, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV } from "../../src/runs/shared/herdr-pi-protocol.ts";
@@ -140,16 +139,11 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_PANE_ID: "w9:p9" }, settings: {} }), /did not return it: herdr pane get w9:p9 exited with code 1: pane not found/u);
 		for (const env of [{ PATH: process.env.PATH ?? "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION\)\./u);
 	});
-	it("runs local scripts with this machine's PATH, while a remote host keeps the FHS one", () => {
-		// `remoteShellCommand` exists to give a remote host a PATH it can rely on. Applied to this machine that
-		// assumption fails wherever coreutils live elsewhere (NixOS has no /usr/bin/rm), so a local shell keeps
-		// the PATH of the process that asked for it.
-		const local = localMachineAccess({ env: { PATH: "/local/tools:/bin" } }).shellCommand("rm -rf x");
-		assert.ok(local.includes('PATH="/local/tools:/bin"; export PATH;'));
-		assert.equal(local.includes("/opt/homebrew/bin"), false, "a local shell must not be given the remote PATH");
-
-		const remote = sshMachineAccess({ target: "host" }).shellCommand("true");
-		assert.ok(remote.includes(`PATH="${HERDR_REMOTE_PATH}"; export PATH;`));
+	it("runs local scripts with this process's PATH, kept literally", () => {
+		const pathValue = `/local/"$tools:${process.env.PATH}`, access = localMachineAccess({ env: { PATH: pathValue } });
+		const result = access.run(access.shellCommand('printf %s "$PATH"'));
+		assert.equal(result.status, 0);
+		assert.ok(result.stdout.startsWith(pathValue));
 	});
 
 });
