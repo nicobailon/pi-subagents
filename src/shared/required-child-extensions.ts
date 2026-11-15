@@ -3,6 +3,7 @@ import * as path from "node:path";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const MAX_REQUIRED_EXTENSIONS = 32;
+const MAX_REQUIRED_TOOL_NAMES = 32;
 const MAX_PATH_BYTES = 4096;
 const EMPTY_SNAPSHOT: RequiredChildExtensionSnapshot = Object.freeze([]);
 
@@ -11,6 +12,8 @@ export interface RequiredChildExtension {
 	id: string;
 	/** Existing importable module path. Snapshotted to its canonical absolute path. */
 	path: string;
+	/** Load only for a child whose own tools list names one of these tools and whose effective allowlist still allows it. Omit to load for every child. */
+	toolNames?: readonly string[];
 }
 
 export interface RegisterRequiredChildExtensionsInput {
@@ -31,13 +34,16 @@ export function snapshotRequiredChildExtensions(value: unknown, label = "Require
 	const paths = new Set<string>();
 	return Object.freeze(value.map((entry, index) => {
 		// The flag comes from registration, so only serialized snapshots (not registration input) may carry it.
-		if (!entry || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).some((key) => key !== "id" && key !== "path" && (canonicalizeFiles || key !== "requireForAllRunners"))) throw new Error(`${label} entry ${index} requires only id and path.`);
+		if (!entry || typeof entry !== "object" || Array.isArray(entry) || Object.keys(entry).some((key) => key !== "id" && key !== "path" && key !== "toolNames" && (canonicalizeFiles || key !== "requireForAllRunners"))) throw new Error(`${label} entry ${index} accepts only ${canonicalizeFiles ? "id, path, and toolNames" : "id, path, toolNames, and requireForAllRunners"}.`);
 		const id = "id" in entry ? entry.id : undefined;
 		const rawPath = "path" in entry ? entry.path : undefined;
 		const requireForAllRunners = "requireForAllRunners" in entry ? entry.requireForAllRunners : undefined;
+		const toolNames = "toolNames" in entry ? entry.toolNames : undefined;
 		if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error(`${label} entry ${index} requires a safe id of at most 128 characters.`);
 		if (ids.has(id)) throw new Error(`${label} id '${id}' is duplicated.`);
 		if (requireForAllRunners !== undefined && requireForAllRunners !== true) throw new Error(`${label} '${id}' requireForAllRunners must be true when present.`);
+		if (toolNames !== undefined && (!Array.isArray(toolNames) || toolNames.length === 0 || toolNames.length > MAX_REQUIRED_TOOL_NAMES || new Set(toolNames).size !== toolNames.length || toolNames.some((name) => typeof name !== "string" || !ID_PATTERN.test(name)))) throw new Error(`${label} '${id}' toolNames must be 1 to ${MAX_REQUIRED_TOOL_NAMES} unique safe tool names.`);
+		if (toolNames !== undefined && requireForAllRunners) throw new Error(`${label} '${id}' cannot combine toolNames with requireForAllRunners.`);
 		if (typeof rawPath !== "string" || !rawPath.trim() || rawPath.includes("\0") || Buffer.byteLength(rawPath, "utf8") > MAX_PATH_BYTES || (!canonicalizeFiles && !path.isAbsolute(rawPath))) throw new Error(`${label} '${id}' requires ${canonicalizeFiles ? "a" : "an absolute"} non-empty path of at most ${MAX_PATH_BYTES} bytes without NUL.`);
 		let extensionPath = rawPath;
 		if (canonicalizeFiles) {
@@ -51,7 +57,7 @@ export function snapshotRequiredChildExtensions(value: unknown, label = "Require
 		if (paths.has(extensionPath)) throw new Error(`${label} path '${extensionPath}' is duplicated.`);
 		ids.add(id);
 		paths.add(extensionPath);
-		return Object.freeze(requireForAllRunners ? { id, path: extensionPath, requireForAllRunners } : { id, path: extensionPath });
+		return Object.freeze({ id, path: extensionPath, ...(requireForAllRunners ? { requireForAllRunners } : {}), ...(toolNames ? { toolNames: Object.freeze([...toolNames]) } : {}) });
 	}));
 }
 
@@ -76,6 +82,8 @@ export function registerRequiredChildExtensions(input: RegisterRequiredChildExte
 	if (typeof input.sessionId !== "string" || !input.sessionId || input.sessionId.trim() !== input.sessionId || input.sessionId.length > 256 || input.sessionId.includes("\0")) throw new Error("Required child extension registration requires a non-empty trimmed sessionId of at most 256 characters without NUL.");
 	if (input.requireForAllRunners !== undefined && typeof input.requireForAllRunners !== "boolean") throw new Error("Required child extension registration requireForAllRunners must be a boolean.");
 	const canonical = snapshotRequiredChildExtensions(input.extensions, "Required child extensions", true);
+	const gated = canonical.find((entry) => entry.toolNames !== undefined);
+	if (input.requireForAllRunners && gated) throw new Error(`Required child extensions '${gated.id}' cannot combine toolNames with requireForAllRunners.`);
 	const frozen = input.requireForAllRunners ? Object.freeze(canonical.map((entry) => Object.freeze({ ...entry, requireForAllRunners: true as const }))) : canonical;
 	const store = registry();
 	if (store.bySession.has(input.sessionId)) throw new Error(`Required child extensions are already registered for session '${input.sessionId}'; dispose them first.`);

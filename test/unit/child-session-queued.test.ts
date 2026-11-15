@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
+import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
+import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { runChildSession, type StepSteerHandler } from "../../src/runs/background/run-child-session.ts";
 import type { ChildSessionEvent } from "../../src/runs/shared/child-session.ts";
 import type { InProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
@@ -296,6 +301,37 @@ describe("default factory queued-message probe", () => {
 		});
 		assert.equal(child.hasQueuedMessages?.(), true);
 		assert.equal(childSessionHasQueuedMessages(child), true);
+	});
+});
+
+describe("default factory tool-gated required extension", () => {
+	it("hands the loader the gated extension only when the agent explicitly requests its tool", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-gated-loader-"));
+		const computer = path.join(dir, "computer.mjs");
+		fs.writeFileSync(computer, "export default () => {};\n");
+		const sessionId = `gated-loader-${Date.now()}`;
+		const handle = registerRequiredChildExtensions({ sessionId, extensions: [{ id: "tron-computer", path: computer, toolNames: ["computer"] }] });
+		const loaderPaths: string[][] = [];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
+			ModelRuntime: { create: async () => ({ refresh: async () => {} }) },
+			SettingsManager: { create: () => ({}) },
+			DefaultResourceLoader: class {
+				constructor(options: { additionalExtensionPaths: string[] }) { loaderPaths.push(options.additionalExtensionPaths); }
+				async reload() { throw new Error("loader boundary reached"); }
+			},
+			SessionManager: { inMemory: () => ({}) },
+			resolveCliModel: () => ({}),
+		}) as unknown as PiCodingAgentModule });
+		const base = { parentSessionId: sessionId, sessionEnabled: false, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, cwd: process.cwd(), childAgentName: "worker", childIndex: 0, host: "parent" as const };
+		try {
+			const ceiling = { version: 1 as const, allowedTools: ["read", "computer"], sources: ["host-test"] };
+			for (const input of [{}, { capabilityCeiling: ceiling }, { tools: ["read"] }, { tools: ["read", "computer"] }]) {
+				const launch = buildInProcessChildLaunch({ ...base, ...input });
+				await assert.rejects(() => factory.create(launch.session as ChildSessionLaunch), /loader boundary reached/);
+			}
+			const gated = fs.realpathSync(computer);
+			assert.deepEqual(loaderPaths.map((paths) => paths.includes(gated)), [false, false, false, true]);
+		} finally { handle.dispose(); fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 });
 

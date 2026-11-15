@@ -77,6 +77,49 @@ describe("required child extension host policy", () => {
 	it("rejects malformed serialized snapshots at the shared launch boundary", () => {
 		assert.throws(() => buildInProcessChildLaunch({ ...baseInput("serialized"), requiredExtensions: [{ id: "unsafe id", path: "/tmp/provider.mjs" }] }), /safe id/);
 		assert.throws(() => buildInProcessChildLaunch({ ...baseInput("serialized"), requiredExtensions: [{ id: "provider", path: "relative.mjs" }] }), /absolute/);
+		assert.throws(() => snapshotRequiredChildExtensions([{ id: "provider", path: "/tmp/provider.mjs", bogus: true }], "requiredExtensions"), /accepts only id, path, toolNames, and requireForAllRunners/);
+		assert.throws(() => buildInProcessChildLaunch({ ...baseInput("serialized"), requiredExtensions: [{ id: "provider", path: "/tmp/provider.mjs", toolNames: [] }] }), /toolNames must be 1 to 32/);
+		assert.throws(() => buildInProcessChildLaunch({ ...baseInput("serialized"), requiredExtensions: [{ id: "provider", path: "/tmp/provider.mjs", toolNames: ["computer"], requireForAllRunners: true }] }), /cannot combine toolNames with requireForAllRunners/);
+	});
+
+	it("loads a tool-gated required extension only when the agent explicitly requests its tool", () => {
+		const gated = fixture();
+		const always = path.join(gated.dir, "always.mjs");
+		fs.writeFileSync(always, "export default () => {};\n");
+		const sessionId = `required-${Date.now()}-tool-gated`;
+		const handle = registerRequiredChildExtensions({ sessionId, extensions: [
+			{ id: "tron-computer", path: gated.file, toolNames: ["computer"] },
+			{ id: "policy", path: always },
+		] });
+		const computerPath = fs.realpathSync(gated.file);
+		const ceiling = { version: 1 as const, allowedTools: ["read", "computer"], sources: ["host-test"] };
+		const readOnlyCeiling = { version: 1 as const, allowedTools: ["read"], sources: ["host-test"] };
+		try {
+			for (const [input, required] of [
+				[{}, ["policy"]],
+				[{ capabilityCeiling: ceiling }, ["policy"]],
+				[{ tools: ["read"] }, ["policy"]],
+				[{ tools: ["read", "computer"], excludeTools: ["computer"] }, ["policy"]],
+				[{ tools: ["read", "computer"] }, ["tron-computer", "policy"]],
+				[{ tools: ["read", "computer"], capabilityCeiling: ceiling }, ["tron-computer", "policy"]],
+				[{ tools: ["read", "computer"], capabilityCeiling: readOnlyCeiling }, ["policy"]],
+			] as const) {
+				const launch = buildInProcessChildLaunch({ ...baseInput(sessionId), ...input });
+				assert.deepEqual(launch.launchResolvedExtensions.required, required, JSON.stringify(input));
+				assert.equal(launch.session.extensionPaths.includes(computerPath), required.includes("tron-computer"), JSON.stringify(input));
+			}
+		} finally { handle.dispose(); fs.rmSync(gated.dir, { recursive: true, force: true }); }
+	});
+
+	it("fails closed for a denied extension only when the agent requests the gated tool", () => {
+		const { dir, file } = fixture();
+		const sessionId = `required-${Date.now()}-tool-gated-deny`;
+		const handle = registerRequiredChildExtensions({ sessionId, extensions: [{ id: "tron-computer", path: file, toolNames: ["computer"] }] });
+		const denied = { version: 1 as const, denyExtensions: true, sources: ["host-test"] };
+		try {
+			assert.equal(buildInProcessChildLaunch({ ...baseInput(sessionId), capabilityCeiling: denied }).launchResolvedExtensions.required.length, 0);
+			assert.throws(() => buildInProcessChildLaunch({ ...baseInput(sessionId), tools: ["read", "computer"], capabilityCeiling: denied }), /denies extensions.*tron-computer/);
+		} finally { handle.dispose(); fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 
 	it("uses a serialized snapshot in a detached runner after registration disposal", () => {
@@ -90,6 +133,22 @@ describe("required child extension host policy", () => {
 			assert.equal(launch.session.extensionPaths.at(-1), fs.realpathSync(file));
 			assert.deepEqual(launch.launchResolvedExtensions.required, ["runner-provider"]);
 		} finally { fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+
+	it("carries the admitted gated snapshot so a nested child that requests the tool loads it", () => {
+		const { dir, file } = fixture();
+		const policy = path.join(dir, "policy.mjs");
+		fs.writeFileSync(policy, "export default () => {};\n");
+		const sessionId = `required-${Date.now()}-nested-gated`;
+		const handle = registerRequiredChildExtensions({ sessionId, extensions: [{ id: "tron-computer", path: file, toolNames: ["computer"] }, { id: "policy", path: policy }] });
+		try {
+			const parent = buildInProcessChildLaunch({ ...baseInput(sessionId), tools: ["read", "subagent"], allowNestedSubagents: true });
+			assert.deepEqual(parent.launchResolvedExtensions.required, ["policy"]);
+			assert.deepEqual(parent.config.requiredExtensions?.map(({ id }) => id), ["tron-computer", "policy"]);
+			const nested = buildInProcessChildLaunch({ ...baseInput("nested-computer-child"), tools: ["read", "computer"], inherited: { depth: 1, requiredExtensions: parent.config.requiredExtensions } });
+			assert.deepEqual(nested.launchResolvedExtensions.required, ["tron-computer", "policy"]);
+			assert.equal(nested.session.extensionPaths.includes(fs.realpathSync(file)), true);
+		} finally { handle.dispose(); fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 
 	it("propagates the root snapshot through nested child runtime inheritance", () => {
@@ -263,6 +322,18 @@ describe("require-for-all-runners admission", () => {
 			assert.equal(snapshotRequiredChildExtensions(snapshot, "requiredExtensions")[0]?.requireForAllRunners, true);
 			assert.throws(() => snapshotRequiredChildExtensions([{ id: "host-policy", path: fs.realpathSync(file), requireForAllRunners: false }], "requiredExtensions"), /must be true when present/);
 		} finally { handle.dispose(); fs.rmSync(dir, { recursive: true, force: true }); }
+	});
+
+	it("refuses toolNames with requireForAllRunners at registration without installing a snapshot", () => {
+		const { dir, file } = fixture();
+		const sessionId = `required-${Date.now()}-gated-all-runners`;
+		try {
+			assert.throws(() => registerRequiredChildExtensions({ sessionId, extensions: [{ id: "tron-computer", path: file, toolNames: ["computer"] }], requireForAllRunners: true }), /'tron-computer' cannot combine toolNames with requireForAllRunners/);
+			assert.deepEqual(resolveRequiredChildExtensions(sessionId), []);
+			const handle = registerRequiredChildExtensions({ sessionId, extensions: [{ id: "tron-computer", path: file, toolNames: ["computer"] }] });
+			assert.equal(resolveRequiredChildExtensions(sessionId)[0]?.id, "tron-computer");
+			handle.dispose();
+		} finally { fs.rmSync(dir, { recursive: true, force: true }); }
 	});
 
 	it("admits every runner for a legacy registration but rejects non-native routes for an opt-in one", () => {

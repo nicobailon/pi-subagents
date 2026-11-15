@@ -282,7 +282,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		maxDepth: childDepth.maxDepth,
 		...(toolPlan.capabilityCeiling ? { capabilityCeiling: toolPlan.capabilityCeiling } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
-		...(toolPlan.requiredExtensions.length > 0 ? { requiredExtensions: toolPlan.requiredExtensions } : {}),
+		...(toolPlan.admittedRequiredExtensions.length > 0 ? { requiredExtensions: toolPlan.admittedRequiredExtensions } : {}),
 		inheritProjectContext: input.inheritProjectContext,
 		inheritGlobalContext: input.inheritGlobalContext,
 		inheritSkills: input.inheritSkills,

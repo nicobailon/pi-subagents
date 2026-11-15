@@ -4,6 +4,7 @@
 
 ### Added
 
+- Required host extensions accept `toolNames`: an extension loads only for a child whose own `tools` list names one of them and whose effective allowlist still allows it, so an agent opts in per definition. A capability ceiling never opts a child in, and `toolNames` cannot be combined with `requireForAllRunners`.
 - From a Pi running inside a Herdr pane, `machine: "local"` now opens the subagent in a new tab of your own Herdr session, with no saved machine or SSH. Before, `local` worked only inside Rex, and placing a child in Herdr on the same machine meant a saved machine and SSH to yourself. When Herdr runs inside a Rex tab, the Herdr session wins, and outside both terminals `local` fails before anything starts. Thanks to [@mystery4f](https://github.com/mystery4f) for #3266.
 
 ### Fixed

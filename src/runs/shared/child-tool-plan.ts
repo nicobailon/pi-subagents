@@ -163,6 +163,8 @@ export interface PiLaunchToolPlan {
 	runtimeExtensions: string[];
 	configuredExtensions: string[];
 	requiredExtensions: RequiredChildExtensionSnapshot;
+	/** Every host-registered entry admitted for this host, before this launch's tool filter. Nested launches re-filter it against their own tools. */
+	admittedRequiredExtensions: RequiredChildExtensionSnapshot;
 	extensionArgs: string[];
 	disableAmbientExtensions: boolean;
 	capabilityAudit?: SubagentCapabilityAudit;
@@ -310,10 +312,7 @@ export function resolvePiLaunchToolPlan(
 		input.capabilityCeiling,
 		input.inheritedCapabilityCeiling,
 	);
-	const requiredExtensions = snapshotRequiredChildExtensions(input.requiredExtensions ?? []);
-	if (requiredExtensions.length > 0 && capabilityCeiling?.denyExtensions) {
-		throw new Error(`Capability ceiling from ${capabilityCeiling.sources.join(", ") || "unknown source"} denies extensions but this host requires: ${requiredExtensions.map(({ id }) => id).join(", ")}.`);
-	}
+	const registeredRequiredExtensions = snapshotRequiredChildExtensions(input.requiredExtensions ?? []);
 	const allowedToolSet =
 		capabilityCeiling?.allowedTools === undefined
 			? undefined
@@ -391,6 +390,12 @@ export function resolvePiLaunchToolPlan(
 			...internalTools,
 		]),
 	];
+	const requestedTools = new Set(input.tools);
+	const requiredExtensions = registeredRequiredExtensions.filter((extension) => extension.toolNames === undefined
+		|| extension.toolNames.some((tool) => requestedTools.has(tool) && effectiveToolAllowlist.includes(tool)));
+	if (requiredExtensions.length > 0 && capabilityCeiling?.denyExtensions) {
+		throw new Error(`Capability ceiling from ${capabilityCeiling.sources.join(", ") || "unknown source"} denies extensions but this host requires: ${requiredExtensions.map(({ id }) => id).join(", ")}.`);
+	}
 	// Upward contact stays in the --tools allowlist but is not a strict
 	// requirement: children register contact_supervisor at runtime through
 	// the native supervisor channel (or pi-intercom). The pre-0.50 bridge always
@@ -513,6 +518,7 @@ export function resolvePiLaunchToolPlan(
 		runtimeExtensions,
 		configuredExtensions,
 		requiredExtensions,
+		admittedRequiredExtensions: registeredRequiredExtensions,
 		extensionArgs,
 		disableAmbientExtensions,
 		warnings,
