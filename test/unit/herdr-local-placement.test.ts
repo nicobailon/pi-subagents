@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import registerHerdrPiBridge from "../../src/extension/herdr-pi-bridge.ts";
 import type { ChildSessionLaunch } from "../../src/runs/shared/child-session.ts";
 import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
+import { HERDR_REMOTE_PATH, sshMachineAccess } from "../../src/runs/shared/herdr-connection.ts";
+import { localMachineAccess } from "../../src/runs/shared/local-machine-access.ts";
 import { HerdrPlacedRunOwner } from "../../src/runs/shared/herdr-pane-host.ts";
 import { HERDR_PI_MODE_ENV, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV } from "../../src/runs/shared/herdr-pi-protocol.ts";
 import { createHerdrPiSession, HerdrPiSession } from "../../src/runs/shared/herdr-placed-run.ts";
@@ -129,13 +131,25 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 	});
 
 	it("resolves 'local' to this pane's Herdr server, Herdr over Rex, and refuses outside both before anything starts", () => {
-		const herdrPane = { PATH: "/usr/bin:/bin", HERDR_BIN: path.join(dir, "herdr"), FAKE_HERDR_DIR: dir, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: socket };
+		const herdrPane = { PATH: process.env.PATH ?? "/usr/bin:/bin", HERDR_BIN: path.join(dir, "herdr"), FAKE_HERDR_DIR: dir, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: socket };
 		assert.deepEqual(resolveMachinePlacement({ machine: "local", cwd: dir, stepCwd: "repo", env: herdrPane, settings: {} }), { machine: { provider: "herdr", id: "local", socket, cwd: path.join(dir, "repo") } });
 		assert.deepEqual(fs.readFileSync(path.join(dir, "herdr-calls"), "utf8").trim().split("\n"), ["status server --json", "pane get w1:p1"], "no saved-machine catalog lookup");
 		assert.deepEqual(fs.readFileSync(path.join(dir, "herdr-env"), "utf8").trim().split("\n"), [`${socket} unset w1:p1 1 unset`, `${socket} unset unset unset unset`]);
 		// Herdr inside a Rex tab: its panes inherit REX_SESSION, and Herdr is where this Pi is drawn.
 		assert.deepEqual(resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_SESSION: "work", REX_SESSION: "session:outer", REX_BIN_DIR: path.join(dir, "no-rex") }, settings: {} }).machine, { provider: "herdr", id: "local", socket, session: "work", cwd: dir });
 		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_PANE_ID: "w9:p9" }, settings: {} }), /did not return it: herdr pane get w9:p9 exited with code 1: pane not found/u);
-		for (const env of [{ PATH: "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION\)\./u);
+		for (const env of [{ PATH: process.env.PATH ?? "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION\)\./u);
 	});
+	it("runs local scripts with this machine's PATH, while a remote host keeps the FHS one", () => {
+		// `remoteShellCommand` exists to give a remote host a PATH it can rely on. Applied to this machine that
+		// assumption fails wherever coreutils live elsewhere (NixOS has no /usr/bin/rm), so a local shell keeps
+		// the PATH of the process that asked for it.
+		const local = localMachineAccess({ env: { PATH: "/local/tools:/bin" } }).shellCommand("rm -rf x");
+		assert.ok(local.includes('PATH="/local/tools:/bin"; export PATH;'));
+		assert.equal(local.includes("/opt/homebrew/bin"), false, "a local shell must not be given the remote PATH");
+
+		const remote = sshMachineAccess({ target: "host" }).shellCommand("true");
+		assert.ok(remote.includes(`PATH="${HERDR_REMOTE_PATH}"; export PATH;`));
+	});
+
 });

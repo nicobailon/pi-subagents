@@ -29,7 +29,8 @@ type SshTarget = Pick<HerdrMachineReference, "target">;
 export function decodeHerdrJsonLine(line: Buffer): unknown { try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(line)) as unknown; } catch { throw new Error("Herdr emitted malformed JSON or UTF-8."); } }
 
 export function shellQuoteRemote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
-export function remoteShellCommand(script: string, args: string[] = []): string { return `sh -c ${shellQuoteRemote(`PATH="${HERDR_REMOTE_PATH}"; export PATH; ${script}`)} sh${args.map((arg) => ` ${shellQuoteRemote(arg)}`).join("")}`; }
+/** `pathValue` exists for `localMachineAccess`: a local shell must use this machine's PATH, not the FHS one a remote host is expected to have. */
+export function remoteShellCommand(script: string, args: string[] = [], pathValue: string = HERDR_REMOTE_PATH): string { return `sh -c ${shellQuoteRemote(`PATH="${pathValue}"; export PATH; ${script}`)} sh${args.map((arg) => ` ${shellQuoteRemote(arg)}`).join("")}`; }
 function canonicalHerdrSession(session: string | null | undefined): string | null { return session && session !== "default" ? session : null; }
 /**
  * Points herdr at a recorded local server only: the calling process's own pane selectors (a background runner started from
