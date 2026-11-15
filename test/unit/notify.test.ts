@@ -887,6 +887,22 @@ describe("completion formatting helpers", () => {
 		}).handoffPath, "/tmp/run/handoff.json");
 	});
 
+	it("names a branch worktree cleanup kept under the parallel handoff line", () => {
+		const tip = "0123456789abcdef0123456789abcdef01234567";
+		const details = buildCompletionDetails({
+			id: "run",
+			agent: "worker",
+			success: true,
+			summary: "Done",
+			parallelHandoff: { path: "/tmp/run/handoff.json", keptBranches: [{ branch: "pi-subagents/run-0", tip }] },
+		});
+		const content = formatSingleCompletion(details);
+		assert.match(content, /\nParallel handoff: \/tmp\/run\/handoff\.json\nKept branch pi-subagents\/run-0 at 0123456789ab: its commits are on no other branch\./);
+		const parsed = parseSubagentNotifyContent(content);
+		assert.equal(parsed?.resultPreview, "Done");
+		assert.equal(formatSingleCompletion(parsed!), content);
+	});
+
 	it("formatSingleCompletion mirrors the in-handler single message shape", () => {
 		const content = formatSingleCompletion({
 			agent: "worker",

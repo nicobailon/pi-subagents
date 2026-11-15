@@ -465,6 +465,8 @@ export interface ParallelHandoffCleanupTask {
 	naming?: WorktreeNaming;
 	worktreeRemoved: boolean;
 	branchRemoved: boolean;
+	/** Tip of a branch cleanup kept because no other branch, remote branch, or tag holds its commits. */
+	keptBranchTip?: string;
 	preserved?: boolean;
 	reason?: string;
 	errors?: string[];
@@ -531,6 +533,7 @@ export interface ParallelHandoffReference {
 	childCount: number;
 	changedPatches: number;
 	cleanupState: "complete" | "partial";
+	keptBranches?: Array<{ branch: string; tip: string }>;
 	cleanupEligibility?: CleanupEligibility;
 }
 

@@ -21,8 +21,9 @@ import type {
 	WorktreeSetupProgress,
 	WorktreeCleanupIntent,
 } from "./worktree.ts";
-import { cleanupWorktrees, withWorktreeTransaction } from "./worktree.ts";
+import { cleanupWorktrees, isWorktreeCleanupTaskDone, withWorktreeTransaction } from "./worktree.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "./lane-metadata.ts";
+import { formatKeptBranchLines } from "./kept-branch-text.ts";
 
 export interface ParallelHandoffResult {
 	agent: string;
@@ -215,6 +216,7 @@ export function resolveRetainedWorktreeCwd(manifestPath: string, runId: string, 
 
 function referenceFor(manifestPath: string, manifest: ParallelHandoffManifest): ParallelHandoffReference {
 	const children = manifest.groups.flatMap((group) => group.children);
+	const keptBranches = manifest.groups.flatMap((group) => group.cleanup.tasks.flatMap((task) => task.keptBranchTip ? [{ branch: task.branch, tip: task.keptBranchTip }] : []));
 	return {
 		version: 1,
 		path: manifestPath,
@@ -222,6 +224,7 @@ function referenceFor(manifestPath: string, manifest: ParallelHandoffManifest): 
 		childCount: children.length,
 		changedPatches: children.filter((child) => child.patch.changed).length,
 		cleanupState: manifest.groups.every((group) => group.cleanup.state === "complete") ? "complete" : "partial",
+		...(keptBranches.length ? { keptBranches } : {}),
 		...(Object.prototype.hasOwnProperty.call(manifest, "cleanupEligibility")
 			? { cleanupEligibility: trustedStoredCleanupEligibility(manifest) }
 			: {}),
@@ -626,6 +629,7 @@ function writeParallelHandoffGroupUnlocked(input: {
 		const previous = existing?.groups.flatMap((item) => item.cleanup.tasks).find((item) => item.path === task.path && item.branch === task.branch);
 		if (previous?.worktreeRemoved) task.worktreeRemoved = true;
 		if (previous?.branchRemoved) task.branchRemoved = true;
+		if (previous?.keptBranchTip) task.keptBranchTip = previous.keptBranchTip;
 		if (!task.worktreeRemoved && previous?.reason?.includes("retained child resume")) {
 			task.preserved = true;
 			task.reason = previous.reason;
@@ -721,7 +725,10 @@ export function writeWorktreeSetupHandoff(input: Omit<Parameters<typeof writePar
 }
 
 export function formatParallelHandoffReference(reference: ParallelHandoffReference): string {
-	return `Worktree handoff: ${reference.path} (${reference.childCount} children, ${reference.changedPatches} changed patches, cleanup ${reference.cleanupState})`;
+	return [
+		`Worktree handoff: ${reference.path} (${reference.childCount} children, ${reference.changedPatches} changed patches, cleanup ${reference.cleanupState})`,
+		...formatKeptBranchLines(reference.keptBranches ?? []),
+	].join("\n");
 }
 
 export function formatParallelHandoffError(error: unknown): string {
@@ -741,7 +748,7 @@ function discardPreservedWorktreesUnlocked(
 	if (!manifest) throw new Error(`Parallel handoff manifest not found: ${resolvedPath}`);
 	let attempted = 0;
 	for (const group of manifest.groups) {
-		const pending = group.cleanup.tasks.filter((task) => task.preserved && (!task.worktreeRemoved || !task.branchRemoved));
+		const pending = group.cleanup.tasks.filter((task) => task.preserved && !isWorktreeCleanupTaskDone(task));
 		if (pending.length === 0) continue;
 		attempted += pending.length;
 		const report = cleanupWorktrees({
@@ -759,13 +766,13 @@ function discardPreservedWorktreesUnlocked(
 				syntheticPaths: [],
 			})),
 		}, { kind: "discard", authorization });
-		const updates = new Map(report.tasks.map((task) => [task.index, task.worktreeRemoved && task.branchRemoved
+		const updates = new Map(report.tasks.map((task) => [task.index, isWorktreeCleanupTaskDone(task)
 			? task
 			: { ...task, preserved: true, reason: task.reason ?? "discard cleanup remains incomplete" }]));
 		group.cleanup = {
 			state: group.cleanup.tasks.every((task) => {
 				const next = updates.get(task.index) ?? task;
-				return next.worktreeRemoved && next.branchRemoved;
+				return isWorktreeCleanupTaskDone(next);
 			}) && report.pruned ? "complete" : "partial",
 			tasks: group.cleanup.tasks.map((task) => updates.get(task.index) ?? task),
 			pruned: report.pruned,
@@ -775,7 +782,7 @@ function discardPreservedWorktreesUnlocked(
 	manifest.updatedAt = Date.now();
 	writeAtomicJson(resolvedPath, manifest);
 	const remaining = manifest.groups.flatMap((group) => group.cleanup.tasks.map((task) => ({ group, task })))
-		.filter(({ task }) => task.preserved && (!task.worktreeRemoved || !task.branchRemoved));
+		.filter(({ task }) => task.preserved && !isWorktreeCleanupTaskDone(task));
 	const lines = attempted === 0
 		? [`No preserved worktrees remain in ${resolvedPath}.`]
 		: [`Discard processed ${attempted} preserved worktree${attempted === 1 ? "" : "s"}.`, `Manifest: ${resolvedPath}`];
