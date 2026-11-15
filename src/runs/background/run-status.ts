@@ -36,6 +36,7 @@ import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { workflowAsyncChildSteeringGuidance } from "../shared/workflow-async-child-guidance.ts";
 import { formatWorkflowKeyRevival, projectWorkflowKeyRevival } from "../../workflows/workflow-revival.ts";
 import { capSummaryOutputs } from "../shared/single-output.ts";
+import { formatKeptBranchLines, readKeptBranches } from "../shared/kept-branch-text.ts";
 import { ownsRun } from "../shared/run-ownership.ts";
 import { foregroundChildStateLabel } from "../foreground/foreground-history.ts";
 import { waitToolName } from "../../shared/wait-tool-name.ts";
@@ -625,6 +626,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				`Dir: ${asyncDir}`,
 				outputPath ? `Output: ${outputPath}` : undefined,
 				status.parallelHandoff ? `Parallel handoff: ${status.parallelHandoff.path}` : undefined,
+				...(status.parallelHandoff ? formatKeptBranchLines(readKeptBranches(status.parallelHandoff.keptBranches)) : []),
 				reconciliation.message ? `Diagnosis: ${reconciliation.message}` : undefined,
 				reconciliation.resultPath && fs.existsSync(reconciliation.resultPath) ? `Result: ${reconciliation.resultPath}` : undefined,
 			].filter((line): line is string => Boolean(line));
@@ -746,7 +748,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		}
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; sessionId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; timeoutRecovery?: unknown; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; sessionName?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null; timeoutRecovery?: unknown; savedOutputPath?: string; artifactPaths?: { outputPath?: string } }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; sessionId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; timeoutRecovery?: unknown; parallelHandoff?: { path?: string; keptBranches?: unknown }; results?: Array<{ agent?: string; sessionName?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null; timeoutRecovery?: unknown; savedOutputPath?: string; artifactPaths?: { outputPath?: string } }> };
 			if (params.view === "transcript") {
 				try {
 					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
@@ -772,7 +774,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				: data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
 			const runId = data.runId ?? data.id ?? resolvedId;
 			const lines = [`Run: ${runId}`, data.toolCallId ? `Tool call: ${data.toolCallId}` : undefined, `State: ${status}`, `Result: ${resultPath}`].filter((line): line is string => Boolean(line));
-			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`);
+			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`, ...formatKeptBranchLines(readKeptBranches(data.parallelHandoff.keptBranches)));
 			const receipt = (data as Record<string, unknown>).workflowReceipt;
 			const receiptPath = receipt && typeof receipt === "object" && !Array.isArray(receipt)
 				? (receipt as Record<string, unknown>).path : undefined;

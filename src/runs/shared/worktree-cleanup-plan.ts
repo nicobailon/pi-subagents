@@ -15,7 +15,7 @@ import type {
 } from "../../shared/types.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 import { isTerminalParallelHandoffChildStatus, readParallelHandoffManifest } from "./parallel-handoff.ts";
-import { MACHINE_DIFF_OPTIONS, validateWorktreePatchRepresentsCurrentWorktree } from "./worktree.ts";
+import { MACHINE_DIFF_OPTIONS, isWorktreeCleanupTaskDone, validateWorktreePatchRepresentsCurrentWorktree } from "./worktree.ts";
 
 export const WORKTREE_CLEANUP_PLAN_VERSION = 1 as const;
 export const WORKTREE_CLEANUP_PLAN_TTL_MS = 30 * 60 * 1000;
@@ -736,7 +736,7 @@ function buildUnknownGitEntry(input: { git: GitWorktreeRecord; targetHead: strin
 }
 
 function buildMissingMetadataEntry(input: { record: ManifestMetadataRecord; targetHead: string }): WorktreeCleanupPlanEntry | undefined {
-	if (input.record.task.worktreeRemoved && input.record.task.branchRemoved) return undefined;
+	if (isWorktreeCleanupTaskDone(input.record.task)) return undefined;
 	const pathValue = metadataRecordPath(input.record);
 	const entry = buildEntryBase({ path: pathValue, branch: input.record.task.branch, source: "metadata", metadata: input.record, targetHead: input.targetHead });
 	return blockedEntry(entry, "stale", "unknown", "handoff metadata records a worktree that is not present in Git worktree state");
