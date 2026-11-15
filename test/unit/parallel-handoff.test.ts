@@ -562,29 +562,10 @@ describe("parallel handoff", () => {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
-	it("names where the work is and that none of it was applied", () => {
-		const complete = formatParallelHandoffReference({
-			version: 1, path: "/run/handoff.json", groupCount: 1, childCount: 1, changedPatches: 1, cleanupState: "complete",
-		});
-		assert.match(complete, /the deliverable is groups\[\]\.children\[\]\.patch/);
-		assert.match(complete, /nothing was applied to this checkout/);
-		assert.equal(complete.includes("cleanup.tasks[]"), false, "a complete cleanup has nothing left behind to explain");
-
-		const partial = formatParallelHandoffReference({
-			version: 1, path: "/run/handoff.json", groupCount: 1, childCount: 2, changedPatches: 1, cleanupState: "partial",
-		});
-		assert.match(partial, /cleanup partial/);
-		assert.match(partial, /groups\[\]\.cleanup\.tasks\[\] \(reason, errors\)/);
-	});
-
-	it("names an unknown worktree state when the handoff file cannot be written or saved", () => {
-		// The callers can fail before cleanup, during it, or while saving its report after the
-		// worktrees are already gone, so the message must not claim any of them.
-		const text = formatParallelHandoffError(new Error("EACCES"));
-		assert.match(text, /Worktree handoff unavailable: EACCES/);
-		assert.match(text, /worktree state unknown/);
-		assert.match(text, /captured patches are unaffected/);
-		assert.match(text, /git worktree list/);
-		assert.equal(/cleanup did not complete/u.test(text), false, "a later failure does not prove cleanup stopped");
+	it("says where unapplied patches are and what a partial cleanup left behind", () => {
+		const reference = { version: 1 as const, path: "/run/handoff.json", groupCount: 1, childCount: 1 };
+		assert.equal(formatParallelHandoffReference({ ...reference, changedPatches: 1, cleanupState: "complete" }), "Worktree handoff: /run/handoff.json (1 children, 1 changed patches, cleanup complete); the work is in groups[].children[].patch, not applied to this checkout");
+		assert.equal(formatParallelHandoffReference({ ...reference, changedPatches: 0, cleanupState: "partial" }), "Worktree handoff: /run/handoff.json (1 children, 0 changed patches, cleanup partial); groups[].cleanup.tasks[] (reason, errors) says what stayed behind");
+		assert.equal(formatParallelHandoffError(new Error("EACCES")), "Worktree handoff unavailable: EACCES; check `git worktree list` for worktrees left behind");
 	});
 });

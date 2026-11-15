@@ -724,22 +724,19 @@ export function writeWorktreeSetupHandoff(input: Omit<Parameters<typeof writePar
 	});
 }
 
-/** The patch file is the only copy of the work after cleanup, and nothing applies it for the parent. */
-const HANDOFF_DELIVERY = "the deliverable is groups[].children[].patch and nothing was applied to this checkout";
-
 export function formatParallelHandoffReference(reference: ParallelHandoffReference): string {
-	// A partial cleanup can also come from a failed removal, whose explanation is in `errors`, not `reason`.
+	// After cleanup a patch is the only copy of the work, and nothing applies it to the parent's checkout.
+	const patches = reference.changedPatches > 0 ? "; the work is in groups[].children[].patch, not applied to this checkout" : "";
 	const kept = reference.cleanupState === "complete" ? "" : "; groups[].cleanup.tasks[] (reason, errors) says what stayed behind";
 	return [
-		`Worktree handoff: ${reference.path} (${reference.childCount} children, ${reference.changedPatches} changed patches, cleanup ${reference.cleanupState}) — ${HANDOFF_DELIVERY}${kept}`,
+		`Worktree handoff: ${reference.path} (${reference.childCount} children, ${reference.changedPatches} changed patches, cleanup ${reference.cleanupState})${patches}${kept}`,
 		...formatKeptBranchLines(reference.keptBranches ?? []),
 	].join("\n");
 }
 
 export function formatParallelHandoffError(error: unknown): string {
-	// This can fire before cleanup, during it, or while saving its report after it already removed the
-	// worktrees, so the state is unknown here and both recovery sources are named.
-	return `Worktree handoff unavailable: ${error instanceof Error ? error.message : String(error)} — worktree state unknown; captured patches are unaffected; check \`git worktree list\` before assuming the work was lost`;
+	// This can fire before, during, or after cleanup, so it cannot say whether the worktrees still exist.
+	return `Worktree handoff unavailable: ${error instanceof Error ? error.message : String(error)}; check \`git worktree list\` for worktrees left behind`;
 }
 
 export function discardPreservedWorktrees(...args: Parameters<typeof discardPreservedWorktreesUnlocked>): ReturnType<typeof discardPreservedWorktreesUnlocked> {
