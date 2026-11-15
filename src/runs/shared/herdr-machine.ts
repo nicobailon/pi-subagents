@@ -123,20 +123,14 @@ function parseMachineCatalog(json: string): HerdrMachineCatalogEntry[] {
 }
 
 function readHerdrMachineCatalog(env: NodeJS.ProcessEnv, herdrBin: string): HerdrMachineCatalogEntry[] {
-	const result = spawnSync(herdrBin, ["machine", "list", "--json"], {
-		env,
-		encoding: "utf-8",
-		maxBuffer: MAX_HERDR_MACHINE_LIST_BYTES,
-		timeout: HERDR_MACHINE_LIST_TIMEOUT_MS,
-		windowsHide: true,
-	});
-	if (result.error) {
-		const code = (result.error as NodeJS.ErrnoException).code;
-		if (code === "ENOENT") throw new Error(`Herdr CLI '${herdrBin}' was not found on PATH. Saved-machine placement needs Herdr installed locally.`);
-		throw new Error(`Failed to run herdr machine list --json: ${result.error.message}`);
-	}
-	if (result.status !== 0) throw new Error(`herdr machine list --json exited with code ${result.status}: ${(result.stderr || result.stdout).trim()}`);
-	return parseMachineCatalog(result.stdout);
+	return parseMachineCatalog(runLocalHerdr(herdrBin, ["machine", "list", "--json"], env, `Herdr CLI '${herdrBin}' was not found on PATH. Saved-machine placement needs Herdr installed locally.`));
+}
+
+function runLocalHerdr(bin: string, args: string[], env: NodeJS.ProcessEnv, notFound: string): string {
+	const result = spawnSync(bin, args, { env, encoding: "utf-8", maxBuffer: MAX_HERDR_MACHINE_LIST_BYTES, timeout: HERDR_MACHINE_LIST_TIMEOUT_MS, windowsHide: true });
+	if (result.error) throw new Error((result.error as NodeJS.ErrnoException).code === "ENOENT" ? notFound : `Failed to run herdr ${args.join(" ")}: ${result.error.message}`, { cause: result.error });
+	if (result.status !== 0) throw new Error(`herdr ${args.join(" ")} exited with code ${result.status}: ${(result.stderr || result.stdout).trim().slice(0, 512)}`);
+	return result.stdout;
 }
 
 /** Mirrors Herdr's own selector rules: profile id first, then a unique case-sensitive label; disabled fails closed. */
@@ -258,24 +252,14 @@ export function resolveHerdrMachinePlacement(input: ResolveHerdrMachinePlacement
 	};
 }
 
-/** A Herdr pane sets both; when Herdr runs inside a Rex tab its panes also inherit REX_SESSION, and the Herdr pane is where this Pi is drawn. */
-function insideHerdrPane(env: NodeJS.ProcessEnv): boolean { return env.HERDR_ENV === "1" && Boolean(env.HERDR_PANE_ID?.trim()); }
-
-function runLocalHerdr(bin: string, args: string[], env: NodeJS.ProcessEnv): string {
-	const result = spawnSync(bin, args, { env, encoding: "utf-8", maxBuffer: MAX_HERDR_MACHINE_LIST_BYTES, timeout: HERDR_MACHINE_LIST_TIMEOUT_MS, windowsHide: true });
-	if (result.error) throw new Error((result.error as NodeJS.ErrnoException).code === "ENOENT" ? `Machine 'local' needs the Herdr CLI, but '${bin}' was not found on PATH.` : `Could not ask Herdr about this pane: ${result.error.message}`, { cause: result.error });
-	if (result.status !== 0) throw new Error(`herdr ${args.join(" ")} exited with code ${result.status}: ${(result.stderr || result.stdout).trim().slice(0, 512)}`);
-	return result.stdout;
-}
-
 /** Resolves `machine: "local"` inside a Herdr pane: records the server drawing this Pi (confirmed to know this pane) and the real launch directory. */
 function resolveHerdrLocalPlacement(input: { cwd: string; stepCwd?: string; env: NodeJS.ProcessEnv; herdrBin?: string }): HerdrLocalMachineReference {
 	if (process.platform === "win32") throw new Error("Machine 'local' runs the child in a Herdr pane, which is not supported on Windows.");
-	const env = input.env, paneId = env.HERDR_PANE_ID!.trim(), bin = input.herdrBin ?? env.HERDR_BIN ?? "herdr";
+	const env = input.env, paneId = env.HERDR_PANE_ID!.trim(), bin = input.herdrBin ?? env.HERDR_BIN ?? "herdr", notFound = `Machine 'local' needs the Herdr CLI, but '${bin}' was not found on PATH.`;
 	let endpoint: ReturnType<typeof parseHerdrEndpoint>;
-	try { endpoint = parseHerdrEndpoint(runLocalHerdr(bin, ["status", "server", "--json"], env), env.HERDR_SESSION); } catch (error) { throw new Error(`Machine 'local' could not confirm this pane's Herdr server: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
+	try { endpoint = parseHerdrEndpoint(runLocalHerdr(bin, ["status", "server", "--json"], env, notFound), env.HERDR_SESSION); } catch (error) { throw new Error(`Machine 'local' could not confirm this pane's Herdr server: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
 	let pane: unknown;
-	try { pane = JSON.parse(runLocalHerdr(bin, ["pane", "get", paneId], herdrLocalEnv(endpoint.socket, endpoint.session, env))) as unknown; } catch (error) { throw new Error(`Machine 'local' needs this Pi's Herdr pane ${paneId}, but the Herdr server at ${endpoint.socket} did not return it: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
+	try { pane = JSON.parse(runLocalHerdr(bin, ["pane", "get", paneId], herdrLocalEnv(endpoint.socket, endpoint.session, env), notFound)); } catch (error) { throw new Error(`Machine 'local' needs this Pi's Herdr pane ${paneId}, but the Herdr server at ${endpoint.socket} did not return it: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
 	const result = (pane as { result?: { type?: unknown; pane?: { pane_id?: unknown } } } | null)?.result;
 	if (result?.type !== "pane_info" || result.pane?.pane_id !== paneId) throw new Error(`The Herdr server at ${endpoint.socket} did not confirm pane ${paneId}.`);
 	return { provider: "herdr", id: REX_LOCAL_MACHINE, socket: endpoint.socket, ...(endpoint.session ? { session: endpoint.session } : {}), cwd: resolveLocalLaunchCwd(input.cwd, input.stepCwd) };
@@ -288,9 +272,10 @@ export function resolveMachinePlacement(input: ResolveHerdrMachinePlacementInput
 	if (requested === REX_LOCAL_MACHINE) {
 		if (settings?.rex) throw new Error("Machine 'local' is reserved for a new tab on this machine; give the Rex SSH host in subagents.machines.local.rex another name.");
 		const env = input.env ?? process.env;
-		if (insideHerdrPane(env)) return { machine: resolveHerdrLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, herdrBin: input.herdrBin }) };
+		// A Herdr pane sets both; when Herdr runs inside a Rex tab its panes also inherit REX_SESSION, and the Herdr pane is where this Pi is drawn.
+		if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID?.trim()) return { machine: resolveHerdrLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, herdrBin: input.herdrBin }) };
 		if (env.REX_SESSION?.trim()) return { machine: resolveRexLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env }) };
-		throw new Error("Machine 'local' opens the child in a new tab of the terminal this Pi runs in, but this Pi is running in neither Herdr (HERDR_ENV=1 with HERDR_PANE_ID) nor Rex (REX_SESSION is not set).");
+		throw new Error("Machine 'local' opens the child in a new tab of the terminal this Pi runs in, but this Pi is running in neither Herdr (HERDR_ENV=1 with HERDR_PANE_ID) nor Rex (REX_SESSION).");
 	}
 	if (settings?.rex) return { machine: { provider: "rex", id: requested, target: settings.rex.ssh, cwd: validateRemoteCwd(remoteMachineCwd(input.stepCwd, settings.cwd, requested), requested) } };
 	return resolveHerdrMachinePlacement(input);

@@ -55,9 +55,7 @@ export function resolveRexLocalPlacement(input: { cwd: string; stepCwd?: string;
 	if (result.status === REX_EXIT_UNREACHABLE) throw new Error("Machine 'local' needs the Rex server, but it is unreachable.");
 	if (result.status !== 0) throw new Error(`rex session inspect exited with code ${result.status}: ${(result.stderr || result.stdout).trim().slice(0, 512)}`);
 	if (!sessionConfirmed(result.stdout, session)) throw new Error(`The Rex server did not confirm session ${session}.`);
-	const machine: RexLocalMachineReference = { provider: "rex", id: REX_LOCAL_MACHINE, session, cwd: resolveLocalLaunchCwd(input.cwd, input.stepCwd) };
-	if (server) machine.server = server;
-	return machine;
+	return { provider: "rex", id: REX_LOCAL_MACHINE, session, cwd: resolveLocalLaunchCwd(input.cwd, input.stepCwd), ...(server ? { server } : {}) };
 }
 
 /** The real launch directory of a `local` child: `stepCwd` is absolute, `~`, or relative to the parent's launch directory `cwd`. */

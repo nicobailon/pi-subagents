@@ -4,7 +4,7 @@ import { connectHerdrMachine, herdrLocalEnv, parseHerdrEndpoint, runBoundedComma
 import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { HERDR_PI_MODE_ENV, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV } from "./herdr-pi-protocol.ts";
 import { localMachineAccess } from "./local-machine-access.ts";
-import { createPlacedRuntimeDir, discoverPlacedBridgeManifest, PlacedRunOwner, removePlacedRuntimeDir, type PlacedBridgeManifest } from "./placed-run-owner.ts";
+import { createPlacedRuntimeDir, hashedRuntimeDirName, PlacedRunOwner, removePlacedRuntimeDir } from "./placed-run-owner.ts";
 import { herdrPaneAllocationKey, withHerdrPaneAllocationLock, type PlacementAgentKind, type PlacementBridgeIdentity, type PlacementEvidenceProof, type PlacementMachineAccess, type PlacementOwnedPane, type PlacementPaneHost, type PlacementPromptOptions, type PlacementReconnectCheck, type PlacementRunState, type PlacementStartOptions } from "./placement-host.ts";
 
 type HerdrPlacementMachine = HerdrMachineReference | HerdrLocalMachineReference;
@@ -58,8 +58,7 @@ async function connectLocalHerdrMachine(machine: HerdrLocalMachineReference): Pr
 	if (result.status !== 0) throw new Error(`Local Herdr discovery failed with code ${result.status}: ${(result.stderr || result.stdout).trim().slice(0, 512)}`);
 	const endpoint = parseHerdrEndpoint(result.stdout, machine.session);
 	if (endpoint.socket !== machine.socket) throw new Error(`Local Herdr server identity mismatch: expected socket ${machine.socket}, received ${endpoint.socket}.`);
-	const sockets = localMachineAccess().openSockets();
-	return { endpoint, socketPath: machine.socket, client: new SocketRpcClient(machine.socket), forwardRemoteSocket: sockets.forwardRemoteSocket, close: sockets.close };
+	return { endpoint, socketPath: machine.socket, client: new SocketRpcClient(machine.socket), ...localMachineAccess().openSockets() };
 }
 
 /** Local runtime directories go under /tmp: the bridge socket path inside a macOS TMPDIR exceeds the unix socket path limit. */
@@ -102,18 +101,12 @@ export const herdrPaneHost = {
 	closeOwnedPane: closeOwnedHerdrPane,
 } satisfies PlacementPaneHost<HerdrForwardedConnection, HerdrPaneCandidate>;
 
-/** SSH entry points for the host-neutral runtime-dir and manifest helpers. */
-export function discoverBridgeManifest(machine: HerdrMachineReference, runId: string, runtimeDir: string, options: { sshBin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<PlacedBridgeManifest> { return discoverPlacedBridgeManifest(sshMachineAccess(machine, options), runId, runtimeDir); }
-export function createRemoteRuntimeDir(machine: HerdrMachineReference, runId: string, options: { sshBin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> { return createPlacedRuntimeDir(sshMachineAccess(machine, options), runId); }
-export function removeRemoteRuntimeDir(machine: HerdrMachineReference, runtimeDir: string, options: { sshBin?: string; env?: NodeJS.ProcessEnv } = {}): void { removePlacedRuntimeDir(sshMachineAccess(machine, options), runtimeDir); }
-
 /** The placed-run owner bound to Herdr and its machine access (SSH, or this machine for `local`), plus the separate provision and start steps the external CLI adapters use. */
 export class HerdrPlacedRunOwner<M extends HerdrPlacementMachine = HerdrMachineReference> extends PlacedRunOwner<HerdrForwardedConnection, M> {
-	private constructor(machine: M, runId: string, runtimeDir: string, connection: HerdrForwardedConnection, removeRuntime?: () => void, access: PlacementMachineAccess = herdrAccess(machine)) { super(machine, runId, runtimeDir, connection, herdrPaneHost, access, removeRuntime); }
+	private constructor(machine: M, runId: string, runtimeDir: string, connection: HerdrForwardedConnection, access: PlacementMachineAccess) { super(machine, runId, runtimeDir, connection, herdrPaneHost, access); }
 	static async create<M extends HerdrPlacementMachine>(machine: M, runId: string, beforePane?: (owner: HerdrPlacedRunOwner<M>) => void | Promise<void>): Promise<HerdrPlacedRunOwner<M>> {
-		// Locally a short hash names the directory, so /tmp/pi-subagents-herdr-<hash>-XXXXXXXX/bridge.sock fits the 103-byte macOS socket path limit for any run id.
-		const access = herdrAccess(machine), runtimeDir = await createPlacedRuntimeDir(access, "target" in machine ? runId : createHash("sha256").update(runId).digest("hex").slice(0, 12)); let connection: HerdrForwardedConnection | undefined;
-		try { connection = await herdrPaneHost.connect(machine); const owner = new HerdrPlacedRunOwner(machine, runId, runtimeDir, connection, undefined, access); await beforePane?.(owner); return owner; } catch (error) { const cleanupErrors: unknown[] = []; try { await connection?.close(); } catch (cleanupError) { cleanupErrors.push(cleanupError); } try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { cleanupErrors.push(cleanupError); } if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], "Herdr owner creation failed and cleanup also failed.", { cause: error }); throw error; }
+		const access = herdrAccess(machine), runtimeDir = await createPlacedRuntimeDir(access, "target" in machine ? runId : hashedRuntimeDirName(runId)); let connection: HerdrForwardedConnection | undefined;
+		try { connection = await herdrPaneHost.connect(machine); const owner = new HerdrPlacedRunOwner(machine, runId, runtimeDir, connection, access); await beforePane?.(owner); return owner; } catch (error) { const cleanupErrors: unknown[] = []; try { await connection?.close(); } catch (cleanupError) { cleanupErrors.push(cleanupError); } try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { cleanupErrors.push(cleanupError); } if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], "Herdr owner creation failed and cleanup also failed.", { cause: error }); throw error; }
 	}
 	async provision(environment?: Record<string, string>): Promise<PlacementOwnedPane> { this.owned = await provisionHerdrOwnedPane(this.connection, this.machine, this.runId, this.runtimeDir, environment); return this.owned; }
 	async start(kind: PlacementAgentKind, name: string, args: string[], options: PlacementStartOptions = {}): Promise<{ terminalId: string; paneId: string; argv: string[] }> {

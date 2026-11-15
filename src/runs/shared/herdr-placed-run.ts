@@ -36,7 +36,7 @@ export async function boundedHerdrReconnect(identity: HerdrRunIdentity, lastEvid
 
 function safeRunId(value: string | undefined): string { const prefix = value?.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 48) ?? "run"; return validateHerdrPiRunId(`${prefix}_${randomBytes(8).toString("hex")}`); }
 
-export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: string[]; resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false; acceptancePrompt?: string } } {
+export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: string[]; resources: NonNullable<ChildSessionLaunch["remoteResources"]> } {
 	// Every child is handed a local session file path; only one that already exists (a fork or a
 	// resumed transcript) asks the pane to restore history. A fresh child's path is never written.
 	if (launch.storage.kind === "file" && fs.existsSync(launch.storage.sessionFile)) throw new Error(PLACED_RESTORE_UNSUPPORTED);
@@ -46,7 +46,7 @@ export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: stri
 	if (launch.excludeTools?.length || launch.runtime.permissions || launch.runtime.toolBudget || launch.runtime.requiredExtensions || launch.runtime.mcpDirectTools?.length || launch.runtime.structuredOutput) throw new Error("Pane-native remote Pi cannot yet represent exclusions, permission rules, tool budgets, MCP direct tools, required-extension contracts, or outputSchema; remove machine placement.");
 	const resources = launch.remoteResources;
 	if (!resources || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(resources.agent) || resources.skills?.some((name) => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(name)) || resources.toolCeiling?.some((name) => !/^[A-Za-z0-9_-]{1,64}$/u.test(name)) || (resources.reads !== undefined && resources.reads !== false && resources.reads.some((read) => typeof read !== "string" || Buffer.byteLength(read) > 4096))) throw new Error("Pane-native remote resources require bounded logical agent, skill, tool, and read names.");
-	if (resources.acceptancePrompt !== undefined && Buffer.byteLength(resources.acceptancePrompt) > HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES) throw new Error(`Pane-native remote Pi acceptance instructions exceed ${HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES} bytes; shorten the acceptance criteria or remove machine placement.`);
+	if (resources.acceptancePrompt !== undefined && Buffer.byteLength(resources.acceptancePrompt) > HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES) throw new Error(`A placed Pi child's acceptance instructions exceed ${HERDR_PI_MAX_ACCEPTANCE_PROMPT_BYTES} bytes; shorten the acceptance criteria or remove machine placement.`);
 	const args: string[] = [];
 	if (launch.noSkills) args.push("--no-skills", "--no-prompt-templates");
 	if (launch.noContextFiles) args.push("--no-context-files");

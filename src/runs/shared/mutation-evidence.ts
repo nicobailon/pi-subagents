@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import type { ArtifactPaths, TimeoutRecoveryProjection, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationFingerprint, TrackedMutationSnapshot } from "../../shared/types.ts";
+import type { ArtifactPaths, HerdrRemoteGitStatus, TimeoutRecoveryProjection, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationFingerprint, TrackedMutationSnapshot } from "../../shared/types.ts";
 
 const MAX_TRACKED_PATHS = 500;
 const MAX_HASH_BYTES = 1024 * 1024;
@@ -118,6 +118,16 @@ async function fingerprintPathAsync(cwd: string, relativePath: string): Promise<
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
 	}
+}
+
+/** A placed child on another machine edits that machine's disk, so local Git evidence stands in only as a marked placeholder. */
+export function remoteMutationSnapshot(cwd: string): TrackedMutationSnapshot {
+	return { source: "tracked-files", trackedOnly: true, cwd, dirtyFiles: [], fingerprints: {}, unavailable: "Local Git evidence is not authoritative for a pane-native remote run." };
+}
+
+export function remoteMutationEvidence(machine: { initialGit?: HerdrRemoteGitStatus; finalGit?: HerdrRemoteGitStatus }): TrackedMutationEvidence {
+	const changed = machine.initialGit && machine.finalGit ? machine.initialGit.head !== machine.finalGit.head || machine.initialGit.dirty !== machine.finalGit.dirty : undefined;
+	return { source: "tracked-files", trackedOnly: true, changedFiles: [], attemptedMutation: changed === true, ...(changed === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) };
 }
 
 export async function collectTrackedMutationEvidence(snapshot: TrackedMutationSnapshot, cwd = snapshot.cwd): Promise<TrackedMutationEvidence> {

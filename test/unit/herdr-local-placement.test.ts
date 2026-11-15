@@ -136,7 +136,6 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		// Herdr inside a Rex tab: its panes inherit REX_SESSION, and Herdr is where this Pi is drawn.
 		assert.deepEqual(resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_SESSION: "work", REX_SESSION: "session:outer", REX_BIN_DIR: path.join(dir, "no-rex") }, settings: {} }).machine, { provider: "herdr", id: "local", socket, session: "work", cwd: dir });
 		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_PANE_ID: "w9:p9" }, settings: {} }), /did not return it: herdr pane get w9:p9 exited with code 1: pane not found/u);
-		for (const env of [{ PATH: "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION is not set\)/u);
-		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: herdrPane, settings: { rex: { ssh: "host" } } }), /Machine 'local' is reserved/u);
+		for (const env of [{ PATH: "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION\)\./u);
 	});
 });

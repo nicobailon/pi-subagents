@@ -296,7 +296,7 @@ pi-subagents never clones, pulls, or checks out on the machine. Generic `externa
 
 The parent drives the child through the same bridge as a Herdr-placed Pi: prompt, steer, follow-up, abort, `contact_supervisor`, and results. The child Pi loads pi-subagents from its own extensions, so it must be installed at the same version. `cwd` is a directory on this machine; a relative path joins the launch directory. In Herdr, the tab opens in the `pi-subagents-…` workspace pi-subagents made for that directory if there is one, else in the one workspace with a pane in that directory, else in a new no-focus `pi-subagents-…` workspace. In Rex, pi-subagents finds `rex` in `$REX_BIN_DIR`, then on `PATH`, then in the Rex server app; in Herdr, it runs `herdr` from `$HERDR_BIN` or `PATH`.
 
-A finished child keeps its tab open, with the idle Pi, until you close it; an aborted or stopped child's tab is closed. Limits: native Pi only (Claude Code, Codex, Cursor, and generic `external-cli` agents are rejected), fresh context only, and the same restrictions as a Herdr-placed Pi (no local extension paths, process environment, nested delegation, permission rules, or tool budgets).
+A finished child keeps its tab open, with the idle Pi, until you close it; an aborted or stopped child's tab is closed. Limits: native Pi only (Claude Code, Codex, Cursor, and generic `external-cli` agents are rejected), fresh context only, and the same restrictions as a Herdr-placed Pi (no local extension paths, process environment, nested delegation, permission rules, tool budgets, or `outputSchema`).
 
 A `local` child edits this machine's disk, so in either terminal it gets the same local cwd check, Git evidence and output-file handling as a child without `machine`.
 

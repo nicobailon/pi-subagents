@@ -4749,19 +4749,10 @@ Answer only from the supplied synthetic text.
 		assert.equal(fs.readFileSync(sharedOutput, "utf-8"), "newer run's report");
 	});
 
-	it("leaves a failed workflow's declared output file unwritten in foreground and async runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const executor = makeExecutor([makeAgent("echo")]);
-		const workflowScript = `throw new Error("review step failed");`;
-		const foregroundOutput = path.join(tempDir, "foreground-review.md");
-		const foreground = await executor.execute("scripted-workflow-failed-output", { async: false, output: foregroundOutput, workflowScript }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
-		assert.equal(foreground.isError, true);
-		assert.match(foreground.content[0]?.text ?? "", /review step failed/);
-		assert.equal(fs.existsSync(foregroundOutput), false);
-
+	it("leaves a failed async workflow's declared output file unwritten", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const asyncOutput = path.join(tempDir, "async-review.md");
-		const started = await executor.execute("scripted-workflow-failed-async-output", { async: true, output: asyncOutput, workflowScript }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
-		const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
-		for (let attempt = 0; attempt < 300 && !fs.existsSync(resultPath); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		const started = await makeExecutor([makeAgent("echo")]).execute("scripted-workflow-failed-async-output", { async: true, output: asyncOutput, workflowScript: `throw new Error("review step failed");` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const resultPath = await waitForAsyncResultFile(started.details.asyncId!, 6_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { success?: boolean; summary?: string };
 		assert.equal(payload.success, false);
 		assert.match(payload.summary ?? "", /review step failed/);

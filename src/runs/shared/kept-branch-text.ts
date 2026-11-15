@@ -1,7 +1,6 @@
-export interface KeptBranch {
-	branch: string;
-	tip: string;
-}
+import type { ParallelHandoffReference } from "../../shared/types.ts";
+
+export type KeptBranch = NonNullable<ParallelHandoffReference["keptBranches"]>[number];
 
 const KEPT_BRANCH_LINE = /^Kept branch (\S+) at ([0-9a-f]+): its commits are on no other branch\.$/;
 
@@ -15,7 +14,11 @@ export function formatKeptBranchLines(keptBranches: readonly KeptBranch[]): stri
 	return keptBranches.map(({ branch, tip }) => `Kept branch ${branch} at ${tip.slice(0, 12)}: its commits are on no other branch.`);
 }
 
-/** Reads the kept-branch lines at the start of `lines`, stopping at the first other line. */
+/** The kept-branch lines follow the handoff line directly: `parseKeptBranchLines` reads them back from there. */
+export function formatParallelHandoffLines(handoffPath: string, keptBranches: unknown): string[] {
+	return [`Parallel handoff: ${handoffPath}`, ...formatKeptBranchLines(readKeptBranches(keptBranches))];
+}
+
 export function parseKeptBranchLines(lines: string[]): KeptBranch[] {
 	const kept: KeptBranch[] = [];
 	for (const line of lines) {
