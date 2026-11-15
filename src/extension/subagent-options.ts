@@ -16,6 +16,11 @@ const optionsValidator = Compile(SubagentOptionParams);
  * Management fields given at the top level keep working, as in the flat shape older sessions declared.
  */
 export function flattenSubagentToolOptions(params: Record<string, unknown>, disabled?: DisabledFeatureSurface): SubagentParamsLike {
+	// Some models fill every unset optional parameter with the string "null", and the workflow union with "false" (#3285).
+	params = Object.fromEntries(Object.entries(params).filter(([key, value]) => value !== "null" && !(key === "workflow" && value === "false")));
+	if (params.options && typeof params.options === "object" && !Array.isArray(params.options)) {
+		params.options = Object.fromEntries(Object.entries(params.options).filter(([, value]) => value !== "null"));
+	}
 	const removedTopLevel = removedModelWorkflowFieldError(params);
 	if (removedTopLevel) throw new Error(removedTopLevel);
 	const { options, ...topLevel } = params;

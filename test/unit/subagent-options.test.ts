@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { SUBAGENT_OPTION_KEYS, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
+import { normalizePublicSubagentExecution } from "../../src/extension/public-execution.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 import { resolveDisabledFeatureSurface } from "../../src/shared/disabled-features.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/subagent-wait.ts";
@@ -58,6 +59,15 @@ describe("subagent tool options", () => {
 		assert.deepEqual(flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { timeoutMs: "120000", toolBudget: { hard: "3" } } }), { agent: "worker", task: "scan", timeoutMs: 120000, toolBudget: { hard: 3 } });
 		assert.deepEqual(flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { skill: "false", thinking: "false" } }), { agent: "worker", task: "scan", skill: "false", thinking: "false" });
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { timeoutMs: "soon" } }), /options\.timeoutMs must be integer/);
+	});
+
+	it("treats the \"null\" and workflow \"false\" placeholders some models send as omitted fields (#3285)", () => {
+		const workflowCall = flattenSubagentToolOptions({ action: "null", agent: "null", task: "null", workflow: "true", id: "null", message: "null", model: "null", output: "null", cwd: "null", options: {}, async: true, worktree: false });
+		assert.deepEqual(workflowCall, { workflow: "true", async: true, worktree: false });
+		assert.deepEqual(normalizePublicSubagentExecution(workflowCall), { ok: true, params: { workflow: true, async: true, worktree: false } });
+		assert.deepEqual(flattenSubagentToolOptions({ action: "validate", agent: "null", task: "null", workflow: "./review.workflow.js" }), { action: "validate", workflow: "./review.workflow.js" });
+		assert.deepEqual(flattenSubagentToolOptions({ action: "list", id: "null", workflow: "false" }), { action: "list" });
+		assert.deepEqual(flattenSubagentToolOptions({ agent: "reviewer", task: "check for null", workflow: "false", options: { timeoutMs: "null", skill: "review" } }), { agent: "reviewer", task: "check for null", skill: "review" });
 	});
 
 	it("points typos, aliases and top-level fields inside options to the field to use", () => {
