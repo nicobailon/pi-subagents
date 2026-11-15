@@ -6381,8 +6381,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						step.async = runId !== undefined && path.basename(runId) === runId && fs.existsSync(path.join(path.dirname(asyncDir), runId));
 						persist({ tolerateStatusWriteFailure: true });
 					};
-					// A relaunch continues an interrupted run that already cleared the path; a reused child's report may be there.
-					const earlierOutputWarning = workflowReuseSource ? undefined : removeEarlierWorkflowOutput(workflowAggregateOutputPath);
+					// An interrupted run never completed, so a file at the path is stale unless a reusable child of it saved its report there.
+					const reusedReportAtOutput = workflowAggregateOutputPath !== undefined && workflowReuseSource !== undefined
+						&& [...workflowReuseSource.settled.values()].some(({ result }) => result.ok && result.outputReference !== undefined
+							&& resolveWorkflowHostOutputClaimPath(result.outputReference) === resolveWorkflowHostOutputClaimPath(workflowAggregateOutputPath));
+					const earlierOutputWarning = reusedReportAtOutput ? undefined : removeEarlierWorkflowOutput(workflowAggregateOutputPath);
 					try {
 						const workflow = await runWorkflowScript({
 							script: workflowScript,
