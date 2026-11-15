@@ -3879,9 +3879,12 @@ function writeWorkflowAggregateOutput(outputPath: string | undefined, text: stri
 	}
 }
 
-/** An unfinished workflow removes an earlier run's file at its output path, so the path never holds a report from another run. */
-function removeWorkflowAggregateOutput(outputPath: string | undefined, producedChildOutputPaths: ReadonlySet<string>): string | undefined {
-	if (!outputPath || producedChildOutputPaths.has(resolveWorkflowHostOutputClaimPath(outputPath))) return undefined;
+/**
+ * Runs once as the script starts, never at the end: another run sharing the path may publish its report meanwhile,
+ * and a failing run must not delete it.
+ */
+function removeEarlierWorkflowOutput(outputPath: string | undefined): string | undefined {
+	if (!outputPath) return undefined;
 	try {
 		fs.rmSync(outputPath, { force: true });
 		return undefined;
@@ -6378,6 +6381,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						step.async = runId !== undefined && path.basename(runId) === runId && fs.existsSync(path.join(path.dirname(asyncDir), runId));
 						persist({ tolerateStatusWriteFailure: true });
 					};
+					// A relaunch continues an interrupted run that already cleared the path; a reused child's report may be there.
+					const earlierOutputWarning = workflowReuseSource ? undefined : removeEarlierWorkflowOutput(workflowAggregateOutputPath);
 					try {
 						const workflow = await runWorkflowScript({
 							script: workflowScript,
@@ -6694,10 +6699,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const terminalSummary = `${status.state === "complete"
 							? "Workflow completed after detached child finished."
 							: errorPreview ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.")}${stopCause ? ` ${WORKFLOW_RUNTIME_REPLACED_STOP_NOTICE}` : ""}${workflowOutputPathMappingSummary(partial.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
-						// The declared file holds only a completed report, so its existence never reads as a delivered report.
+						// Only completion writes the declared file, so its existence never reads as a delivered report.
 						const outputWarning = status.state === "complete"
 							? writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths)
-							: removeWorkflowAggregateOutput(workflowAggregateOutputPath, producedChildOutputPaths);
+							: earlierOutputWarning;
 						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
 						const receiptState: WorkflowReceiptState = status.state === "complete" ? "complete" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "failed";
 						const terminalOutcome = workflowFailureTerminalOutcome(error, partial.children, usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)));
@@ -6778,6 +6783,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const liveWorkflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "running", inventoryComplete: false, trace: liveWorkflow.trace, progress: childProgress, launches: childLaunches });
 				onUpdate?.(workflowProgressUpdate(foregroundWorkflowRunId, chatProgress, liveWorkflow, liveWorkflowChildren, workflowPreflight));
 			};
+			const earlierOutputWarning = removeEarlierWorkflowOutput(workflowAggregateOutputPath);
 			try {
 				const workflow = await runWorkflowScript({
 					script: requestParams.workflowScript,
@@ -6952,7 +6958,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const finalPreflightTrace = annotateWorkflowPreflightTrace(partial.trace, workflowPreflight);
 				const trace = finalPreflightTrace.map((entry) => ({ line: `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.warning ? ` — ${entry.warning}` : ""}`, error: entry.error }));
 				const outputMappings = workflowOutputPathMappingSummary(partial.children).trim();
-				const outputWarning = removeWorkflowAggregateOutput(workflowAggregateOutputPath, producedChildOutputPaths);
 				const displayText = appendWorkflowOutputWarning(formatWorkflowResultText({
 					head: workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : [],
 					script: [
@@ -6970,7 +6975,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					aggregateOutputPath: undefined,
 					fullResultPath: workflowFullResultPath,
 					producedChildOutputPaths,
-				}), outputWarning);
+				}), earlierOutputWarning);
 				const workflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "failed", inventoryComplete: true, trace: partial.trace, children: partial.children });
 				const terminalOutcome = workflowFailureTerminalOutcome(error, partial.children, usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)));
 				const receipt = terminalWorkflowReceipt(foregroundWorkflowRunId, "failed", partial.children, workflowChildren, terminalOutcome, [...workflowHostSteps.values()], workflowResource?.provenance, workflowArgsDigest);

@@ -4735,6 +4735,20 @@ Answer only from the supplied synthetic text.
 		assert.equal(fs.existsSync(sharedOutput), false);
 	});
 
+	it("keeps a report another writer puts at the output path while a workflow runs and then fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const sharedOutput = path.join(tempDir, "shared-report.md");
+		mockPi.onCall({ exitCode: 1, stderr: "child failed", writeFiles: [{ path: sharedOutput, content: "newer run's report" }] });
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"scripted-workflow-shared-output-race",
+			{ async: false, output: sharedOutput, workflowScript: `const child = await runs.run("work", { agent: "echo", task: "Work" }); if (!child.ok) throw new Error(child.error); return child;` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, true);
+		assert.equal(fs.readFileSync(sharedOutput, "utf-8"), "newer run's report");
+	});
+
 	it("leaves a failed workflow's declared output file unwritten in foreground and async runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const workflowScript = `throw new Error("review step failed");`;
