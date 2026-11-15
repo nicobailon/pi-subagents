@@ -140,10 +140,14 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		for (const env of [{ PATH: process.env.PATH ?? "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION\)\./u);
 	});
 	it("runs local scripts with this process's PATH, kept literally", () => {
-		const pathValue = `/local/"$tools:${process.env.PATH}`, access = localMachineAccess({ env: { PATH: pathValue } });
+		// A quote and a dollar sign are what shell re-quoting or expansion would damage; the
+		// rest of the value is the host's business, and a NixOS /bin/sh rewrites PATH wholesale.
+		const literal = `/local/"$tools`, access = localMachineAccess({ env: { PATH: `${literal}:${process.env.PATH}` } });
 		const result = access.run(access.shellCommand('printf %s "$PATH"'));
 		assert.equal(result.status, 0);
-		assert.ok(result.stdout.startsWith(pathValue));
+		assert.ok(result.stdout.includes(literal), `the literal segment survives: ${result.stdout}`);
+		const segments = result.stdout.split(":");
+		assert.ok(segments.includes(literal), "a quote does not split the value into separate entries");
 	});
 
 });
