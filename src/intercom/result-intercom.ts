@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { isUnexplainedProcessSignal } from "../runs/shared/process-signal.ts";
-import { formatKeptBranchLines, readKeptBranches } from "../runs/shared/kept-branch-text.ts";
+import { formatParallelHandoffLines } from "../runs/shared/kept-branch-text.ts";
 import {
 	type Details,
 	type IntercomEventBus,
@@ -264,7 +264,7 @@ function formatSubagentResultIntercomMessage(input: {
 	}
 	if (input.asyncId) lines.push(`Async id: ${input.asyncId}`);
 	if (input.asyncDir) lines.push(`Async dir: ${input.asyncDir}`);
-	if (input.parallelHandoff) lines.push(`Parallel handoff: ${input.parallelHandoff.path}`, ...formatKeptBranchLines(readKeptBranches(input.parallelHandoff.keptBranches)));
+	if (input.parallelHandoff) lines.push(...formatParallelHandoffLines(input.parallelHandoff.path, input.parallelHandoff.keptBranches));
 	const resumeGuidance = asyncResumeGuidance(input);
 	if (resumeGuidance) lines.push(resumeGuidance);
 	if (input.children.some((child) => child.intercomTarget)) {
@@ -398,7 +398,7 @@ export function formatSubagentResultReceipt(input: {
 		`Children: ${formatStatusCounts(counts)}`,
 	];
 
-	if (input.payload.parallelHandoff) lines.push(`Parallel handoff: ${input.payload.parallelHandoff.path}`, ...formatKeptBranchLines(readKeptBranches(input.payload.parallelHandoff.keptBranches)));
+	if (input.payload.parallelHandoff) lines.push(...formatParallelHandoffLines(input.payload.parallelHandoff.path, input.payload.parallelHandoff.keptBranches));
 
 	const artifacts = input.payload.children.filter((child) => typeof child.artifactPath === "string");
 	if (artifacts.length > 0) {

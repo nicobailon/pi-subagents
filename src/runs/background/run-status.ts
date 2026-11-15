@@ -36,7 +36,7 @@ import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { workflowAsyncChildSteeringGuidance } from "../shared/workflow-async-child-guidance.ts";
 import { formatWorkflowKeyRevival, projectWorkflowKeyRevival } from "../../workflows/workflow-revival.ts";
 import { capSummaryOutputs } from "../shared/single-output.ts";
-import { formatKeptBranchLines, readKeptBranches } from "../shared/kept-branch-text.ts";
+import { formatParallelHandoffLines } from "../shared/kept-branch-text.ts";
 import { ownsRun } from "../shared/run-ownership.ts";
 import { foregroundChildStateLabel } from "../foreground/foreground-history.ts";
 import { waitToolName } from "../../shared/wait-tool-name.ts";
@@ -625,8 +625,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				status.turnBudget ? `Turn budget: ${status.turnBudget.turnCount}/${status.turnBudget.maxTurns}+${status.turnBudget.graceTurns} (${status.turnBudget.outcome})` : undefined,
 				`Dir: ${asyncDir}`,
 				outputPath ? `Output: ${outputPath}` : undefined,
-				status.parallelHandoff ? `Parallel handoff: ${status.parallelHandoff.path}` : undefined,
-				...(status.parallelHandoff ? formatKeptBranchLines(readKeptBranches(status.parallelHandoff.keptBranches)) : []),
+				...(status.parallelHandoff ? formatParallelHandoffLines(status.parallelHandoff.path, status.parallelHandoff.keptBranches) : []),
 				reconciliation.message ? `Diagnosis: ${reconciliation.message}` : undefined,
 				reconciliation.resultPath && fs.existsSync(reconciliation.resultPath) ? `Result: ${reconciliation.resultPath}` : undefined,
 			].filter((line): line is string => Boolean(line));
@@ -774,7 +773,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				: data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
 			const runId = data.runId ?? data.id ?? resolvedId;
 			const lines = [`Run: ${runId}`, data.toolCallId ? `Tool call: ${data.toolCallId}` : undefined, `State: ${status}`, `Result: ${resultPath}`].filter((line): line is string => Boolean(line));
-			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`, ...formatKeptBranchLines(readKeptBranches(data.parallelHandoff.keptBranches)));
+			if (data.parallelHandoff?.path) lines.push(...formatParallelHandoffLines(data.parallelHandoff.path, data.parallelHandoff.keptBranches));
 			const receipt = (data as Record<string, unknown>).workflowReceipt;
 			const receiptPath = receipt && typeof receipt === "object" && !Array.isArray(receipt)
 				? (receipt as Record<string, unknown>).path : undefined;

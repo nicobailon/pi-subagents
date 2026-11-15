@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../../policy/authority.ts";
 import { PROJECT_SUBAGENTS_RELATIVE_DIR } from "../../shared/artifacts.ts";
 import { getAgentDir } from "../../shared/utils.ts";
-import type { ManagedWorktreeProvider, WorktreeNaming, WorktreeProvider } from "../../shared/types.ts";
+import type { ManagedWorktreeProvider, ParallelHandoffCleanupTask, WorktreeNaming, WorktreeProvider } from "../../shared/types.ts";
 
 export const DEFAULT_WORKTREE_PROVIDER: WorktreeProvider = "auto";
 export const DEFAULT_WORKTREE_BASE_REF = "HEAD";
@@ -81,21 +81,7 @@ export interface WorktreeDiff {
 	error?: string;
 }
 
-export interface WorktreeCleanupTask {
-	recordedBaseDir?: string;
-	index: number;
-	path: string;
-	branch: string;
-	provider?: ManagedWorktreeProvider;
-	naming?: WorktreeNaming;
-	worktreeRemoved: boolean;
-	branchRemoved: boolean;
-	/** Tip of a branch cleanup kept because no other branch, remote branch, or tag holds its commits. */
-	keptBranchTip?: string;
-	preserved?: boolean;
-	reason?: string;
-	errors?: string[];
-}
+export type WorktreeCleanupTask = ParallelHandoffCleanupTask;
 
 export type WorktreeCleanupIntent =
 	| { kind: "preserve"; capturedDiffs?: WorktreeDiff[]; handoffManifestPath?: string; cleanupBlocker?: string }

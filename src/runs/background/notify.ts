@@ -21,7 +21,7 @@ import { COMPLETION_ACTION, type ParentWake } from "../../shared/parent-wake.ts"
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
 import { isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { capSummaryOutputs } from "../shared/single-output.ts";
-import { formatKeptBranchLines, parseKeptBranchLines, readKeptBranches, type KeptBranch } from "../shared/kept-branch-text.ts";
+import { formatParallelHandoffLines, parseKeptBranchLines, readKeptBranches, type KeptBranch } from "../shared/kept-branch-text.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
 import { describeWorkflowResume } from "../../workflows/workflow-resume-claim.ts";
 import { isReusableWorkflowStopCause } from "../../workflows/workflow-stop-cause.ts";
@@ -390,8 +390,7 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
 		formatResultPreview(details),
 		...(watchdogLines.length ? ["", ...watchdogLines] : []),
 		details.handoffPath ? "" : undefined,
-		details.handoffPath ? `Parallel handoff: ${details.handoffPath}` : undefined,
-		...(details.handoffPath ? formatKeptBranchLines(details.keptBranches ?? []) : []),
+		...(details.handoffPath ? formatParallelHandoffLines(details.handoffPath, details.keptBranches) : []),
 		correlationLines.length && !details.handoffPath ? "" : undefined,
 		...correlationLines,
 		sessionLine ? "" : undefined,
@@ -527,7 +526,7 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 		if (detail.workflowReceiptPath) blocks.push(`Workflow receipt: ${detail.workflowReceiptPath}`);
 		blocks.push(formatResultPreview(detail));
 		blocks.push(...formatWatchdogBlockerLines(detail));
-		if (detail.handoffPath) blocks.push(`Parallel handoff: ${detail.handoffPath}`, ...formatKeptBranchLines(detail.keptBranches ?? []));
+		if (detail.handoffPath) blocks.push(...formatParallelHandoffLines(detail.handoffPath, detail.keptBranches));
 		blocks.push(...formatCorrelationLines(detail));
 		if (sessionLine) blocks.push(sessionLine);
 		blocks.push("");

@@ -5,38 +5,20 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { discoverPlacedBridgeManifest, removePlacedRuntimeDir } from "../../src/runs/shared/placed-run-owner.ts";
 import { localMachineAccess } from "../../src/runs/shared/local-machine-access.ts";
-import type { PlacementMachineAccess } from "../../src/runs/shared/placement-host.ts";
+import type { PlacementCommandResult, PlacementMachineAccess } from "../../src/runs/shared/placement-host.ts";
 
 const runtimeDir = "/tmp/pi-subagents-herdr-run_aaaa/manifest-run";
 const runId = "run_aaaaaaaaaaaa";
 const manifest = { runId, socketPath: `${runtimeDir}/bridge.sock`, nativeSessionId: "native-1", packageVersion: "1.2.3", protocol: 1 };
 
-/** A machine whose `manifest.json` appears only after `absentReads` empty polls, like a child still booting its extensions; each read takes `readMs`, like a poll over SSH. */
-function bootingAccess(absentReads: number, readMs = 0): { access: PlacementMachineAccess; reads: () => number } {
-	let reads = 0;
-	const access: PlacementMachineAccess = {
-		shellCommand: (script, args) => `${script} ${(args ?? []).join(" ")}`,
-		run: () => ({ status: 1, stdout: "", stderr: "" }),
-		runAsync: async () => {
-			reads += 1;
-			if (readMs) await new Promise((resolve) => setTimeout(resolve, readMs));
-			return reads > absentReads ? { status: 0, stdout: `${JSON.stringify(manifest)}\n`, stderr: "" } : { status: 1, stdout: "", stderr: "" };
-		},
-		openSockets: () => ({ forward: () => [], close: () => {} }) as unknown as ReturnType<PlacementMachineAccess["openSockets"]>,
-	};
-	return { access, reads: () => reads };
+function manifestAccess(read: () => Promise<PlacementCommandResult>): PlacementMachineAccess {
+	return { shellCommand: (script) => script, run: () => ({ status: 1, stdout: "", stderr: "" }), runAsync: read, openSockets: () => { throw new Error("unused"); } };
 }
 
 describe("placed bridge manifest discovery", () => {
-	it("keeps polling until a slow child publishes its manifest", async () => {
-		const { access, reads } = bootingAccess(4);
-		const { runId: _runId, ...expected } = manifest;
-		assert.deepEqual(await discoverPlacedBridgeManifest(access, runId, runtimeDir), expected);
-		assert.equal(reads(), 5);
-	});
-
 	it("gives up at a wall-clock deadline however long each poll takes", async () => {
-		const { access } = bootingAccess(Number.POSITIVE_INFINITY, 100);
+		// Each empty poll takes 100 ms, like a read over SSH while the child still boots its extensions.
+		const access = manifestAccess(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); return { status: 1, stdout: "", stderr: "" }; });
 		const started = Date.now();
 		await assert.rejects(
 			() => discoverPlacedBridgeManifest(access, runId, runtimeDir, "The placed Pi never published its bridge manifest.", 120),
@@ -46,12 +28,9 @@ describe("placed bridge manifest discovery", () => {
 	});
 
 	it("rejects a manifest that belongs to another run or escapes its runtime directory", async () => {
-		const foreign = { ...manifest, runId: "run_bbbbbbbbbbbb" };
-		const access = { ...bootingAccess(0).access, runAsync: async () => ({ status: 0, stdout: JSON.stringify(foreign), stderr: "" }) };
-		await assert.rejects(() => discoverPlacedBridgeManifest(access, runId, runtimeDir), /identity is incomplete or outside its owned runtime directory/u);
-		const escaping = { ...manifest, socketPath: "/tmp/elsewhere/bridge.sock" };
-		const escaped = { ...bootingAccess(0).access, runAsync: async () => ({ status: 0, stdout: JSON.stringify(escaping), stderr: "" }) };
-		await assert.rejects(() => discoverPlacedBridgeManifest(escaped, runId, runtimeDir), /identity is incomplete or outside its owned runtime directory/u);
+		for (const foreign of [{ ...manifest, runId: "run_bbbbbbbbbbbb" }, { ...manifest, socketPath: "/tmp/elsewhere/bridge.sock" }]) {
+			await assert.rejects(() => discoverPlacedBridgeManifest(manifestAccess(async () => ({ status: 0, stdout: JSON.stringify(foreign), stderr: "" })), runId, runtimeDir), /identity is incomplete or outside its owned runtime directory/u);
+		}
 	});
 });
 

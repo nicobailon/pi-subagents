@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import * as path from "node:path";
 import { Type, type StaticEncode, type TSchema } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
@@ -7,7 +6,7 @@ import { remoteShellCommand, sshMachineAccess } from "./herdr-connection.ts";
 import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { localMachineAccess } from "./local-machine-access.ts";
 import { getPiSpawnCommand } from "./pi-spawn.ts";
-import { createPlacedRuntimeDir, PLACED_MANIFEST_READ_SCRIPT, PlacedRunOwner, removePlacedRuntimeDir } from "./placed-run-owner.ts";
+import { createPlacedRuntimeDir, hashedRuntimeDirName, PLACED_MANIFEST_READ_SCRIPT, PlacedRunOwner, removePlacedRuntimeDir } from "./placed-run-owner.ts";
 import { withHerdrPaneAllocationLock, type PlacementCommandResult, type PlacementEvidenceProof, type PlacementMachineAccess, type PlacementOwnedPane, type PlacementPaneHost, type PlacementReconnectCheck, type PlacementSockets } from "./placement-host.ts";
 import { isRexLocalMachine, REX_BUNDLE_BIN, REX_CALL_TIMEOUT_MS, REX_EXIT_GONE, REX_EXIT_UNREACHABLE, REX_MAX_OUTPUT, resolveRexBinary, rexCommandEnv, rexGlobalArgs } from "./rex-machine.ts";
 
@@ -235,28 +234,15 @@ export const rexPaneHost = {
 	closeOwnedPane: closeOwnedRexPane,
 } satisfies PlacementPaneHost<RexConnection, RexPaneCandidate>;
 
-function runtimeDirPresent(access: PlacementMachineAccess, runtimeDir: string): boolean {
-	const result = access.run(access.shellCommand('test -e "$1" || test -L "$1"', [runtimeDir]), { timeout: 10_000, maxBuffer: 4096 });
-	if (result.error) throw new Error(`Could not check the owned runtime directory: ${result.error.message}`, { cause: result.error });
-	return result.status === 0;
-}
-
-/** A closed local Pi removes its own runtime directory on shutdown, so already-removed counts as removed. */
-function removeRexRuntimeDir(access: PlacementMachineAccess, runtimeDir: string): void {
-	if (!runtimeDirPresent(access, runtimeDir)) return;
-	try { removePlacedRuntimeDir(access, runtimeDir); } catch (error) { if (runtimeDirPresent(access, runtimeDir)) throw error; }
-}
-
 export class RexPlacedRunOwner extends PlacedRunOwner<RexConnection, RexMachineReference> {
-	private constructor(machine: RexMachineReference, runId: string, runtimeDir: string, connection: RexConnection, access: PlacementMachineAccess, host: PlacementPaneHost<RexConnection, RexPaneCandidate>) { super(machine, runId, runtimeDir, connection, host, access, () => removeRexRuntimeDir(access, runtimeDir)); }
+	private constructor(machine: RexMachineReference, runId: string, runtimeDir: string, connection: RexConnection, access: PlacementMachineAccess, host: PlacementPaneHost<RexConnection, RexPaneCandidate>) { super(machine, runId, runtimeDir, connection, host, access); }
 	/** A Rex SSH owner's machine carries the resolved remote cwd, and its host reconnects only to the session recorded here. */
 	static async create(machine: RexMachineReference, runId: string, options: { sshAccess?: PlacementMachineAccess } = {}): Promise<RexPlacedRunOwner> {
-		// A short hash names the directory, so /tmp/pi-subagents-herdr-<hash>-XXXXXXXX/bridge.sock (57 bytes) fits the 103-byte macOS socket path limit for any run id.
-		const hash = createHash("sha256").update(runId).digest("hex").slice(0, 12);
+		const hash = hashedRuntimeDirName(runId);
 		if (isRexLocalMachine(machine)) {
 			const access = rexAccess(), runtimeDir = await createPlacedRuntimeDir(access, hash);
 			try { return new RexPlacedRunOwner(machine, runId, runtimeDir, await connectRex(machine, { access }), access, rexPaneHost); }
-			catch (error) { try { removeRexRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "Rex owner creation failed and runtime cleanup also failed.", { cause: error }); } throw error; }
+			catch (error) { try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "Rex owner creation failed and runtime cleanup also failed.", { cause: error }); } throw error; }
 		}
 		const access = rexSshAccess(machine, options.sshAccess), bin = await resolveRemoteRexBinary(access, machine);
 		const placed: RexSshMachineReference = { ...machine, cwd: await resolveRemoteCwd(access, machine) };
@@ -264,6 +250,6 @@ export class RexPlacedRunOwner extends PlacedRunOwner<RexConnection, RexMachineR
 		const host = { ...rexPaneHost, connect: (target: PlacementMachineReference) => connectRex(target, { access, bin, session }) } satisfies PlacementPaneHost<RexConnection, RexPaneCandidate>;
 		const runtimeDir = await createPlacedRuntimeDir(access, hash);
 		try { return new RexPlacedRunOwner(placed, runId, runtimeDir, await host.connect(placed), access, host); }
-		catch (error) { try { removeRexRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "Rex owner creation failed and runtime cleanup also failed.", { cause: error }); } throw error; }
+		catch (error) { try { removePlacedRuntimeDir(access, runtimeDir); } catch (cleanupError) { throw new AggregateError([error, cleanupError], "Rex owner creation failed and runtime cleanup also failed.", { cause: error }); } throw error; }
 	}
 }

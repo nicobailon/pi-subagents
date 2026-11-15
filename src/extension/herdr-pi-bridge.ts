@@ -46,10 +46,9 @@ function boundedToolArgs(args: unknown): unknown {
 // Leaves room under HERDR_PI_MAX_FRAME_BYTES for the frame around the message. A read image alone can be 4.5 MB of base64.
 const MESSAGE_FRAME_BUDGET = HERDR_PI_MAX_FRAME_BYTES - 64 * 1024;
 const fitsMessageBudget = (value: unknown) => Buffer.byteLength(JSON.stringify(value)) <= MESSAGE_FRAME_BUDGET;
-const omittedText = (what: string, bytes: number) => `[${what} omitted by the pi-subagents bridge: ${bytes} bytes over its frame limit]`;
-/** Shrinks only a message that would not fit one bridge frame; dropped images and text leave a marker in their place. */
-function boundedMessage(message: AgentMessage | undefined): AgentMessage | undefined {
-	if (!message || fitsMessageBudget(message)) return message;
+const omittedText = (what: string, bytes: number) => `[${what} omitted by the pi-subagents bridge: ${bytes} bytes did not fit in one bridge frame]`;
+function boundedMessage(message: AgentMessage): AgentMessage {
+	if (fitsMessageBudget(message)) return message;
 	const record = message as unknown as Record<string, unknown>;
 	const content = Array.isArray(record.content) ? record.content.map((block: Record<string, unknown>) => {
 		if (block.type === "image") return { type: "text", text: omittedText(`Image (${String(block.mimeType)})`, Buffer.byteLength(String(block.data))) };
@@ -101,10 +100,11 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 	let evidenceCursor = 0; let journalBytes = 0; const journal: HerdrPiFrame[] = [];
 	const send = (frame: { type: string; [key: string]: unknown }) => {
 		// Checked before journaling: the journal replays on every reconnect, where an unencodable record would end this Pi.
-		const record = { protocol: HERDR_PI_PROTOCOL, runId, ...frame, cursor: evidenceCursor + 1 } as HerdrPiFrame; const size = Buffer.byteLength(JSON.stringify(record)); if (size >= HERDR_PI_MAX_FRAME_BYTES) throw new Error(`pi-subagents bridge frame '${frame.type}' is ${size} bytes, over the ${HERDR_PI_MAX_FRAME_BYTES}-byte limit.`); evidenceCursor = record.cursor as number; journal.push(record); journalBytes += size; while (journal.length > 512 || journalBytes > 8 * 1024 * 1024) { const removed = journal.shift(); if (removed) journalBytes -= Buffer.byteLength(JSON.stringify(removed)); }
+		const record = { protocol: HERDR_PI_PROTOCOL, runId, ...frame, cursor: evidenceCursor + 1 } as HerdrPiFrame; const size = Buffer.byteLength(JSON.stringify(record)); if (size >= HERDR_PI_MAX_FRAME_BYTES) throw new Error(`pi-subagents bridge frame '${frame.type}' is ${size} bytes, over the ${HERDR_PI_MAX_FRAME_BYTES}-byte limit.`); evidenceCursor++; journal.push(record); journalBytes += size; while (journal.length > 512 || journalBytes > 8 * 1024 * 1024) { const removed = journal.shift(); if (removed) journalBytes -= Buffer.byteLength(JSON.stringify(removed)); }
 		if (!client || client.destroyed) return;
 		client.write(encodeHerdrPiFrame(record));
 	};
+	const sendReady = (ctx: BridgeContext) => send({ type: "ready", packageVersion: packageJson.version, nativeSessionId, sessionFile: ctx.sessionManager?.getSessionFile?.(), cwd: process.cwd(), tools: pi.getActiveTools(), model: ctx.model?.provider && ctx.model.id ? `${ctx.model.provider}/${ctx.model.id}` : undefined, configured, activeRequestId, evidenceCursor, evidenceFloor: journal[0]?.cursor ?? evidenceCursor + 1, initialGit: gitEvidence(process.cwd()) });
 	const sessionId = (ctx: BridgeContext) => ctx.sessionManager?.getSessionId?.();
 
 	pi.registerTool({
@@ -152,7 +152,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		return resolvedSystemPrompt && resolvedContextPolicy ? { systemPrompt: `${rewriteSubagentPrompt(typeof event.systemPrompt === "string" ? event.systemPrompt : "", { inheritProjectContext: resolvedContextPolicy.inheritProjectContext, inheritGlobalContext: resolvedContextPolicy.inheritGlobalContext, inheritSkills: resolvedContextPolicy.inheritSkills })}\n\n<active_agent name=${JSON.stringify(resolvedContextPolicy.agent)}/>\n\n${resolvedSystemPrompt}` } : undefined;
 	});
 	on("session_start", (_event, ctx) => {
-		if (claimed || claims.has(runDir)) return;
+		if (claims.has(runDir)) return;
 		context = ctx; nativeSessionId = sessionId(ctx);
 		if (!nativeSessionId) throw new Error("Pane-native Pi bridge requires a persisted native session identity.");
 		claims.add(runDir); claimed = true;
@@ -162,11 +162,11 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		}
 		server.listen(socketPath, () => { fs.chmodSync(socketPath, 0o600); });
 		fs.writeFileSync(manifestPath, JSON.stringify({ protocol: HERDR_PI_PROTOCOL, packageVersion: packageJson.version, runId, socketPath, nativeSessionId, pid: process.pid }), { mode: 0o600, flag: "wx" });
-		send({ type: "ready", packageVersion: packageJson.version, nativeSessionId, sessionFile: ctx.sessionManager?.getSessionFile?.(), cwd: process.cwd(), tools: pi.getActiveTools(), model: ctx.model?.provider && ctx.model.id ? `${ctx.model.provider}/${ctx.model.id}` : undefined, configured, activeRequestId, evidenceCursor, evidenceFloor: journal[0]?.cursor ?? evidenceCursor + 1, initialGit: gitEvidence(process.cwd()) });
+		sendReady(ctx);
 	});
 	on("message_end", (event) => {
-		const message = boundedMessage(event.message as AgentMessage | undefined);
-		if (message?.role === "assistant") finalAssistant = message;
+		const message = boundedMessage(event.message as AgentMessage);
+		if (message.role === "assistant") finalAssistant = message;
 		send({ type: "event", requestId: activeRequestId, event: { ...event, message }, nativeSessionId });
 	});
 	// The parent counts tools, arms per-tool timeouts and pauses its run timeout on a supervisor wait from these events.
@@ -216,6 +216,6 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		// Without a listener, a protocol error or peer reset is an uncaught exception that ends the child Pi.
 		socket.on("error", () => {});
 		socket.on("close", () => { if (client === socket) client = undefined; });
-		if (context && nativeSessionId) send({ type: "ready", packageVersion: packageJson.version, nativeSessionId, sessionFile: context.sessionManager?.getSessionFile?.(), cwd: process.cwd(), tools: pi.getActiveTools(), model: context.model?.provider && context.model.id ? `${context.model.provider}/${context.model.id}` : undefined, configured, activeRequestId, evidenceCursor, evidenceFloor: journal[0]?.cursor ?? evidenceCursor + 1, initialGit: gitEvidence(process.cwd()) });
+		if (context && nativeSessionId) sendReady(context);
 	});
 }
