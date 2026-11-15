@@ -6683,7 +6683,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const terminalSummary = `${status.state === "complete"
 							? "Workflow completed after detached child finished."
 							: errorPreview ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.")}${stopCause ? ` ${WORKFLOW_RUNTIME_REPLACED_STOP_NOTICE}` : ""}${workflowOutputPathMappingSummary(partial.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
-						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths);
+						// Like a single child's output, the declared file is written only on completion, so its existence never reads as a delivered report.
+						const outputWarning = status.state === "complete" ? writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths) : undefined;
 						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
 						const receiptState: WorkflowReceiptState = status.state === "complete" ? "complete" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "failed";
 						const terminalOutcome = workflowFailureTerminalOutcome(error, partial.children, usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)));
@@ -6951,7 +6952,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						...(outputMappings ? [outputMappings] : []),
 					],
 					maxOutput: requestParams.maxOutput,
-					aggregateOutputPath: workflowAggregateOutputPath,
+					// A failed workflow leaves the declared output file untouched; truncated text goes to the full-result file.
+					aggregateOutputPath: undefined,
 					fullResultPath: workflowFullResultPath,
 					producedChildOutputPaths,
 				});
