@@ -718,9 +718,16 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 		const repoDir = createRepo("pi-worktree-dirty-");
 		try {
 			fs.writeFileSync(path.join(repoDir, "tracked.txt"), "dirty\n", "utf-8");
+			fs.writeFileSync(path.join(repoDir, "scratch.md"), "new\n", "utf-8");
 			await assert.rejects(
 				() => createWorktrees(repoDir, "dirty", 1, { baseRef: "unsafe..ref" }),
-				/worktree isolation requires a clean git working tree/i,
+				(error: Error) => {
+					assert.match(error.message, /worktree isolation requires a clean git working tree: .+ has 2 uncommitted change\(s\):/);
+					assert.ok(error.message.includes(path.basename(repoDir)), error.message);
+					assert.match(error.message, /^ {2} M tracked\.txt$/m);
+					assert.match(error.message, /^ {2}\?\? scratch\.md$/m);
+					return true;
+				},
 			);
 		} finally {
 			cleanupRepo(repoDir);

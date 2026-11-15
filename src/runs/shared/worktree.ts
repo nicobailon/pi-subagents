@@ -372,8 +372,11 @@ async function probeWorktreeSource(tx: Pick<SetupTransaction, "git" | "gitChecke
 	// pi-subagents writes durable runtime state under .pi/subagents/ by default;
 	// that state must not make managed isolation unusable for later runs.
 	const status = await tx.gitChecked(toplevel, ["status", "--porcelain", "--", `:!${PROJECT_SUBAGENTS_RELATIVE_DIR}`]);
-	if (status.trim().length > 0) {
-		throw new Error("worktree isolation requires a clean git working tree. Commit or stash changes first.");
+	const changes = status.split("\n").filter((line) => line.trim().length > 0);
+	if (changes.length > 0) {
+		const shown = changes.slice(0, 10).map((line) => `  ${line}`);
+		if (changes.length > shown.length) shown.push(`  … and ${changes.length - shown.length} more`);
+		throw new Error(`worktree isolation requires a clean git working tree: ${toplevel} has ${changes.length} uncommitted change(s):\n${shown.join("\n")}\nCommit or stash them first.`);
 	}
 	return toplevel;
 }

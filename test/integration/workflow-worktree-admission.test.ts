@@ -36,7 +36,7 @@ describe("public workflow worktree admission", { skip: !available }, () => {
 			}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 
 			assert.equal(result.isError, true);
-			assert.match(result.content.map((item) => item.text).join("\n"), /worktree isolation requires a clean git working tree\. Commit or stash changes first\./);
+			assert.match(result.content.map((item) => item.text).join("\n"), /worktree isolation requires a clean git working tree: .+ has 1 uncommitted change\(s\):\n  \?\? untracked\.txt\nCommit or stash them first\./);
 			assert.equal(result.details?.asyncId, undefined);
 			assert.equal(callCount(), 0);
 			assert.equal(fs.existsSync(ASYNC_DIR), asyncDirExistedBefore);
