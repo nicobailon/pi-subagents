@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
-import { remoteShellCommand, runBoundedCommand } from "./herdr-connection.ts";
+import { runBoundedCommand, shellScriptCommand } from "./herdr-connection.ts";
 import type { PlacementCommandResult, PlacementMachineAccess, PlacementSockets } from "./placement-host.ts";
 
 const DEFAULT_TIMEOUT_MS = 15_000, DEFAULT_MAX_BUFFER = 256 * 1024;
@@ -13,11 +13,14 @@ function localSockets(): PlacementSockets {
 	};
 }
 
-/** Machine access for the parent's own machine: the same quoted `sh -c` scripts the SSH access sends, run directly through /bin/sh. */
+/**
+ * Machine access for the parent's own machine: the same quoted `sh -c` scripts the SSH access sends, run directly through /bin/sh.
+ * They keep this process's PATH instead of the fixed remote one, which lacks coreutils on hosts such as NixOS.
+ */
 export function localMachineAccess(options: { env?: NodeJS.ProcessEnv } = {}): PlacementMachineAccess {
 	const env = options.env ?? process.env;
 	return {
-		shellCommand: remoteShellCommand,
+		shellCommand: shellScriptCommand,
 		run(command, limits = {}) {
 			const spawned = spawnSync("/bin/sh", ["-c", command], { encoding: "utf8", env, timeout: limits.timeout ?? DEFAULT_TIMEOUT_MS, maxBuffer: limits.maxBuffer ?? DEFAULT_MAX_BUFFER, windowsHide: true });
 			const result: PlacementCommandResult = { status: spawned.status, stdout: spawned.stdout ?? "", stderr: spawned.stderr ?? "" };

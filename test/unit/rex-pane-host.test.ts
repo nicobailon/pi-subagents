@@ -38,7 +38,7 @@ describe("Rex pane host exit codes and cleanup", { skip: process.platform === "w
 	let dir: string, bin: string;
 	const script = (key: string, codes: number[]) => fs.writeFileSync(path.join(dir, key), `${codes.join("\n")}\n`);
 	const calls = () => fs.readFileSync(path.join(dir, "calls"), "utf8").trim().split("\n");
-	const connect = () => connectRex(machine, { bin, access: localMachineAccess({ env: { PATH: "/usr/bin:/bin", FAKE_REX_DIR: dir, FAKE_REX_SESSION: session } }) });
+	const connect = () => connectRex(machine, { bin, access: localMachineAccess({ env: { PATH: process.env.PATH ?? "/usr/bin:/bin", FAKE_REX_DIR: dir, FAKE_REX_SESSION: session } }) });
 	beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "fake-rex-")); bin = path.join(dir, "rex"); fs.writeFileSync(bin, FAKE_REX, { mode: 0o755 }); });
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -125,7 +125,7 @@ describe("Rex pane host exit codes and cleanup", { skip: process.platform === "w
 describe("machine 'local' resolution", { skip: process.platform === "win32" }, () => {
 	let dir: string;
 	const script = (codes: number[]) => fs.writeFileSync(path.join(dir, "session"), `${codes.join("\n")}\n`);
-	const parentEnv = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ PATH: "/usr/bin:/bin", REX_BIN_DIR: dir, FAKE_REX_DIR: dir, FAKE_REX_SESSION: session, ...extra });
+	const parentEnv = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ PATH: process.env.PATH ?? "/usr/bin:/bin", REX_BIN_DIR: dir, FAKE_REX_DIR: dir, FAKE_REX_SESSION: session, ...extra });
 	let insideRex: NodeJS.ProcessEnv;
 	beforeEach(() => { dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "fake-rex-"))); fs.writeFileSync(path.join(dir, "rex"), FAKE_REX, { mode: 0o755 }); fs.mkdirSync(path.join(dir, "repo")); insideRex = parentEnv({ REX_SESSION: session, REX_BLOCK: "block:parent", REX_SERVER: "unix:///tmp/fake-rex.sock" }); });
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));

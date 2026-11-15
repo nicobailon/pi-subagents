@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { Type, type StaticEncode, type TSchema } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
 import type { PlacementMachineReference, RexMachineReference, RexSshMachineReference } from "../../shared/types.ts";
-import { remoteShellCommand, sshMachineAccess } from "./herdr-connection.ts";
+import { sshMachineAccess } from "./herdr-connection.ts";
 import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { localMachineAccess } from "./local-machine-access.ts";
 import { getPiSpawnCommand } from "./pi-spawn.ts";
@@ -23,7 +23,7 @@ const bridgeManifestPid = Compile(Type.Object({ pid: Type.Integer() }));
 /** Rex runtime directories go under /tmp: the bridge socket path inside a macOS TMPDIR exceeds the unix socket path limit. */
 function rexAccess(): PlacementMachineAccess { return localMachineAccess({ env: { ...rexCommandEnv(), TMPDIR: "/tmp" } }); }
 /** The same /tmp rule on the remote, whatever TMPDIR its SSH session has. */
-function rexSshAccess(machine: RexSshMachineReference, access: PlacementMachineAccess = sshMachineAccess(machine)): PlacementMachineAccess { return { ...access, shellCommand: (script, args) => remoteShellCommand(`TMPDIR=/tmp; export TMPDIR; ${script}`, args) }; }
+function rexSshAccess(machine: RexSshMachineReference, access: PlacementMachineAccess = sshMachineAccess(machine)): PlacementMachineAccess { return { ...access, shellCommand: (script, args) => access.shellCommand(`TMPDIR=/tmp; export TMPDIR; ${script}`, args) }; }
 
 interface RexEndpoint { access: PlacementMachineAccess; bin: string; session: string; server?: string }
 export interface RexConnection extends RexEndpoint, PlacementSockets {}
