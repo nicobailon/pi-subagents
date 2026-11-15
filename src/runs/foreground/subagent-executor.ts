@@ -3879,6 +3879,17 @@ function writeWorkflowAggregateOutput(outputPath: string | undefined, text: stri
 	}
 }
 
+/** An unfinished workflow removes an earlier run's file at its output path, so the path never holds a report from another run. */
+function removeWorkflowAggregateOutput(outputPath: string | undefined, producedChildOutputPaths: ReadonlySet<string>): string | undefined {
+	if (!outputPath || producedChildOutputPaths.has(resolveWorkflowHostOutputClaimPath(outputPath))) return undefined;
+	try {
+		fs.rmSync(outputPath, { force: true });
+		return undefined;
+	} catch (error) {
+		return `Output file error: ${outputPath}\n${error instanceof Error ? error.message : String(error)}`;
+	}
+}
+
 function appendWorkflowOutputWarning(text: string, warning: string | undefined): string {
 	return warning ? `${text}\n\n${warning}` : text;
 }
@@ -6683,8 +6694,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const terminalSummary = `${status.state === "complete"
 							? "Workflow completed after detached child finished."
 							: errorPreview ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.")}${stopCause ? ` ${WORKFLOW_RUNTIME_REPLACED_STOP_NOTICE}` : ""}${workflowOutputPathMappingSummary(partial.children)}${finalPreflightWarnings.length ? ` ${finalPreflightWarnings.join(" ")}` : ""}`;
-						// Like a single child's output, the declared file is written only on completion, so its existence never reads as a delivered report.
-						const outputWarning = status.state === "complete" ? writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths) : undefined;
+						// The declared file holds only a completed report, so its existence never reads as a delivered report.
+						const outputWarning = status.state === "complete"
+							? writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths)
+							: removeWorkflowAggregateOutput(workflowAggregateOutputPath, producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
 						const receiptState: WorkflowReceiptState = status.state === "complete" ? "complete" : status.state === "paused" ? "paused" : status.state === "stopped" ? "stopped" : "failed";
 						const terminalOutcome = workflowFailureTerminalOutcome(error, partial.children, usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)));
@@ -6939,7 +6952,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const finalPreflightTrace = annotateWorkflowPreflightTrace(partial.trace, workflowPreflight);
 				const trace = finalPreflightTrace.map((entry) => ({ line: `- ${entry.operation} ${entry.key}: ${entry.state}${entry.runId ? ` (${entry.runId})` : ""}${entry.warning ? ` — ${entry.warning}` : ""}`, error: entry.error }));
 				const outputMappings = workflowOutputPathMappingSummary(partial.children).trim();
-				const displayText = formatWorkflowResultText({
+				const outputWarning = removeWorkflowAggregateOutput(workflowAggregateOutputPath, producedChildOutputPaths);
+				const displayText = appendWorkflowOutputWarning(formatWorkflowResultText({
 					head: workflowPreflight ? [formatWorkflowPreflight(workflowPreflight)] : [],
 					script: [
 						`Workflow failed: ${text}`,
@@ -6952,11 +6966,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						...(outputMappings ? [outputMappings] : []),
 					],
 					maxOutput: requestParams.maxOutput,
-					// A failed workflow leaves the declared output file untouched; truncated text goes to the full-result file.
+					// A failed workflow's text never goes to the declared output file; truncated text goes to the full-result file.
 					aggregateOutputPath: undefined,
 					fullResultPath: workflowFullResultPath,
 					producedChildOutputPaths,
-				});
+				}), outputWarning);
 				const workflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: foregroundWorkflowRunId, workflowState: "failed", inventoryComplete: true, trace: partial.trace, children: partial.children });
 				const terminalOutcome = workflowFailureTerminalOutcome(error, partial.children, usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)));
 				const receipt = terminalWorkflowReceipt(foregroundWorkflowRunId, "failed", partial.children, workflowChildren, terminalOutcome, [...workflowHostSteps.values()], workflowResource?.provenance, workflowArgsDigest);

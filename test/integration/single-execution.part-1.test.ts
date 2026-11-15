@@ -4703,6 +4703,38 @@ Answer only from the supplied synthetic text.
 		assert.equal(result.details.workflow?.failureKind, "validation");
 	});
 
+	it("removes stale workflow output when a child claims its path but writes no report", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const sharedOutput = path.join(tempDir, "failed-review.md");
+		fs.writeFileSync(sharedOutput, "stale workflow output", "utf-8");
+		mockPi.onCall({ exitCode: 1, stderr: "review child failed before writing output" });
+		const executor = makeExecutor([makeAgent("reviewer")]);
+
+		const result = await executor.execute(
+			"scripted-workflow-missing-child-output-collision",
+			{
+				async: false,
+				output: sharedOutput,
+				workflowScript: `
+					const child = await runs.run("review", {
+						agent: "reviewer",
+						task: "Write a review report.",
+						output: ${JSON.stringify(sharedOutput)},
+						outputMode: "file-only"
+					});
+					if (!child.ok) throw new Error(child.error);
+					return child;
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /review child failed before writing output/);
+		assert.equal(fs.existsSync(sharedOutput), false);
+	});
+
 	it("leaves a failed workflow's declared output file unwritten in foreground and async runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const workflowScript = `throw new Error("review step failed");`;
