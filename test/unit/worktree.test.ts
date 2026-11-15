@@ -722,7 +722,7 @@ console.log(JSON.stringify({ action: "created", branch, path: repo, created_bran
 			await assert.rejects(
 				() => createWorktrees(repoDir, "dirty", 1, { baseRef: "unsafe..ref" }),
 				(error: Error) => {
-					assert.match(error.message, /worktree isolation requires a clean git working tree: \S+ has 2 uncommitted change\(s\):/);
+					assert.match(error.message, /worktree isolation requires a clean git working tree: .+ has 2 uncommitted change\(s\):/);
 					assert.ok(error.message.includes(path.basename(repoDir)), error.message);
 					assert.match(error.message, /^ {2} M tracked\.txt$/m);
 					assert.match(error.message, /^ {2}\?\? scratch\.md$/m);
