@@ -28,7 +28,7 @@ export async function discoverPlacedBridgeManifest(access: PlacementMachineAcces
 	}
 }
 
-/** A short hash names a runtime directory on this machine, so /tmp/pi-subagents-herdr-<hash>-XXXXXXXX/bridge.sock (57 bytes) fits the 103-byte macOS socket path limit for any run id. */
+/** A short hash names a runtime directory under /tmp, so /tmp/pi-subagents-herdr-<hash>-XXXXXXXX/bridge.sock (57 bytes) fits the 103-byte macOS socket path limit for any run id. */
 export function hashedRuntimeDirName(runId: string): string { return createHash("sha256").update(runId).digest("hex").slice(0, 12); }
 
 export async function createPlacedRuntimeDir(access: PlacementMachineAccess, runId: string): Promise<string> { const result = await access.runAsync(access.shellCommand("umask 077; mktemp -d \"${TMPDIR:-/tmp}/pi-subagents-herdr-$1-XXXXXXXX\"", [runId]), { timeout: 10_000, maxBuffer: 4096 }); if (result.error) throw new Error(`Could not provision a run-private remote bridge runtime directory: ${result.error.message}`, { cause: result.error }); const value = result.stdout.trim(); if (result.status !== 0 || !path.posix.isAbsolute(value) || value.includes("\n")) throw new Error("Could not provision a run-private remote bridge runtime directory."); return value; }
