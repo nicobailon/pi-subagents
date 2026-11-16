@@ -4,6 +4,7 @@
 
 ### Added
 
+- Workflow progress now names each child's session file. The `workflowChildren` rows of a workflow's progress updates, status and results carry `sessionFile` from the child's launch, and a finished child keeps it while its siblings still run, so an editor or other host can show any child's transcript during the workflow. Before, a host following a workflow could see a child's state but had no way to read what it was doing until the workflow returned. Thanks to [@zeishr](https://github.com/zeishr) for #3290.
 - Foreground progress updates now name the child's session file. Each `details.progress[]` row of a `subagent` tool update carries `sessionFile` from the first update, when the child has one, so an editor or other host can show the child's transcript as it runs. Before, the path appeared only in the final result, once the child had finished. Thanks to [@zeishr](https://github.com/zeishr) for #3289.
 - From a Pi running inside a Herdr pane, `machine: "local"` now opens the subagent in a new tab of your own Herdr session, with no saved machine or SSH. Before, `local` worked only inside Rex, and placing a child in Herdr on the same machine meant a saved machine and SSH to yourself. When Herdr runs inside a Rex tab, the Herdr session wins, and outside both terminals `local` fails before anything starts. Thanks to [@mystery4f](https://github.com/mystery4f) for #3266.
 
