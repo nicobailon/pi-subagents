@@ -59,6 +59,12 @@ it("names each child's session file from launch through the final result", () =>
 	assert.equal(settled.children.find((row) => row.childId === "a")?.sessionFile, sessionFile);
 });
 
+it("keeps a finished child's session file in live updates while a sibling still runs", () => {
+	const launches = new Map([["a", { agent: "worker", runId: "child-a", sessionFile: "/s/a.jsonl" }], ["b", { agent: "worker", runId: "child-b", sessionFile: "/s/b.jsonl" }]]);
+	const live = workflowChildSummary({ ...input, trace: [...input.trace, { operation: "run" as const, key: "a", state: "completed" as const }], launches });
+	assert.deepEqual(live.children.map((row) => [row.childId, row.state, row.sessionFile]), [["a", "completed", "/s/a.jsonl"], ["b", "running", "/s/b.jsonl"]]);
+});
+
 it("drops an oversized session path and rejects a malformed one when parsing", () => {
 	const tooLong = `/${"x".repeat(4_096)}`;
 	const summary = workflowChildSummary({ ...input, launches: new Map([["a", { agent: "worker", sessionFile: tooLong }]]) });

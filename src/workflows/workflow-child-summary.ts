@@ -136,11 +136,13 @@ export function workflowChildSummary(input: {
 	}
 	for (const [key, launch] of input.launches ?? []) {
 		const row = rows.get(key);
-		if (!row || row.state !== "running") continue;
+		if (!row) continue;
+		const running = row.state === "running";
 		rows.set(key, {
 			...row,
-			...(!row.runId && bounded(launch.runId, 256) ? { runId: launch.runId } : {}),
-			...(!row.agent && bounded(launch.agent, 256) ? { agent: launch.agent } : {}),
+			...(running && !row.runId && bounded(launch.runId, 256) ? { runId: launch.runId } : {}),
+			...(running && !row.agent && bounded(launch.agent, 256) ? { agent: launch.agent } : {}),
+			// Finished rows keep it too: live updates carry no child results, so this is a settled child's only transcript link until the workflow returns.
 			...(!row.sessionFile && bounded(launch.sessionFile, MAX_SESSION_FILE_BYTES) ? { sessionFile: launch.sessionFile } : {}),
 		});
 	}
