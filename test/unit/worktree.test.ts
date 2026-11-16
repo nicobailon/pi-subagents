@@ -1135,6 +1135,26 @@ process.stdout.write("corrupt external diff output\\n");
 		}
 	});
 
+	it("does not link node_modules when linkNodeModules is false", async () => {
+		const repoDir = createRepo("pi-worktree-no-node-modules-");
+		const nodeModulesDir = path.join(repoDir, "node_modules");
+		fs.mkdirSync(nodeModulesDir, { recursive: true });
+		fs.writeFileSync(path.join(nodeModulesDir, "fixture.txt"), "fixture\n", "utf-8");
+
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = await createWorktrees(repoDir, "no-node-modules", 1, { linkNodeModules: false });
+			const worktree = setup.worktrees[0]!;
+			assert.equal(worktree.nodeModulesLinked, false);
+			assert.deepEqual(worktree.syntheticPaths, []);
+			assert.equal(fs.existsSync(path.join(worktree.path, "node_modules")), false,
+				"a setup hook can install into an empty worktree instead of following a link");
+		} finally {
+			if (setup) cleanupWorktrees(setup);
+			cleanupRepo(repoDir);
+		}
+	});
+
 	it("preserves a dangling node_modules destination", {
 		skip: process.platform === "win32" ? "Git symlink behavior differs on Windows CI environments." : undefined,
 	}, async () => {

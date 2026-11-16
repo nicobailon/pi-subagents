@@ -241,6 +241,7 @@ interface AsyncChainParams {
 	waitToolDefaultTimeoutMs?: number;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
+	worktreeNodeModulesLink?: import("../../shared/types.ts").ExtensionConfig["worktreeNodeModulesLink"];
 	worktreeBaseDir?: string;
 	baseRef?: string;
 	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
@@ -322,6 +323,7 @@ interface AsyncSingleParams {
 	waitToolDefaultTimeoutMs?: number;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
+	worktreeNodeModulesLink?: import("../../shared/types.ts").ExtensionConfig["worktreeNodeModulesLink"];
 	worktreeBaseDir?: string;
 	baseRef?: string;
 	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
@@ -1523,6 +1525,7 @@ export function executeAsyncChain(
 		maxSubagentDepth,
 		worktreeSetupHook,
 		worktreeSetupHookTimeoutMs,
+		worktreeNodeModulesLink,
 		worktreeBaseDir,
 		baseRef,
 		worktreeProvider,
@@ -1676,6 +1679,7 @@ export function executeAsyncChain(
 				projectTrusted: ctx.projectTrusted,
 				worktreeSetupHook,
 				worktreeSetupHookTimeoutMs,
+				worktreeNodeModulesLink,
 				worktreeBaseDir,
 				baseRef,
 				worktreeProvider,
@@ -1880,6 +1884,7 @@ export function executeAsyncSingle(
 		maxSubagentDepth,
 		worktreeSetupHook,
 		worktreeSetupHookTimeoutMs,
+		worktreeNodeModulesLink,
 		worktreeBaseDir,
 		baseRef,
 		worktreeProvider,
@@ -2339,6 +2344,7 @@ export function executeAsyncSingle(
 				inheritedChildRuntime: inheritedChildRuntime(ctx.childRuntime),
 				worktreeSetupHook,
 				worktreeSetupHookTimeoutMs,
+				worktreeNodeModulesLink,
 				worktreeBaseDir,
 				baseRef,
 				worktreeProvider,

@@ -203,6 +203,7 @@ export interface SubagentRunConfig {
 	projectTrusted?: boolean;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
+	worktreeNodeModulesLink?: import("../../shared/types.ts").ExtensionConfig["worktreeNodeModulesLink"];
 	worktreeBaseDir?: string;
 	baseRef?: string;
 	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
@@ -4092,6 +4093,7 @@ export async function runSubagent(
 						setupHook: config.worktreeSetupHook
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
 							: undefined,
+						linkNodeModules: config.worktreeNodeModulesLink !== "never",
 						baseDir: config.worktreeBaseDir,
 						onProgress: (progress) => {
 							publishSetupUnknown(progress);
@@ -4494,6 +4496,7 @@ export async function runSubagent(
 						setupHook: config.worktreeSetupHook
 							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
 							: undefined,
+						linkNodeModules: config.worktreeNodeModulesLink !== "never",
 						baseDir: config.worktreeBaseDir,
 						onProgress: (progress) => {
 							publishSetupUnknown(progress);

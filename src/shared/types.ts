@@ -2843,6 +2843,8 @@ export interface ExtensionConfig {
 	chain?: ExtensionChainConfig;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
+	/** Make the main checkout's node_modules available inside a worktree; "never" stops the link. */
+	worktreeNodeModulesLink?: "always" | "never";
 	worktreeBaseDir?: string;
 	/** Enable managed worktrees when a launch does not provide an explicit value. */
 	worktree?: boolean;

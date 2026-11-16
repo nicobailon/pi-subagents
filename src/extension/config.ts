@@ -14,7 +14,7 @@ import { validateDisabledFeatures } from "../shared/disabled-features.ts";
 
 // Explicit route identity, worktree, checkpoint, and tool-surface policies must not be silently
 // discarded and replaced by the built-in defaults after validation fails.
-const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers", "globalConcurrencyLimit"];
+const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "worktreeNodeModulesLink", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers", "globalConcurrencyLimit"];
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -152,6 +152,9 @@ function validateConfig(config: Record<string, unknown>): void {
 	}
 	if (config.worktreeProvider !== undefined && config.worktreeProvider !== "auto" && config.worktreeProvider !== "native" && config.worktreeProvider !== "worktrunk") {
 		throw new Error('config.worktreeProvider must be "auto", "native", or "worktrunk"');
+	}
+	if (config.worktreeNodeModulesLink !== undefined && config.worktreeNodeModulesLink !== "always" && config.worktreeNodeModulesLink !== "never") {
+		throw new Error(`config.worktreeNodeModulesLink must be "always" or "never", got ${JSON.stringify(config.worktreeNodeModulesLink)}`);
 	}
 	if (config.worktreeBranchPrefix !== undefined) {
 		if (typeof config.worktreeBranchPrefix !== "string") throw new Error("config.worktreeBranchPrefix must be a string");

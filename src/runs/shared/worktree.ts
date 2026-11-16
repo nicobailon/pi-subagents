@@ -128,6 +128,8 @@ export interface CreateWorktreesOptions {
 	/** Branch namespace; defaults to `pi-subagents/`. */
 	branchPrefix?: string;
 	setupHook?: WorktreeSetupHookConfig;
+	/** Make the main checkout's node_modules available inside the worktree; defaults to true. */
+	linkNodeModules?: boolean;
 	baseDir?: string;
 }
 
@@ -917,12 +919,13 @@ async function finalizeCreatedWorktree(
 	runId: string,
 	baseCommit: string,
 	setupHook: ResolvedWorktreeSetupHook | undefined,
+	linkNodeModules: boolean,
 	agent: string | undefined,
 	worktree: WorktreeInfo,
 ): Promise<WorktreeInfo> {
 	const agentCwd = cwdRelative ? path.join(worktree.path, cwdRelative) : worktree.path;
 	tx.check();
-	const nodeModulesLinked = linkNodeModulesIfPresent(toplevel, worktree.path);
+	const nodeModulesLinked = linkNodeModules && linkNodeModulesIfPresent(toplevel, worktree.path);
 	const syntheticPaths = nodeModulesLinked ? ["node_modules"] : [];
 	if (setupHook) {
 		const hookSyntheticPaths = await runWorktreeSetupHook(tx, setupHook, {
@@ -942,6 +945,7 @@ async function createNativeWorktree(
 	index: number,
 	baseCommit: string,
 	setupHook: ResolvedWorktreeSetupHook | undefined,
+	linkNodeModules: boolean,
 	agent: string | undefined,
 	dedicatedRoot: string,
 	labels: Array<string | undefined> | undefined,
@@ -973,7 +977,7 @@ async function createNativeWorktree(
 		naming,
 	};
 	tx.validated(worktree);
-	return finalizeCreatedWorktree(tx, toplevel, cwdRelative, runId, baseCommit, setupHook, agent, worktree);
+	return finalizeCreatedWorktree(tx, toplevel, cwdRelative, runId, baseCommit, setupHook, linkNodeModules, agent, worktree);
 }
 
 interface WorktrunkSwitchOutput {
@@ -1429,6 +1433,7 @@ async function allocateWorktrees(tx: SetupTransaction, cwd: string, runId: strin
 	tx.progress.setup.cwd = repo.toplevel;
 	tx.progress.setup.baseCommit = repo.baseCommit;
 	const setupHook = resolveWorktreeSetupHook(repo.toplevel, options?.setupHook);
+	const linkNodeModules = options?.linkNodeModules !== false;
 	const provider = await resolveSetupProvider(tx, options?.provider, options?.baseDir, repo.toplevel);
 	const branchPrefix = normalizeWorktreeBranchPrefix(options?.branchPrefix);
 	const dedicatedRoot = provider === "native"
@@ -1447,6 +1452,7 @@ async function allocateWorktrees(tx: SetupTransaction, cwd: string, runId: strin
 					index,
 					repo.baseCommit,
 					setupHook,
+					linkNodeModules,
 					options?.agents?.[index],
 					dedicatedRoot!,
 					options?.labels,
@@ -1477,6 +1483,7 @@ async function allocateWorktrees(tx: SetupTransaction, cwd: string, runId: strin
 					runId,
 					repo.baseCommit,
 					setupHook,
+					linkNodeModules,
 					options?.agents?.[index],
 					worktrees[index]!,
 				);

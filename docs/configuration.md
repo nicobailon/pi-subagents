@@ -682,6 +682,20 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 
 `syntheticPaths` must be relative to the worktree root. They are removed before diff capture so helper files do not pollute patches. Tracked files are never excluded; marking a tracked path as synthetic fails setup. Default timeout is `30000` ms.
 
+## `worktreeNodeModulesLink`
+
+```json
+{
+  "worktreeNodeModulesLink": "never"
+}
+```
+
+A new worktree is given a link to the main checkout's `node_modules`, so a worktree that installs nothing can still resolve dependencies. `always` (the default) keeps that link; `never` leaves the worktree without a `node_modules` unless something creates one.
+
+Choose `never` when the project installs its own dependencies in `worktreeSetupHook`. The link points at whatever the main checkout happens to have installed, not at what the worktree's manifest declares, so an install runs into the main checkout instead of the worktree, and a dependency that the worktree declares but the main checkout lacks fails with `Cannot find module`. With pnpm's `virtualStoreType: global`, an install through the link also rewrites the main checkout's `node_modules/.modules.yaml`, whose `virtualStoreDir` is a path relative to the `node_modules` it lives in.
+
+The setting is global, like `worktreeSetupHook`, and applies to every worktree a run creates. A project that does not install its own dependencies should leave it at `always`, because then the link is the only way a worktree resolves anything.
+
 ## `missions`
 
 ```json
