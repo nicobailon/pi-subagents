@@ -986,6 +986,11 @@ export interface AgentProgress {
 	agent: string;
 	/** Human-readable display name for the child's session, when derived at launch. */
 	sessionName?: string;
+	/**
+	 * The child's session file, from launch, when it has one. The file may not exist until the
+	 * child writes its first entry; a host can follow it to show the child's transcript live.
+	 */
+	sessionFile?: string;
 	status: "pending" | "running" | "completed" | "failed" | "detached";
 	progressText?: string;
 	progressUpdatedAt?: number;

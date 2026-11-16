@@ -49,6 +49,14 @@ function splitNul(output: string): string[] {
 	return output.split("\0").filter((part) => part.length > 0);
 }
 
+/** Git prints its whole option reference after the error, which must not reach recovery summaries. */
+function gitFailureReason(error: unknown): string {
+	const stderr = error && typeof error === "object" && "stderr" in error ? String(error.stderr ?? "") : "";
+	if (/not a git repository/i.test(stderr)) return "not a Git work tree";
+	const firstLine = (stderr || (error instanceof Error ? error.message : String(error))).split("\n").find((line) => line.trim().length > 0);
+	return firstLine?.trim() ?? "git failed";
+}
+
 function hashLargeDiff(cwd: string, relativePath: string): string {
 	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tracked-diff-"));
 	const diffPath = path.join(tempDir, "diff.patch");
@@ -100,7 +108,7 @@ export function snapshotTrackedMutations(cwd: string): TrackedMutationSnapshot {
 		for (const file of changed.paths) fingerprints[file] = fingerprintPath(cwd, file);
 		return { source: "tracked-files", trackedOnly: true, cwd, dirtyFiles: changed.paths, fingerprints, truncated: changed.truncated };
 	} catch (error) {
-		return { source: "tracked-files", trackedOnly: true, cwd, dirtyFiles: [], fingerprints: {}, unavailable: error instanceof Error ? error.message : String(error) };
+		return { source: "tracked-files", trackedOnly: true, cwd, dirtyFiles: [], fingerprints: {}, unavailable: gitFailureReason(error) };
 	}
 }
 
@@ -155,7 +163,7 @@ export async function collectTrackedMutationEvidence(snapshot: TrackedMutationSn
 			truncated: snapshot.truncated || current.truncated || undefined,
 		};
 	} catch (error) {
-		return { source: "tracked-files", trackedOnly: true, changedFiles: [], attemptedMutation: false, unavailable: error instanceof Error ? error.message : String(error) };
+		return { source: "tracked-files", trackedOnly: true, changedFiles: [], attemptedMutation: false, unavailable: gitFailureReason(error) };
 	}
 }
 
