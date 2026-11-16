@@ -2408,6 +2408,7 @@ async function resumeAsyncRun(input: {
 		waitToolDefaultTimeoutMs: input.deps.waitToolDefaultTimeoutMs,
 		worktreeSetupHook: input.deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
+		worktreeNodeModulesLink: input.deps.config.worktreeNodeModulesLink,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
 		baseRef: input.params.baseRef ?? recoveryDescriptor?.baseRef,
 		worktreeProvider: input.deps.config.worktreeProvider,
