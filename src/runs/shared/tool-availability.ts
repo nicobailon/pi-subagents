@@ -4,6 +4,10 @@ export interface ChildToolDiagnostic {
 	available: string[];
 	missing: string[];
 	missingMcpDirectTools?: string[];
+	/** Registered allowlisted tools an extension left out of the tools sent to the model. */
+	undeclared?: string[];
+	/** Tools sent to the model that this child cannot call. */
+	uncallable?: string[];
 }
 
 /**
@@ -14,6 +18,13 @@ export interface ChildToolDiagnostic {
  */
 export function formatChildToolDiagnostic(diagnostic: ChildToolDiagnostic, options: { host?: "parent" | "runner" } = {}): string {
 	const subject = diagnostic.agent ? `Agent '${diagnostic.agent}'` : "Subagent";
+	if (diagnostic.undeclared?.length) {
+		const uncallable = diagnostic.uncallable?.length ? ` and added ${diagnostic.uncallable.join(", ")}, which this child cannot call` : "";
+		return [
+			`${subject} declares tools: ${diagnostic.required.join(", ")}, but an extension loaded in this child replaced the tools sent to the model: it left out ${diagnostic.undeclared.join(", ")}${uncallable}.`,
+			"The `tools` field is a strict allowlist. Set `extensions: []` or list only the extensions this child needs, or omit `tools` to use that extension's tool surface.",
+		].join("\n");
+	}
 	if (options.host === "parent") {
 		return [
 			`${subject} ran as a foreground child, which never loads the parent's ambient extensions, and these child tools were unavailable: ${diagnostic.missing.join(", ")}.`,
