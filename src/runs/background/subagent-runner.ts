@@ -1241,7 +1241,9 @@ export async function runSingleStepInner(
 		// A parked run still owes output diagnostics when it actually finishes.
 		// Stopped/timedOut runs already have terminal failures, so terminal output diagnostics are deferred.
 		const terminalDiagnosticsEligible = !run.interrupted && !run.stopped && !run.timedOut;
-		const toolDiagnostic = run.exitCode === 0 && !run.error ? launch.capture.toolDiagnostic() : undefined;
+		const recordedToolDiagnostic = launch.capture.toolDiagnostic();
+		// An undeclared allowlisted tool aborts the child itself, so its diagnostic explains that abort's error.
+		const toolDiagnostic = (run.exitCode === 0 && !run.error) || recordedToolDiagnostic?.undeclared ? recordedToolDiagnostic : undefined;
 		const toolAvailabilityError = toolDiagnostic ? formatChildToolDiagnostic(toolDiagnostic) : undefined;
 		const runtimeAcknowledgedExtensions = launch.capture.runtimeAcknowledgedExtensions();
 		const midToolExitError = run.currentTool

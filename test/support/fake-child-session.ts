@@ -42,6 +42,8 @@ export interface FakeChildResponse {
 	structuredOutput?: unknown;
 	runtimeAcknowledgedExtensions?: unknown;
 	missingTools?: string[];
+	/** Records the diagnostic of an extension that left these allowlisted tools out of the request; pair it with an aborted reply. */
+	undeclaredTools?: string[];
 	/** Rejects the session creation itself (a startup failure). */
 	createError?: string;
 	hangUntilAbort?: boolean;
@@ -366,6 +368,17 @@ export function createFakeChildSessions(queueDir: () => string): FakeChildSessio
 					}
 				}
 				emit({ type: "agent_start" });
+				if (Array.isArray(response.undeclaredTools) && response.undeclaredTools.length > 0) {
+					const required = launch.runtime.requiredTools ?? [];
+					launch.runtime.toolDiagnostic?.({
+						...(launch.runtime.agent ? { agent: launch.runtime.agent } : {}),
+						required,
+						available: required,
+						missing: [],
+						undeclared: response.undeclaredTools.filter((name) => required.includes(name)),
+						uncallable: ["fabric_exec"],
+					});
+				}
 				if (response.queuedInputReleasePath) {
 					boundaryOpen = true;
 					const keepAlive = setInterval(() => {}, 1_000);

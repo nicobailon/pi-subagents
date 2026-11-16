@@ -1315,6 +1315,31 @@ syncBuiltinESMExports();
 		assert.equal(statusPayload.steps?.[0]?.effects?.fileMutation, undefined);
 	});
 
+	it("reports the replaced-tools diagnostic, not the abort it caused, when an extension leaves allowlisted tools out of the request", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			undeclaredTools: ["read", "grep"],
+			jsonl: [{ type: "message_end", message: { role: "assistant", content: [], model: "openai/gpt-5-mini", stopReason: "aborted", errorMessage: "Request was aborted", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } }],
+		});
+		const id = `async-undeclared-tools-${Date.now().toString(36)}`;
+
+		executeAsyncSingle(id, {
+			agent: "probe",
+			task: "Report your tool names",
+			agentConfig: makeAgent("probe", { tools: ["read", "grep"] }),
+			ctx: { pi: { events: { emit() {} }, getAllTools: () => [{ name: "read", sourceInfo: { source: "builtin" } }, { name: "grep", sourceInfo: { source: "builtin" } }] }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: false,
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id, 10_000), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, false);
+		assert.match(payload.results[0]?.error ?? "", /^Agent 'probe' declares tools: read, grep, but an extension loaded in this child replaced the tools sent to the model: it left out read, grep and added fabric_exec/);
+		assert.doesNotMatch(payload.results[0]?.error ?? "", /aborted/i);
+	});
+
 	it("applies agent acceptance roles to inferred async acceptance", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "exploration complete" });
 		const executor = makeAsyncExecutor([makeAgent("worker", { acceptanceRole: "read-only" })]);

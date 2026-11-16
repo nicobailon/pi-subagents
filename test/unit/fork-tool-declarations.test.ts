@@ -5,7 +5,8 @@ import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { collapseSystemMessages, fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools, type FauxResponseFactory, type Message, type SystemMessage, type Tool } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
+import { buildInProcessChildLaunch, type InProcessChildCapture } from "../../src/runs/shared/child-launch.ts";
+import { formatChildToolDiagnostic } from "../../src/runs/shared/tool-availability.ts";
 import { topLevelSupervisorTool } from "../../src/intercom/native-supervisor-channel.ts";
 import { createDefaultChildSessionFactory } from "../../src/runs/shared/child-session.ts";
 import registerSubagentPromptRuntime, { applyForkSessionAffinity, modelBefore, projectForkRequest, stripParentOnlySubagentMessages, systemMessagesBefore } from "../../src/runs/shared/subagent-prompt-runtime.ts";
@@ -208,25 +209,27 @@ describe("a forked child session", () => {
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
-	type Request = { tools: string[]; declarations: string; results: Message[]; messages: Message[] };
+	type Request = { tools: string[]; declarations: string; results: Message[]; messages: Message[]; aborted: boolean };
 
 	type Launch = Partial<Parameters<typeof buildInProcessChildLaunch>[0]>;
 	/** Runs a real SDK session on `sessionFile` and returns what each provider request declared. */
-	async function run(options: { sessionFile: string; tools: string[]; replies: Array<ReturnType<typeof fauxAssistantMessage>>; forkCacheKey?: string; launch?: Launch; hooks?: Array<(pi: ExtensionAPI) => void> }): Promise<Request[]> {
+	async function run(options: { sessionFile: string; tools: string[]; replies: Array<ReturnType<typeof fauxAssistantMessage>>; forkCacheKey?: string; launch?: Launch; hooks?: Array<(pi: ExtensionAPI) => void>; capture?: (capture: InProcessChildCapture) => void }): Promise<Request[]> {
 		const faux = fauxProvider({ provider: "probe", models: [{ id: "local" }], tokensPerSecond: 100_000 });
 		const requests: Request[] = [];
-		faux.setResponses(options.replies.map((message): FauxResponseFactory => (context) => {
+		faux.setResponses(options.replies.map((message): FauxResponseFactory => (context, streamOptions) => {
 			const messages = context.messages as Message[];
 			const declarations = JSON.stringify(getCurrentTools(messages).map(({ name, description, parameters }) => ({ name, description, parameters })));
-			requests.push({ tools: declared(messages), declarations, results: messages.filter((entry) => entry.role === "toolResult"), messages });
+			// pi-ai's providers check the signal before sending, so an already-aborted request counts as not sent.
+			requests.push({ tools: declared(messages), declarations, results: messages.filter((entry) => entry.role === "toolResult"), messages, aborted: streamOptions?.signal?.aborted === true });
 			return message;
 		}));
-		const { session } = buildInProcessChildLaunch({
+		const { session, capture } = buildInProcessChildLaunch({
 			host: "parent", cwd: root, childAgentName: "worker", childIndex: 0, sessionEnabled: true, sessionFile: options.sessionFile, waitToolEnabled: false,
 			model: "probe/local", systemPrompt: "Role instructions.", systemPromptMode: "append", tools: options.tools,
 			...(options.forkCacheKey ? { forkCacheKey: options.forkCacheKey } : {}),
 			...options.launch,
 		});
+		options.capture?.(capture);
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: () => import("@earendil-works/pi-coding-agent") });
 		const hooks = [(pi: ExtensionAPI) => pi.registerProvider(faux.provider as never), ...options.hooks ?? []];
 		const child = await factory.create({ ...session, hooks: [...session.hooks, ...hooks.map((hook, index) => ({ name: `probe-${index}`, factory: hook }))] });
@@ -365,6 +368,40 @@ describe("a forked child session", () => {
 			assert.equal(messages.some((entry) => entry.role === "toolResult" && entry.toolName === "subagent"), false);
 			assert.doesNotMatch(JSON.stringify(messages), /PARENT-NOTICE/);
 		}
+	});
+
+	/** Stands in for an extension like pi-fabric's code mode, which sends only its own tool to the model. */
+	const replaceDeclaredTools = (pi: ExtensionAPI) => pi.on("context_with_system", (event) => {
+		let first = true;
+		return { messages: event.messages.map((message) => {
+			if (message.role !== "system") return message;
+			const { toolsAdded: _added, toolsRemoved: _removed, ...rest } = message as SystemMessage;
+			const head = first ? { toolsAdded: [tool("fabric_exec")] } : {};
+			first = false;
+			return { ...rest, ...head } as SystemMessage;
+		}) };
+	});
+
+	it("with a tools allowlist, fails before the provider gets a request whose tools an extension replaced", async () => {
+		let capture: InProcessChildCapture | undefined;
+		const requests = await run({ sessionFile: path.join(root, "replaced.jsonl"), tools: ["read", "grep"], replies: [fauxAssistantMessage("done")], hooks: [replaceDeclaredTools], capture: (value) => { capture = value; } });
+
+		assert.deepEqual(requests.filter((request) => !request.aborted), [], "no request reached the provider");
+		const diagnostic = capture!.toolDiagnostic();
+		assert.ok(diagnostic);
+		const message = formatChildToolDiagnostic(diagnostic, { host: "parent" });
+		assert.match(message, /^Agent 'worker' declares tools: read, grep, but an extension loaded in this child replaced the tools sent to the model: it left out read, grep and added fabric_exec, which this child cannot call\./);
+		assert.match(message, /Set `extensions: \[\]`/);
+	});
+
+	it("without a tools allowlist, sends the tools that extension declares", async () => {
+		let capture: InProcessChildCapture | undefined;
+		const requests = await run({ sessionFile: path.join(root, "replaced-no-allowlist.jsonl"), tools: [], launch: { tools: undefined }, replies: [fauxAssistantMessage("done")], hooks: [replaceDeclaredTools], capture: (value) => { capture = value; } });
+
+		assert.equal(requests.length, 1);
+		assert.equal(requests[0]!.aborted, false);
+		assert.deepEqual(requests[0]!.tools, ["fabric_exec"]);
+		assert.equal(capture!.toolDiagnostic(), undefined);
 	});
 });
 

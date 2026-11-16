@@ -251,8 +251,39 @@ function rewritesChildPrompt(config: ChildRuntimeConfig): boolean {
 	return config.inheritProjectContext !== undefined || config.inheritGlobalContext !== undefined || config.inheritSkills !== undefined || Boolean(config.fanoutChild);
 }
 
+/**
+ * An extension can replace the tools a request declares (pi-fabric's code mode sends only its own
+ * `fabric_exec`), and Pi only reports a throw from a request hook. This hook runs after every other
+ * extension's, so a child whose registered allowlisted tools were left out records why and stops
+ * before the provider gets the request. A request that declares them all passes through unchanged.
+ */
+function registerDeclaredToolCheck(pi: ExtensionAPI, config: ChildRuntimeConfig, required: readonly string[]): void {
+	pi.on("context_with_system", (event, ctx) => {
+		const declared = new Set(getCurrentTools(event.messages).map((tool) => tool.name));
+		if (required.every((name) => declared.has(name))) return undefined;
+		const registered = new Set(pi.getAllTools().map((tool) => tool.name));
+		// A required tool that never registered is the agent_start diagnostic's case.
+		const undeclared = required.filter((name) => registered.has(name) && !declared.has(name));
+		if (undeclared.length === 0) return undefined;
+		const active = new Set(pi.getActiveTools());
+		// A fork declares its parent's tools on purpose, to reuse the parent's prompt cache.
+		const uncallable = config.forkCacheKey ? [] : [...declared].filter((name) => !active.has(name));
+		config.toolDiagnostic?.({
+			...(config.agent ? { agent: config.agent } : {}),
+			required: [...required],
+			available: [...registered],
+			missing: [],
+			undeclared,
+			...(uncallable.length > 0 ? { uncallable } : {}),
+		});
+		ctx.abort();
+		return undefined;
+	});
+}
+
 /** Installed after every other extension: a returned prompt freezes out sections added after it. */
 export function registerSubagentPromptBoundary(pi: ExtensionAPI, config: ChildRuntimeConfig): void {
+	if (config.requiredTools) registerDeclaredToolCheck(pi, config, config.requiredTools);
 	if (!rewritesChildPrompt(config)) return;
 	// A returned prompt replaces the whole system prompt of every request. A fork must send its
 	// parent's prompt unchanged to reuse its prompt cache, so its boundary goes in its task
