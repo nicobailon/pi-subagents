@@ -198,6 +198,11 @@ export interface WorkflowChildSummary {
 		agent?: string;
 		/** Human-readable display name for the child session, when derived at launch. */
 		sessionName?: string;
+		/**
+		 * The child's session file, once its launch resolved one. The file may not exist until the
+		 * child writes its first entry; a host can follow it to show the child's transcript live.
+		 */
+		sessionFile?: string;
 		model?: string;
 		thinking?: string;
 		/** Present only while a synchronous foreground child is running. */

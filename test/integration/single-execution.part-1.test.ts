@@ -144,6 +144,20 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual({ agent: running?.agent, runId: running?.runId }, { agent: "worker", runId: settledRunId });
 	});
 
+	it("names a running foreground workflow child's session file from launch", async () => {
+		mockPi.onCall({ matchArgIncludes: "Child A", delay: 300, output: "A done" });
+		const updates: any[] = [];
+		const result = await makeExecutor([makeAgent("worker")]).execute("wf-launch-session-file", {
+			workflowScript: `return await runs.run("a", { agent: "worker", task: "Child A", async: false });`,
+			async: false, chatProgress: "off",
+		}, undefined, (update) => updates.push(structuredClone(update.details)), makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined, JSON.stringify(result.content));
+		const running = updates.flatMap((update) => update.workflowChildren?.children ?? []).find((row) => row.childId === "a" && row.state === "running" && row.sessionFile);
+		assert.ok(running, "no running row named the child's session file");
+		assert.match(running.sessionFile, /\.jsonl$/);
+		assert.equal(result.details.workflowChildren.children.find((row) => row.childId === "a")?.sessionFile, running.sessionFile);
+	});
+
 	it("still runs a background workflow child when the host's progress callback throws at its launch", async () => {
 		mockPi.onCall({ matchArgIncludes: "Child A", delay: 100, output: "A done" });
 		const result = await makeExecutor([makeAgent("worker")], {}, true).execute("wf-launch-update-throws", {

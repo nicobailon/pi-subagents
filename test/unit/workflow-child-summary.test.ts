@@ -42,3 +42,28 @@ it("bounds UTF-8 and JSON bytes and rejects malformed activity strictly", () => 
 	}
 	assert.throws(() => parseWorkflowChildSummary({ ...summary, children: [{ ...summary.children[0], state: "completed" }] }), /running state/);
 });
+
+it("names each child's session file from launch through the final result", () => {
+	const sessionFile = "/sessions/parent/wf/run-0/session.jsonl";
+	const live = workflowChildSummary({ ...input, launches: new Map([["a", { agent: "worker", runId: "child-a", sessionFile }]]) });
+	assert.equal(live.children.find((row) => row.childId === "a")?.sessionFile, sessionFile);
+	assert.equal(live.children.find((row) => row.childId === "b")?.sessionFile, undefined);
+	assert.deepEqual(parseWorkflowChildSummary(live), live);
+
+	const background = workflowChildSummary({ ...input, steps: [{ workflowKey: "a", agent: "worker", status: "running", async: true, runId: "child-a", sessionFile }] as never });
+	assert.equal(background.children.find((row) => row.childId === "a")?.sessionFile, sessionFile);
+
+	const settled = workflowChildSummary({ ...input, workflowState: "completed", inventoryComplete: true,
+		children: [{ key: "a", state: "completed", ok: true, runId: "child-a", output: "done", artifactPaths: [], results: [{ sessionFile }] }] as never,
+	});
+	assert.equal(settled.children.find((row) => row.childId === "a")?.sessionFile, sessionFile);
+});
+
+it("drops an oversized session path and rejects a malformed one when parsing", () => {
+	const tooLong = `/${"x".repeat(4_096)}`;
+	const summary = workflowChildSummary({ ...input, launches: new Map([["a", { agent: "worker", sessionFile: tooLong }]]) });
+	assert.equal(summary.children.find((row) => row.childId === "a")?.sessionFile, undefined);
+	for (const invalid of [tooLong, "", 42]) {
+		assert.throws(() => parseWorkflowChildSummary({ ...summary, children: [{ ...summary.children[0], sessionFile: invalid }] }), /sessionFile/);
+	}
+});

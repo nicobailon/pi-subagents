@@ -6768,7 +6768,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowHostSteps = new Map<string, HostStepNode>();
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [], ...(workflowResource ? { resource: workflowResource.provenance } : {}) };
 			const childProgress = new Map<string, ReturnType<typeof workflowChildProgress>>();
-			const childLaunches = new Map<string, { agent: string; runId?: string }>();
+			const childLaunches = new Map<string, { agent: string; runId?: string; sessionFile?: string }>();
 			const blockingWorkflowChildren = new Set<string>();
 			let activityTimer: ReturnType<typeof setTimeout> | undefined;
 			let lastProgressAt = 0;
@@ -6867,7 +6867,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									(deps.state.blockingWorkflowChildren ??= new Set()).add(launch.runId);
 									blockingWorkflowChildren.add(launch.runId);
 								}
-								childLaunches.set(key, { agent: launch.agent, ...(launch.runId ? { runId: launch.runId } : {}) });
+								childLaunches.set(key, {
+									agent: launch.agent,
+									...(launch.runId ? { runId: launch.runId } : {}),
+									...(launch.sessionFile ? { sessionFile: launch.sessionFile } : {}),
+								});
 								// Telemetry must not decide the child's outcome, as with onTrace in scripted-workflow.
 								try {
 									sendWorkflowProgress();
