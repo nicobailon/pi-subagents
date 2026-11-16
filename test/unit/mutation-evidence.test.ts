@@ -110,6 +110,21 @@ describe("tracked mutation evidence", () => {
 		});
 	});
 
+	it("reports a cwd outside Git in one line instead of git's usage text", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-mutation-evidence-nogit-"));
+		try {
+			const snapshot = snapshotTrackedMutations(dir);
+			const evidence = await collectTrackedMutationEvidence(snapshot, dir);
+			const summary = buildTimeoutRecoverySummary({ termination: "timed-out", evidence });
+
+			assert.equal(snapshot.unavailable, "not a Git work tree");
+			assert.match(summary.message, /changed tracked files: unavailable \(not a Git work tree\)/);
+			assert.doesNotMatch(summary.message, /usage: git diff/);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("formats bounded timeout recovery data", () => {
 		const summary = buildTimeoutRecoverySummary({
 			termination: "timed-out",
