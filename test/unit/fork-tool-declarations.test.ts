@@ -219,7 +219,7 @@ describe("a forked child session", () => {
 		faux.setResponses(options.replies.map((message): FauxResponseFactory => (context, streamOptions) => {
 			const messages = context.messages as Message[];
 			const declarations = JSON.stringify(getCurrentTools(messages).map(({ name, description, parameters }) => ({ name, description, parameters })));
-			// A real provider never sends a request whose signal is already aborted.
+			// pi-ai's providers check the signal before sending, so an already-aborted request counts as not sent.
 			requests.push({ tools: declared(messages), declarations, results: messages.filter((entry) => entry.role === "toolResult"), messages, aborted: streamOptions?.signal?.aborted === true });
 			return message;
 		}));
