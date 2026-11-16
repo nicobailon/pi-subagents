@@ -670,6 +670,8 @@ Set `worktree` to `true` to make managed worktree isolation the default for laun
 
 The hook runs once per created worktree. Paths must be absolute, `~/...`, or repo-relative; bare command names are rejected.
 
+Before the hook runs, a new worktree gets a `node_modules` link to the main checkout's `node_modules` when one exists, so a worktree that installs nothing can still load its dependencies. A hook that installs dependencies must remove that link first, for example with `fs.rmSync(path.join(worktreePath, "node_modules"), { force: true })`. Otherwise the install writes through the link into the main checkout's `node_modules`.
+
 Setup command waits are nonblocking and cancellable through existing run controls. Existing run deadlines and the hook timeout still apply; there is no new setup timeout or configuration.
 
 Setup commands, including Git hooks, must be finite and await all descendants before reporting success; do not start background services. Exit zero, natural pipe closure, complete bounded output, and valid JSON/path metadata are trusted completion for launch and cleanup—not observed process-tree proof. Violations are unsupported: protection against deleting a worktree with an undisclosed live descendant is not guaranteed. No additional Windows containment guarantee is provided.
