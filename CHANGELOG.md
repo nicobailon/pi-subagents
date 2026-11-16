@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.89.0] - 2026-11-16
+
+### Highlights
+
+- From a Pi running inside Herdr, `machine: "local"` opens the subagent in a new tab of your own Herdr session, with no saved machine or SSH.
+- Subagents in Herdr or Rex panes are much more dependable: they get time to load a heavy set of extensions, report their tool calls, keep large messages, and no longer end as failed after doing their job.
+- Editors and other hosts can now show a subagent's transcript while it runs, for foreground subagents and for every child of a workflow.
+- A subagent limited to a list of `tools` now stops right away with a clear error when another extension, such as pi-fabric's code mode, swaps out its tools, instead of wasting turns on tools it can't call.
+- Models such as GLM-5.3 that fill unused options with `"null"` can call `subagent`, and `machine: "local"` works on NixOS.
+
 ### Added
 
 - Workflow progress now names each child's session file. The `workflowChildren` rows of a workflow's progress updates, status and results carry `sessionFile` from the child's launch, and a finished child keeps it while its siblings still run, so an editor or other host can show any child's transcript during the workflow. Before, a host following a workflow could see a child's state but had no way to read what it was doing until the workflow returned. Thanks to [@zeishr](https://github.com/zeishr) for #3290.
