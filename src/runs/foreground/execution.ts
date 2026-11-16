@@ -522,6 +522,7 @@ async function runSingleAttempt(
 		index: options.index ?? 0,
 		agent: agent.name,
 		...(childSessionName ? { sessionName: childSessionName } : {}),
+		...(options.sessionFile ? { sessionFile: options.sessionFile } : {}),
 		status: "running",
 		task,
 		skills: shared.resolvedSkillNames,
