@@ -23,7 +23,7 @@ import { isStatusAccessError, readStatus, resolveWatchPath } from "../../shared/
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { findNestedRouteForRootId, hasLiveNestedDescendants, retainNestedLookupRoute, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
-import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { listAsyncRuns, summarizeAsyncStatus, type AsyncRunSummary } from "./async-status.ts";
 import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, externalJobBridgeEligibility, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
@@ -458,28 +458,33 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const refreshJob = (job: AsyncJobState): boolean => {
 		if (unverifiedRuns.has(job.asyncId)) {
 			let stored: ReturnType<typeof readStatus> = null;
+			let summary: AsyncRunSummary | undefined;
 			try {
 				stored = readStatus(job.asyncDir);
+				if (stored) summary = summarizeAsyncStatus(job.asyncDir, stored);
 			} catch (error) {
 				if (isStatusAccessError(error, job.asyncDir)) return false;
+				console.error(`[pi-subagents] Dropping restored async run '${job.asyncId}' at '${path.join(job.asyncDir, "status.json")}': ${error instanceof Error ? error.message : String(error)}.`);
 			}
 			const owners = state.currentSessionId ? ownerSessionIds(state.currentSessionId) : undefined;
-			if (!stored || (owners && !owners.has(stored.sessionId))) {
+			if (!stored || !summary || (owners && !owners.has(stored.sessionId))) {
 				forgetJob(job.asyncId);
 				return true;
 			}
-			if (job.controlEventCursor === undefined) {
-				// Restore could not search the run directory; it is readable now.
-				try {
-					job.controlEventCursor = restoredControlEventCursor(job.asyncDir);
-				} catch (error) {
-					if (!unreadableStatusRuns.has(job.asyncId)) {
-						unreadableStatusRuns.add(job.asyncId);
-						console.error(`Cannot read async control events for '${job.asyncDir}'; keeping it as running until they are readable:`, error);
-					}
-					return false;
+			let restored: AsyncJobState;
+			try {
+				restored = summaryToJob(summary);
+			} catch (error) {
+				if (!unreadableStatusRuns.has(job.asyncId)) {
+					unreadableStatusRuns.add(job.asyncId);
+					console.error(`Cannot read async control events for '${job.asyncDir}'; keeping it as running until they are readable:`, error);
 				}
+				return false;
 			}
+			// Become the job a normal restore would have made, but keep the placeholder's state so the
+			// refresh below sees any transition, and its cursor when restore could read events.jsonl.
+			Object.assign(job, restored, { status: job.status, controlEventCursor: job.controlEventCursor ?? restored.controlEventCursor });
+			rememberFleetJob(state, job);
 			unverifiedRuns.delete(job.asyncId);
 		}
 		const widgetExpanded = withLastUiContext((ctx) => ctx.ui.getToolsExpanded?.() ?? false) ?? false;

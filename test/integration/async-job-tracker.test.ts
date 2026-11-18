@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import fsDefault from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as path from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, type TestContext } from "node:test";
 import { registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import { SUBAGENT_CHILD_STATUS_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_CONTROL_INTERCOM_EVENT, type ControlEvent } from "../../src/shared/types.ts";
@@ -191,6 +193,19 @@ function startSupervisorAttentionRun(asyncRoot: string, runId: string, timers: {
 	timers.tick(25); // the tracker's event-refresh debounce
 	assert.deepEqual(recorder.events.map((entry) => [entry.channel, (entry.data as { noticeDeferred?: boolean }).noticeDeferred]), [[SUBAGENT_CONTROL_EVENT, true]], "status consumers see the request immediately, marked deferred");
 	return { tracker, answer: () => { answered = true; }, events: recorder.events };
+}
+
+/** Makes `statSync` fail with EACCES for every path in the returned set, as a permission change would. */
+function denyStat(t: TestContext): Set<string> {
+	const denied = new Set<string>();
+	const statSync = fsDefault.statSync;
+	t.mock.method(fsDefault, "statSync", ((file: fs.PathLike, ...args: unknown[]) => {
+		if (denied.has(String(file))) throw Object.assign(new Error(`EACCES: permission denied, stat '${String(file)}'`), { code: "EACCES" });
+		return Reflect.apply(statSync, fsDefault, [file, ...args]);
+	}) as typeof fsDefault.statSync);
+	syncBuiltinESMExports();
+	t.after(() => syncBuiltinESMExports());
+	return denied;
 }
 
 function pidGone(): never {
@@ -1213,19 +1228,25 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("restores an unreadable active run as live work until a read shows its owner", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "needs POSIX permissions as a non-root user" : undefined }, async () => {
+	it("restores an unreadable active run as live work until a read shows its owner", async (t) => {
 		const asyncRoot = createTempDir("pi-async-job-restore-unreadable-");
 		const originalError = console.error;
-		console.error = () => {};
+		const errors: string[] = [];
+		console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
 		const ownedDir = path.join(asyncRoot, "run-owned");
 		const foreignDir = path.join(asyncRoot, "run-foreign");
+		const corruptDir = path.join(asyncRoot, "run-corrupt");
+		const nestedRoute = createNestedRoute("run-owned");
+		const denied = denyStat(t);
 		try {
 			writeRunningAsyncStatus(ownedDir, "run-owned", "session-owner");
 			writeRunningAsyncStatus(foreignDir, "run-foreign", "session-other");
+			fs.mkdirSync(corruptDir, { recursive: true });
+			fs.writeFileSync(path.join(corruptDir, "status.json"), "{", "utf-8");
 			updateActiveRunIndex(ownedDir, "running");
 			updateActiveRunIndex(foreignDir, "running");
-			fs.chmodSync(path.join(ownedDir, "status.json"), 0o200);
-			fs.chmodSync(path.join(foreignDir, "status.json"), 0o200);
+			updateActiveRunIndex(corruptDir, "running");
+			for (const dir of [ownedDir, foreignDir, corruptDir]) denied.add(path.join(dir, "status.json"));
 
 			const state = createState();
 			state.currentSessionId = "session-owner";
@@ -1234,33 +1255,38 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.resetJobs(ui.ctx as never);
 			tracker.restoreActiveJobs(ui.ctx as never);
 
-			assert.deepEqual([...state.asyncJobs.keys()].sort(), ["run-foreign", "run-owned"]);
+			assert.deepEqual([...state.asyncJobs.keys()].sort(), ["run-corrupt", "run-foreign", "run-owned"]);
 			assert.equal(hasLiveSubagentWork(state as never), true);
 
-			fs.chmodSync(path.join(ownedDir, "status.json"), 0o644);
-			fs.chmodSync(path.join(foreignDir, "status.json"), 0o644);
-			await waitForCondition(() => !state.asyncJobs.has("run-foreign") && state.asyncJobs.get("run-owned")?.agents?.[0] === "worker", "the runs to resolve by owner");
+			denied.clear();
+			await waitForCondition(() => !state.asyncJobs.has("run-foreign") && !state.asyncJobs.has("run-corrupt") && state.asyncJobs.get("run-owned")?.agents?.[0] === "worker", "the runs to resolve by owner");
 			assert.equal(state.asyncJobs.get("run-owned")?.status, "running");
+			assert.equal(state.asyncJobs.get("run-owned")?.nestedRoute?.eventSink, nestedRoute.eventSink);
+			assert.equal(errors.filter((line) => line.includes("Dropping restored async run 'run-corrupt'") && line.includes("Failed to parse")).length, 1);
 		} finally {
 			console.error = originalError;
-			for (const dir of [ownedDir, foreignDir]) if (fs.existsSync(path.join(dir, "status.json"))) fs.chmodSync(path.join(dir, "status.json"), 0o644);
+			denied.clear();
 			removeTempDir(asyncRoot);
+			removeTempDir(path.dirname(nestedRoute.eventSink));
 		}
 	});
 
-	it("restores a run whose directory cannot be searched without dropping the other runs", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "needs POSIX permissions as a non-root user" : undefined }, async () => {
+	it("restores a run whose directory cannot be searched without dropping the other runs", async (t) => {
 		const asyncRoot = createTempDir("pi-async-job-restore-unsearchable-");
 		const originalError = console.error;
 		console.error = () => {};
 		const lockedDir = path.join(asyncRoot, "run-locked");
 		const readableDir = path.join(asyncRoot, "run-readable");
+		const denied = denyStat(t);
 		try {
 			writeRunningAsyncStatus(lockedDir, "run-locked", "session-owner");
 			writeRunningAsyncStatus(readableDir, "run-readable", "session-owner");
 			fs.writeFileSync(path.join(lockedDir, "events.jsonl"), "", "utf-8");
 			updateActiveRunIndex(lockedDir, "running");
 			updateActiveRunIndex(readableDir, "running");
-			fs.chmodSync(lockedDir, 0o600);
+			// What an unsearchable run directory does: every stat inside it fails.
+			denied.add(path.join(lockedDir, "status.json"));
+			denied.add(path.join(lockedDir, "events.jsonl"));
 
 			const state = createState();
 			state.currentSessionId = "session-owner";
@@ -1270,12 +1296,12 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.deepEqual([...state.asyncJobs.keys()].sort(), ["run-locked", "run-readable"]);
 			assert.equal(state.asyncJobs.get("run-readable")?.agents?.[0], "worker");
 
-			fs.chmodSync(lockedDir, 0o700);
+			denied.clear();
 			await waitForCondition(() => state.asyncJobs.get("run-locked")?.agents?.[0] === "worker", "the locked run to resolve");
 			assert.equal(state.asyncJobs.get("run-locked")?.controlEventCursor, 0);
 		} finally {
 			console.error = originalError;
-			fs.chmodSync(lockedDir, 0o700);
+			denied.clear();
 			removeTempDir(asyncRoot);
 		}
 	});
@@ -1667,13 +1693,14 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("keeps a running job live while its status file is unreadable, then resumes tracking", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "needs POSIX permissions as a non-root user" : undefined }, async () => {
+	it("keeps a running job live while its status file is unreadable, then resumes tracking", async (t) => {
 		const asyncRoot = createTempDir("pi-async-job-unreadable-status-");
 		const originalError = console.error;
 		const errors: string[] = [];
 		console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
 		const runDir = path.join(asyncRoot, "run-unreadable");
 		const statusPath = path.join(runDir, "status.json");
+		const denied = denyStat(t);
 		try {
 			writeRunningAsyncStatus(runDir, "run-unreadable", "session-1");
 			const state = createState();
@@ -1681,20 +1708,20 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({ id: "run-unreadable", asyncDir: runDir, agent: "worker" });
 			await waitForCondition(() => state.asyncJobs.get("run-unreadable")?.status === "running", "the job to be running");
 
-			fs.chmodSync(statusPath, 0o200);
+			denied.add(statusPath);
 			await waitForCondition(() => errors.some((line) => line.includes(runDir) && line.includes("EACCES")), "the unreadable status to be reported");
 
 			assert.equal(state.asyncJobs.get("run-unreadable")?.status, "running");
 			assert.equal(state.cleanupTimers.has("run-unreadable"), false);
 			assert.equal(hasLiveSubagentWork(state as never), true);
 
-			fs.chmodSync(statusPath, 0o644);
+			denied.clear();
 			fs.writeFileSync(statusPath, JSON.stringify({ runId: "run-unreadable", mode: "single", state: "complete", sessionId: "session-1", startedAt: Date.now() - 1000, lastUpdate: Date.now(), steps: [{ agent: "worker", status: "complete" }] }), "utf-8");
 			await waitForCondition(() => !state.asyncJobs.has("run-unreadable"), "the completed job to be cleaned up");
 			assert.equal(errors.filter((line) => line.includes(runDir)).length, 1);
 		} finally {
 			console.error = originalError;
-			if (fs.existsSync(statusPath)) fs.chmodSync(statusPath, 0o644);
+			denied.clear();
 			removeTempDir(asyncRoot);
 		}
 	});
