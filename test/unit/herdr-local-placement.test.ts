@@ -137,7 +137,8 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		// Herdr inside a Rex tab: its panes inherit REX_SESSION, and Herdr is where this Pi is drawn.
 		assert.deepEqual(resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_SESSION: "work", REX_SESSION: "session:outer", REX_BIN_DIR: path.join(dir, "no-rex") }, settings: {} }).machine, { provider: "herdr", id: "local", socket, session: "work", cwd: dir });
 		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_PANE_ID: "w9:p9" }, settings: {} }), /did not return it: herdr pane get w9:p9 exited with code 1: pane not found/u);
-		for (const env of [{ PATH: process.env.PATH ?? "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION\)\./u);
+		for (const env of [{ PATH: process.env.PATH ?? "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION\)\.$/u);
+		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HC_TERMINAL_SOCKET: path.join(dir, "hc.sock"), HC_TERMINAL_ID: "t1" }, settings: {} }), /nor Rex \(REX_SESSION\)\. It runs in a Herdr Core terminal \(HC_TERMINAL_ID\), which machine 'local' does not support\.$/u);
 	});
 	it("runs local scripts with this process's PATH, kept literally", () => {
 		// A quote and a dollar sign are what shell re-quoting or expansion would damage; the

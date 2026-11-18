@@ -6,6 +6,7 @@
 
 - A subagent limited to a list of `tools` no longer stops before its first request when an extension keeps one of those tools inactive on purpose, as pi-web-access does with `web_enable`. 0.89.0 treated that tool as replaced by another extension and failed the child with a misleading error. The check now fails the child only when a tool it can call is missing from the request, so pi-fabric's code mode is still caught. Thanks to [@chpock](https://github.com/chpock) for the report (#3296).
 - A background subagent whose status file can't be read, for example after its permissions changed, now still counts as running. Before, a session that reopened while the subagent was working showed no active subagents and told hosts such as pi-web it was idle, and a session already open marked the subagent failed and dropped it about 10 seconds later. The run is kept until its status can be read again, then tracked normally, or dropped if it belongs to another session. Thanks to [@jordan-quan](https://github.com/jordan-quan) for the report (#3295).
+- `machine: "local"` from a Pi running in a Herdr Core terminal (`hc`, the Herdr app's terminal server) now fails with an error that says Herdr Core is not supported. Before, the error said Pi was not running in Herdr, which was confusing inside the Herdr app. Only the herdr terminal multiplexer and Rex are supported. Thanks to [@guneriu](https://github.com/guneriu) for the report (#3300).
 
 ## [0.89.0] - 2026-11-16
 
