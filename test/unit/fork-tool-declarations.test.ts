@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { collapseSystemMessages, fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools, type FauxResponseFactory, type Message, type SystemMessage, type Tool } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildInProcessChildLaunch, type InProcessChildCapture } from "../../src/runs/shared/child-launch.ts";
 import { formatChildToolDiagnostic } from "../../src/runs/shared/tool-availability.ts";
@@ -392,6 +393,23 @@ describe("a forked child session", () => {
 		const message = formatChildToolDiagnostic(diagnostic, { host: "parent" });
 		assert.match(message, /^Agent 'worker' declares tools: read, grep, but an extension loaded in this child replaced the tools sent to the model: it left out read, grep and added fabric_exec, which this child cannot call\./);
 		assert.match(message, /Set `extensions: \[\]`/);
+	});
+
+	it("with a tools allowlist, sends a request that leaves out an allowlisted tool an extension keeps inactive", async () => {
+		// Stands in for pi-web-access, which registers `web_enable` and leaves it inactive with setActiveTools.
+		const inactiveLoader = (pi: ExtensionAPI) => {
+			pi.registerTool({ name: "web_enable", label: "Web enable", description: "Load the web tools", parameters: Type.Object({}), async execute() {
+				return { content: [{ type: "text", text: "loaded" }], details: {} };
+			} });
+			pi.on("session_start", () => pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "web_enable")));
+		};
+		let capture: InProcessChildCapture | undefined;
+		const requests = await run({ sessionFile: path.join(root, "inactive.jsonl"), tools: ["read", "web_enable"], replies: [fauxAssistantMessage("done")], hooks: [inactiveLoader], capture: (value) => { capture = value; } });
+
+		assert.equal(requests.length, 1);
+		assert.equal(requests[0]!.aborted, false);
+		assert.deepEqual(requests[0]!.tools, ["read"]);
+		assert.equal(capture!.toolDiagnostic(), undefined);
 	});
 
 	it("without a tools allowlist, sends the tools that extension declares", async () => {
