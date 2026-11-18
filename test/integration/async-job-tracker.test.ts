@@ -1213,6 +1213,41 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("restores an unreadable active run as live work until a read shows its owner", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "needs POSIX permissions as a non-root user" : undefined }, async () => {
+		const asyncRoot = createTempDir("pi-async-job-restore-unreadable-");
+		const originalError = console.error;
+		console.error = () => {};
+		const ownedDir = path.join(asyncRoot, "run-owned");
+		const foreignDir = path.join(asyncRoot, "run-foreign");
+		try {
+			writeRunningAsyncStatus(ownedDir, "run-owned", "session-owner");
+			writeRunningAsyncStatus(foreignDir, "run-foreign", "session-other");
+			updateActiveRunIndex(ownedDir, "running");
+			updateActiveRunIndex(foreignDir, "running");
+			fs.chmodSync(path.join(ownedDir, "status.json"), 0o200);
+			fs.chmodSync(path.join(foreignDir, "status.json"), 0o200);
+
+			const state = createState();
+			state.currentSessionId = "session-owner";
+			const ui = createUiContext();
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			tracker.resetJobs(ui.ctx as never);
+			tracker.restoreActiveJobs(ui.ctx as never);
+
+			assert.deepEqual([...state.asyncJobs.keys()].sort(), ["run-foreign", "run-owned"]);
+			assert.equal(hasLiveSubagentWork(state as never), true);
+
+			fs.chmodSync(path.join(ownedDir, "status.json"), 0o644);
+			fs.chmodSync(path.join(foreignDir, "status.json"), 0o644);
+			await waitForCondition(() => !state.asyncJobs.has("run-foreign") && state.asyncJobs.get("run-owned")?.agents?.[0] === "worker", "the runs to resolve by owner");
+			assert.equal(state.asyncJobs.get("run-owned")?.status, "running");
+		} finally {
+			console.error = originalError;
+			for (const dir of [ownedDir, foreignDir]) if (fs.existsSync(path.join(dir, "status.json"))) fs.chmodSync(path.join(dir, "status.json"), 0o644);
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("uses flattened async-start agents for initial parallel group widget state", () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {

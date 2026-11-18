@@ -134,6 +134,12 @@ function isNotFoundError(error: unknown): boolean {
 		&& (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
+/** A `readStatus` error caused by permissions: the file exists but says nothing about whether its runner is alive. */
+export function isStatusAccessError(error: unknown): boolean {
+	const code = ((error as Error | undefined)?.cause as NodeJS.ErrnoException | undefined)?.code;
+	return (code === "EACCES" || code === "EPERM") && /^Failed to (?:inspect|read) async status file '/.test(error instanceof Error ? error.message : "");
+}
+
 export function readStatus(asyncDir: string): AsyncStatus | null {
 	if (Buffer.byteLength(path.basename(asyncDir), "utf-8") > 255) {
 		return null;

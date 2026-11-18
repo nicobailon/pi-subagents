@@ -19,7 +19,7 @@ import {
 	SUBAGENT_STEERING_NOTICE_EVENT,
 	WIDGET_ANIMATION_INTERVAL_MS,
 } from "../../shared/types.ts";
-import { readStatus, resolveWatchPath } from "../../shared/utils.ts";
+import { isStatusAccessError, readStatus, resolveWatchPath } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { findNestedRouteForRootId, hasLiveNestedDescendants, retainNestedLookupRoute, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
@@ -108,6 +108,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	// Runs whose status.json this process may not read. An unreadable file says nothing about the
 	// runner, so the job keeps its last known state rather than reading as finished (#3295).
 	const unreadableStatusRuns = new Set<string>();
+	// Restored runs whose status.json was unreadable, so their owner is unknown. Each is counted as
+	// this session's until a read shows otherwise; nothing writes to it before then.
+	const unverifiedRuns = new Set<string>();
 	const supervisorNoticeTimers = new Map<string, { asyncId: string; timer: ReturnType<typeof setTimeout> }>();
 	let rootWatcher: fs.FSWatcher | undefined;
 	let nextLivenessAt = Date.now() + livenessIntervalMs;
@@ -441,10 +444,32 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		externalJobBridgeRuns.delete(asyncId);
 		terminalPublications.delete(asyncId);
 		unreadableStatusRuns.delete(asyncId);
+		unverifiedRuns.delete(asyncId);
 		clearSupervisorNotices(asyncId);
+	};
+	const forgetJob = (asyncId: string) => {
+		cancelCleanup(asyncId);
+		closeJobWatcher(asyncId);
+		state.asyncJobs.delete(asyncId);
+		state.fleetJobs?.delete(asyncId);
+		options.onJobCleanup?.(asyncId);
 	};
 
 	const refreshJob = (job: AsyncJobState): boolean => {
+		if (unverifiedRuns.has(job.asyncId)) {
+			let stored: ReturnType<typeof readStatus> = null;
+			try {
+				stored = readStatus(job.asyncDir);
+			} catch (error) {
+				if (isStatusAccessError(error)) return false;
+			}
+			const owners = state.currentSessionId ? ownerSessionIds(state.currentSessionId) : undefined;
+			if (!stored || (owners && !owners.has(stored.sessionId))) {
+				forgetJob(job.asyncId);
+				return true;
+			}
+			unverifiedRuns.delete(job.asyncId);
+		}
 		const widgetExpanded = withLastUiContext((ctx) => ctx.ui.getToolsExpanded?.() ?? false) ?? false;
 		const widgetStateBefore = widgetRenderKey(job, widgetExpanded);
 		let nestedRefreshFailed = false;
@@ -611,8 +636,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					console.error(`Failed to service external job bridge for '${job.asyncDir}':`, bridgeError);
 				}
 			}
-			const code = ((error as Error | undefined)?.cause as NodeJS.ErrnoException | undefined)?.code;
-			if ((code === "EACCES" || code === "EPERM") && /^Failed to (?:inspect|read) async status file '/.test(error instanceof Error ? error.message : "")) {
+			if (isStatusAccessError(error)) {
 				if (!unreadableStatusRuns.has(job.asyncId)) {
 					unreadableStatusRuns.add(job.asyncId);
 					console.error(`Cannot read async status for '${job.asyncDir}'; keeping its last known state until it is readable:`, error);
@@ -742,11 +766,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				const owners = state.currentSessionId ? ownerSessionIds(state.currentSessionId) : undefined;
 				for (const job of state.asyncJobs.values()) {
 					if (owners && job.sessionId !== undefined && !owners.has(job.sessionId)) {
-						cancelCleanup(job.asyncId);
-						closeJobWatcher(job.asyncId);
-						state.asyncJobs.delete(job.asyncId);
-						state.fleetJobs?.delete(job.asyncId);
-						options.onJobCleanup?.(job.asyncId);
+						forgetJob(job.asyncId);
 						widgetChanged = true;
 						continue;
 					}
@@ -887,9 +907,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		state.statusProjectionSessionId = null;
 		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
+		const unreadable: Array<{ runId: string; asyncDir: string }> = [];
 		try {
 			// A workflow whose Pi exited is repaired here, in the session that owns it, which then delivers its notice.
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now, adoptCompletionOwnerId: state.completionOwnerId }, observeStatus);
+			runs = listAsyncRuns(asyncDirRoot, {
+				states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now, adoptCompletionOwnerId: state.completionOwnerId,
+				onUnreadableActiveRun: (runId, asyncDir) => unreadable.push({ runId, asyncDir }),
+			}, observeStatus);
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
 			return;
@@ -901,8 +925,17 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			rememberFleetJob(state, job);
 			watchJob(job);
 		}
+		// An unreadable run may still be working: idle must not be reported until a read settles it.
+		for (const { runId, asyncDir } of unreadable) {
+			if (state.asyncJobs.has(runId)) continue;
+			const job: AsyncJobState = { asyncId: runId, asyncDir, status: "running", sessionId: state.currentSessionId, updatedAt: Date.now(), controlEventCursor: restoredControlEventCursor(asyncDir) };
+			state.asyncJobs.set(runId, job);
+			runningJobIds.add(runId);
+			unverifiedRuns.add(runId);
+			watchJob(job);
+		}
 		state.statusProjectionSessionId = state.currentSessionId;
-		if (runs.length === 0) return;
+		if (runs.length === 0 && unreadable.length === 0) return;
 		ensurePoller();
 		rerenderLastWidget();
 	};
