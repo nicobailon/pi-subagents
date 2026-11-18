@@ -19,11 +19,11 @@ import {
 	SUBAGENT_STEERING_NOTICE_EVENT,
 	WIDGET_ANIMATION_INTERVAL_MS,
 } from "../../shared/types.ts";
-import { readStatus, resolveWatchPath } from "../../shared/utils.ts";
+import { isStatusAccessError, readStatus, resolveWatchPath } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { findNestedRouteForRootId, hasLiveNestedDescendants, retainNestedLookupRoute, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
-import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { listAsyncRuns, summarizeAsyncStatus, type AsyncRunSummary } from "./async-status.ts";
 import type { RawDrainStatusObserver } from "../shared/readonly-drain-observation.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, externalJobBridgeEligibility, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
@@ -105,6 +105,12 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	// Early native failure is visible before its publisher finishes. Retain only
 	// that scoped observation, using the existing liveness sweep to renew delivery.
 	const terminalPublications = new Map<string, { instanceId: string; pending: true } | { pending: false }>();
+	// Runs whose status.json this process may not read. An unreadable file says nothing about the
+	// runner, so the job keeps its last known state rather than reading as finished (#3295).
+	const unreadableStatusRuns = new Set<string>();
+	// Restored runs whose status.json was unreadable, so their owner is unknown. Each is counted as
+	// this session's until a read shows otherwise; nothing writes to it before then.
+	const unverifiedRuns = new Set<string>();
 	const supervisorNoticeTimers = new Map<string, { asyncId: string; timer: ReturnType<typeof setTimeout> }>();
 	let rootWatcher: fs.FSWatcher | undefined;
 	let nextLivenessAt = Date.now() + livenessIntervalMs;
@@ -437,10 +443,50 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		runningJobIds.delete(asyncId);
 		externalJobBridgeRuns.delete(asyncId);
 		terminalPublications.delete(asyncId);
+		unreadableStatusRuns.delete(asyncId);
+		unverifiedRuns.delete(asyncId);
 		clearSupervisorNotices(asyncId);
+	};
+	const forgetJob = (asyncId: string) => {
+		cancelCleanup(asyncId);
+		closeJobWatcher(asyncId);
+		state.asyncJobs.delete(asyncId);
+		state.fleetJobs?.delete(asyncId);
+		options.onJobCleanup?.(asyncId);
 	};
 
 	const refreshJob = (job: AsyncJobState): boolean => {
+		if (unverifiedRuns.has(job.asyncId)) {
+			let stored: ReturnType<typeof readStatus> = null;
+			let summary: AsyncRunSummary | undefined;
+			try {
+				stored = readStatus(job.asyncDir);
+				if (stored) summary = summarizeAsyncStatus(job.asyncDir, stored);
+			} catch (error) {
+				if (isStatusAccessError(error, job.asyncDir)) return false;
+				console.error(`[pi-subagents] Dropping restored async run '${job.asyncId}' at '${path.join(job.asyncDir, "status.json")}': ${error instanceof Error ? error.message : String(error)}.`);
+			}
+			const owners = state.currentSessionId ? ownerSessionIds(state.currentSessionId) : undefined;
+			if (!stored || !summary || (owners && !owners.has(stored.sessionId))) {
+				forgetJob(job.asyncId);
+				return true;
+			}
+			let restored: AsyncJobState;
+			try {
+				restored = summaryToJob(summary);
+			} catch (error) {
+				if (!unreadableStatusRuns.has(job.asyncId)) {
+					unreadableStatusRuns.add(job.asyncId);
+					console.error(`Cannot read async control events for '${job.asyncDir}'; keeping it as running until they are readable:`, error);
+				}
+				return false;
+			}
+			// Become the job a normal restore would have made, but keep the placeholder's state so the
+			// refresh below sees any transition, and its cursor when restore could read events.jsonl.
+			Object.assign(job, restored, { status: job.status, controlEventCursor: job.controlEventCursor ?? restored.controlEventCursor });
+			rememberFleetJob(state, job);
+			unverifiedRuns.delete(job.asyncId);
+		}
 		const widgetExpanded = withLastUiContext((ctx) => ctx.ui.getToolsExpanded?.() ?? false) ?? false;
 		const widgetStateBefore = widgetRenderKey(job, widgetExpanded);
 		let nestedRefreshFailed = false;
@@ -486,6 +532,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				},
 			});
 			const status = reconciliation.status ?? readStatus(job.asyncDir);
+			unreadableStatusRuns.delete(job.asyncId);
 			if (!bridgeAlreadyRequired) {
 				const bridgeEligibility = externalJobBridgeEligibility(status?.steps);
 				if (bridgeEligibility === "required") externalJobBridgeRuns.add(job.asyncId);
@@ -605,6 +652,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				} catch (bridgeError) {
 					console.error(`Failed to service external job bridge for '${job.asyncDir}':`, bridgeError);
 				}
+			}
+			if (isStatusAccessError(error, job.asyncDir)) {
+				if (!unreadableStatusRuns.has(job.asyncId)) {
+					unreadableStatusRuns.add(job.asyncId);
+					console.error(`Cannot read async status for '${job.asyncDir}'; keeping its last known state until it is readable:`, error);
+				}
+				return widgetRenderKey(job, widgetExpanded) !== widgetStateBefore;
 			}
 			if (job.status !== "failed") {
 				console.error(`Failed to read async status for '${job.asyncDir}':`, error);
@@ -729,11 +783,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				const owners = state.currentSessionId ? ownerSessionIds(state.currentSessionId) : undefined;
 				for (const job of state.asyncJobs.values()) {
 					if (owners && job.sessionId !== undefined && !owners.has(job.sessionId)) {
-						cancelCleanup(job.asyncId);
-						closeJobWatcher(job.asyncId);
-						state.asyncJobs.delete(job.asyncId);
-						state.fleetJobs?.delete(job.asyncId);
-						options.onJobCleanup?.(job.asyncId);
+						forgetJob(job.asyncId);
 						widgetChanged = true;
 						continue;
 					}
@@ -849,6 +899,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		runningJobIds.clear();
 		externalJobBridgeRuns.clear();
 		terminalPublications.clear();
+		unreadableStatusRuns.clear();
+		unverifiedRuns.clear();
 		clearSupervisorNotices();
 	};
 
@@ -874,9 +926,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		state.statusProjectionSessionId = null;
 		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
+		const unreadable: Array<{ runId: string; asyncDir: string }> = [];
 		try {
 			// A workflow whose Pi exited is repaired here, in the session that owns it, which then delivers its notice.
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now, adoptCompletionOwnerId: state.completionOwnerId }, observeStatus);
+			runs = listAsyncRuns(asyncDirRoot, {
+				states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now, adoptCompletionOwnerId: state.completionOwnerId,
+				onUnreadableActiveRun: (runId, asyncDir) => unreadable.push({ runId, asyncDir }),
+			}, observeStatus);
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
 			return;
@@ -888,8 +944,22 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			rememberFleetJob(state, job);
 			watchJob(job);
 		}
+		// An unreadable run may still be working: idle must not be reported until a read settles it.
+		for (const { runId, asyncDir } of unreadable) {
+			if (state.asyncJobs.has(runId)) continue;
+			const job: AsyncJobState = { asyncId: runId, asyncDir, status: "running", sessionId: state.currentSessionId, updatedAt: Date.now() };
+			try {
+				job.controlEventCursor = restoredControlEventCursor(asyncDir);
+			} catch {
+				// An unsearchable run directory: refreshJob reads the cursor once the run is verified.
+			}
+			state.asyncJobs.set(runId, job);
+			runningJobIds.add(runId);
+			unverifiedRuns.add(runId);
+			watchJob(job);
+		}
 		state.statusProjectionSessionId = state.currentSessionId;
-		if (runs.length === 0) return;
+		if (runs.length === 0 && unreadable.length === 0) return;
 		ensurePoller();
 		rerenderLastWidget();
 	};

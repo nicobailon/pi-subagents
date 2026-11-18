@@ -5,7 +5,7 @@ import { previewDisplayText } from "../../shared/display-text.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
 import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type Details, type HostStepNode, type HostStepState, type LaunchResolvedChildExtensions, type RuntimeAcknowledgedChildExtensions, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TimeoutRecoveryProjection, type TokenUsage, type TurnBudgetState, type UsageBudgetState, type WorktreeNaming, type WorkflowPreflight, type WorkflowGraphSnapshot } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { isStatusAccessError, readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, findNestedRouteForRootId, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
@@ -174,6 +174,8 @@ interface AsyncRunListOptions {
 	adoptCompletionOwnerId?: string;
 	/** Receives the warning for a skipped corrupt terminal status, so an open TUI can show it as a notice instead of console output. */
 	onCorruptStatus?: (warning: string) => void;
+	/** Receives an active run kept in the index whose status.json this process may not read. */
+	onUnreadableActiveRun?: (runId: string, asyncDir: string) => void;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -193,7 +195,8 @@ function isAsyncStatusIsolationError(asyncDir: string, error: unknown): boolean 
 // status poll, so the line repeats only when the file or the outcome changes.
 const reportedCorruptStatus = new Map<string, string>();
 
-function isolateCorruptActiveRun(asyncDir: string, runId: string, error: unknown, now?: () => number): void {
+/** Returns whether the active-run marker is still in place. */
+function isolateCorruptActiveRun(asyncDir: string, runId: string, error: unknown, now?: () => number): boolean {
 	const statusPath = path.join(asyncDir, "status.json");
 	const processTerminal = readProcessTerminal(asyncDir, { runId });
 	let markerAge: number | undefined;
@@ -205,9 +208,11 @@ function isolateCorruptActiveRun(asyncDir: string, runId: string, error: unknown
 	const markerCanBeReleased = processTerminal?.state === "observed"
 		|| (markerAge !== undefined && markerAge > DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS);
 	let markerAction = "active marker retained because runner liveness is unknown";
+	let retained = true;
 	if (markerCanBeReleased) {
 		try {
 			releaseActiveRunIndex(asyncDir);
+			retained = false;
 			markerAction = processTerminal?.state === "observed"
 				? "active marker released after observed process-terminal proof"
 				: "stale active marker released";
@@ -224,9 +229,10 @@ function isolateCorruptActiveRun(asyncDir: string, runId: string, error: unknown
 		// A missing file still gets the line once; its message carries the cause.
 	}
 	const signature = `${fileSignature}\n${line}`;
-	if (reportedCorruptStatus.get(statusPath) === signature) return;
+	if (reportedCorruptStatus.get(statusPath) === signature) return retained;
 	reportedCorruptStatus.set(statusPath, signature);
 	console.error(line);
+	return retained;
 }
 
 function isNotFoundError(error: unknown): boolean {
@@ -597,7 +603,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		} catch (error) {
 			observeStatus?.(null);
 			if (!activeEntries.has(entry) || !isAsyncStatusIsolationError(asyncDir, error)) throw error;
-			isolateCorruptActiveRun(asyncDir, entry, error, options.now);
+			if (isolateCorruptActiveRun(asyncDir, entry, error, options.now) && isStatusAccessError(error, asyncDir)) options.onUnreadableActiveRun?.(entry, asyncDir);
 			continue;
 		}
 		if (!status) {
