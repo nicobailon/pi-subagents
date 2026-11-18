@@ -275,7 +275,9 @@ export function resolveMachinePlacement(input: ResolveHerdrMachinePlacementInput
 		// A Herdr pane sets both; when Herdr runs inside a Rex tab its panes also inherit REX_SESSION, and the Herdr pane is where this Pi is drawn.
 		if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID?.trim()) return { machine: resolveHerdrLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, herdrBin: input.herdrBin }) };
 		if (env.REX_SESSION?.trim()) return { machine: resolveRexLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env }) };
-		throw new Error("Machine 'local' opens the child in a new tab of the terminal this Pi runs in, but this Pi is running in neither Herdr (HERDR_ENV=1 with HERDR_PANE_ID) nor Rex (REX_SESSION).");
+		// Herdr Core (`hc`, the Herdr app's terminal server) is a different product from the herdr multiplexer, with a different CLI and protocol.
+		const core = env.HC_TERMINAL_ID?.trim() ? " It runs in a Herdr Core terminal (HC_TERMINAL_ID), which machine 'local' does not support." : "";
+		throw new Error(`Machine 'local' opens the child in a new tab of the terminal this Pi runs in, but this Pi is running in neither Herdr (HERDR_ENV=1 with HERDR_PANE_ID) nor Rex (REX_SESSION).${core}`);
 	}
 	if (settings?.rex) return { machine: { provider: "rex", id: requested, target: settings.rex.ssh, cwd: validateRemoteCwd(remoteMachineCwd(input.stepCwd, settings.cwd, requested), requested) } };
 	return resolveHerdrMachinePlacement(input);

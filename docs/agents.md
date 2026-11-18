@@ -269,7 +269,7 @@ A custom agent file that shadows a bundled agent replaces the bundled definition
 
 Native Pi and the six code-owned Claude Code, Codex, and Cursor profiles can run on a Herdr machine (`herdr machine add <target> --label <name>`). Herdr owns each visible agent process in a fresh no-focus pane; SSH is used only as bounded transport for Herdr RPC and ownership checks. Herdr's catalog is the host allowlist; raw ssh targets are rejected.
 
-For a pane on this machine you don't need a saved machine: run Pi inside Herdr and use `machine: "local"`.
+For a pane on this machine you don't need a saved machine: run Pi inside Herdr and use `machine: "local"`. This means the herdr terminal multiplexer; terminals of Herdr Core (`hc`, the Herdr app's terminal server) are not supported.
 
 `machine` is a top-level frontmatter key, a settings override (`subagents.agentOverrides.<agent>.machine`, project beats user, `false` clears a pin), and a launch option on the `subagent` tool, workflow `runs.run`, chain, parallel, and dynamic-fanout steps. The launch option wins. Placement survives `subagent({ action: "disable" })`, `reset`, and model profile switches.
 
