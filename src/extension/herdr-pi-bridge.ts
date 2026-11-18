@@ -21,6 +21,7 @@ interface PendingRequest { operation: "prompt" | "steer" | "follow-up" | "abort"
 interface BridgeContext {
 	isIdle(): boolean;
 	hasPendingMessages(): boolean;
+	abort(): void;
 	sessionManager?: { getSessionId?(): string; getSessionFile?(): string | undefined };
 	model?: { provider?: string; id?: string };
 	ui?: { notify(message: string, type?: "info" | "warning" | "error"): void };
@@ -129,11 +130,11 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		pending.delete(requestId);
 		if (sessionId(ctx) !== nativeSessionId) throw new Error("Native Pi session identity changed.");
 		send({ type: "accepted", requestId, operation: request.operation, nativeSessionId });
-		const api = pi as unknown as { sendUserMessage(text: string, options?: { deliverAs?: "steer" | "followUp" }): void; abort(): void };
+		const api = pi as unknown as { sendUserMessage(text: string, options?: { deliverAs?: "steer" | "followUp" }): void };
 		if (request.operation === "prompt") { activeRequestId = requestId; finalAssistant = undefined; api.sendUserMessage(request.text ?? ""); }
 		else if (request.operation === "steer") api.sendUserMessage(request.text ?? "", { deliverAs: "steer" });
 		else if (request.operation === "follow-up") api.sendUserMessage(request.text ?? "", { deliverAs: "followUp" });
-		else if (request.operation === "abort") api.abort();
+		else if (request.operation === "abort") ctx.abort();
 		else {
 			const entry = request.supervisorId ? supervisor.get(request.supervisorId) : undefined;
 			if (!entry) throw new Error("Unknown supervisor request.");
