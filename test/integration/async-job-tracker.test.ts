@@ -12,6 +12,7 @@ import { SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { resolveSubagentRunId } from "../../src/runs/background/run-id-resolver.ts";
 import { registerProgramStatusReporter } from "../../src/integrations/program-status.ts";
+import { hasLiveSubagentWork } from "../../src/integrations/pi-web-session-liveness.ts";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
 
 interface AsyncJobTrackerModule {
@@ -1595,6 +1596,38 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(state.asyncJobs.size, 0);
 			assert.ok(ui.renderRequests > 0, "expected malformed status cleanup to request a rerender");
 		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("keeps a running job live while its status file is unreadable, then resumes tracking", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "needs POSIX permissions as a non-root user" : undefined }, async () => {
+		const asyncRoot = createTempDir("pi-async-job-unreadable-status-");
+		const originalError = console.error;
+		const errors: string[] = [];
+		console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
+		const runDir = path.join(asyncRoot, "run-unreadable");
+		const statusPath = path.join(runDir, "status.json");
+		try {
+			writeRunningAsyncStatus(runDir, "run-unreadable", "session-1");
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { completionRetentionMs: 5, pollIntervalMs: 10 });
+			tracker.handleStarted({ id: "run-unreadable", asyncDir: runDir, agent: "worker" });
+			await waitForCondition(() => state.asyncJobs.get("run-unreadable")?.status === "running", "the job to be running");
+
+			fs.chmodSync(statusPath, 0o200);
+			await waitForCondition(() => errors.some((line) => line.includes(runDir) && line.includes("EACCES")), "the unreadable status to be reported");
+
+			assert.equal(state.asyncJobs.get("run-unreadable")?.status, "running");
+			assert.equal(state.cleanupTimers.has("run-unreadable"), false);
+			assert.equal(hasLiveSubagentWork(state as never), true);
+
+			fs.chmodSync(statusPath, 0o644);
+			fs.writeFileSync(statusPath, JSON.stringify({ runId: "run-unreadable", mode: "single", state: "complete", sessionId: "session-1", startedAt: Date.now() - 1000, lastUpdate: Date.now(), steps: [{ agent: "worker", status: "complete" }] }), "utf-8");
+			await waitForCondition(() => !state.asyncJobs.has("run-unreadable"), "the completed job to be cleaned up");
+			assert.equal(errors.filter((line) => line.includes(runDir)).length, 1);
+		} finally {
+			console.error = originalError;
+			if (fs.existsSync(statusPath)) fs.chmodSync(statusPath, 0o644);
 			removeTempDir(asyncRoot);
 		}
 	});

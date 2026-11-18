@@ -105,6 +105,9 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	// Early native failure is visible before its publisher finishes. Retain only
 	// that scoped observation, using the existing liveness sweep to renew delivery.
 	const terminalPublications = new Map<string, { instanceId: string; pending: true } | { pending: false }>();
+	// Runs whose status.json this process may not read. An unreadable file says nothing about the
+	// runner, so the job keeps its last known state rather than reading as finished (#3295).
+	const unreadableStatusRuns = new Set<string>();
 	const supervisorNoticeTimers = new Map<string, { asyncId: string; timer: ReturnType<typeof setTimeout> }>();
 	let rootWatcher: fs.FSWatcher | undefined;
 	let nextLivenessAt = Date.now() + livenessIntervalMs;
@@ -437,6 +440,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		runningJobIds.delete(asyncId);
 		externalJobBridgeRuns.delete(asyncId);
 		terminalPublications.delete(asyncId);
+		unreadableStatusRuns.delete(asyncId);
 		clearSupervisorNotices(asyncId);
 	};
 
@@ -486,6 +490,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				},
 			});
 			const status = reconciliation.status ?? readStatus(job.asyncDir);
+			unreadableStatusRuns.delete(job.asyncId);
 			if (!bridgeAlreadyRequired) {
 				const bridgeEligibility = externalJobBridgeEligibility(status?.steps);
 				if (bridgeEligibility === "required") externalJobBridgeRuns.add(job.asyncId);
@@ -605,6 +610,14 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				} catch (bridgeError) {
 					console.error(`Failed to service external job bridge for '${job.asyncDir}':`, bridgeError);
 				}
+			}
+			const code = ((error as Error | undefined)?.cause as NodeJS.ErrnoException | undefined)?.code;
+			if ((code === "EACCES" || code === "EPERM") && /^Failed to (?:inspect|read) async status file '/.test(error instanceof Error ? error.message : "")) {
+				if (!unreadableStatusRuns.has(job.asyncId)) {
+					unreadableStatusRuns.add(job.asyncId);
+					console.error(`Cannot read async status for '${job.asyncDir}'; keeping its last known state until it is readable:`, error);
+				}
+				return widgetRenderKey(job, widgetExpanded) !== widgetStateBefore;
 			}
 			if (job.status !== "failed") {
 				console.error(`Failed to read async status for '${job.asyncDir}':`, error);
