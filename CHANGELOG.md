@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A subagent limited to a list of `tools` no longer stops before its first request when an extension keeps one of those tools inactive on purpose, as pi-web-access does with `web_enable`. 0.89.0 treated that tool as replaced by another extension and failed the child with a misleading error. The check now fails the child only when a tool it can call is missing from the request, so pi-fabric's code mode is still caught. Thanks to [@chpock](https://github.com/chpock) for the report (#3296).
+
 ## [0.89.0] - 2026-11-16
 
 ### Highlights
