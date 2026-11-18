@@ -461,12 +461,24 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			try {
 				stored = readStatus(job.asyncDir);
 			} catch (error) {
-				if (isStatusAccessError(error)) return false;
+				if (isStatusAccessError(error, job.asyncDir)) return false;
 			}
 			const owners = state.currentSessionId ? ownerSessionIds(state.currentSessionId) : undefined;
 			if (!stored || (owners && !owners.has(stored.sessionId))) {
 				forgetJob(job.asyncId);
 				return true;
+			}
+			if (job.controlEventCursor === undefined) {
+				// Restore could not search the run directory; it is readable now.
+				try {
+					job.controlEventCursor = restoredControlEventCursor(job.asyncDir);
+				} catch (error) {
+					if (!unreadableStatusRuns.has(job.asyncId)) {
+						unreadableStatusRuns.add(job.asyncId);
+						console.error(`Cannot read async control events for '${job.asyncDir}'; keeping it as running until they are readable:`, error);
+					}
+					return false;
+				}
 			}
 			unverifiedRuns.delete(job.asyncId);
 		}
@@ -636,7 +648,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					console.error(`Failed to service external job bridge for '${job.asyncDir}':`, bridgeError);
 				}
 			}
-			if (isStatusAccessError(error)) {
+			if (isStatusAccessError(error, job.asyncDir)) {
 				if (!unreadableStatusRuns.has(job.asyncId)) {
 					unreadableStatusRuns.add(job.asyncId);
 					console.error(`Cannot read async status for '${job.asyncDir}'; keeping its last known state until it is readable:`, error);
@@ -882,6 +894,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		runningJobIds.clear();
 		externalJobBridgeRuns.clear();
 		terminalPublications.clear();
+		unreadableStatusRuns.clear();
+		unverifiedRuns.clear();
 		clearSupervisorNotices();
 	};
 
@@ -928,7 +942,12 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		// An unreadable run may still be working: idle must not be reported until a read settles it.
 		for (const { runId, asyncDir } of unreadable) {
 			if (state.asyncJobs.has(runId)) continue;
-			const job: AsyncJobState = { asyncId: runId, asyncDir, status: "running", sessionId: state.currentSessionId, updatedAt: Date.now(), controlEventCursor: restoredControlEventCursor(asyncDir) };
+			const job: AsyncJobState = { asyncId: runId, asyncDir, status: "running", sessionId: state.currentSessionId, updatedAt: Date.now() };
+			try {
+				job.controlEventCursor = restoredControlEventCursor(asyncDir);
+			} catch {
+				// An unsearchable run directory: refreshJob reads the cursor once the run is verified.
+			}
 			state.asyncJobs.set(runId, job);
 			runningJobIds.add(runId);
 			unverifiedRuns.add(runId);

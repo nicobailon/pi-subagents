@@ -1248,6 +1248,38 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("restores a run whose directory cannot be searched without dropping the other runs", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "needs POSIX permissions as a non-root user" : undefined }, async () => {
+		const asyncRoot = createTempDir("pi-async-job-restore-unsearchable-");
+		const originalError = console.error;
+		console.error = () => {};
+		const lockedDir = path.join(asyncRoot, "run-locked");
+		const readableDir = path.join(asyncRoot, "run-readable");
+		try {
+			writeRunningAsyncStatus(lockedDir, "run-locked", "session-owner");
+			writeRunningAsyncStatus(readableDir, "run-readable", "session-owner");
+			fs.writeFileSync(path.join(lockedDir, "events.jsonl"), "", "utf-8");
+			updateActiveRunIndex(lockedDir, "running");
+			updateActiveRunIndex(readableDir, "running");
+			fs.chmodSync(lockedDir, 0o600);
+
+			const state = createState();
+			state.currentSessionId = "session-owner";
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot, { pollIntervalMs: 10 });
+			assert.doesNotThrow(() => tracker.restoreActiveJobs());
+
+			assert.deepEqual([...state.asyncJobs.keys()].sort(), ["run-locked", "run-readable"]);
+			assert.equal(state.asyncJobs.get("run-readable")?.agents?.[0], "worker");
+
+			fs.chmodSync(lockedDir, 0o700);
+			await waitForCondition(() => state.asyncJobs.get("run-locked")?.agents?.[0] === "worker", "the locked run to resolve");
+			assert.equal(state.asyncJobs.get("run-locked")?.controlEventCursor, 0);
+		} finally {
+			console.error = originalError;
+			fs.chmodSync(lockedDir, 0o700);
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("uses flattened async-start agents for initial parallel group widget state", () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {

@@ -134,10 +134,13 @@ function isNotFoundError(error: unknown): boolean {
 		&& (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-/** A `readStatus` error caused by permissions: the file exists but says nothing about whether its runner is alive. */
-export function isStatusAccessError(error: unknown): boolean {
+/** A `readStatus(asyncDir)` error caused by permissions on that run's own status file, which says nothing about whether its runner is alive. */
+export function isStatusAccessError(error: unknown, asyncDir: string): boolean {
 	const code = ((error as Error | undefined)?.cause as NodeJS.ErrnoException | undefined)?.code;
-	return (code === "EACCES" || code === "EPERM") && /^Failed to (?:inspect|read) async status file '/.test(error instanceof Error ? error.message : "");
+	if (code !== "EACCES" && code !== "EPERM") return false;
+	const message = error instanceof Error ? error.message : "";
+	const quotedPath = `'${path.join(asyncDir, "status.json")}':`;
+	return message.startsWith(`Failed to inspect async status file ${quotedPath}`) || message.startsWith(`Failed to read async status file ${quotedPath}`);
 }
 
 export function readStatus(asyncDir: string): AsyncStatus | null {

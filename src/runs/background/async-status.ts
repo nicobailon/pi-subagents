@@ -603,7 +603,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		} catch (error) {
 			observeStatus?.(null);
 			if (!activeEntries.has(entry) || !isAsyncStatusIsolationError(asyncDir, error)) throw error;
-			if (isolateCorruptActiveRun(asyncDir, entry, error, options.now) && isStatusAccessError(error)) options.onUnreadableActiveRun?.(entry, asyncDir);
+			if (isolateCorruptActiveRun(asyncDir, entry, error, options.now) && isStatusAccessError(error, asyncDir)) options.onUnreadableActiveRun?.(entry, asyncDir);
 			continue;
 		}
 		if (!status) {
