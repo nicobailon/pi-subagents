@@ -15,7 +15,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { resolveSubagentResultStatus } from "../../intercom/result-intercom.ts";
-import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
+import { readProcessTerminal, sanitizeProcessTerminal, unobservedRunnerExitPath } from "./process-terminal.ts";
 import { readWorkflowTerminalProof } from "./workflow-terminal-proof.ts";
 import { formatWaitSubscriptions } from "./wait-subscriptions.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
@@ -103,6 +103,7 @@ function formatRunLifecycleDebug(input: { status: AsyncStatus; asyncDir: string;
 		`Status file: ${path.join(asyncDir, "status.json")}`,
 		status.workflowReceiptPath ? `Workflow receipt: ${status.workflowReceiptPath}` : undefined,
 		`Process terminal file: ${path.join(asyncDir, "process-terminal.json")}`,
+		`Unobserved runner exit file: ${unobservedRunnerExitPath(asyncDir)}`,
 		`Session: ${status.sessionId ?? "unknown"}`,
 		`State: ${status.state}`,
 		`Mode: ${status.mode}`,

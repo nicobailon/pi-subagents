@@ -2,11 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { resultFilePath, resultPayloadPathForSessionRun, writeAsyncResultFile } from "./result-files.ts";
-import { updateActiveRunIndex } from "./active-run-index.ts";
-import { readProcessTerminal } from "./process-terminal.ts";
+import { isTerminalAsyncState, updateActiveRunIndex } from "./active-run-index.ts";
+import { readProcessTerminal, unobservedRunnerExitPath } from "./process-terminal.ts";
 import { OWNING_SESSION_COMPLETION_OWNER } from "../../shared/completion-owner.ts";
 import { readStatus } from "../../shared/utils.ts";
-import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
+import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type ProcessTerminal, type SubagentRunMode } from "../../shared/types.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, type NestedRoute } from "../shared/nested-events.ts";
@@ -15,7 +15,6 @@ import type { RawDrainStatusObserver } from "../shared/readonly-drain-observatio
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { currentBootId } from "./boot-id.ts";
 import { WORKFLOW_STOP_CAUSE_OWNER_EXITED } from "../../workflows/workflow-stop-cause.ts";
-import { isTerminalAsyncState } from "./workflow-terminal-proof.ts";
 
 export type PidLiveness = "alive" | "dead" | "unknown";
 
@@ -484,6 +483,34 @@ export function checkRecordedPidLiveness(recorded: RecordedPid, observation: Rec
 	return liveness === "dead" && scopeMismatch ? "unknown" : liveness;
 }
 
+/**
+ * Only the Pi process that spawned a runner sees it close and writes its process-terminal proof. When that
+ * process is gone, a finished run whose runner is confirmed dead would report a `pending` proof forever.
+ * Record it as unknown, never observed: nobody saw the exit. A workflow's pid is its host Pi, not a runner.
+ * The verdict goes to its own file, never process-terminal.json, so a close the launching Pi observes after the
+ * pending read above still wins.
+ */
+export function settleUnobservedRunnerExit(asyncDir: string, status: AsyncStatus, observation: RecordedPidObservation = { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() }): void {
+	const runnerProcessInstanceId = status.processTerminal?.runnerProcessInstanceId;
+	if (!terminal(status.state) || status.mode === "workflow" || status.processTerminal?.state !== "pending" || !runnerProcessInstanceId) return;
+	if (typeof status.pid !== "number" || status.pidNamespaceScope !== observation.observedScope) return;
+	if (readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId })?.state !== "pending") return;
+	if (checkRecordedPidLiveness({ pid: status.pid, pidNamespaceScope: status.pidNamespaceScope, bootId: status.bootId }, observation) !== "dead") return;
+	try {
+		const proof: ProcessTerminal = {
+			version: 1,
+			state: "unknown",
+			runId: status.runId,
+			runnerProcessInstanceId,
+			reason: "observer-unavailable",
+			diagnostic: `Runner PID ${status.pid} is gone and no Pi recorded its exit.`,
+		};
+		writeAtomicJson(unobservedRunnerExitPath(asyncDir), proof);
+	} catch {
+		// The proof stays pending; the next status read tries again.
+	}
+}
+
 export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOptions = {}, observeStatus?: RawDrainStatusObserver): ReconcileAsyncRunResult {
 	const now = options.now?.() ?? Date.now();
 	const status = readStatus(asyncDir);
@@ -507,11 +534,9 @@ export function reconcileAsyncRun(asyncDir: string, options: ReconcileAsyncRunOp
 	const staleAfterMs = options.staleAlivePidMs ?? 24 * 60 * 60 * 1000;
 	const lastUpdate = effectiveStatus.lastUpdate ?? effectiveStatus.startedAt;
 	const observedScope = options.pidNamespaceScope ? options.pidNamespaceScope() : currentPidNamespaceScope();
-	const runnerLiveness = (pid: number): PidLiveness => checkRecordedPidLiveness({ pid, pidNamespaceScope: effectiveStatus.pidNamespaceScope, bootId: effectiveStatus.bootId }, {
-		kill: options.kill,
-		observedScope,
-		observedBootId: options.bootId ? options.bootId() : currentBootId(),
-	});
+	const observation: RecordedPidObservation = { kill: options.kill, observedScope, observedBootId: options.bootId ? options.bootId() : currentBootId() };
+	const runnerLiveness = (pid: number): PidLiveness => checkRecordedPidLiveness({ pid, pidNamespaceScope: effectiveStatus.pidNamespaceScope, bootId: effectiveStatus.bootId }, observation);
+	if (status) settleUnobservedRunnerExit(asyncDir, status, observation);
 	if (existingResultPath) {
 		// A live runner writes its result before its final status; repairing in that window would replace
 		// its pending exit proof with a placeholder. Only a confirmed-alive pid defers: a result is better

@@ -852,7 +852,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 					// Diagnostic only; process-terminal proof stays authoritative.
 				}
 				// The runner may outlive its wrapper; only a confirmed-dead runner in this pid namespace finalizes here,
-				// otherwise status-pid reconciliation does it later.
+				// otherwise a later status read in the runner's pid namespace records the proof as unknown once its pid is dead.
 				if (!runnerIdentity || runnerIdentity.pidNamespaceScope !== currentPidNamespaceScope()
 					|| checkRecordedPidLiveness(runnerIdentity) !== "dead") return;
 			}

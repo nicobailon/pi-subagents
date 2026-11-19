@@ -43,6 +43,10 @@ export function isActiveAsyncState(state: AsyncStatus["state"]): boolean {
 	return state === "queued" || state === "running";
 }
 
+export function isTerminalAsyncState(state: AsyncStatus["state"]): state is Exclude<AsyncStatus["state"], "queued" | "running" | "paused"> {
+	return state !== "queued" && state !== "running" && state !== "paused";
+}
+
 function releaseToolCallAliases(asyncDir: string): void {
 	const root = path.join(indexDir(path.dirname(asyncDir)), TOOL_CALL_INDEX_DIR);
 	let entries: fs.Dirent[];

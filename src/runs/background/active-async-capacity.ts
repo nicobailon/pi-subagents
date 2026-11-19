@@ -8,7 +8,8 @@ import { checkPidLiveness, checkRecordedPidLiveness, type PidLiveness } from "./
 import { currentBootId } from "./boot-id.ts";
 import { currentPidNamespaceScope } from "./pid-namespace.ts";
 import { readProcessTerminal } from "./process-terminal.ts";
-import { isTerminalAsyncState as terminalState, readWorkflowChildEvidence, readWorkflowChildProcessEvidence } from "./workflow-terminal-proof.ts";
+import { readWorkflowChildEvidence, readWorkflowChildProcessEvidence } from "./workflow-terminal-proof.ts";
+import { isTerminalAsyncState as terminalState } from "./active-run-index.ts";
 
 export const ACTIVE_ASYNC_CAPACITY_DIR = path.join(TEMP_ROOT_DIR, "session-active-async-capacity");
 export const DEFAULT_ABANDONED_SLOT_RELEASE_AFTER_MS = 20 * 60 * 1000;
