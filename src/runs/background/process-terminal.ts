@@ -157,7 +157,9 @@ export function finalizeProcessTerminal(
 	const existing = readProcessTerminal(asyncDir, { runId, runnerProcessInstanceId: runnerClose.processInstanceId });
 	if (existing && fs.existsSync(processTerminalPath(asyncDir))) {
 		if (existing.state === "observed" && existing.runId === runId && existing.runnerProcessInstanceId === runnerClose.processInstanceId) return existing;
-		if (existing.state === "unknown") {
+		// A status reader that saw the runner pid dead before this close event fired settled the proof as
+		// observer-unavailable; this process did observe the close, so it computes the full proof.
+		if (existing.state === "unknown" && existing.reason !== "observer-unavailable") {
 			// A sticky runner-published unknown proof keeps its reason; only add the observed exit. Unreadable or mismatched sidecars read back as proof-write-failed and stay untouched.
 			if (existing.instances?.length || existing.reason === "proof-write-failed") return existing;
 			const withExit: ProcessTerminal = { ...existing, instances: [{ kind: "runner", ...runnerClose }] };

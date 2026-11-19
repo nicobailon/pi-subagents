@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
-import { finalizeProcessTerminal, initializeProcessTerminal, readProcessTerminal } from "../../src/runs/background/process-terminal.ts";
+import { finalizeProcessTerminal, initializeProcessTerminal, readProcessTerminal, writeProcessTerminalCandidate } from "../../src/runs/background/process-terminal.ts";
 import { checkPidLiveness, checkRecordedPidLiveness, reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import { summarizeAsyncStatus } from "../../src/runs/background/async-status.ts";
 
@@ -385,6 +385,54 @@ describe("async stale-run reconciliation", () => {
 			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-killed.json"), "utf-8"));
 			assert.equal(resultJson.state, "failed");
 			assert.match(resultJson.summary, /Async runner process 4242 exited with code none \(signal SIGKILL\) before writing a result/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("records a finished run's pending proof as unknown once its unwatched runner is dead, and a later close still observes it", () => {
+		const root = tempRoot("pi-stale-run-unobserved-exit-");
+		try {
+			const resultsDir = path.join(root, "results");
+			const finishedRun = (runId: string) => {
+				const asyncDir = path.join(root, runId);
+				writeStatus(asyncDir, {
+					lifecycleArtifactVersion: 3,
+					runId,
+					mode: "single",
+					state: "complete",
+					pid: 4242,
+					startedAt: 1000,
+					lastUpdate: 1500,
+					endedAt: 1500,
+					processTerminal: { version: 1, state: "pending", runId, runnerProcessInstanceId: `${runId}-runner` },
+					steps: [{ agent: "worker", status: "complete" }],
+				});
+				initializeProcessTerminal(asyncDir, runId, `${runId}-runner`);
+				return asyncDir;
+			};
+			const options = { resultsDir, pidNamespaceScope: () => undefined, now: () => 2000 };
+
+			const live = finishedRun("run-live");
+			reconcileAsyncRun(live, { ...options, kill: () => true });
+			assert.equal(readProcessTerminal(live)?.state, "pending");
+
+			const dead = finishedRun("run-dead");
+			reconcileAsyncRun(dead, { ...options, kill: () => { throw errno("ESRCH"); } });
+			const settled = readProcessTerminal(dead);
+			assert.equal(settled?.state, "unknown");
+			assert.equal(settled?.reason, "observer-unavailable");
+
+			writeProcessTerminalCandidate(dead, {
+				version: 1,
+				runId: "run-dead",
+				runnerProcessInstanceId: "run-dead-runner",
+				expectedWriters: { "0": 1 },
+				writers: { "0": [{ processInstanceId: "writer-1", kind: "pi-writer", attempt: 0, closeObservedAt: 1400, exitCode: 0, signal: null, processTree: { state: "observed", mechanism: "posix-process-group", processGroupId: 123, verifiedAt: 1450 } }] },
+			});
+			const closed = finalizeProcessTerminal(dead, "run-dead", { processInstanceId: "run-dead-runner", closeObservedAt: 1600, exitCode: 0, signal: null });
+			assert.equal(closed.state, "observed");
+			assert.equal(readProcessTerminal(dead)?.state, "observed");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

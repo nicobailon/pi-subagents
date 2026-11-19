@@ -3,12 +3,10 @@ import * as path from "node:path";
 import type { AsyncStatus, ProcessTerminal, WorkflowChildSummary, WorkflowTerminalProof } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { readProcessTerminal } from "./process-terminal.ts";
+import { isTerminalAsyncState } from "./active-run-index.ts";
+import { settleUnobservedRunnerExit } from "./stale-run-reconciler.ts";
 
 const TERMINAL_WORKFLOW_STATES = new Set<WorkflowChildSummary["workflowState"]>(["completed", "failed", "stopped"]);
-
-export function isTerminalAsyncState(state: AsyncStatus["state"]): state is Exclude<AsyncStatus["state"], "queued" | "running" | "paused"> {
-	return state !== "queued" && state !== "running" && state !== "paused";
-}
 
 /**
  * The model an async workflow child reports for itself. Workflow lane records keep only
@@ -89,13 +87,14 @@ export function readWorkflowChildEvidence(workflowAsyncDir: string, step: NonNul
 	if (recorded.state === "not-started" && recorded.runId === step.runId && typeof childStatus.error === "string" && childStatus.error) {
 		return { state: "resolved", proof: recorded };
 	}
+	settleUnobservedRunnerExit(childDir, childStatus);
 	const proof = readProcessTerminal(childDir, { runId: step.runId, runnerProcessInstanceId: recorded.runnerProcessInstanceId });
 	if (proof?.state !== "observed" || proof.runId !== step.runId) {
 		const proofState = proof?.state ?? "missing";
 		const bound = childStatus.runId === step.runId && typeof recorded.runnerProcessInstanceId === "string";
 		return {
 			state: !proof || proof.state === "pending" ? "pending" : "unknown",
-			reason: `async workflow child ${label} process-terminal proof is ${proofState}`,
+			reason: `async workflow child ${label} process-terminal proof is ${proofState}${proof?.state === "unknown" && proof.reason ? ` (${proof.reason})` : ""}`,
 			...(bound ? { unresolvedProof: { status: childStatus, proofState } } : {}),
 		};
 	}

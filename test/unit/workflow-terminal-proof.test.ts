@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AsyncStatus, ProcessTerminal, WorkflowChildSummary } from "../../src/shared/types.ts";
 import { readWorkflowTerminalProof } from "../../src/runs/background/workflow-terminal-proof.ts";
+import { currentPidNamespaceScope } from "../../src/runs/background/pid-namespace.ts";
 
 type Steps = NonNullable<AsyncStatus["steps"]>;
 
@@ -64,6 +66,17 @@ describe("readWorkflowTerminalProof", () => {
 		assert.deepEqual(readWorkflowTerminalProof(asyncDir, asyncChild, summary(), 0, 2_000), {
 			version: 1, kind: "workflow", runId: "workflow-run", state: "pending", dispatchClosed: true,
 			reason: "async workflow child main process-terminal proof is missing",
+		});
+	}));
+
+	it("reports unknown instead of pending when a finished child's runner died with nobody watching it", () => withFixture(({ asyncDir, writeChild }) => {
+		const exited = spawnSync(process.execPath, ["-e", ""]);
+		assert.equal(exited.status, 0);
+		const pending: ProcessTerminal = { ...runnerIdentity, state: "pending" };
+		writeChild({ state: "complete", pid: exited.pid, pidNamespaceScope: currentPidNamespaceScope(), processTerminal: pending }, pending);
+		assert.deepEqual(readWorkflowTerminalProof(asyncDir, asyncChild, summary(), 0, 2_000), {
+			version: 1, kind: "workflow", runId: "workflow-run", state: "unknown", dispatchClosed: true,
+			reason: "async workflow child main process-terminal proof is unknown (observer-unavailable)",
 		});
 	}));
 
