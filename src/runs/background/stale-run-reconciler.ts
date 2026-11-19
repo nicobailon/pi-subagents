@@ -503,7 +503,7 @@ export function settleUnobservedRunnerExit(asyncDir: string, status: AsyncStatus
 			runId: status.runId,
 			runnerProcessInstanceId,
 			reason: "observer-unavailable",
-			diagnostic: `Runner PID ${status.pid} exited while no Pi process was watching it, so its exit was not observed.`,
+			diagnostic: `Runner PID ${status.pid} is gone and no Pi recorded its exit.`,
 		};
 		writeAtomicJson(unobservedRunnerExitPath(asyncDir), proof);
 	} catch {

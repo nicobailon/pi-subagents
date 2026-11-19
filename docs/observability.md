@@ -271,7 +271,7 @@ Lifecycle artifacts include `process-terminal-candidate.json` (private runner ev
 
 A proof is `observed` only after the live parent observes the exact detached runner's `close` event and any tracked canonical-session lease is free. Children run inside the runner process, so the candidate records no separate writer processes. If the observer is unavailable, the proof is `unknown`; do not infer process exit from `endedAt`, result-file existence, PID disappearance, or lease-directory absence.
 
-When the Pi that launched a finished run is gone and the runner PID is confirmed dead, a status read writes `process-terminal-unobserved.json` with an `unknown` proof (reason `observer-unavailable`). It never touches `process-terminal.json`; status readers report it only while `process-terminal.json` is still `pending` for the same runner, so a close that is observed later still wins.
+When a finished run's runner PID is confirmed dead and `process-terminal.json` is still `pending`, for example because the Pi that launched it has exited, a status read writes `process-terminal-unobserved.json` with an `unknown` proof (reason `observer-unavailable`). It never touches `process-terminal.json`; status readers report it only while `process-terminal.json` is still `pending` for the same runner, so a close that is observed later still wins.
 
 The `subagent:process-terminal` event and RPC `ping.capabilities.processTerminalProof` expose this status. Process proof is point-in-time evidence and remains separate from execution success or stopped/non-resumable state.
 
