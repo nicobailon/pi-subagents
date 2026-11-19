@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { resultFilePath, resultPayloadPathForSessionRun, writeAsyncResultFile } from "./result-files.ts";
 import { isTerminalAsyncState, updateActiveRunIndex } from "./active-run-index.ts";
-import { processTerminalPath, readProcessTerminal } from "./process-terminal.ts";
+import { readProcessTerminal, unobservedRunnerExitPath } from "./process-terminal.ts";
 import { OWNING_SESSION_COMPLETION_OWNER } from "../../shared/completion-owner.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type ProcessTerminal, type SubagentRunMode } from "../../shared/types.ts";
@@ -487,6 +487,8 @@ export function checkRecordedPidLiveness(recorded: RecordedPid, observation: Rec
  * Only the Pi process that spawned a runner sees it close and writes its process-terminal proof. When that
  * process is gone, a finished run whose runner is confirmed dead would report a `pending` proof forever.
  * Record it as unknown, never observed: nobody saw the exit. A workflow's pid is its host Pi, not a runner.
+ * The verdict goes to its own file, never process-terminal.json, so a close the launching Pi observes after the
+ * pending read above still wins.
  */
 export function settleUnobservedRunnerExit(asyncDir: string, status: AsyncStatus, observation: RecordedPidObservation = { observedScope: currentPidNamespaceScope(), observedBootId: currentBootId() }): void {
 	const runnerProcessInstanceId = status.processTerminal?.runnerProcessInstanceId;
@@ -503,9 +505,9 @@ export function settleUnobservedRunnerExit(asyncDir: string, status: AsyncStatus
 			reason: "observer-unavailable",
 			diagnostic: `Runner PID ${status.pid} exited while no Pi process was watching it, so its exit was not observed.`,
 		};
-		writeAtomicJson(processTerminalPath(asyncDir), proof);
+		writeAtomicJson(unobservedRunnerExitPath(asyncDir), proof);
 	} catch {
-		// The sidecar stays pending; the next status read tries again.
+		// The proof stays pending; the next status read tries again.
 	}
 }
 

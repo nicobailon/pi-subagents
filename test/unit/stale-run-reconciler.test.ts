@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
-import { finalizeProcessTerminal, initializeProcessTerminal, readProcessTerminal, writeProcessTerminalCandidate } from "../../src/runs/background/process-terminal.ts";
+import { finalizeProcessTerminal, initializeProcessTerminal, processTerminalPath, readProcessTerminal, writeProcessTerminalCandidate } from "../../src/runs/background/process-terminal.ts";
 import { checkPidLiveness, checkRecordedPidLiveness, reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import { summarizeAsyncStatus } from "../../src/runs/background/async-status.ts";
 
@@ -390,7 +390,7 @@ describe("async stale-run reconciliation", () => {
 		}
 	});
 
-	it("records a finished run's pending proof as unknown once its unwatched runner is dead, and a later close still observes it", () => {
+	it("records a finished run's pending proof as unknown once its unwatched runner is dead, without hiding a close the launching Pi observes", () => {
 		const root = tempRoot("pi-stale-run-unobserved-exit-");
 		try {
 			const resultsDir = path.join(root, "results");
@@ -409,30 +409,41 @@ describe("async stale-run reconciliation", () => {
 					steps: [{ agent: "worker", status: "complete" }],
 				});
 				initializeProcessTerminal(asyncDir, runId, `${runId}-runner`);
+				writeProcessTerminalCandidate(asyncDir, {
+					version: 1,
+					runId,
+					runnerProcessInstanceId: `${runId}-runner`,
+					expectedWriters: { "0": 1 },
+					writers: { "0": [{ processInstanceId: "writer-1", kind: "pi-writer", attempt: 0, closeObservedAt: 1400, exitCode: 0, signal: null, processTree: { state: "observed", mechanism: "posix-process-group", processGroupId: 123, verifiedAt: 1450 } }] },
+				});
 				return asyncDir;
 			};
+			const close = (asyncDir: string) => finalizeProcessTerminal(asyncDir, path.basename(asyncDir), { processInstanceId: `${path.basename(asyncDir)}-runner`, closeObservedAt: 1600, exitCode: 0, signal: null });
 			const options = { resultsDir, pidNamespaceScope: () => undefined, now: () => 2000 };
+			const deadPid = () => { throw errno("ESRCH"); };
 
 			const live = finishedRun("run-live");
 			reconcileAsyncRun(live, { ...options, kill: () => true });
 			assert.equal(readProcessTerminal(live)?.state, "pending");
 
-			const dead = finishedRun("run-dead");
-			reconcileAsyncRun(dead, { ...options, kill: () => { throw errno("ESRCH"); } });
-			const settled = readProcessTerminal(dead);
+			const settledFirst = finishedRun("run-settled-first");
+			reconcileAsyncRun(settledFirst, { ...options, kill: deadPid });
+			const settled = readProcessTerminal(settledFirst);
 			assert.equal(settled?.state, "unknown");
 			assert.equal(settled?.reason, "observer-unavailable");
+			assert.equal(JSON.parse(fs.readFileSync(processTerminalPath(settledFirst), "utf-8")).state, "pending");
+			assert.equal(close(settledFirst).state, "observed");
+			assert.equal(readProcessTerminal(settledFirst)?.state, "observed");
 
-			writeProcessTerminalCandidate(dead, {
-				version: 1,
-				runId: "run-dead",
-				runnerProcessInstanceId: "run-dead-runner",
-				expectedWriters: { "0": 1 },
-				writers: { "0": [{ processInstanceId: "writer-1", kind: "pi-writer", attempt: 0, closeObservedAt: 1400, exitCode: 0, signal: null, processTree: { state: "observed", mechanism: "posix-process-group", processGroupId: 123, verifiedAt: 1450 } }] },
-			});
-			const closed = finalizeProcessTerminal(dead, "run-dead", { processInstanceId: "run-dead-runner", closeObservedAt: 1600, exitCode: 0, signal: null });
-			assert.equal(closed.state, "observed");
-			assert.equal(readProcessTerminal(dead)?.state, "observed");
+			// The launching Pi sees the close between the reconciler's pending read and its write.
+			const racing = finishedRun("run-racing");
+			reconcileAsyncRun(racing, { ...options, kill: () => { close(racing); return deadPid(); } });
+			assert.equal(readProcessTerminal(racing)?.state, "observed");
+
+			const closedFirst = finishedRun("run-closed-first");
+			assert.equal(close(closedFirst).state, "observed");
+			reconcileAsyncRun(closedFirst, { ...options, kill: deadPid });
+			assert.equal(readProcessTerminal(closedFirst)?.state, "observed");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

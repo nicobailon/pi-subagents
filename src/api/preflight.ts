@@ -23,7 +23,7 @@ import { loadConfig } from "../extension/config.ts";
 import { applyIntercomBridgeToAgent, resolveIntercomBridge, validateIntercomBridgeConfig } from "../intercom/intercom-bridge.ts";
 import { AGENT_DEFINITION_PROJECTION_VERSION, resolveLaunchBinding, stableJsonDigest } from "../shared/launch-contract.ts";
 import { DIRS, TEMP_ROOT_DIR } from "../shared/types.ts";
-import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
+import { processTerminalCandidatePath, processTerminalPath, unobservedRunnerExitPath } from "../runs/background/process-terminal.ts";
 import { resultFilePath } from "../runs/background/result-files.ts";
 import { nestedResultsPath } from "../runs/shared/nested-events.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../runs/shared/extension-bindings.ts";
@@ -178,6 +178,7 @@ export interface SubagentLaunchContractRoots {
 		eventsPath: string;
 		processTerminalPath: string;
 		processTerminalCandidatePath: string;
+		unobservedRunnerExitPath: string;
 	};
 }
 
@@ -579,6 +580,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 				eventsPath: path.join(lifecycleAsyncDir, "events.jsonl"),
 				processTerminalPath: processTerminalPath(lifecycleAsyncDir),
 				processTerminalCandidatePath: processTerminalCandidatePath(lifecycleAsyncDir),
+				unobservedRunnerExitPath: unobservedRunnerExitPath(lifecycleAsyncDir),
 			},
 		},
 		protocol: {

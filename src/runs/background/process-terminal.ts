@@ -26,6 +26,15 @@ export function processTerminalPath(asyncDir: string): string {
 	return path.join(asyncDir, "process-terminal.json");
 }
 
+/**
+ * A status reader's verdict that a finished run's runner died with no Pi watching it. It is a separate file so a
+ * reader can never overwrite the proof the launching Pi writes when it does see the close; it shows only while
+ * process-terminal.json is still pending for the same runner.
+ */
+export function unobservedRunnerExitPath(asyncDir: string): string {
+	return path.join(asyncDir, "process-terminal-unobserved.json");
+}
+
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -96,11 +105,30 @@ export function sanitizeProcessTerminal(value: unknown, fallback: { runId?: stri
 	}
 }
 
+/** Throws for an unreadable or invalid file, like the sidecar it stands in for. */
+function readUnobservedRunnerExit(asyncDir: string, pending: ProcessTerminal): ProcessTerminal | undefined {
+	const filePath = unobservedRunnerExitPath(asyncDir);
+	let raw: unknown;
+	try {
+		raw = JSON.parse(fs.readFileSync(filePath, "utf-8")) as unknown;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+	// Left behind by an earlier runner instance of this run.
+	if (isRecord(raw) && (raw.runId !== pending.runId || raw.runnerProcessInstanceId !== pending.runnerProcessInstanceId)) return undefined;
+	validateProof(raw, filePath);
+	const proof = raw as ProcessTerminal;
+	if (proof.state !== "unknown" || proof.reason !== "observer-unavailable") throw new Error(`Invalid unobserved runner exit in '${asyncDir}'.`);
+	return proof;
+}
+
 export function readProcessTerminal(asyncDir: string, fallback?: { runId?: string; runnerProcessInstanceId?: string }): ProcessTerminal | undefined {
 	try {
 		const raw = JSON.parse(fs.readFileSync(processTerminalPath(asyncDir), "utf-8")) as unknown;
 		validateProof(raw, asyncDir, fallback);
-		return raw as ProcessTerminal;
+		const proof = raw as ProcessTerminal;
+		return proof.state === "pending" ? readUnobservedRunnerExit(asyncDir, proof) ?? proof : proof;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		return unknownProof(fallback?.runId ?? path.basename(asyncDir), fallback?.runnerProcessInstanceId ?? "unknown", "proof-write-failed", errorMessage(error));
