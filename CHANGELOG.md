@@ -5,6 +5,7 @@
 ### Fixed
 
 - A background subagent that finishes after the Pi process that started it has exited, for example because Pi was restarted, no longer waits forever for proof that its process exited. Only the Pi that started a subagent sees its process close, so when that Pi was gone the proof stayed pending and the workflow that launched the subagent never reported its processes as settled. Once the subagent's process is confirmed gone, its proof now reads as unknown with the reason `observer-unavailable`. Thanks to [@tdslot](https://github.com/tdslot) for the report (#3304).
+- A subagent placed in a Herdr pane (`machine: "local"`) no longer fails to start with `is not an active named agent`. Herdr keeps a newly started agent pending until someone asks for its state, so retrying the first prompt alone never got through; pi-subagents now waits for the agent to be ready before it prompts again. Thanks to [@TheEdgeOfRage](https://github.com/TheEdgeOfRage) for #3312.
 - A subagent that lists `mcp:<server>` in its `tools` now starts when that server's MCP config sets `"openUi": false`. Before, it failed with `Unresolved MCP direct-tool selectors` even though the server was connected and cached, because pi-mcp-adapter 7 includes `openUi: false` in the server's cache hash and pi-subagents did not (#3310). Thanks to [@carlesba](https://github.com/carlesba) for #3311.
 
 ## [0.89.1] - 2026-11-18
