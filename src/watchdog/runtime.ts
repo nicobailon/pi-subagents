@@ -113,6 +113,15 @@ export function boundWatchdogReviewText(text: string, cap = MAX_REVIEW_INPUT_CHA
 	return `${text.slice(0, head)}${marker}${text.slice(text.length - (cap - head - marker.length))}`;
 }
 
+// The reviewer must not read missing text as proof that an instruction or authorization never happened.
+function omittedDeltaNote(chars: number): string {
+	return `[Parts of this run's turn delta omitted: about ${chars} characters are not shown, to fit the review input limit. Do not report an instruction, authorization, or action as absent unless the supplied evidence shows it; it may be in an omitted part.]`;
+}
+
+const OMITTED_NOTE_RESERVE = omittedDeltaNote(Number.MAX_SAFE_INTEGER).length + 2;
+// Retained delta leaves room for the note, so a note never forces a second cut of the delta.
+const MAX_RETAINED_DELTA_CHARS = MAX_REVIEW_INPUT_CHARS - OMITTED_NOTE_RESERVE;
+
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
@@ -147,7 +156,7 @@ export class MainWatchdogRuntime {
 	private status: WatchdogRuntimeStatus = "idle";
 	private pendingDeltas: string[] = [];
 	private pendingDeltaChars = 0;
-	private droppedDeltaChars = 0;
+	private omittedDeltaChars = 0;
 	private guard = new WatchdogEmissionGuard();
 	private guardMaxWarnings: number | null = null;
 	private epoch = 0;
@@ -847,14 +856,17 @@ export class MainWatchdogRuntime {
 	private appendBoundedDelta(delta: string): void {
 		let entry = delta.trim();
 		if (!entry) return;
-		if (entry.length > MAX_REVIEW_INPUT_CHARS) entry = boundWatchdogReviewText(entry);
+		if (entry.length > MAX_RETAINED_DELTA_CHARS) {
+			this.omittedDeltaChars += entry.length - MAX_RETAINED_DELTA_CHARS;
+			entry = boundWatchdogReviewText(entry, MAX_RETAINED_DELTA_CHARS);
+		}
 		this.pendingDeltas.push(entry);
 		this.pendingDeltaChars += entry.length;
-		while (this.pendingDeltas.length > 1 && this.pendingDeltaChars + (this.pendingDeltas.length - 1) * REVIEW_DELTA_SEPARATOR.length > MAX_REVIEW_INPUT_CHARS) {
+		while (this.pendingDeltas.length > 1 && this.pendingDeltaChars + (this.pendingDeltas.length - 1) * REVIEW_DELTA_SEPARATOR.length > MAX_RETAINED_DELTA_CHARS) {
 			const removed = this.pendingDeltas.shift();
 			if (removed) {
 				this.pendingDeltaChars -= removed.length;
-				this.droppedDeltaChars += removed.length;
+				this.omittedDeltaChars += removed.length;
 			}
 		}
 	}
@@ -891,12 +903,10 @@ export class MainWatchdogRuntime {
 		return [boundedContext, boundedInput].filter(Boolean).join(REVIEW_DELTA_SEPARATOR);
 	}
 
-	// The reviewer must not read missing turns as proof that an instruction or authorization never happened.
 	private boundDeltaInput(input: string, cap: number): string {
-		const omitted = this.droppedDeltaChars + Math.max(0, input.length - cap);
-		if (!input || omitted === 0) return boundWatchdogReviewText(input, cap);
-		const note = `[Earlier turns omitted: about ${omitted} characters of this run's turn delta are not shown, to fit the review input limit. Do not report an instruction, authorization, or action as absent unless the supplied evidence shows it; it may be in an omitted turn.]`;
-		return boundWatchdogReviewText(`${note}\n\n${input}`, cap);
+		if (!input || (this.omittedDeltaChars === 0 && input.length <= cap)) return input;
+		const bodyCap = cap - OMITTED_NOTE_RESERVE;
+		return `${omittedDeltaNote(this.omittedDeltaChars + Math.max(0, input.length - bodyCap))}\n\n${boundWatchdogReviewText(input, bodyCap)}`;
 	}
 
 	private scopeBlock(): string {
@@ -906,7 +916,7 @@ export class MainWatchdogRuntime {
 	private clearPendingDeltas(): void {
 		this.pendingDeltas = [];
 		this.pendingDeltaChars = 0;
-		this.droppedDeltaChars = 0;
+		this.omittedDeltaChars = 0;
 	}
 
 	private clearActivity(): void {

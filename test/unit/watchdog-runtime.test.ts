@@ -600,9 +600,11 @@ describe("main watchdog runtime", () => {
 		runtime.enqueueDelta(`Assistant:\n${"x".repeat(30_000)}`);
 		await runtime.handleAgentEnd({ type: "agent_end", messages: [] }, { cwd: "/tmp/project" });
 
-		assert.equal(reviewedDelta.length, 24_000, "head + marker + tail fill the cap exactly");
-		assert.match(reviewedDelta, /^Assistant:\nx+\n\n\[\.\.\. about \d+ characters omitted \.\.\.\]\n\nx+$/);
-		assert.equal(reviewedDelta.indexOf("\n\n[..."), 6_000, "the first 6,000 characters are kept as the head");
+		assert.ok(reviewedDelta.length <= 24_000 && reviewedDelta.length > 23_000, "note + head + marker + tail fill the cap");
+		const shape = reviewedDelta.match(/^\[Parts of this run's turn delta omitted: about (\d+) characters[^\n]*\]\n\n(Assistant:\nx+)\n\n\[\.\.\. about \d+ characters omitted \.\.\.\]\n\nx+$/);
+		assert.ok(shape, "the reviewer is told that part of the over-long turn was cut");
+		assert.ok(Number(shape[1]) > 6_000, "the note counts the cut characters");
+		assert.ok(shape[2]!.length > 5_000, "the start of the turn is kept as the head");
 	});
 
 	it("does not record duplicate signatures for stale invalidated reviews", async () => {
@@ -755,8 +757,9 @@ describe("main watchdog runtime", () => {
 		runtime.enqueueDelta(`Assistant:\n${"x".repeat(30_000)}`);
 		await runtime.handleAgentEnd({ type: "agent_end" }, { cwd: repo });
 
-		assert.equal(reviewedDelta.length, 24_000);
 		assert.match(reviewedDelta, /^Current scope:/);
+		assert.ok(reviewedDelta.length <= 24_000);
+		assert.match(reviewedDelta, /\[Parts of this run's turn delta omitted: about \d+ characters/);
 		assert.match(reviewedDelta, /Changed repo paths:/);
 		assert.match(reviewedDelta, /src\/file\.ts/);
 		assert.match(reviewedDelta, /x+$/);
@@ -1179,9 +1182,9 @@ describe("main watchdog runtime", () => {
 		assert.ok(deltas[0]!.length <= 24_000);
 		assert.match(deltas[0]!, /Supervisor replies this agent received through contact_supervisor[^\n]*\nTool call: contact_supervisor[\s\S]*Write exactly two records\./);
 		assert.doesNotMatch(deltas[0]!, /AAAA/, "the reply's own turn and the first filler were dropped from the delta");
-		assert.match(deltas[0]!, /\[Earlier turns omitted: about \d+ characters/);
+		assert.match(deltas[0]!, /\[Parts of this run's turn delta omitted: about \d+ characters/);
 		assert.match(deltas[1]!, /Write exactly two records\./, "the reply stays in scope for the next prompt");
-		assert.doesNotMatch(deltas[1]!, /Earlier turns omitted/);
+		assert.doesNotMatch(deltas[1]!, /turn delta omitted/);
 	});
 
 	it("keeps every retained supervisor reply whole beside scope and changed paths", async () => {

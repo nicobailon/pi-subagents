@@ -69,7 +69,7 @@ Child watchdog findings are lifted into the parent in three ways:
 
 ## What the reviewer is given
 
-- **Turn delta** with changed repo paths. Over-long input keeps the first 6,000 characters and the tail. When earlier turns of the run were dropped to fit, the delta starts with a note saying so, and the reviewer is told not to report an instruction as missing when it may be in an omitted turn.
+- **Turn delta** with changed repo paths. Over-long input keeps up to the first 6,000 characters and the tail. Whenever any of the run's turn text was left out to fit (whole turns dropped, or one long turn or the delta cut), the delta starts with a note saying how much, and the reviewer is told not to report an instruction as missing when it may be in an omitted part.
 - **Current scope** (`scope.enabled`, default on): bounded real user prompts. Side questions are additive; only explicit changes supersede older requirements. Scope survives compaction within the current session.
 - **Supervisor replies** (with scope, child watchdogs): paired `contact_supervisor` decision and interview requests with their non-error replies, kept outside the turn delta so a long run cannot drop them. Each entry is bounded to 3,000 characters, with a 6,000-character recent tail kept for the session like scope.
 - **`watchdog_diff`** when inside git: diff since the session-start commit, including later commits, plus untracked paths to inspect with `read`; accepts `path` and `stat:true`.
