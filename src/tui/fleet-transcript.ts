@@ -44,8 +44,16 @@ function renderExpandedTool(
 	const output = event.output ?? event.error;
 	const outputColor = event.status === "error" ? "error" : "toolOutput";
 	if (event.name === "bash") {
-		const command = jsonScalar(args?.command) ?? event.args ?? "(unknown command)";
-		lines.push(railLine(`${glyph} ${theme.fg("toolTitle", theme.bold(`$ ${command}`))}`, width, theme));
+		const command = jsonScalar(args?.command);
+		let first = true;
+		for (const commandLine of (command ?? event.args ?? "(unknown command)").split(/\r?\n/)) {
+			for (const wrapped of renderWrapped(theme.fg("toolTitle", theme.bold(first ? `$ ${commandLine}` : commandLine)), Math.max(1, width - 4))) {
+				lines.push(railLine(`${first ? glyph : " "} ${wrapped}`, width, theme));
+				first = false;
+			}
+		}
+		// An unparseable payload was cut at the transcript size cap; show it raw so its truncation marker is visible.
+		if (command === undefined && !args && event.argsPayload) lines.push(...renderArgsPayload(event.argsPayload, width, theme));
 		if (output) {
 			for (const outputLine of output.replace(/\s+$/, "").split(/\r?\n/)) {
 				for (const wrapped of renderWrapped(theme.fg(outputColor, outputLine), Math.max(1, width - 4))) {
@@ -74,12 +82,7 @@ function renderExpandedTool(
 		return lines;
 	}
 	lines.push(railLine(`${glyph} ${theme.fg("toolTitle", theme.bold(event.name))}`, width, theme));
-	if (event.argsPayload) {
-		lines.push(railLine(theme.fg("dim", "  args"), width, theme));
-		for (const argLine of event.argsPayload.split(/\r?\n/)) {
-			for (const wrapped of renderWrapped(theme.fg("muted", argLine), Math.max(1, width - 4))) lines.push(railLine(`  ${wrapped}`, width, theme));
-		}
-	}
+	if (event.argsPayload) lines.push(...renderArgsPayload(event.argsPayload, width, theme));
 	if (output) {
 		lines.push(railLine(theme.fg(event.status === "error" ? "error" : "dim", event.status === "error" ? "  error" : "  output"), width, theme));
 		for (const outputLine of output.split(/\r?\n/)) {
@@ -91,6 +94,14 @@ function renderExpandedTool(
 
 function bounded(text: string, width: number): string {
 	return truncateToWidth(text, Math.max(0, width));
+}
+
+function renderArgsPayload(payload: string, width: number, theme: Theme): string[] {
+	const lines = [railLine(theme.fg("dim", "  args"), width, theme)];
+	for (const argLine of payload.split(/\r?\n/)) {
+		for (const wrapped of renderWrapped(theme.fg("muted", argLine), Math.max(1, width - 4))) lines.push(railLine(`  ${wrapped}`, width, theme));
+	}
+	return lines;
 }
 
 function railLine(content: string, width: number, theme: Theme): string {

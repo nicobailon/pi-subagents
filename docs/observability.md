@@ -120,7 +120,7 @@ Default keys:
 - `↑`/`↓` or `j`/`k` — select a child
 - `K`/`J` (Shift+k / Shift+j) — scroll output one line
 - `PgUp`/`PgDn` — scroll output one body viewport page (structured headers stay pinned)
-- `x`/`Ctrl+O` — toggle tool details
+- `x`/`Ctrl+O` — toggle tool details, including each tool call's full arguments (a multiline `bash` command shows every line)
 - `r` — refresh
 - `Esc` — close
 - `Enter` — open the selected inspectable async child through the available Inspect plugin

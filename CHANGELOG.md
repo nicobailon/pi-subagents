@@ -5,6 +5,7 @@
 ### Fixed
 
 - A background subagent that finishes after the Pi process that started it has exited, for example because Pi was restarted, no longer waits forever for proof that its process exited. Only the Pi that started a subagent sees its process close, so when that Pi was gone the proof stayed pending and the workflow that launched the subagent never reported its processes as settled. Once the subagent's process is confirmed gone, its proof now reads as unknown with the reason `observer-unavailable`. Thanks to [@tdslot](https://github.com/tdslot) for the report (#3304).
+- In `/subagents-fleet`, expanding tool details (`x` or `Ctrl+O`) now shows a `bash` call's whole command, every line wrapped to the pane, while it runs and after it finishes. Before, a multiline script such as a heredoc was cut to one line. When the saved arguments were too large to keep in full, the expanded view now shows what was saved and says it was truncated. Thanks to [@power22c](https://github.com/power22c) for the report (#3308).
 
 ## [0.89.1] - 2026-11-18
 
