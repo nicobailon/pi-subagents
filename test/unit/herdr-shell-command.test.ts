@@ -57,3 +57,12 @@ describe("formatShellCommand on Windows PowerShell", () => {
 		);
 	});
 });
+
+describe("formatShellCommand for a POSIX pane on Windows", () => {
+	it("omits the call operator and quotes for the POSIX shell", () => {
+		assert.equal(
+			formatShellCommand("C:\\Program Files\\nodejs\\node.exe", ["cli.js"], "win32", "posix"),
+			`sh -c 'exec "$0" "$@"' 'C:\\Program Files\\nodejs\\node.exe' 'cli.js'`,
+		);
+	});
+});
