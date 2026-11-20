@@ -42,6 +42,7 @@ export interface McpServerDefinition {
 	pluginDataDir?: string;
 	literalEnv?: boolean;
 	inheritEnv?: boolean;
+	openUi?: boolean;
 	/** Only literal true disables a server, matching pi-mcp-adapter. */
 	disabled?: boolean;
 }
@@ -57,7 +58,7 @@ export function isMcpServerDefinition(value: unknown): value is McpServerDefinit
 	for (const field of ["env", "headers"] as const) {
 		if (value[field] !== undefined && !isStringRecord(value[field])) return false;
 	}
-	for (const field of ["exposeResources", "literalEnv", "inheritEnv"] as const) {
+	for (const field of ["exposeResources", "literalEnv", "inheritEnv", "openUi"] as const) {
 		if (value[field] !== undefined && typeof value[field] !== "boolean") return false;
 	}
 	if (value.requestHeadersCommand !== undefined && !isRequestHeadersCommand(value.requestHeadersCommand)) return false;
