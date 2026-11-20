@@ -5,6 +5,7 @@
 ### Fixed
 
 - A background subagent that finishes after the Pi process that started it has exited, for example because Pi was restarted, no longer waits forever for proof that its process exited. Only the Pi that started a subagent sees its process close, so when that Pi was gone the proof stayed pending and the workflow that launched the subagent never reported its processes as settled. Once the subagent's process is confirmed gone, its proof now reads as unknown with the reason `observer-unavailable`. Thanks to [@tdslot](https://github.com/tdslot) for the report (#3304).
+- On Windows, a Herdr project pane opened by pi-subagents now starts Pi when the pane runs Git Bash or another POSIX shell. The launch command was always written for PowerShell, so a Git Bash pane failed with `syntax error near unexpected token '&'` and never started. Thanks to [@mystery4f](https://github.com/mystery4f) for #3306.
 
 ## [0.89.1] - 2026-11-18
 

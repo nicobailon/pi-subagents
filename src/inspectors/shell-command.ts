@@ -8,7 +8,7 @@ function isBareExecutable(value: string): boolean {
 }
 
 // Windows does not imply PowerShell: a Herdr pane may run Git Bash or another POSIX shell, which cannot parse the call operator.
-export type ShellFlavor = "auto" | "posix" | "powershell";
+export type ShellFlavor = "auto" | "posix";
 
 export function formatShellCommand(exe: string, args: readonly string[], platform: NodeJS.Platform = process.platform, flavor: ShellFlavor = "auto"): string {
 	const posix = flavor === "posix" || (flavor === "auto" && platform !== "win32");
