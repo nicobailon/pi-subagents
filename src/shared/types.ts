@@ -2576,6 +2576,8 @@ export interface RunSyncOptions {
 	remoteReads?: string[] | false;
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
+	/** Workflow child label; names the child session instead of the task excerpt. */
+	label?: string;
 	signal?: AbortSignal;
 	/** Report a child ended by `signal` as stopped; set for workflow children, whose signal is the workflow's. */
 	abortedAsStopped?: boolean;
