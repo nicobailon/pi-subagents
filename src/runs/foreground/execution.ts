@@ -383,7 +383,7 @@ async function runSingleAttempt(
 	// Display name for the child session: applied inside the child through its
 	// runtime config and echoed back on the result payload so hosts can label
 	// this run without reading the child's session file.
-	const childSessionName = deriveChildSessionName({ agent: agent.name, task: shared.originalTask ?? task });
+	const childSessionName = deriveChildSessionName({ agent: agent.name, task: shared.originalTask ?? task, label: options.label });
 	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
 	const childWatchdog = watchdogConfig.ok
 		? resolveChildWatchdogConfig({
@@ -1750,7 +1750,7 @@ async function runSyncCompletionInner(
 		...options,
 		capabilityCeiling: intersectSubagentCapabilityCeilings(options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId), options.childRuntime?.capabilityCeiling),
 	};
-	const childSessionName = deriveChildSessionName({ agent: agentName, task });
+	const childSessionName = deriveChildSessionName({ agent: agentName, task, label: options.label });
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
 		const diagnosticContext = options.unknownAgentDiagnosticContext

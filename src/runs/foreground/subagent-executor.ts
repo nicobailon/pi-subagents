@@ -349,6 +349,8 @@ export interface SubagentParamsLike {
 	/** Internal workflow ownership metadata; not part of the public schema. */
 	workflowParentRunId?: string;
 	workflowKey?: string;
+	/** Workflow child's `runs.run` label, trimmed; names the child's own session instead of a task excerpt. */
+	label?: string;
 	lane?: import("../../shared/types.ts").WorkflowLaneMetadata;
 	/** Set by the scheduler so this run's completion can name the schedule that produced it. */
 	scheduleOrigin?: ScheduleOrigin;
@@ -3767,6 +3769,8 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			runFanoutBudget: data.runFanoutBudget,
 			parentWorkflowRunId: params.workflowParentRunId,
 			workflowKey: params.workflowKey,
+			// Top-level calls pass unknown keys through; only a workflow child's label is normalized.
+			label: params.workflowParentRunId !== undefined ? params.label : undefined,
 			lane: params.lane,
 			workflowAwaitAsync: params.workflowAwaitAsync,
 		}));
@@ -4469,6 +4473,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
 			cwd: singleCwd,
 			requestedCwd: data.requestedCwd,
+			label: params.workflowParentRunId !== undefined ? params.label : undefined,
 			signal,
 			abortedAsStopped: params.workflowParentRunId !== undefined,
 			interruptSignal: interruptController.signal,
@@ -5279,6 +5284,10 @@ export function prepareWorkflowLaunchParams(
 		...(options.suppressRoutineResultIntercom ? { suppressRoutineResultIntercom: true } : {}),
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 	} as SubagentParamsLike;
+	// Scripts pass `label` unchecked; keep only a non-empty string so session naming can trust the field.
+	const label = typeof childParams.label === "string" ? childParams.label.trim() : "";
+	if (label) launchParams.label = label;
+	else delete launchParams.label;
 	if (launchParams.extensionBindings !== undefined) launchParams.extensionBindings = normalizeExtensionBindings(launchParams.extensionBindings)!.value;
 	const normalizedGate = normalizeGateParams(launchParams);
 	if (!normalizedGate.ok) throw new Error(normalizedGate.error);
@@ -8289,7 +8298,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (workflowLaunchObserver) {
 				const singleTask = hasTasks && effectiveParams.tasks?.length === 1 ? effectiveParams.tasks[0] : undefined;
 				const singleSessionName = hasSingle
-					? deriveChildSessionName({ agent: effectiveParams.agent!, task: effectiveParams.task })
+					? deriveChildSessionName({ agent: effectiveParams.agent!, task: effectiveParams.task, label: effectiveParams.label })
 					: singleTask
 						? deriveChildSessionName({ agent: singleTask.agent, task: singleTask.task })
 						: undefined;

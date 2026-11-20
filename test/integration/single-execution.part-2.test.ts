@@ -64,6 +64,7 @@ import { toSubagentDelegationExecutionParams, toSubagentDelegationUpdate } from 
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-output.ts";
 import { ensureSupervisorChannelDir, resolveSupervisorChannelDir } from "../../src/intercom/native-supervisor-channel.ts";
+import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 
 /** Every saved foreground run: one file each under results/foreground-history. */
 function savedForegroundRuns<T>(): T[] {
@@ -2081,6 +2082,39 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			assert.equal(matches[0]?.awaitedByWorkflow, undefined);
 		} finally {
 			watcher.stopResultWatcher();
+		}
+	});
+
+	it("names a labeled workflow child's own session and async step by its label", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")], {}, true, undefined, true, new Map(), undefined, undefined, createEventBus());
+		const ctx = makeMinimalCtx(tempDir);
+		// The executor runs workflow children async by default, so omitting `async` gives an awaited async child.
+		for (const [index, childAsync] of [false, true].entries()) {
+			mockPi.onCall({ output: "done" });
+			const result = await executor.execute(
+				`labeled-child-${childAsync}`,
+				{ async: false, workflowScript: `return runs.run("child", { agent: "echo", label: " Validate sanitizer tests ", task: "Run the sanitizer suite and report every failing case",${childAsync ? "" : " async: false,"} acceptance: false, output: false });` },
+				new AbortController().signal, undefined, ctx,
+			);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+			assert.equal(mockPi.callCount(), index + 1);
+			assert.equal(readCall().runtime?.sessionName, "echo: Validate sanitizer tests");
+			if (!childAsync) continue;
+			const child = result.details.workflow?.value as { runId?: string };
+			const status = JSON.parse(fs.readFileSync(path.join(DIRS.async, child.runId!, "status.json"), "utf-8")) as AsyncStatus;
+			assert.deepEqual(status.steps?.map(({ label, sessionName }) => ({ label, sessionName })), [{ label: "Validate sanitizer tests", sessionName: "echo: Validate sanitizer tests" }]);
+		}
+	});
+
+	it("ignores a label passed on a top-level call", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const ctx = makeMinimalCtx(tempDir);
+		for (const label of ["Top level injected", 5]) {
+			mockPi.onCall({ output: "done" });
+			const params = flattenSubagentToolOptions({ agent: "echo", task: "Run the sanitizer suite", label, async: false });
+			const result = await executor.executePublic(`top-level-label-${label}`, params, new AbortController().signal, undefined, ctx);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
+			assert.equal(readCall().runtime?.sessionName, "echo: Run the sanitizer suite");
 		}
 	});
 
