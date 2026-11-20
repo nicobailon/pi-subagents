@@ -498,6 +498,7 @@ export function computeMcpServerHash(definition: ServerEntry): string {
 		includeTools: definition.includeTools,
 		excludeTools: definition.excludeTools,
 		protocolVersion: definition.protocolVersion,
+		...(definition.openUi === false ? { openUi: false } : {}),
 	};
 	return createHash("sha256").update(stableStringify(identity)).digest("hex");
 }
