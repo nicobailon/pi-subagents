@@ -69,8 +69,9 @@ Child watchdog findings are lifted into the parent in three ways:
 
 ## What the reviewer is given
 
-- **Turn delta** with changed repo paths. Over-long input keeps the first 6,000 characters and the tail.
+- **Turn delta** with changed repo paths. Over-long input keeps up to the first 6,000 characters and the tail. Whenever any of the run's turn text was left out to fit (whole turns dropped, or one long turn or the delta cut), the delta starts with a note saying how much, and the reviewer is told not to report an instruction as missing when it may be in an omitted part.
 - **Current scope** (`scope.enabled`, default on): bounded real user prompts. Side questions are additive; only explicit changes supersede older requirements. Scope survives compaction within the current session.
+- **Supervisor replies** (with scope, child watchdogs): paired `contact_supervisor` decision and interview requests with their non-error replies, kept outside the turn delta so a long run cannot drop them. Each entry is bounded to 3,000 characters, with a 6,000-character recent tail kept for the session like scope.
 - **`watchdog_diff`** when inside git: diff since the session-start commit, including later commits, plus untracked paths to inspect with `read`; accepts `path` and `stat:true`.
 - **`WATCHDOG.md`** standing instructions, read fresh on every review: `<project>/.pi/WATCHDOG.md` first, then `~/.pi/agent/WATCHDOG.md`, capped at 8,000 characters. Set `guidance.watchdogMd: false` to ignore them.
 - **LSP diagnostics** from `typescript-language-server`, auto-detected in `node_modules/.bin` or `PATH`; it is never installed and never run over the whole workspace. Errors become blockers, warnings concerns, and info/hints stay in status.
@@ -122,7 +123,7 @@ With this opt-in, completed `turn_end` events retain a recent actual-activity ta
 
 New unreviewed activity permits at most one additional boundary review per user prompt even with no local edit. Side questions keep earlier authorized task evidence available; they do not themselves trigger a model call. Activity gathered after that prompt's extra review remains available for the next prompt. Warning continuations cannot supply fresh triggering activity. No polling, task scheduling, cross-worktree scans or idle calls are added.
 
-**Visibility limit:** external task/gate completions are visible when returned through those parent tool results. Standalone native completion notifications, arbitrary custom messages, direct shell/CI output, and events not delivered to the parent through these contracts are not ingested by this activity tail. Existing scope retains at most eight prompts (2,000 characters each); new streaming user input cancels an active review but is not added to scope unless `before_agent_start` fires. Reminders depend on retained evidence and model judgment, not an exhaustive view of running work.
+**Visibility limit:** external task/gate completions are visible when returned through those parent tool results. Standalone native completion notifications, arbitrary custom messages, direct shell/CI output, and events not delivered to the parent through these contracts are not ingested by this activity tail. Existing scope retains at most eight prompts (2,000 characters each); new streaming user input cancels an active review and is added to scope. Reminders depend on retained evidence and model judgment, not an exhaustive view of running work.
 
 Set `subagents.watchdog.clarification: true` in Pi settings alongside `enabled: true`. It defaults to `false` and applies **only to the main watchdog**, not child watchdogs or child permission arbitration.
 
