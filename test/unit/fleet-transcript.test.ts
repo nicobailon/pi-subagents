@@ -135,6 +135,29 @@ describe("Fleet inspector structured transcript", () => {
 		}
 	});
 
+	it("shows a running bash tool's full multiline command when tools are expanded", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-bash-args-"));
+		try {
+			const command = "python3 - <<'PY'\nfrom pathlib import Path\nimport json\nprint(json.dumps({'cwd': str(Path('.').resolve()), 'note': 'a long line that has to wrap'}))\nPY";
+			const truncatedPayload = `${JSON.stringify({ command: "cat <<'EOF'\nhuge" }, null, 2).slice(0, 20)}\n\n… payload truncated`;
+			const transcriptPath = writeTranscript(root, [
+				{ recordType: "tool_start", toolName: "bash", argsPreview: "python3 - <<'PY' from pathlib import Path import json...", argsPayload: JSON.stringify({ command }, null, 2), ts: 1000 },
+				{ recordType: "tool_start", toolName: "bash", argsPreview: "cat <<'EOF' huge...", argsPayload: truncatedPayload, ts: 1100 },
+			]);
+			const transcript = readFleetTranscript(transcriptPath, { trustedRoots: [root] });
+			const compact = renderFleetTranscript(transcript, 40, theme as never, markdownTheme).join("\n");
+			assert.ok(!compact.includes("print(json.dumps"));
+
+			const expanded = renderFleetTranscript(transcript, 40, theme as never, markdownTheme, { expandedTools: true });
+			assert.ok(expanded.every((line) => visibleWidth(line) <= 40));
+			const text = expanded.join("\n");
+			for (const fragment of ["$ python3 - <<'PY'", "from pathlib import Path", "import json", "has to wrap", "PY"]) assert.ok(text.includes(fragment), fragment);
+			assert.ok(text.includes("payload truncated"));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps ANSI-styled tool output within the requested width", () => {
 		const transcript = {
 			path: "/trusted/transcript.jsonl",
