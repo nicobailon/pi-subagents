@@ -876,14 +876,15 @@ export class MainWatchdogRuntime {
 		const supervisor = this.configResult.config.scope.enabled && this.supervisorReplies.length
 			? `Supervisor replies this agent received through contact_supervisor (oldest first; the orchestrator's answers to this agent's questions, which can authorize or redirect its work):\n${this.supervisorReplies.join(REVIEW_DELTA_SEPARATOR)}`
 			: "";
-		const contextPieces = [scopeBlock, changes, lspBlock, activity, supervisor].filter(Boolean);
-		if (!contextPieces.length) return this.boundDeltaInput(input, MAX_REVIEW_INPUT_CHARS);
+		const contextPieces = [scopeBlock, changes, lspBlock, activity].filter(Boolean);
+		if (!contextPieces.length && !supervisor) return this.boundDeltaInput(input, MAX_REVIEW_INPUT_CHARS);
 
 		const maxContextLength = Math.floor(MAX_REVIEW_INPUT_CHARS / 2);
 		const maxPieceLength = Math.max(1_000, Math.floor(maxContextLength / contextPieces.length));
-		const boundedContext = contextPieces.map((piece) => piece.length > maxPieceLength
-			? piece === activity || piece === supervisor ? boundWatchdogReviewText(piece, maxPieceLength) : `${piece.slice(0, maxPieceLength - 6)}\n- ...`
-			: piece).join(REVIEW_DELTA_SEPARATOR);
+		// Supervisor replies are already bounded to whole entries at retention; a second head+tail cut would drop whole replies.
+		const boundedContext = [...contextPieces.map((piece) => piece.length > maxPieceLength
+			? piece === activity ? boundWatchdogReviewText(piece, maxPieceLength) : `${piece.slice(0, maxPieceLength - 6)}\n- ...`
+			: piece), supervisor].filter(Boolean).join(REVIEW_DELTA_SEPARATOR);
 		const separatorLength = input ? REVIEW_DELTA_SEPARATOR.length : 0;
 		const inputBudget = MAX_REVIEW_INPUT_CHARS - boundedContext.length - separatorLength;
 		const boundedInput = inputBudget <= 0 ? "" : this.boundDeltaInput(input, inputBudget);

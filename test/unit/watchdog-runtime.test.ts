@@ -1184,6 +1184,31 @@ describe("main watchdog runtime", () => {
 		assert.doesNotMatch(deltas[1]!, /Earlier turns omitted/);
 	});
 
+	it("keeps every retained supervisor reply whole beside scope and changed paths", async () => {
+		const deltas: string[] = [];
+		const ctx = { cwd: "/tmp/project" };
+		let key = "baseline";
+		const runtime = new MainWatchdogRuntime({
+			resolveConfig: () => configResult(enabledConfig()),
+			reviewChangesOnly: true,
+			repoChangeSignature: () => ({ root: ctx.cwd, key, changedPaths: ["src/records.ts"] }),
+			review: (request) => { deltas.push(request.delta); return { stopReason: "stop" }; },
+		});
+		const replies = [1, 2, 3].map((index) => `reply-${index}-start ${String(index).repeat(1_700)} reply-${index}-end`);
+
+		runtime.handleBeforeAgentStart({ prompt: "Write the records." }, ctx);
+		replies.forEach((text, index) => runtime.handleTurnEnd(activityTurn("contact_supervisor", { reason: "need_decision", message: `Question ${index + 1}?` }, text, `ask-${index}`), ctx));
+		for (const filler of ["A", "B", "C", "D"]) runtime.handleTurnEnd({ message: { role: "assistant", content: filler.repeat(8_000) } }, ctx);
+		key = "edited";
+		await runtime.handleAgentEnd({}, ctx);
+
+		assert.equal(deltas.length, 1);
+		assert.ok(deltas[0]!.length <= 24_000);
+		assert.match(deltas[0]!, /Changed repo paths:[\s\S]*src\/records\.ts/);
+		assert.match(deltas[0]!, /Write the records\./);
+		for (const text of replies) assert.ok(deltas[0]!.includes(text), `${text.slice(0, 14)} survives whole`);
+	});
+
 	it("adds user messages sent while the agent streams to the scope record", async () => {
 		let reviewedDelta = "";
 		const runtime = new MainWatchdogRuntime({
