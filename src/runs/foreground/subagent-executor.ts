@@ -3769,7 +3769,8 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			runFanoutBudget: data.runFanoutBudget,
 			parentWorkflowRunId: params.workflowParentRunId,
 			workflowKey: params.workflowKey,
-			label: params.label,
+			// Top-level calls pass unknown keys through; only a workflow child's label is normalized.
+			label: params.workflowParentRunId !== undefined ? params.label : undefined,
 			lane: params.lane,
 			workflowAwaitAsync: params.workflowAwaitAsync,
 		}));
@@ -4472,7 +4473,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
 			cwd: singleCwd,
 			requestedCwd: data.requestedCwd,
-			label: params.label,
+			label: params.workflowParentRunId !== undefined ? params.label : undefined,
 			signal,
 			abortedAsStopped: params.workflowParentRunId !== undefined,
 			interruptSignal: interruptController.signal,
