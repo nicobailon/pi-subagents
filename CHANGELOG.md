@@ -5,6 +5,7 @@
 ### Fixed
 
 - A background subagent that finishes after the Pi process that started it has exited, for example because Pi was restarted, no longer waits forever for proof that its process exited. Only the Pi that started a subagent sees its process close, so when that Pi was gone the proof stayed pending and the workflow that launched the subagent never reported its processes as settled. Once the subagent's process is confirmed gone, its proof now reads as unknown with the reason `observer-unavailable`. Thanks to [@tdslot](https://github.com/tdslot) for the report (#3304).
+- A child watchdog no longer warns that a change the supervisor approved was unauthorised. When a subagent asks its supervisor a question and follows the reply, the reviewer now always sees that question and reply, even in a long run whose earlier turns no longer fit in the review. Before, the reply could fall out of the review, and the watchdog reported the instruction as missing and suggested undoing correct work. The reviewer is also told when earlier turns were left out, so it does not treat missing evidence as proof. Thanks to [@mannainsect](https://github.com/mannainsect) for the report (#3307).
 
 ## [0.89.1] - 2026-11-18
 

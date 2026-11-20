@@ -12,7 +12,7 @@ import {
 import { ruleViolationWarning, type WatchdogRuleViolation } from "./rules.ts";
 import { WatchdogScopeArtifact } from "./scope.ts";
 import { resolveWatchdogConfig } from "./settings.ts";
-import { formatWatchdogOrchestrationActivity, formatWatchdogTurnDelta } from "./turn-delta.ts";
+import { formatWatchdogOrchestrationActivity, formatWatchdogSupervisorReplies, formatWatchdogTurnDelta } from "./turn-delta.ts";
 import {
 	WATCHDOG_WARNING_IMPORTANCES,
 	type ResolvedWatchdogConfig,
@@ -103,6 +103,8 @@ const DEFAULT_REVIEW: WatchdogReviewFunction = () => ({ warnings: [] });
 const MAX_REVIEW_INPUT_CHARS = 24_000;
 const REVIEW_INPUT_HEAD_CHARS = 6_000;
 const REVIEW_DELTA_SEPARATOR = "\n\n---\n\n";
+const MAX_SUPERVISOR_REPLY_CHARS = 3_000;
+const MAX_SUPERVISOR_REPLIES_CHARS = 6_000;
 
 export function boundWatchdogReviewText(text: string, cap = MAX_REVIEW_INPUT_CHARS): string {
 	if (text.length <= cap) return text;
@@ -145,6 +147,7 @@ export class MainWatchdogRuntime {
 	private status: WatchdogRuntimeStatus = "idle";
 	private pendingDeltas: string[] = [];
 	private pendingDeltaChars = 0;
+	private droppedDeltaChars = 0;
 	private guard = new WatchdogEmissionGuard();
 	private guardMaxWarnings: number | null = null;
 	private epoch = 0;
@@ -183,6 +186,7 @@ export class MainWatchdogRuntime {
 	private activityTail = "";
 	private activityPending = false;
 	private activityReviewUsed = false;
+	private supervisorReplies: string[] = [];
 
 	constructor(options: MainWatchdogRuntimeOptions = {}) {
 		this.cwd = options.cwd ?? process.cwd();
@@ -295,7 +299,10 @@ export class MainWatchdogRuntime {
 			this.lspLedger.reset();
 			this.lastLspSnapshot = undefined;
 		}
-		if (options.clearScope) this.scope.reset();
+		if (options.clearScope) {
+			this.scope.reset();
+			this.supervisorReplies = [];
+		}
 		if (options.clearScope || options.clearActivity) this.clearActivity();
 		if (options.clearReviewInputSignature) this.lastReviewInputSignature = undefined;
 		if (options.resetChangeSignature) this.resetRepoChangeBaseline({ reviewed: true });
@@ -320,6 +327,7 @@ export class MainWatchdogRuntime {
 		this.lastLspSnapshot = undefined;
 		this.lspLedger.reset();
 		this.scope.reset();
+		this.supervisorReplies = [];
 		this.observedRepoEditThisTurn = false;
 		this.toolResultsThisRun = 0;
 		this.midRunReviewing = false;
@@ -356,6 +364,7 @@ export class MainWatchdogRuntime {
 					this.activityPending = true;
 				}
 			}
+			this.retainSupervisorReplies(event);
 			this.observedRepoEditThisTurn ||= eventIndicatesRepoEdit(event);
 			const delta = formatWatchdogTurnDelta({
 				includeUserPrompt: this.includeUserPromptInNextDelta,
@@ -843,8 +852,18 @@ export class MainWatchdogRuntime {
 		this.pendingDeltaChars += entry.length;
 		while (this.pendingDeltas.length > 1 && this.pendingDeltaChars + (this.pendingDeltas.length - 1) * REVIEW_DELTA_SEPARATOR.length > MAX_REVIEW_INPUT_CHARS) {
 			const removed = this.pendingDeltas.shift();
-			if (removed) this.pendingDeltaChars -= removed.length;
+			if (removed) {
+				this.pendingDeltaChars -= removed.length;
+				this.droppedDeltaChars += removed.length;
+			}
 		}
+	}
+
+	// Kept outside the rolling delta so a long run cannot push the supervisor's instruction out of the review input.
+	private retainSupervisorReplies(event: unknown): void {
+		for (const reply of formatWatchdogSupervisorReplies(event)) this.supervisorReplies.push(boundWatchdogReviewText(reply, MAX_SUPERVISOR_REPLY_CHARS));
+		let total = this.supervisorReplies.reduce((sum, reply) => sum + reply.length, 0);
+		while (this.supervisorReplies.length > 1 && total > MAX_SUPERVISOR_REPLIES_CHARS) total -= this.supervisorReplies.shift()!.length;
 	}
 
 	private buildReviewInput(changeSignature?: WatchdogRepoChangeSignature, lspBlock = ""): string {
@@ -854,18 +873,29 @@ export class MainWatchdogRuntime {
 			? ["Changed repo paths: every dirty path in the working tree. Authorship is not verified; a path may predate this session or come from another session.", ...changeSignature.changedPaths.slice(0, 200).map((file) => `- ${file}`)].join("\n")
 			: "";
 		const activity = this.activityTail ? `Recent delivered orchestration activity (oldest first; bounded observations, not a task board; waits/holds are not evidence of neglect):\n${this.activityTail}` : "";
-		const contextPieces = [scopeBlock, changes, lspBlock, activity].filter(Boolean);
-		if (!contextPieces.length) return boundWatchdogReviewText(input);
+		const supervisor = this.configResult.config.scope.enabled && this.supervisorReplies.length
+			? `Supervisor replies this agent received through contact_supervisor (oldest first; the orchestrator's answers to this agent's questions, which can authorize or redirect its work):\n${this.supervisorReplies.join(REVIEW_DELTA_SEPARATOR)}`
+			: "";
+		const contextPieces = [scopeBlock, changes, lspBlock, activity, supervisor].filter(Boolean);
+		if (!contextPieces.length) return this.boundDeltaInput(input, MAX_REVIEW_INPUT_CHARS);
 
 		const maxContextLength = Math.floor(MAX_REVIEW_INPUT_CHARS / 2);
 		const maxPieceLength = Math.max(1_000, Math.floor(maxContextLength / contextPieces.length));
 		const boundedContext = contextPieces.map((piece) => piece.length > maxPieceLength
-			? piece === activity ? boundWatchdogReviewText(piece, maxPieceLength) : `${piece.slice(0, maxPieceLength - 6)}\n- ...`
+			? piece === activity || piece === supervisor ? boundWatchdogReviewText(piece, maxPieceLength) : `${piece.slice(0, maxPieceLength - 6)}\n- ...`
 			: piece).join(REVIEW_DELTA_SEPARATOR);
 		const separatorLength = input ? REVIEW_DELTA_SEPARATOR.length : 0;
 		const inputBudget = MAX_REVIEW_INPUT_CHARS - boundedContext.length - separatorLength;
-		const boundedInput = inputBudget <= 0 ? "" : boundWatchdogReviewText(input, inputBudget);
+		const boundedInput = inputBudget <= 0 ? "" : this.boundDeltaInput(input, inputBudget);
 		return [boundedContext, boundedInput].filter(Boolean).join(REVIEW_DELTA_SEPARATOR);
+	}
+
+	// The reviewer must not read missing turns as proof that an instruction or authorization never happened.
+	private boundDeltaInput(input: string, cap: number): string {
+		const omitted = this.droppedDeltaChars + Math.max(0, input.length - cap);
+		if (!input || omitted === 0) return boundWatchdogReviewText(input, cap);
+		const note = `[Earlier turns omitted: about ${omitted} characters of this run's turn delta are not shown, to fit the review input limit. Do not report an instruction, authorization, or action as absent unless the supplied evidence shows it; it may be in an omitted turn.]`;
+		return boundWatchdogReviewText(`${note}\n\n${input}`, cap);
 	}
 
 	private scopeBlock(): string {
@@ -875,6 +905,7 @@ export class MainWatchdogRuntime {
 	private clearPendingDeltas(): void {
 		this.pendingDeltas = [];
 		this.pendingDeltaChars = 0;
+		this.droppedDeltaChars = 0;
 	}
 
 	private clearActivity(): void {

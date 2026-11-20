@@ -1161,6 +1161,29 @@ describe("main watchdog runtime", () => {
 		} finally { runtime.dispose(); }
 	});
 
+	it("keeps a child's supervisor reply in the review input after its turn falls out of the delta", async () => {
+		const deltas: string[] = [];
+		const runtime = new MainWatchdogRuntime({ resolveConfig: () => configResult(enabledConfig()), review: (request) => { deltas.push(request.delta); return { stopReason: "stop" }; } });
+		const ctx = { cwd: "/tmp/project" };
+		const reply = activityTurn("contact_supervisor", { reason: "need_decision", message: "Write which records?" }, "**Reply from supervisor:**\nWrite exactly two records.");
+
+		runtime.handleBeforeAgentStart({ prompt: "Write the records." }, ctx);
+		runtime.handleTurnEnd(reply, ctx);
+		for (const filler of ["A", "B", "C", "D"]) runtime.handleTurnEnd({ message: { role: "assistant", content: filler.repeat(8_000) } }, ctx);
+		await runtime.handleAgentEnd({}, ctx);
+		runtime.handleBeforeAgentStart({ prompt: "Write the records." }, ctx);
+		runtime.handleTurnEnd({ message: { role: "assistant", content: "Wrote two records." } }, ctx);
+		await runtime.handleAgentEnd({}, ctx);
+
+		assert.equal(deltas.length, 2);
+		assert.ok(deltas[0]!.length <= 24_000);
+		assert.match(deltas[0]!, /Supervisor replies this agent received through contact_supervisor[^\n]*\nTool call: contact_supervisor[\s\S]*Write exactly two records\./);
+		assert.doesNotMatch(deltas[0]!, /AAAA/, "the reply's own turn and the first filler were dropped from the delta");
+		assert.match(deltas[0]!, /\[Earlier turns omitted: about \d+ characters/);
+		assert.match(deltas[1]!, /Write exactly two records\./, "the reply stays in scope for the next prompt");
+		assert.doesNotMatch(deltas[1]!, /Earlier turns omitted/);
+	});
+
 	it("adds user messages sent while the agent streams to the scope record", async () => {
 		let reviewedDelta = "";
 		const runtime = new MainWatchdogRuntime({
