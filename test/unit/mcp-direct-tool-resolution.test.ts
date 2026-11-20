@@ -90,6 +90,15 @@ describe("MCP direct-tool resolution config sources", () => {
 		assert.equal(computeMcpServerHash({ ...CURRENT_DEFINITION, inheritEnv: false }), "345b359732aa3ece7fdf8b98b9927809243685846c2b375e98a312a80e89e333");
 	});
 
+	it("computes config hashes identical to pi-mcp-adapter 7.0.1 for servers with openUi: false", () => {
+		// Values computed by pi-mcp-adapter 7.0.1's computeServerHash; only openUi: false joins the identity.
+		const definition: McpServerDefinition = { url: "http://localhost/mcp", auth: "oauth" };
+		const withoutOpenUi = "6f7f3deed30790a48b18787aae9e43e9fb30719992b62e112cb7254fbf541069";
+		assert.equal(computeMcpServerHash(definition), withoutOpenUi);
+		assert.equal(computeMcpServerHash({ ...definition, openUi: true }), withoutOpenUi);
+		assert.equal(computeMcpServerHash({ ...definition, openUi: false }), "8a3a121af2bde03e92d5d8d4151819e5bb5d9d0bc50e67315f46847d6fc3c0c5");
+	});
+
 	it("expands ${NAME:-default} like pi-mcp-adapter when hashing", () => {
 		// Values computed by pi-mcp-adapter's computeServerHash with the same environment.
 		const names = ["PI_SUBAGENTS_TEST_SET", "PI_SUBAGENTS_TEST_EMPTY", "PI_SUBAGENTS_TEST_UNSET"] as const;
