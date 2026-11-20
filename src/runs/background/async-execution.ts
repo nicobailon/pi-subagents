@@ -352,6 +352,8 @@ interface AsyncSingleParams {
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
+	/** Workflow child label; names the child session and its status step. */
+	label?: string;
 	lane?: WorkflowLaneMetadata;
 	workflowAwaitAsync?: boolean;
 	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
@@ -2261,6 +2263,7 @@ export function executeAsyncSingle(
 						...(capabilityCeiling ? { capabilityCeiling } : {}),
 						agent,
 						task: taskText,
+						...(params.label ? { label: params.label } : {}),
 						...(agentConfig.runner ? { runner: agentConfig.runner } : {}),
 						...(singleClaudeCodeOverride ? { claudeCodeOverrideArgs: singleClaudeCodeOverride.args } : {}),
 						...(machine ? { machine } : {}),
@@ -2386,7 +2389,7 @@ export function executeAsyncSingle(
 				chainStepCount: 1,
 				...(lane ? { lane } : {}),
 				...(launcher ? { launcher } : {}),
-				steps: [{ agent, status: "pending", ...(lane ? { lane } : {}), ...(model ? { model } : {}), ...(contextLimit !== undefined ? { contextLimit } : {}) }],
+				steps: [{ agent, status: "pending", ...(params.label ? { label: params.label } : {}), ...(lane ? { lane } : {}), ...(model ? { model } : {}), ...(contextLimit !== undefined ? { contextLimit } : {}) }],
 			},
 			path.join(asyncDir, "status.json"),
 			launchParentSessionId,

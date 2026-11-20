@@ -2084,6 +2084,27 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		}
 	});
 
+	it("names a labeled workflow child's own session and async step by its label", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")], {}, true, undefined, true, new Map(), undefined, undefined, createEventBus());
+		const ctx = makeMinimalCtx(tempDir);
+		// The executor runs workflow children async by default, so omitting `async` gives an awaited async child.
+		for (const [index, childAsync] of [false, true].entries()) {
+			mockPi.onCall({ output: "done" });
+			const result = await executor.execute(
+				`labeled-child-${childAsync}`,
+				{ async: false, workflowScript: `return runs.run("child", { agent: "echo", label: " Validate sanitizer tests ", task: "Run the sanitizer suite and report every failing case",${childAsync ? "" : " async: false,"} acceptance: false, output: false });` },
+				new AbortController().signal, undefined, ctx,
+			);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+			assert.equal(mockPi.callCount(), index + 1);
+			assert.equal(readCall().runtime?.sessionName, "echo: Validate sanitizer tests");
+			if (!childAsync) continue;
+			const child = result.details.workflow?.value as { runId?: string };
+			const status = JSON.parse(fs.readFileSync(path.join(DIRS.async, child.runId!, "status.json"), "utf-8")) as AsyncStatus;
+			assert.deepEqual(status.steps?.map(({ label, sessionName }) => ({ label, sessionName })), [{ label: "Validate sanitizer tests", sessionName: "echo: Validate sanitizer tests" }]);
+		}
+	});
+
 	it("preserves original parent authority when reviving a foreground child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const callerRuntime: ChildRuntimeConfig = {
 			capabilityCeiling: {
