@@ -95,7 +95,10 @@ export const herdrPaneHost = {
 				if (!(error instanceof Error) || !error.message.includes("is not an active named agent") || clock.now() >= deadline) throw error;
 				const remainingMs = deadline - clock.now();
 				// Over RPC, agent.start returns with launch_pending and Herdr refuses prompts until the agent is observed ready; agent.wait blocks until then.
-				try { await connection.client.call("agent.wait", { target: identity.agentName, until: ["idle", "done"], timeout_ms: remainingMs }, remainingMs + 5_000); } catch { await clock.wait(Math.min(pollMs, remainingMs)); }
+				// A failed wait (older Herdr, name not registered yet, wait timeout) falls back to polling; the refusal stays the error reported at the deadline.
+				try { await connection.client.call("agent.wait", { target: identity.agentName, until: ["idle", "done"], timeout_ms: remainingMs }, remainingMs + 5_000); } catch {}
+				// agent.wait returns at once for an idle agent that Herdr still holds as launch-pending, so always pause before the next prompt.
+				await clock.wait(Math.min(pollMs, Math.max(0, deadline - clock.now())));
 				if (options.stopped?.()) throw new Error("Remote Pi prompt was not sent because the run was stopped.", { cause: error });
 			}
 		}
