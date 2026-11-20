@@ -189,3 +189,21 @@ export function formatWatchdogOrchestrationActivity(event: unknown): string {
 	}
 	return sections.join("\n\n");
 }
+
+/** A supervisor reply arrives as a tool result, never as a user prompt, so scope alone never records it. */
+export function formatWatchdogSupervisorReplies(event: unknown): string[] {
+	const turn = event as { type?: string; message?: { content?: unknown }; toolResults?: unknown[] } | undefined;
+	if (turn?.type !== "turn_end" || !Array.isArray(turn.message?.content) || !Array.isArray(turn.toolResults)) return [];
+	const entries: string[] = [];
+	for (const call of turn.message.content) {
+		if (call?.type !== "toolCall" || call.name !== "contact_supervisor" || typeof call.id !== "string") continue;
+		const args = call.arguments;
+		if (!args || typeof args !== "object" || !["need_decision", "interview_request"].includes(args.reason)) continue;
+		const result = turn.toolResults.find((value) => {
+			const result = value as { role?: string; toolCallId?: string; toolName?: string; isError?: boolean; error?: unknown };
+			return result?.role === "toolResult" && result.toolCallId === call.id && result.toolName === call.name && result.isError !== true && !result.error;
+		});
+		if (result) entries.push([formatToolCall(call.name, args), formatWatchdogReviewMessage(result) ?? ""].join("\n\n"));
+	}
+	return entries;
+}

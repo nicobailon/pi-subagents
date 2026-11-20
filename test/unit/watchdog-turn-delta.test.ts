@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { formatWatchdogOrchestrationActivity, formatWatchdogReviewMessage, formatWatchdogTurnDelta } from "../../src/watchdog/turn-delta.ts";
+import { formatWatchdogOrchestrationActivity, formatWatchdogReviewMessage, formatWatchdogSupervisorReplies, formatWatchdogTurnDelta } from "../../src/watchdog/turn-delta.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
 
 describe("watchdog turn delta formatter", () => {
@@ -163,5 +163,24 @@ describe("watchdog turn delta formatter", () => {
 		});
 		for (const id of ["call-0", "call-1", "call-2"]) assert.match(activity, new RegExp(`launched ${id}`));
 		assert.doesNotMatch(activity, /launched call-3/);
+	});
+
+	it("keeps only answered contact_supervisor decision and interview requests as supervisor replies", () => {
+		const calls = [
+			{ id: "decision", reason: "need_decision" },
+			{ id: "interview", reason: "interview_request" },
+			{ id: "progress", reason: "progress_update" },
+			{ id: "failed", reason: "need_decision" },
+			{ id: "unpaired", reason: "need_decision" },
+		].map(({ id, reason }) => ({ type: "toolCall", id, name: "contact_supervisor", arguments: { reason, message: `ask ${id}` } }));
+		const result = (id: string, extra: Record<string, unknown> = {}) => ({ role: "toolResult", toolCallId: id, toolName: "contact_supervisor", content: [{ type: "text", text: `reply ${id}` }], ...extra });
+		const replies = formatWatchdogSupervisorReplies({
+			type: "turn_end",
+			message: { content: calls },
+			toolResults: [result("decision"), result("interview"), result("progress"), result("failed", { isError: true }), result("other-id")],
+		});
+		assert.equal(replies.length, 2);
+		assert.match(replies[0]!, /^Tool call: contact_supervisor[\s\S]*ask decision[\s\S]*Tool result: contact_supervisor\nResult:\nreply decision$/);
+		assert.match(replies[1]!, /reply interview$/);
 	});
 });
