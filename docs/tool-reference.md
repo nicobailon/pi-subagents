@@ -118,7 +118,7 @@ The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `
 | `options.maxOutput` | object | none | Final output truncation limits `{ bytes?, lines? }`. For child runs it is only applied when set; there is no default cap on the inline path, so use `outputMode: "file-only"` for large outputs. For workflow script results, the Return, Emitted, and Console sections are always capped, at 200 KB / 5000 lines unless `maxOutput` sets other limits. |
 | `options.artifacts` | boolean | true | Write debug artifacts. |
 | `options.includeProgress` | boolean | false | Include full progress in result. |
-| `options.share` | boolean | false | Upload session export to GitHub Gist. |
+| `options.share` | boolean | false | Upload session export to GitHub Gist. Disable with `disabledFeatures: ["session-sharing"]`. |
 | `options.sessionDir` | string | derived | Override session log directory. |
 | `options.acceptance` | string/object/false | inferred | Configure evidence gates. See [Acceptance gates](#acceptance-gates). |
 | `options.gate` | string \| object | - | One host-run verification command, shorthand for `acceptance: { level: "verified", verify: [{ id: "gate", command }] }`. The object form `{ command, output?: "json", schema?, timeoutMs? }` adds a [typed gate](#typed-gates): with `output: "json"`, a passing command's stdout becomes the child's `structuredOutput`. Also valid on individual `runs.run`/`runs.all` items. Rejects `acceptance` except `false` (treated as omitted), rejects retained `resume`, and `output: "json"` rejects `outputSchema`. |
@@ -550,6 +550,10 @@ Intentionally unsupported: native Pi child options such as model override, struc
 ## Session sharing
 
 Pass `share: true` to export a full session to HTML, upload it to a secret GitHub Gist through your `gh` credentials, and return a `https://shittycodingagent.ai/session/?<gistId>` URL.
+
+A session can contain source code, file paths, environment variables, and credentials that appeared in tool output. A secret Gist is unlisted, not private: anyone holding the URL can read it, the upload is made under your GitHub account, and the returned link hands the Gist id to a third-party site. Nothing prompts before the upload, so treat `share: true` as publishing. With `context: "fork"` the exported session is a branch of the parent session, so the parent conversation is included.
+
+Setting `disabledFeatures: ["session-sharing"]` rejects `share` at every entry point (see [configuration](configuration.md#disabledfeatures)); this is the supported way to turn the capability off for an install.
 
 ```js workflow
 return runs.run("main", { agent: "scout", task: "..." });

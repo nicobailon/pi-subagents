@@ -87,6 +87,16 @@ describe("subagent tool options", () => {
 			return true;
 		});
 	});
+
+	it("rejects options.share when session sharing is disabled", () => {
+		const disabled = resolveDisabledFeatureSurface({ disabledFeatures: ["session-sharing"] });
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { share: true } }, disabled), { message: `subagent option 'options.share' is disabled by config disabledFeatures "session-sharing".` });
+		// A near miss must not name the option the setting removed, or the model would retry it.
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { shar: true } }, disabled), (error: Error) => {
+			assert.doesNotMatch(error.message, /\bshare\b/);
+			return true;
+		});
+	});
 });
 
 describe("registered subagent tools with options", () => {
