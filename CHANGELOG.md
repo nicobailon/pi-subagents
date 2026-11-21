@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- A foreground subagent run now emits `task:subagent:lifecycle` (`started`, then `completed`, `failed` or `aborted`) on Pi's extension event bus, so host apps that only watch `subagent:async-*` can show foreground runs. The payload carries the run id, agent name and the agent's description, never the task prompt. `subagent:async-started` for single, chain and parallel runs now also carries `description`, by the same rule.
+
 ## [0.89.2] - 2026-11-20
 
 ### Highlights

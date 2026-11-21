@@ -340,7 +340,13 @@ Async events:
 - `subagent:async-complete`
 - `subagent:jobs-changed` (see [extension-api.md](extension-api.md#refresh-a-host-view-without-polling))
 
-For regular async starts, the `subagent:async-started` payload includes redacted `task` and `goal` prompt fields. Async workflow script roots emit the same event with `mode: "workflow"` after their initial `status.json` is durable; workflow roots can omit `task`, and any included prompt fields are redacted. Their keyed children are then announced dynamically through `subagent:child-status`. Companion UI extensions can combine those hints with the authoritative live lifecycle artifacts under `asyncDir` without scraping terminal output.
+For regular async starts, the `subagent:async-started` payload includes redacted `task` and `goal` prompt fields. Single, chain and parallel starts also include `description`: the first agent's description, or its name when it has none, never the task prompt. Async workflow script roots emit the same event with `mode: "workflow"` after their initial `status.json` is durable; workflow roots can omit `task`, and any included prompt fields are redacted. Their keyed children are then announced dynamically through `subagent:child-status`. Companion UI extensions can combine those hints with the authoritative live lifecycle artifacts under `asyncDir` without scraping terminal output.
+
+Foreground lifecycle event:
+
+- `task:subagent:lifecycle`
+
+A foreground single run emits it with `status: "started"` when the child launches and `"completed"`, `"failed"` or `"aborted"` (stopped or paused) when it ends. Payload: `id` (the run id), `agent`, `description` (the agent's description, never the task prompt), `success` (terminal events only), `mode: "foreground"`, and `parentWorkflowRunId` / `workflowKey` when the run belongs to a workflow. A child detached to the background reports its terminal status when it exits. Hosts that only listen for `subagent:async-*` can use this event to show foreground runs. `subagent:foreground-complete` is unchanged.
 
 Intercom delivery events:
 
