@@ -317,8 +317,8 @@ describe("async retention cleanup", () => {
 	it("reclaims a finished workflow with its children and keeps workflows that are live, recent, or revived", async () => {
 		const roots = makeRoots();
 		try {
-			const writeWorkflow = (workflowRunId: string, childRunId: string, overrides: Record<string, unknown> = {}): void => {
-				writeOldRun(roots.asyncDirRoot, childRunId, { state: "failed", parentWorkflowRunId: workflowRunId, workflowKey: "build" });
+			const writeWorkflow = (workflowRunId: string, childRunId: string, overrides: Record<string, unknown> = {}, childOverrides: Record<string, unknown> = {}): void => {
+				writeOldRun(roots.asyncDirRoot, childRunId, { state: "failed", parentWorkflowRunId: workflowRunId, workflowKey: "build", ...childOverrides });
 				writeOldRun(roots.asyncDirRoot, workflowRunId, { mode: "workflow", steps: [{ agent: "worker", status: "failed", runId: childRunId, workflowKey: "build" }], ...overrides });
 			};
 			writeWorkflow("old-workflow", "old-child");
@@ -332,6 +332,13 @@ describe("async retention cleanup", () => {
 			const revival = writeOldRun(roots.asyncDirRoot, "revival", { state: "running" });
 			recordWorkflowRevival(roots.asyncDirRoot, "revived-child", "revival");
 			for (const runDir of [path.join(roots.asyncDirRoot, "revived-child"), revival]) fs.utimesSync(runDir, OLD / 1000, OLD / 1000);
+			const sessionFile = path.join(roots.root, "resumable-child.jsonl");
+			fs.writeFileSync(sessionFile, "{}\n");
+			writeWorkflow("resumable-workflow", "resumable-child", {}, { sessionFile });
+			writeWorkflow("broken-link-workflow", "broken-link-child");
+			const brokenLinkChild = path.join(roots.asyncDirRoot, "broken-link-child");
+			fs.writeFileSync(path.join(brokenLinkChild, "workflow-revival.json"), "{ unreadable link");
+			fs.utimesSync(brokenLinkChild, OLD / 1000, OLD / 1000);
 
 			// The workflow goes first; its child and result follow on the next pass.
 			const first = await cleanupAsyncRetention(cleanupOptions(roots));
@@ -342,9 +349,13 @@ describe("async retention cleanup", () => {
 				assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, runId)), true, runId);
 			}
 			assert.equal(fs.existsSync(oldChildResult), false);
+			// A child still inside the resumable window keeps its workflow for keyed resume.
+			assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, "resumable-workflow")), true);
+			// A revival link that cannot be read may hide a live revival, so the workflow is kept.
+			assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, "broken-link-workflow")), true);
 			assert.equal(first.deletedRuns + second.deletedRuns, 2);
 			assert.equal(first.deletedResults + second.deletedResults, 1);
-			assert.equal(second.skipped["workflow-reference"], 4);
+			assert.equal(second.skipped["workflow-reference"], 8);
 		} finally {
 			fs.rmSync(roots.root, { recursive: true, force: true });
 		}

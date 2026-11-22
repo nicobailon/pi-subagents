@@ -9,7 +9,7 @@ import type { AsyncStatus } from "../../shared/types.ts";
 import { readMissionBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
 import { MissionNotFoundError, readMission } from "../../missions/store.ts";
 import type { MissionStatus } from "../../missions/types.ts";
-import { projectWorkflowKeyRevival, REVIVAL_ORIGIN_FILE } from "../../workflows/workflow-revival.ts";
+import { projectWorkflowKeyRevival, REVIVAL_LINK_FILE, REVIVAL_ORIGIN_FILE } from "../../workflows/workflow-revival.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "./active-run-index.ts";
 import { encodeIndexSegment } from "./index-segment.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
@@ -240,9 +240,9 @@ function missionReferenceBlocksReclaim(runDir: string, resultsDir: string, runId
 	}
 }
 
-type ReferenceInput = { asyncDirRoot: string; cutoff: number; protectedRunIds: ReadonlySet<string>; waitRunIds: ReadonlySet<string> };
+type ReferenceInput = { asyncDirRoot: string; cutoff: number; resumableCutoff: number; protectedRunIds: ReadonlySet<string>; waitRunIds: ReadonlySet<string> };
 
-// A run is kept by its own state: live, waited on, recent, or unreadable. A missing run keeps nothing.
+// A run is kept by its own state: live, waited on, recent, resumable, or unreadable. A missing run keeps nothing.
 function runKept(input: ReferenceInput, runId: string): boolean {
 	const runDir = path.join(input.asyncDirRoot, runId);
 	if (!fs.existsSync(runDir)) return false;
@@ -250,7 +250,7 @@ function runKept(input: ReferenceInput, runId: string): boolean {
 	if (status?.runId !== runId || !TERMINAL_STATES.has(status.state)) return true;
 	if (input.protectedRunIds.has(runId) || input.waitRunIds.has(runId) || activeMarkerExists(input.asyncDirRoot, runId)) return true;
 	const timestamp = statusTimestamp(status, runDir);
-	return timestamp === undefined || timestamp > input.cutoff;
+	return timestamp === undefined || timestamp > input.cutoff || (timestamp > input.resumableCutoff && hasResumableContract(runDir, status));
 }
 
 // A workflow, its children and their revivals are reclaimed together: each is kept while any of them is.
@@ -258,7 +258,9 @@ function workflowTreeKept(input: ReferenceInput, workflow: AsyncStatus): boolean
 	return (workflow.steps ?? []).some((step) => {
 		if (!step.runId || !validRunId(step.runId)) return false;
 		const revived = step.workflowKey ? projectWorkflowKeyRevival(input.asyncDirRoot, workflow.runId, step.workflowKey, step.runId)?.revivedRunIds ?? [] : [];
-		return [step.runId, ...revived].some((runId) => runKept(input, runId));
+		const chain = [step.runId, ...revived];
+		// The chain ends at a link it could not follow when that link file is still there.
+		return fs.existsSync(path.join(input.asyncDirRoot, chain.at(-1)!, REVIVAL_LINK_FILE)) || chain.some((runId) => runKept(input, runId));
 	});
 }
 
