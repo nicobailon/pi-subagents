@@ -485,7 +485,7 @@ An explicit `subagent` call value wins over this default. Choose a value at leas
 
 Caps simultaneously running children inside one run, including durable legacy multi-child runs and workflow script launches through `runs.run`/`runs.all`. Queued workflow children retain their stable keys and begin when a running sibling releases capacity. The default is `20`. The value must be a positive integer; an invalid value fails config loading.
 
-Inline or file-backed top-level workflow calls may set a positive safe-integer `globalConcurrencyLimit` to override this value for that workflow. The override is workflow-only and is not forwarded to child calls.
+Top-level workflow calls (inline, file-backed, or named) may set a positive safe-integer `globalConcurrencyLimit` to override this value for that workflow. The override is workflow-only and is not forwarded to child calls.
 
 ## `maxSubagentSpawnsPerSession`
 
