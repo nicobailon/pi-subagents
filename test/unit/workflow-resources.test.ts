@@ -178,7 +178,7 @@ describe("named workflow resources", () => {
 
 		assert.deepEqual(resolveWorkflowResource("parallel", {}), { ok: false, error: "workflow 'parallel' args.tasks must be a non-empty array of { agent, task } items." });
 		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "reviewer" }] }) as { error: string }).error, /args\.tasks\[0\]\.task must be a non-empty string/);
-		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b" }], concurrency: 2 }) as { error: string }).error, /unsupported fields: concurrency/);
+		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b" }], concurrency: 2 }) as { error: string }).error, /unsupported fields: concurrency\. .* To cap how many run at once, pass globalConcurrencyLimit at the top level, alongside workflow and args\. No child was launched\.$/);
 		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b" }], worktree: true }) as { error: string }).error, /args contain unsupported fields: worktree\. .*Set worktree on the subagent call itself to give every child the same value/);
 	});
 

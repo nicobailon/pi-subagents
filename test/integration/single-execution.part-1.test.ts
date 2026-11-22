@@ -1288,6 +1288,28 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 2);
 	});
 
+	it("runs the built-in parallel workflow's tasks one at a time under a top-level globalConcurrencyLimit", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const release = path.join(tempDir, "serial-parallel.release");
+		mockPi.onCall({ waitForPath: release, output: "Serial child completed" });
+		const running = makeExecutor([makeAgent("reviewer"), makeAgent("scout")]).executePublic(
+			"named-parallel-serial",
+			{ workflow: "parallel", globalConcurrencyLimit: 1, args: { tasks: [{ agent: "reviewer", task: "Review src/api" }, { agent: "scout", task: "Map the tests" }] }, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		let settled = false;
+		void running.finally(() => { settled = true; });
+		for (const deadline = Date.now() + 10_000; mockPi.callCount() < 1 && !settled && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 20));
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		const concurrent = mockPi.callCount();
+		fs.writeFileSync(release, "go");
+		const result = await running;
+		assert.equal(concurrent, 1, "the second child waits while the first holds the only slot");
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "parallel workflow failed");
+		assert.equal(mockPi.callCount(), 2);
+	});
+
 	it("names each failed parallel child's provider stop text without the workflow fan-out line", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const filtered = { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Blocked by the provider's usage policy." }], model: "mock/model", stopReason: "error", rawStopReason: "content_filter", errorMessage: "Provider finish_reason: content_filter", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } };
 		mockPi.onCall({ exitCode: 1, jsonl: [filtered] });
