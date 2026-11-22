@@ -2514,6 +2514,18 @@ export interface RequiredRunnerLauncher {
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_PROCESS_TERMINAL_EVENT = "subagent:process-terminal";
 export const SUBAGENT_FOREGROUND_COMPLETE_EVENT = "subagent:foreground-complete";
+/** Generic lifecycle for a foreground child, so hosts can track runs that never emit `subagent:async-*`. Payload has no prompt text. */
+export const TASK_SUBAGENT_LIFECYCLE_EVENT = "task:subagent:lifecycle";
+export interface SubagentLifecycleEvent {
+	id: string;
+	status: "started" | "completed" | "failed" | "aborted";
+	agent: string;
+	description: string;
+	success?: boolean;
+	mode: "foreground";
+	parentWorkflowRunId?: string;
+	workflowKey?: string;
+}
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 export const SUBAGENT_STEERING_NOTICE_EVENT = "subagent:steering-notice";

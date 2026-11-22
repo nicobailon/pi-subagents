@@ -5,8 +5,9 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatAvailableAgentLines, formatUnknownAgentError, resolveAgentName, suggestAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir, missingForkCopyNote } from "../../shared/artifacts.ts";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { createAtomicJsonWriter, writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
+import { isRetryableFileSystemError, isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { reportSessionWarning } from "../../shared/session-warnings.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import {
@@ -207,6 +208,7 @@ import {
 	type WorkflowNodeStatus,
 	type WorkflowTerminalOutcome,
 	type SubagentRunMode,
+	type SubagentLifecycleEvent,
 	type SubagentState,
 	DIRS,
 	DEFAULT_ARTIFACT_CONFIG,
@@ -218,6 +220,7 @@ import {
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
+	TASK_SUBAGENT_LIFECYCLE_EVENT,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 	checkSubagentDepth,
 	resolveChildMaxSubagentDepth,
@@ -879,6 +882,19 @@ function rememberedForegroundChild(input: RememberedForegroundRunInput, result: 
 	};
 }
 
+/** The execution outcome a finished attached run is saved with; a rejected acceptance does not change it. */
+function foregroundExecutionStatus(result: SingleResult): ReturnType<typeof resolveSubagentResultStatus> {
+	return resolveSubagentResultStatus(omitUndefinedProperties({
+		exitCode: result.exitCode,
+		interrupted: result.interrupted,
+		detached: result.detached,
+		processSignal: result.processSignal,
+		timedOut: result.timedOut,
+		stopped: result.stopped,
+		turnBudgetExceeded: result.turnBudgetExceeded,
+	}));
+}
+
 function rememberForegroundRun(state: SubagentState, input: RememberedForegroundRunInput & { results: SingleResult[] }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
@@ -890,15 +906,7 @@ function rememberForegroundRun(state: SubagentState, input: RememberedForeground
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
 		updatedAt,
 		children: input.results.map((result, index) => {
-			const child = rememberedForegroundChild(input, result, index, resolveSubagentResultStatus(omitUndefinedProperties({
-				exitCode: result.exitCode,
-				interrupted: result.interrupted,
-				detached: result.detached,
-				processSignal: result.processSignal,
-				timedOut: result.timedOut,
-				stopped: result.stopped,
-				turnBudgetExceeded: result.turnBudgetExceeded,
-			})), updatedAt);
+			const child = rememberedForegroundChild(input, result, index, foregroundExecutionStatus(result), updatedAt);
 			const recovered = previous?.children[index];
 			return child.status === "detached" && recovered && recovered.status !== "detached" ? recovered : child;
 		}),
@@ -1162,6 +1170,24 @@ function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, o
 	if (foregroundError) throw foregroundError;
 	if (asyncError) throw asyncError;
 	throw new Error("Run not found. Provide id or runId.");
+}
+
+function foregroundLifecycleStatus(status: ReturnType<typeof resolveSubagentResultStatus>): SubagentLifecycleEvent["status"] {
+	if (status === "completed") return "completed";
+	return status === "stopped" || status === "paused" ? "aborted" : "failed";
+}
+
+/** Never throws: a host listener or a stale extension runtime must not fail a child run. */
+function emitForegroundLifecycle(pi: ExtensionAPI, input: { runId: string; agent: string; description: string; status: SubagentLifecycleEvent["status"]; parentWorkflowRunId?: string; workflowKey?: string }): void {
+	const payload: SubagentLifecycleEvent = { id: input.runId, status: input.status, agent: input.agent, description: input.description, mode: "foreground" };
+	if (input.status !== "started") payload.success = input.status === "completed";
+	if (input.parentWorkflowRunId) payload.parentWorkflowRunId = input.parentWorkflowRunId;
+	if (input.workflowKey) payload.workflowKey = input.workflowKey;
+	try {
+		pi.events.emit(TASK_SUBAGENT_LIFECYCLE_EVENT, payload);
+	} catch (error) {
+		if (!isStaleExtensionContextError(error)) console.error("Failed to emit foreground lifecycle event:", error);
+	}
 }
 
 function isStaleExtensionContextError(error: unknown): boolean {
@@ -3908,6 +3934,10 @@ function appendWorkflowOutputWarning(text: string, warning: string | undefined):
 }
 
 const WORKFLOW_TRACE_ERROR_MAX_CHARS = 500;
+// How long an async workflow keeps retrying a status.json write that a file lock blocks.
+const WORKFLOW_STATUS_LOCK_RETRY_WINDOW_MS = 60_000;
+// Deferred retries make one quick attempt per tick instead of blocking the event loop on a lock.
+const writeAtomicJsonWithoutLockWaits = createAtomicJsonWriter({ retryRenameErrors: false });
 
 // Return, emits, console, and trace errors (which carry child text) have no size limit of their
 // own, so only they are cut; other host sections stay whole. The saved full result is uncut.
@@ -4445,6 +4475,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const detachedWorkflowChild = params.workflowAwaitDetached === true
 		? new Promise<Awaited<ReturnType<typeof runSync>>>((resolve) => { resolveDetachedWorkflowChild = resolve; })
 		: undefined;
+	const lifecycleBase = {
+		runId,
+		agent: params.agent!,
+		description: agents.find((candidate) => candidate.name === params.agent)?.description?.trim() || params.agent!,
+		parentWorkflowRunId: params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId,
+		workflowKey: params.workflowKey,
+	};
 	try {
 		const childSessionFile = sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent, modelOrigin);
 		rememberRunningForegroundRun({
@@ -4459,6 +4496,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			}),
 			parentWorkflowRunId: params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId,
 		});
+		emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: "started" });
 		const launched = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			machine: foregroundMachine,
 			parentProviderRegistry: ctx.modelRegistry,
@@ -4535,6 +4573,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 					resolveDetachedWorkflowChild(result);
 					return;
 				}
+				// Same status updateRememberedForegroundChild saves and sends with subagent:foreground-complete.
+				emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: foregroundLifecycleStatus(foregroundResultIntercomStatus(result)) });
 				try {
 					if (worktreeSetup) {
 						try {
@@ -4594,7 +4634,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			};
 		}
 		r = launched.detached && detachedWorkflowChild ? await detachedWorkflowChild : launched;
+		if (!r.detached) emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: foregroundLifecycleStatus(foregroundExecutionStatus(r)) });
 	} catch (error) {
+		emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: "failed" });
 		discardRunningRecord();
 		await cleanupSingleWorktree();
 		throw error;
@@ -5929,10 +5971,38 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 				const pendingWorkflowChildAnnouncements = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
 				let announcePersistedWorkflowChildren = (): void => {};
+				let statusPersistenceDegraded = false;
+				let statusLockedSince: number | undefined;
+				const reportStatusWriteFailure = (error: unknown): void => {
+					const message = `Failed to persist async workflow state ${statusPath}: ${error instanceof Error ? error.message : String(error)}`;
+					console.error(message, error);
+					if (statusPersistenceDegraded) return;
+					statusPersistenceDegraded = true;
+					try {
+						appendWorkflowEvent({ type: "subagent.workflow.status_write_failed", error: message });
+					} catch (eventError) {
+						console.error(`Failed to record degraded status persistence for '${statusPath}':`, eventError);
+					}
+				};
+				// A Windows rename lock can outlast writeAtomicJson's own retries. Keep the newest
+				// status for the writer's 1s retry so a terminal state still lands once the lock
+				// clears, but only for WORKFLOW_STATUS_LOCK_RETRY_WINDOW_MS: a lock that never clears
+				// must not keep the referenced retry timer, and with it the process, alive.
+				const shouldDeferRunWrite = (error: unknown, filePath: string): boolean => {
+					if (isStorageCapacityError(error)) return true;
+					if (filePath !== statusPath || !isRetryableFileSystemError(error)) return false;
+					statusLockedSince ??= Date.now();
+					if (Date.now() - statusLockedSince >= WORKFLOW_STATUS_LOCK_RETRY_WINDOW_MS) return false;
+					if (!statusPersistenceDegraded) reportStatusWriteFailure(error);
+					return true;
+				};
 				const runPersistence = createCapacityResilientJsonWriter({
 					keepAlive: true,
+					shouldDefer: shouldDeferRunWrite,
 					onSuccess: (filePath, payload) => {
 						if (filePath === statusPath) {
+							statusPersistenceDegraded = false;
+							statusLockedSince = undefined;
 							announcePersistedWorkflowChildren();
 							queueActiveRunIndex(payload as AsyncStatus);
 						}
@@ -5945,17 +6015,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					write: (filePath, payload) => filePath === resultPath
 						? writeAsyncResultFile(filePath, payload as Record<string, unknown>)
 						: writeAtomicJson(filePath, payload),
+					retryWrite: (filePath, payload) => filePath === resultPath
+						? writeAsyncResultFile(filePath, payload as Record<string, unknown>)
+						: writeAtomicJsonWithoutLockWaits(filePath, payload),
 				});
 				let initialPersistenceComplete = false;
 				let persistClosed = false;
-				let statusPersistenceDegraded = false;
 				// Progress journalling runs from admit, launch, the launch and progress observers,
 				// onTrace and onEmit -- all inside the promises a workflowScript awaits. Those
 				// callers pass tolerateStatusWriteFailure so a transient lock on status.json cannot
-				// mark a finished child failed or abort its still-running siblings. Initial and
-				// terminal writes stay fail-fast on purpose: no child work is at risk by then, and
-				// silently dropping a terminal write would leave status.json and the active-run
-				// index pinned at "running" after the result already says complete.
+				// mark a finished child failed or abort its still-running siblings. The initial
+				// write stays fail-fast so a run without storage never starts. Teardown writes
+				// tolerate failure too: they run in a detached promise, so a throw there would
+				// crash the host. A locked status.json is retried by runPersistence instead.
 				const persist = (options: { tolerateStatusWriteFailure?: boolean } = {}): void => {
 					if (persistClosed) return;
 					const liveJob = deps.state.asyncJobs.get(workflowRunId);
@@ -5970,18 +6042,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					} else if (options.tolerateStatusWriteFailure) {
 						try {
 							runPersistence.write(statusPath, { ...status });
-							if (runPersistence.pendingCount() === 0) statusPersistenceDegraded = false;
 						} catch (error) {
-							const message = `Failed to persist async workflow state ${statusPath}: ${error instanceof Error ? error.message : String(error)}`;
-							console.error(message, error);
-							if (!statusPersistenceDegraded) {
-								statusPersistenceDegraded = true;
-								try {
-									appendWorkflowEvent({ type: "subagent.workflow.status_write_failed", error: message });
-								} catch (eventError) {
-									console.error(`Failed to record degraded status persistence for '${statusPath}':`, eventError);
-								}
-							}
+							reportStatusWriteFailure(error);
 						}
 					} else {
 						runPersistence.write(statusPath, { ...status });
@@ -6217,7 +6279,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					}
 					// Commit receipts while run status is still nonterminal. Result/index publication
 					// can fail next; teardown must not publish the subsequently computed terminal status.
-					persist();
+					persist({ tolerateStatusWriteFailure: true });
 				};
 				void Promise.resolve().then(async () => {
 					const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
@@ -6675,7 +6737,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflowResultChildren(workflow.children, status, false), workflow: status.workflow, ...(workflowCapabilityCeiling ? { admissionCapabilityCeiling: workflowCapabilityCeiling } : {}), ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						if (pendingResultPublication && !await pendingResultPublication) return;
-						persist();
+						persist({ tolerateStatusWriteFailure: true });
 						deps.refreshResultDelivery?.();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(workflowArgsDigest ? { argsDigest: workflowArgsDigest } : {}), ...(status.error ? { error: status.error } : {}) });
@@ -6732,7 +6794,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: workflowResultChildren(partial.children, status, true), workflow: status.workflow, ...(workflowCapabilityCeiling ? { admissionCapabilityCeiling: workflowCapabilityCeiling } : {}), ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						if (pendingResultPublication && !await pendingResultPublication) return;
-						persist();
+						persist({ tolerateStatusWriteFailure: true });
 						deps.refreshResultDelivery?.();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(workflowArgsDigest ? { argsDigest: workflowArgsDigest } : {}), ...(terminalOutcome ? { terminalOutcome } : {}), ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });

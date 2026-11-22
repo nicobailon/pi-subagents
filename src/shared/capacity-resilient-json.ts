@@ -14,12 +14,16 @@ const defaultTimerApi: TimerApi = {
 export type CapacityResilientJsonWriterOptions = {
 	/** It must be atomic for each target path. */
 	write?: (filePath: string, payload: object) => void;
+	/** Replaces `write` for deferred retries, so a timer tick can skip blocking lock waits. */
+	retryWrite?: (filePath: string, payload: object) => void;
 	/** Keep retry timers referenced by the event loop (needed by child runners). */
 	keepAlive?: boolean;
 	retryDelayMs?: number;
 	timerApi?: TimerApi;
 	onError?: (error: unknown, filePath: string) => void;
 	onSuccess?: (filePath: string, payload: object) => void;
+	/** Decides which failures keep the newest payload for retry. Default: storage-capacity errors. */
+	shouldDefer?: (error: unknown, filePath: string) => boolean;
 };
 
 export type CapacityResilientJsonWriter = {
@@ -29,17 +33,19 @@ export type CapacityResilientJsonWriter = {
 };
 
 /**
- * Defers only storage-capacity failures, retaining the newest payload per path.
- * Initial/ordinary writes remain synchronous and preserve their throwing contract;
- * only ENOSPC-like failures enter the guarded retry loop.
+ * Defers storage-capacity failures (or those `shouldDefer` accepts), retaining the
+ * newest payload per path. Initial/ordinary writes remain synchronous and preserve
+ * their throwing contract; only deferred failures enter the guarded retry loop.
  */
 export function createCapacityResilientJsonWriter(options: CapacityResilientJsonWriterOptions = {}): CapacityResilientJsonWriter {
 	const defaultWrite = options.write ?? writeAtomicJson;
+	const retryWrite = options.retryWrite ?? defaultWrite;
 	const keepAlive = options.keepAlive ?? false;
 	const retryDelayMs = options.retryDelayMs ?? 1_000;
 	const timerApi = options.timerApi ?? defaultTimerApi;
 	const onError = options.onError ?? ((error, filePath) => console.error(`Failed to persist JSON '${filePath}':`, error));
 	const onSuccess = options.onSuccess;
+	const shouldDefer = options.shouldDefer ?? isStorageCapacityError;
 	const reportError = (error: unknown, filePath: string): void => {
 		try {
 			onError(error, filePath);
@@ -68,7 +74,7 @@ export function createCapacityResilientJsonWriter(options: CapacityResilientJson
 					pending.delete(filePath);
 					notifySuccess(filePath, entry.payload);
 				} catch (error) {
-					if (isStorageCapacityError(error)) continue;
+					if (shouldDefer(error, filePath)) continue;
 					pending.delete(filePath);
 					reportError(error, filePath);
 				}
@@ -87,8 +93,8 @@ export function createCapacityResilientJsonWriter(options: CapacityResilientJson
 				pending.delete(filePath);
 				notifySuccess(filePath, payload);
 			} catch (error) {
-				if (!isStorageCapacityError(error)) throw error;
-				pending.set(filePath, { payload, write: writeOperation });
+				if (!shouldDefer(error, filePath)) throw error;
+				pending.set(filePath, { payload, write: writeOperation === defaultWrite ? retryWrite : writeOperation });
 				scheduleRetry();
 			}
 		},
