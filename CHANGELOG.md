@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- On Windows, an async workflow whose last writes to `status.json` failed with `EPERM` no longer crashes Pi. When another process held the file locked past the rename retries, the error escaped the workflow's background teardown and took the whole process down. The failure is now recorded as a `subagent.workflow.status_write_failed` event, and the workflow's result is still delivered. Thanks to [@M0-3del](https://github.com/M0-3del) for the report (#3325).
+- On Windows, an async workflow whose last writes to `status.json` failed with `EPERM` no longer crashes Pi. When another process held the file locked past the rename retries, the error escaped the workflow's background teardown and took the whole process down. The failure is now recorded as a `subagent.workflow.status_write_failed` event, the workflow's result is still delivered, and `status.json` catches up with the finished state once the lock clears (Pi keeps retrying for up to a minute). Thanks to [@M0-3del](https://github.com/M0-3del) for the report (#3325).
 
 ## [0.89.2] - 2026-11-20
 

@@ -77,6 +77,26 @@ describe("createCapacityResilientJsonWriter", () => {
 		}
 	});
 
+	it("defers and retries the failures a shouldDefer predicate accepts", () => {
+		const timers = createTimers();
+		const writes: object[] = [];
+		let locked = true;
+		const writer = createCapacityResilientJsonWriter({
+			timerApi: timers.timerApi,
+			shouldDefer: (error) => (error as NodeJS.ErrnoException).code === "EPERM",
+			write: (_filePath, payload) => {
+				if (locked) throw capacityError("EPERM");
+				writes.push(payload);
+			},
+		});
+		assert.doesNotThrow(() => writer.write("status.json", { state: "complete" }));
+		assert.equal(writer.pendingCount(), 1);
+		locked = false;
+		timers.runNext();
+		assert.deepEqual(writes, [{ state: "complete" }]);
+		assert.equal(writer.pendingCount(), 0);
+	});
+
 	it("preserves synchronous throwing for non-capacity failures", () => {
 		const writer = createCapacityResilientJsonWriter({ write: () => { throw new Error("invalid path"); } });
 		assert.throws(() => writer.write("status.json", {}), /invalid path/);

@@ -93,7 +93,8 @@ describe("host workflow result publication", { skip: !available }, () => {
 	it("records a terminal status write failure instead of crashing the host (#3325)", async () => {
 		// A Windows rename lock that outlasts the retries makes every teardown write to
 		// status.json throw EPERM. The workflow runs in a detached promise, so a throw there
-		// would surface as an unhandled rejection that takes down the host process.
+		// would surface as an unhandled rejection that takes down the host process, and a
+		// dropped write would leave the finished run listed as running.
 		const unhandled: unknown[] = [];
 		const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
 		process.on("unhandledRejection", onUnhandled);
@@ -123,6 +124,11 @@ describe("host workflow result publication", { skip: !available }, () => {
 			assert.equal(state.asyncJobs.get(id)?.status, "failed");
 			assert.equal((await readAsyncPayload(id)).state, "failed");
 			assert.match(fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf8"), /"type":"subagent\.workflow\.status_write_failed".*EPERM/);
+			assert.equal(JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf8")).state, "running");
+			// Once the lock clears, the retried terminal status lands and the run leaves the active index.
+			fs.renameSync = originalRename; syncBuiltinESMExports();
+			await waitForAsyncState(id, (status) => status.state === "failed");
+			assert.equal(fs.existsSync(path.join(ASYNC_DIR, ".active-runs", id)), false);
 		} finally {
 			fs.renameSync = originalRename; syncBuiltinESMExports();
 			process.off("unhandledRejection", onUnhandled);

@@ -7,6 +7,7 @@ import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatA
 import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir, missingForkCopyNote } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
+import { isRetryableFileSystemError, isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { reportSessionWarning } from "../../shared/session-warnings.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import {
@@ -3902,6 +3903,8 @@ function appendWorkflowOutputWarning(text: string, warning: string | undefined):
 }
 
 const WORKFLOW_TRACE_ERROR_MAX_CHARS = 500;
+// How long an async workflow keeps retrying a status.json write that a file lock blocks.
+const WORKFLOW_STATUS_LOCK_RETRY_WINDOW_MS = 60_000;
 
 // Return, emits, console, and trace errors (which carry child text) have no size limit of their
 // own, so only they are cut; other host sections stay whole. The saved full result is uncut.
@@ -5923,10 +5926,38 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 				const pendingWorkflowChildAnnouncements = new Map<string, NonNullable<AsyncStatus["steps"]>[number]>();
 				let announcePersistedWorkflowChildren = (): void => {};
+				let statusPersistenceDegraded = false;
+				let statusLockedSince: number | undefined;
+				const reportStatusWriteFailure = (error: unknown): void => {
+					const message = `Failed to persist async workflow state ${statusPath}: ${error instanceof Error ? error.message : String(error)}`;
+					console.error(message, error);
+					if (statusPersistenceDegraded) return;
+					statusPersistenceDegraded = true;
+					try {
+						appendWorkflowEvent({ type: "subagent.workflow.status_write_failed", error: message });
+					} catch (eventError) {
+						console.error(`Failed to record degraded status persistence for '${statusPath}':`, eventError);
+					}
+				};
+				// A Windows rename lock can outlast writeAtomicJson's own retries. Keep the newest
+				// status for the writer's 1s retry so a terminal state still lands once the lock
+				// clears, but only for WORKFLOW_STATUS_LOCK_RETRY_WINDOW_MS: a lock that never clears
+				// must not keep the referenced retry timer, and with it the process, alive.
+				const shouldDeferRunWrite = (error: unknown, filePath: string): boolean => {
+					if (isStorageCapacityError(error)) return true;
+					if (filePath !== statusPath || !isRetryableFileSystemError(error)) return false;
+					statusLockedSince ??= Date.now();
+					if (Date.now() - statusLockedSince >= WORKFLOW_STATUS_LOCK_RETRY_WINDOW_MS) return false;
+					if (!statusPersistenceDegraded) reportStatusWriteFailure(error);
+					return true;
+				};
 				const runPersistence = createCapacityResilientJsonWriter({
 					keepAlive: true,
+					shouldDefer: shouldDeferRunWrite,
 					onSuccess: (filePath, payload) => {
 						if (filePath === statusPath) {
+							statusPersistenceDegraded = false;
+							statusLockedSince = undefined;
 							announcePersistedWorkflowChildren();
 							queueActiveRunIndex(payload as AsyncStatus);
 						}
@@ -5942,15 +5973,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 				let initialPersistenceComplete = false;
 				let persistClosed = false;
-				let statusPersistenceDegraded = false;
 				// Progress journalling runs from admit, launch, the launch and progress observers,
 				// onTrace and onEmit -- all inside the promises a workflowScript awaits. Those
 				// callers pass tolerateStatusWriteFailure so a transient lock on status.json cannot
 				// mark a finished child failed or abort its still-running siblings. The initial
 				// write stays fail-fast so a run without storage never starts. Teardown writes
-				// tolerate failure too: they run in a detached promise, so a throw there (a Windows
-				// rename lock outlasting the retries) would crash the host; the failure is recorded
-				// as subagent.workflow.status_write_failed instead and result.json stays authoritative.
+				// tolerate failure too: they run in a detached promise, so a throw there would
+				// crash the host. A locked status.json is retried by runPersistence instead.
 				const persist = (options: { tolerateStatusWriteFailure?: boolean } = {}): void => {
 					if (persistClosed) return;
 					const liveJob = deps.state.asyncJobs.get(workflowRunId);
@@ -5965,18 +5994,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					} else if (options.tolerateStatusWriteFailure) {
 						try {
 							runPersistence.write(statusPath, { ...status });
-							if (runPersistence.pendingCount() === 0) statusPersistenceDegraded = false;
 						} catch (error) {
-							const message = `Failed to persist async workflow state ${statusPath}: ${error instanceof Error ? error.message : String(error)}`;
-							console.error(message, error);
-							if (!statusPersistenceDegraded) {
-								statusPersistenceDegraded = true;
-								try {
-									appendWorkflowEvent({ type: "subagent.workflow.status_write_failed", error: message });
-								} catch (eventError) {
-									console.error(`Failed to record degraded status persistence for '${statusPath}':`, eventError);
-								}
-							}
+							reportStatusWriteFailure(error);
 						}
 					} else {
 						runPersistence.write(statusPath, { ...status });

@@ -20,6 +20,8 @@ export type CapacityResilientJsonWriterOptions = {
 	timerApi?: TimerApi;
 	onError?: (error: unknown, filePath: string) => void;
 	onSuccess?: (filePath: string, payload: object) => void;
+	/** Decides which failures keep the newest payload for retry. Default: storage-capacity errors. */
+	shouldDefer?: (error: unknown, filePath: string) => boolean;
 };
 
 export type CapacityResilientJsonWriter = {
@@ -29,9 +31,9 @@ export type CapacityResilientJsonWriter = {
 };
 
 /**
- * Defers only storage-capacity failures, retaining the newest payload per path.
- * Initial/ordinary writes remain synchronous and preserve their throwing contract;
- * only ENOSPC-like failures enter the guarded retry loop.
+ * Defers storage-capacity failures (or those `shouldDefer` accepts), retaining the
+ * newest payload per path. Initial/ordinary writes remain synchronous and preserve
+ * their throwing contract; only deferred failures enter the guarded retry loop.
  */
 export function createCapacityResilientJsonWriter(options: CapacityResilientJsonWriterOptions = {}): CapacityResilientJsonWriter {
 	const defaultWrite = options.write ?? writeAtomicJson;
@@ -40,6 +42,7 @@ export function createCapacityResilientJsonWriter(options: CapacityResilientJson
 	const timerApi = options.timerApi ?? defaultTimerApi;
 	const onError = options.onError ?? ((error, filePath) => console.error(`Failed to persist JSON '${filePath}':`, error));
 	const onSuccess = options.onSuccess;
+	const shouldDefer = options.shouldDefer ?? isStorageCapacityError;
 	const reportError = (error: unknown, filePath: string): void => {
 		try {
 			onError(error, filePath);
@@ -68,7 +71,7 @@ export function createCapacityResilientJsonWriter(options: CapacityResilientJson
 					pending.delete(filePath);
 					notifySuccess(filePath, entry.payload);
 				} catch (error) {
-					if (isStorageCapacityError(error)) continue;
+					if (shouldDefer(error, filePath)) continue;
 					pending.delete(filePath);
 					reportError(error, filePath);
 				}
@@ -87,7 +90,7 @@ export function createCapacityResilientJsonWriter(options: CapacityResilientJson
 				pending.delete(filePath);
 				notifySuccess(filePath, payload);
 			} catch (error) {
-				if (!isStorageCapacityError(error)) throw error;
+				if (!shouldDefer(error, filePath)) throw error;
 				pending.set(filePath, { payload, write: writeOperation });
 				scheduleRetry();
 			}
