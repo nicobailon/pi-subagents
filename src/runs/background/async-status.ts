@@ -484,11 +484,8 @@ export function summarizeAsyncStatus(asyncDir: string, status: AsyncStatus & { c
 	return statusToSummary(asyncDir, status);
 }
 
-/**
- * Projects nested children onto summaries built without them. It never
- * reconciles descendants, so callers run it only on the runs they show.
- */
-export function attachNestedChildren(runs: AsyncRunSummary[], resolveRoute: (run: AsyncRunSummary) => NestedRoute | undefined = (run) => findNestedRouteForRootId(run.id)): void {
+/** Projects nested children onto summaries built without them. It never reconciles descendants. */
+function attachNestedChildren(runs: AsyncRunSummary[], resolveRoute: (run: AsyncRunSummary) => NestedRoute | undefined = (run) => findNestedRouteForRootId(run.id)): void {
 	for (const run of runs) {
 		let nestedChildren: NestedRunSummary[];
 		try {

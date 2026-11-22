@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- A background subagent that launches its own nested subagents now shows them in `/subagents-fleet`, `subagent({ action: "status" })` and its completion result. Before, the nested children's record was filed under the launch's foreground id instead of the background run id, so status never found them, and the Fleet history never looked for them. Thanks to [@dvishoot](https://github.com/dvishoot) for #3316.
+- A background subagent that launches its own nested subagents now shows them in the Fleet status widget, `subagent({ action: "status" })` and its completion result. Before, the nested children's record was filed under the launch's foreground id instead of the background run id, so status never found them. Thanks to [@dvishoot](https://github.com/dvishoot) for #3316.
 - The session sharing section of the tool reference states again that an uploaded session can contain source code, file paths, environment variables, and credentials, that a secret Gist is unlisted rather than private, that the upload uses your `gh` account, and that the returned link hands the Gist id to a third-party site. The warning was lost when the README was split into focused guides, and it now also says how to disable the capability (#30).
 
 ## [0.89.2] - 2026-11-20

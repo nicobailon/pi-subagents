@@ -26,7 +26,6 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
-import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 
 function clearExternalRuns(): void {
 	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)];
@@ -206,30 +205,6 @@ describe("native subagent fleet", () => {
 			]);
 			assert.equal(snapshot.error, undefined);
 		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("attaches nested children to the finished history runs it shows", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-nested-"));
-		const routes = ["async-old", "async-new"].map((id) => createNestedRoute(id));
-		try {
-			writeAsyncRun(root, { id: "async-old", state: "complete", lastUpdate: 200 });
-			writeAsyncRun(root, { id: "async-new", state: "complete", lastUpdate: 300 });
-			for (const route of routes) {
-				const id = route.rootRunId;
-				writeNestedEvent(route, {
-					type: "subagent.nested.completed", ts: 400, parentRunId: id, parentStepIndex: 0,
-					child: { id: `${id}-leaf`, parentRunId: id, parentStepIndex: 0, depth: 1, path: [{ runId: id, stepIndex: 0 }], mode: "single", state: "complete", agent: "leaf", agents: ["leaf"], startedAt: 1, lastUpdate: 2, steps: [{ agent: "leaf", status: "complete" }] },
-				});
-			}
-
-			const snapshot = collectFleetSnapshot(stateForTest(), { asyncDirRoot: root, resultsDir: path.join(root, "results"), limit: 1 });
-			const [item] = snapshot.items;
-			assert.equal(snapshot.items.length, 1);
-			assert.equal(item?.kind === "async" ? item.step?.children?.map((child) => child.id).join() : undefined, "async-new-leaf");
-		} finally {
-			for (const route of routes) fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
