@@ -5946,10 +5946,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				// Progress journalling runs from admit, launch, the launch and progress observers,
 				// onTrace and onEmit -- all inside the promises a workflowScript awaits. Those
 				// callers pass tolerateStatusWriteFailure so a transient lock on status.json cannot
-				// mark a finished child failed or abort its still-running siblings. Initial and
-				// terminal writes stay fail-fast on purpose: no child work is at risk by then, and
-				// silently dropping a terminal write would leave status.json and the active-run
-				// index pinned at "running" after the result already says complete.
+				// mark a finished child failed or abort its still-running siblings. The initial
+				// write stays fail-fast so a run without storage never starts. Teardown writes
+				// tolerate failure too: they run in a detached promise, so a throw there (a Windows
+				// rename lock outlasting the retries) would crash the host; the failure is recorded
+				// as subagent.workflow.status_write_failed instead and result.json stays authoritative.
 				const persist = (options: { tolerateStatusWriteFailure?: boolean } = {}): void => {
 					if (persistClosed) return;
 					const liveJob = deps.state.asyncJobs.get(workflowRunId);
@@ -6211,7 +6212,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					}
 					// Commit receipts while run status is still nonterminal. Result/index publication
 					// can fail next; teardown must not publish the subsequently computed terminal status.
-					persist();
+					persist({ tolerateStatusWriteFailure: true });
 				};
 				void Promise.resolve().then(async () => {
 					const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
@@ -6669,7 +6670,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, workflowChildren, results: workflowResultChildren(workflow.children, status, false), workflow: status.workflow, ...(workflowCapabilityCeiling ? { admissionCapabilityCeiling: workflowCapabilityCeiling } : {}), ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						if (pendingResultPublication && !await pendingResultPublication) return;
-						persist();
+						persist({ tolerateStatusWriteFailure: true });
 						deps.refreshResultDelivery?.();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(workflowArgsDigest ? { argsDigest: workflowArgsDigest } : {}), ...(status.error ? { error: status.error } : {}) });
@@ -6726,7 +6727,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						}
 						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, workflowChildren, ...(terminalOutcome ? { terminalOutcome } : {}), results: workflowResultChildren(partial.children, status, true), workflow: status.workflow, ...(workflowCapabilityCeiling ? { admissionCapabilityCeiling: workflowCapabilityCeiling } : {}), ...(workflowReceipt ? { workflowReceipt } : {}), asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						if (pendingResultPublication && !await pendingResultPublication) return;
-						persist();
+						persist({ tolerateStatusWriteFailure: true });
 						deps.refreshResultDelivery?.();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(workflowArgsDigest ? { argsDigest: workflowArgsDigest } : {}), ...(terminalOutcome ? { terminalOutcome } : {}), ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });
