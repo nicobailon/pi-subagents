@@ -9,7 +9,7 @@ import type { AsyncStatus } from "../../shared/types.ts";
 import { readMissionBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
 import { MissionNotFoundError, readMission } from "../../missions/store.ts";
 import type { MissionStatus } from "../../missions/types.ts";
-import { REVIVAL_ORIGIN_FILE } from "../../workflows/workflow-revival.ts";
+import { projectWorkflowKeyRevival, REVIVAL_LINK_FILE, REVIVAL_ORIGIN_FILE } from "../../workflows/workflow-revival.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "./active-run-index.ts";
 import { encodeIndexSegment } from "./index-segment.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
@@ -240,6 +240,48 @@ function missionReferenceBlocksReclaim(runDir: string, resultsDir: string, runId
 	}
 }
 
+type ReferenceInput = { asyncDirRoot: string; cutoff: number; resumableCutoff: number; protectedRunIds: ReadonlySet<string>; waitRunIds: ReadonlySet<string> };
+
+// A run is kept by its own state: live, waited on, recent, resumable, or unreadable. A missing run keeps nothing.
+function runKept(input: ReferenceInput, runId: string): boolean {
+	const runDir = path.join(input.asyncDirRoot, runId);
+	if (!fs.existsSync(runDir)) return false;
+	const status = readStatus(runDir);
+	if (status?.runId !== runId || !TERMINAL_STATES.has(status.state)) return true;
+	if (input.protectedRunIds.has(runId) || input.waitRunIds.has(runId) || activeMarkerExists(input.asyncDirRoot, runId)) return true;
+	const timestamp = statusTimestamp(status, runDir);
+	return timestamp === undefined || timestamp > input.cutoff || (timestamp > input.resumableCutoff && hasResumableContract(runDir, status));
+}
+
+// A workflow, its children and their revivals are reclaimed together: each is kept while any of them is.
+function workflowTreeKept(input: ReferenceInput, workflow: AsyncStatus): boolean {
+	return (workflow.steps ?? []).some((step) => {
+		if (!step.runId || !validRunId(step.runId)) return false;
+		const revived = step.workflowKey ? projectWorkflowKeyRevival(input.asyncDirRoot, workflow.runId, step.workflowKey, step.runId)?.revivedRunIds ?? [] : [];
+		const chain = [step.runId, ...revived];
+		// The chain ends at a link it could not follow when that link file is still there.
+		return fs.existsSync(path.join(input.asyncDirRoot, chain.at(-1)!, REVIVAL_LINK_FILE)) || chain.some((runId) => runKept(input, runId));
+	});
+}
+
+// Only the workflow checks its tree; its children wait for its folder to go, then are judged on their own.
+function workflowFolderExists(asyncDirRoot: string, workflowRunId: string): boolean {
+	return !validRunId(workflowRunId) || fs.existsSync(path.join(asyncDirRoot, workflowRunId));
+}
+
+function workflowReferenceBlocksReclaim(input: ReferenceInput, runDir: string, status: AsyncStatus): boolean {
+	if (status.mode === "workflow" && workflowTreeKept(input, status)) return true;
+	let workflowRunId = status.parentWorkflowRunId;
+	// A revived workflow child is a link in its key's revival chain and belongs to that workflow.
+	if (fs.existsSync(path.join(runDir, REVIVAL_ORIGIN_FILE))) {
+		const origin = readJson(path.join(runDir, REVIVAL_ORIGIN_FILE));
+		if (typeof origin?.workflowRunId !== "string") return true;
+		workflowRunId = origin.workflowRunId;
+	}
+	if (workflowRunId === undefined) return status.workflowKey !== undefined;
+	return workflowFolderExists(input.asyncDirRoot, workflowRunId);
+}
+
 function runTombstoneMarkerPath(maintenanceRoot: string, runId: string): string {
 	return path.join(maintenanceRoot, RUN_TOMBSTONE_MARKERS_DIR, `${encodeIndexSegment(runId)}.json`);
 }
@@ -324,9 +366,7 @@ function runSkipReason(input: {
 	if (input.waitRunIds.has(status.runId)) return "wait-reference";
 	if (activeMarkerExists(input.asyncDirRoot, status.runId)) return "active-index";
 	if (!TERMINAL_STATES.has(status.state)) return "non-terminal";
-	if (status.mode === "workflow" || status.parentWorkflowRunId || status.workflowKey) return "workflow-reference";
-	// A revived workflow child is a link in its key's revival chain; deleting it would cut off later revivals.
-	if (fs.existsSync(path.join(runDir, REVIVAL_ORIGIN_FILE))) return "workflow-reference";
+	if (workflowReferenceBlocksReclaim(input, runDir, status)) return "workflow-reference";
 	if (hasNestedReferences(status)) return "nested-reference";
 	if (missionReferenceBlocksReclaim(runDir, input.resultsDir, status.runId)) return "mission-reference";
 	if (hasUnresolvedRunHandoff(runDir, status)) return "handoff-reference";
@@ -517,12 +557,6 @@ function hasUnresolvedResultHandoff(data: Record<string, unknown>): boolean {
 	return typeof manifestPath !== "string" || !manifestPath || unresolvedHandoff(manifestPath);
 }
 
-function completionMode(data: Record<string, unknown>): unknown {
-	return data.completion && typeof data.completion === "object" && !Array.isArray(data.completion)
-		? (data.completion as Record<string, unknown>).mode
-		: undefined;
-}
-
 function resultSkipReason(input: {
 	candidate: ResultCandidate;
 	data: Record<string, unknown> | undefined;
@@ -543,7 +577,8 @@ function resultSkipReason(input: {
 	if (activeMarkerExists(input.asyncDirRoot, runId)) return "active-index";
 	if (fs.existsSync(path.join(input.asyncDirRoot, runId))) return "run-present";
 	if (missionObserverIndexExists(input.resultsDir, runId)) return "mission-reference";
-	if (input.data.mode === "workflow" || completionMode(input.data) === "workflow" || typeof input.data.parentWorkflowRunId === "string" || typeof input.data.workflowKey === "string") return "workflow-reference";
+	// The run dir is gone here, so a workflow's own result is an orphan; a child's result waits for its workflow's folder.
+	if (typeof input.data.parentWorkflowRunId === "string" ? workflowFolderExists(input.asyncDirRoot, input.data.parentWorkflowRunId) : typeof input.data.workflowKey === "string") return "workflow-reference";
 	if (hasUnresolvedResultHandoff(input.data)) return "handoff-reference";
 	const timestamp = resultTimestamp(input.data, input.candidate.path);
 	if (resultHasResumableSession(input.data) && (timestamp === undefined || timestamp > input.resumableCutoff)) return "resumable";
@@ -874,7 +909,6 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 					continue;
 				}
 				fs.rmSync(tombstone, { recursive: true });
-				// Retention never deletes a workflow run, so this removes only a single run's recovery descriptor.
 				fs.rmSync(runLaunchDir(options.asyncDirRoot, status!.runId), { recursive: true, force: true });
 				removeRunTombstoneMarker(maintenanceRoot, status!.runId);
 				result.deletedRuns += 1;

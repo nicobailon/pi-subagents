@@ -7,6 +7,7 @@ describe("public subagent execution normalization", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", globalConcurrencyLimit: 4, maxSubagentSpawnsPerRun: 8 }), { ok: true, params: { workflowScript: "return 1", globalConcurrencyLimit: 4, maxSubagentSpawnsPerRun: 8 } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return args.task", args: { task: "review" } }), { ok: true, params: { workflowScript: "return args.task", args: { task: "review" } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "review", args: { task: "Review this" } }), { ok: true, params: { workflow: "review", args: { task: "Review this" } } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "parallel", args: { tasks: [] }, globalConcurrencyLimit: 1 }), { ok: true, params: { workflow: "parallel", args: { tasks: [] }, globalConcurrencyLimit: 1 } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "workflows/review.js", globalConcurrencyLimit: 2 }), { ok: true, params: { workflow: "workflows/review.js", globalConcurrencyLimit: 2 } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "workflows/review.js", args: { task: "review" } }), { ok: true, params: { workflow: "workflows/review.js", args: { task: "review" } } });
