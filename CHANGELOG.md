@@ -6,6 +6,14 @@
 
 - A foreground subagent's result in the tool details (`details.results[i]`) no longer carries hidden Symbol keys, so extensions that hash or compare tool results, such as pi-fold, see a plain JSON object. Thanks to [@xiaquwan1001](https://github.com/xiaquwan1001) for the report (#3319).
 
+### Added
+
+- `disabledFeatures: ["session-sharing"]` now removes `share` from the `subagent` tool, so a run cannot upload a session to a GitHub Gist from that install. The setting rejects the option at every entry point, leaves it out of the valid-options list, and names itself in the error, through the same feature-group mechanism as `usage-budgets` and `external-machines`; nothing changes when the setting is absent. A resume whose saved launch enabled `share` is refused before it starts rather than uploading when the continued session ends, and the run stays resumable once the setting is gone. Before, the only ways to stop the upload were to remove `gh` from `PATH`, revoke the `gist` OAuth scope, or block egress at the host. Thanks to [@marcfargas](https://github.com/marcfargas) for #30.
+
+### Fixed
+
+- The session sharing section of the tool reference states again that an uploaded session can contain source code, file paths, environment variables, and credentials, that a secret Gist is unlisted rather than private, that the upload uses your `gh` account, and that the returned link hands the Gist id to a third-party site. The warning was lost when the README was split into focused guides, and it now also says how to disable the capability (#30).
+
 ## [0.89.2] - 2026-11-20
 
 ### Highlights

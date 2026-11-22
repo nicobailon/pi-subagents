@@ -35,6 +35,7 @@ export const SUBAGENT_FEATURES = {
 	"control-overrides": { actions: [], params: ["control"] },
 	"extension-bindings": { actions: [], params: ["extensionBindings"] },
 	"external-machines": { actions: [], params: ["machine"] },
+	"session-sharing": { actions: [], params: ["share"] },
 	"workflow-scripts": { actions: ["validate"], params: ["workflow", "args", "preflight", "globalConcurrencyLimit", "maxSubagentSpawnsPerRun"] },
 } as const satisfies Record<string, { actions: readonly string[]; params: readonly string[] }>;
 
