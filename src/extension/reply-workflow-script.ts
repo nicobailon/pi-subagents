@@ -42,9 +42,14 @@ function earlierTurnHasJsBlock(branch: ReturnType<ExtensionContext["sessionManag
 	return false;
 }
 
+function hasOptionsScript(options: unknown): boolean {
+	return typeof options === "object" && options !== null && !Array.isArray(options) && (options as Record<string, unknown>).script !== undefined;
+}
+
 function scriptFromReply(content: AssistantMessage["content"], earlierBlock: () => boolean): ReplyWorkflowScript {
+	// A call that also passes options.script runs that script, not the reply's block (#3320).
 	const replyCalls = content.filter((block) => block.type === "toolCall" && block.name === "subagent"
-		&& (block.arguments?.workflow === true || block.arguments?.workflow === "true")).length;
+		&& (block.arguments?.workflow === true || block.arguments?.workflow === "true") && !hasOptionsScript(block.arguments?.options)).length;
 	if (replyCalls > 1) return { error: `This reply has ${replyCalls} subagent calls with workflow: true; a reply can carry only one. Pass other scripts as workflow file paths.` };
 	if (!content.some((block) => block.type === "text")) {
 		if (earlierBlock()) return { error: "The assistant message that issued this call has no text. A ```js block is in an earlier message of this turn, but workflow: true reads only the message that issues the call. Pass that script's source as options: { script: \"...\" } in place of workflow: true, with the call's other fields unchanged, or write the block and the call in one message." };

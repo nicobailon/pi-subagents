@@ -19,6 +19,11 @@ describe("reply workflow block", () => {
 		assert.deepEqual(readReplyWorkflowScript(branch({ type: "text", text }, call("call-1")), "call-1"), { script: "return 2;" });
 	});
 
+	it("does not count a sibling call that passes options.script alongside workflow: true (#3320)", () => {
+		const manager = branch({ type: "text", text: "```js workflow\nreturn 1;\n```" }, call("call-1"), call("call-2", { workflow: true, options: { script: "return 2;" } }));
+		assert.deepEqual(readReplyWorkflowScript(manager, "call-1"), { script: "return 1;" });
+	});
+
 	it("fails instead of guessing when the block or its owning call is ambiguous or missing", () => {
 		const block = "```js workflow\nreturn 1;\n```";
 		for (const [manager, pattern] of [
