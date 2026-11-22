@@ -77,7 +77,7 @@ function capCompactMainWindowResult(component: Component, layout: MainWindowRend
 	const maxLines = layout.compactResultMaxLines;
 	if (!enabled || maxLines === undefined) return component;
 	const capped = new Container();
-	capped.render = (width: number): string[] => {
+	capped.render = (width: number) => {
 		const lines = component.render(width);
 		if (lines.length <= maxLines) return lines;
 		const visibleRows = maxLines === 1 ? 1 : maxLines - 1;
