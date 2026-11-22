@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- A direct subagent launch can now be named with a short top-level `label`, for example `subagent({ agent: "worker", task: "…", label: "Fix login redirect" })`, and so can each `args.tasks` item of `workflow: "parallel"`. The label names the child's session and status row, as a workflow child's `runs.run` label already does, and `subagent:async-started` carries it as `description`, so hosts that list running children can tell several runs of the same agent apart. Thanks to [@mmarabel](https://github.com/mmarabel) for the report (#3324).
+
 ## [0.89.2] - 2026-11-20
 
 ### Highlights

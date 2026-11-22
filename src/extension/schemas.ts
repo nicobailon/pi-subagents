@@ -297,6 +297,8 @@ export const SubagentOptionParams = Type.Object(SubagentOptionProperties, { addi
 const ModelTopLevelProperties = {
 	agent, task, workflow, args, async, model, cwd, worktree, output, action, id, message,
 	options: Type.Optional(Type.Unsafe<Record<string, unknown>>({ type: "object", additionalProperties: true, description: "Every field not listed here, such as acceptance, timeoutMs, context, view and index; guide tool-reference/parameter-reference." })),
+	// Appended after options so the earlier fields keep their order.
+	label: Type.Optional(Type.String({ minLength: 1, maxLength: 80, description: "2-4 words on what it does; appears wherever the run is listed." })),
 };
 
 export const SubagentParams = keepTopLevelParameterDescriptions(Type.Object(ModelTopLevelProperties));
