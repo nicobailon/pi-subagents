@@ -52,7 +52,7 @@ import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts"
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
 import { SUBAGENT_CHILD_ENV, type ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
-import { createNestedRoute, parseNestedEventRecords } from "../../src/runs/shared/nested-events.ts";
+import { createNestedRoute, findNestedRouteForRootId, parseNestedEventRecords, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { resolveMissionStoreLocation } from "../../src/missions/store.ts";
 import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
@@ -1248,6 +1248,35 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 		assert.equal(mockPi.callCount(), 2, "both detached mock children should start before test cleanup");
+	});
+
+	it("lists nested children of an async run without reconciling", { timeout: 30_000 }, async () => {
+		mockPi.onCall({ output: "async root done" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const started = await executor.execute("nested-async-root", { agent: "echo", task: "Root", async: true }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(started.isError, undefined, started.content[0]?.text ?? "async launch failed");
+		const asyncId = started.details.asyncId!;
+		const statusPath = path.join(DIRS.async, asyncId, "status.json");
+		const deadlineAt = Date.now() + 15_000;
+		while ((JSON.parse(fs.readFileSync(statusPath, "utf-8")) as { state?: string }).state !== "complete" && Date.now() < deadlineAt) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		const route = findNestedRouteForRootId(asyncId);
+		assert.ok(route, "the nested route should be keyed by the async run id");
+		try {
+			writeNestedEvent(route, {
+				type: "subagent.nested.completed",
+				ts: Date.now(),
+				parentRunId: asyncId,
+				parentStepIndex: 0,
+				child: { id: "nested-leaf", parentRunId: asyncId, parentStepIndex: 0, depth: 1, path: [{ runId: asyncId, stepIndex: 0 }], mode: "single", state: "complete", agent: "leaf", agents: ["leaf"], startedAt: 1, lastUpdate: 2, steps: [{ agent: "leaf", status: "complete" }] },
+			});
+			const [run] = listAsyncRuns(DIRS.async, { runId: asyncId, exactRunId: true, includeNested: true, reconcile: false });
+			assert.deepEqual(run?.nestedChildren?.map((child) => child.id), ["nested-leaf"]);
+			assert.deepEqual(run?.steps[0]?.children?.map((child) => child.id), ["nested-leaf"]);
+		} finally {
+			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+		}
 	});
 
 	it("does not impose a cumulative spawn cap by default", async () => {

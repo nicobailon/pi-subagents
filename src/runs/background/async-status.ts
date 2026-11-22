@@ -576,7 +576,9 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	let nestedRouteIndex: Map<string, NestedRoute> | undefined;
 	const resolveNestedRoute = (rootRunId: string): NestedRoute | undefined => {
 		if (!includeNested) return undefined;
-		if (activeEntries.has(rootRunId)) return findNestedRouteForRootId(rootRunId);
+		// Non-reconciling reads (FleetView polls them) read one root's index directory
+		// instead of building the index over every route ever created.
+		if (options.reconcile === false || activeEntries.has(rootRunId)) return findNestedRouteForRootId(rootRunId);
 		if (!nestedRouteIndex) nestedRouteIndex = buildNestedRouteIndex();
 		return nestedRouteIndex.get(rootRunId);
 	};
@@ -626,10 +628,10 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		if (owners && !owners.has(status.sessionId)) continue;
 		const nestedWarnings: string[] = [];
 		let nestedRoute: NestedRoute | undefined;
-		if (options.reconcile !== false && includeNested) {
+		if (includeNested) {
 			try {
 				nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
-				if (nestedRoute) reconcileNestedAsyncDescendants(nestedRoute, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+				if (nestedRoute && options.reconcile !== false) reconcileNestedAsyncDescendants(nestedRoute, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
 			} catch (error) {
 				observeStatus?.(null);
 				nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);

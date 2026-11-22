@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A background subagent that launches its own nested subagents now shows them in `/subagents-fleet`, `subagent({ action: "status" })` and its completion result. Before, the nested children's record was filed under the launch's foreground id instead of the background run id, so status never found them, and the Fleet history never looked for them. Thanks to [@dvishoot](https://github.com/dvishoot) for #3316.
+
 ## [0.89.2] - 2026-11-20
 
 ### Highlights
