@@ -1752,6 +1752,8 @@ export interface AsyncStartedEvent {
 	completionOwnerId?: string;
 	mode?: SubagentRunMode;
 	agent?: string;
+	/** Launch label when set, else the agent's description or name; never the task prompt. */
+	description?: string;
 	agents?: string[];
 	/** Redacted prompt marker for the first child task; workflow roots may omit this field. */
 	task?: string;

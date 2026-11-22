@@ -2150,7 +2150,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		const children = started.filter((event) => event.mode === "single").map(({ workflowKey, description }) => ({ workflowKey, description }));
 		assert.deepEqual(children.sort((a, b) => String(a.workflowKey).localeCompare(String(b.workflowKey))), [
 			{ workflowKey: "task-1", description: "Validate sanitizer tests" },
-			{ workflowKey: "task-2", description: undefined },
+			{ workflowKey: "task-2", description: "Test agent: echo" },
 		]);
 		const sessionNames = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 			.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as { runtime?: { sessionName?: string } }).runtime?.sessionName);

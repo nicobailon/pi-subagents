@@ -1062,8 +1062,8 @@ Answer only from the supplied synthetic text.
 
 		lifecycle.length = 0;
 		mockPi.onCall({ matchArgIncludes: "Secret task B", stderr: "child failed", exitCode: 1 });
-		await executor.execute("lifecycle-fail", { agent: "echo", task: "Secret task B", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
-		assert.deepEqual(lifecycle.map((event) => event.status), ["started", "failed"]);
+		await executor.execute("lifecycle-fail", { agent: "echo", task: "Secret task B", label: "Validate sanitizer tests", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.deepEqual(lifecycle.map(({ status, description }) => ({ status, description })), [{ status: "started", description: "Validate sanitizer tests" }, { status: "failed", description: "Validate sanitizer tests" }]);
 		assert.equal(lifecycle[1]!.id, lifecycle[0]!.id);
 		assert.equal(lifecycle[1]!.success, false);
 

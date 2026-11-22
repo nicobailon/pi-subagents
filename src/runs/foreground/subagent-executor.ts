@@ -4477,7 +4477,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const lifecycleBase = {
 		runId,
 		agent: params.agent!,
-		description: agents.find((candidate) => candidate.name === params.agent)?.description?.trim() || params.agent!,
+		description: launchLabel(params.label) ?? (agents.find((candidate) => candidate.name === params.agent)?.description?.trim() || params.agent!),
 		parentWorkflowRunId: params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId,
 		workflowKey: params.workflowKey,
 	};
