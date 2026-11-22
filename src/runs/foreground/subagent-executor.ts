@@ -4429,7 +4429,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			cwd: singleCwd,
 			outputPath,
 			rerun: { params: { ...params, task: authoredTask, async: params.async ?? false } },
-			description: foregroundControl.description,
+			description: launchLabel(params.label) ?? foregroundControl.description,
 			...(modelOverride ? { model: modelOverride } : {}),
 			...(thinking ? { thinking } : {}),
 			interrupt: () => {

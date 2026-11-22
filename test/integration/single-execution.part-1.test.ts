@@ -992,7 +992,7 @@ Answer only from the supplied synthetic text.
 
 		const pending = executor.execute(
 			"user-detach-guidance",
-			{ agent: "echo", task: "Keep working", async: false },
+			{ agent: "echo", task: "Keep working", label: "Keep the fix going", async: false },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1003,6 +1003,7 @@ Answer only from the supplied synthetic text.
 			control = state.lastForegroundControlId ? state.foregroundControls.get(state.lastForegroundControlId) : undefined;
 		}
 		assert.ok(control?.detach, "foreground detach control should become available");
+		assert.equal(control.activeChildren?.get(0)?.description, "Keep the fix going", "the Fleet row reads the launch label");
 		assert.equal(control.detach(), true);
 
 		const result = await pending;
