@@ -6,6 +6,7 @@
 
 - A new `fastServiceTier` setting chooses the OpenAI service tier that `fast: true` requests for native OpenAI-Codex children: `"priority"` (the default, as before) or `"ultrafast"`. Before, fast mode could only request Priority. Thanks to [@FireSpoonYZ](https://github.com/FireSpoonYZ) for #3317.
 - `disabledFeatures: ["session-sharing"]` now removes `share` from the `subagent` tool, so a run cannot upload a session to a GitHub Gist from that install. The setting rejects the option at every entry point, leaves it out of the valid-options list, and names itself in the error, through the same feature-group mechanism as `usage-budgets` and `external-machines`; nothing changes when the setting is absent. A resume whose saved launch enabled `share` is refused before it starts rather than uploading when the continued session ends, and the run stays resumable once the setting is gone. Before, the only ways to stop the upload were to remove `gh` from `PATH`, revoke the `gist` OAuth scope, or block egress at the host. Thanks to [@marcfargas](https://github.com/marcfargas) for #30.
+- A named workflow call such as `{ workflow: "parallel", args: { tasks: [...] } }` now accepts a top-level `globalConcurrencyLimit`, so `globalConcurrencyLimit: 1` runs its tasks one at a time; before, the call was refused. When `args.concurrency` is passed to `parallel`, the error now points to `globalConcurrencyLimit`. Thanks to [@mmarabel](https://github.com/mmarabel) for #3320.
 
 ### Fixed
 

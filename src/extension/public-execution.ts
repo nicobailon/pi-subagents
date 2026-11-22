@@ -130,8 +130,10 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		if (capacityOverrideError) return { ok: false, error: capacityOverrideError, mode: params.action === undefined ? "workflow" : "management" };
 		const validatesSpawnBudget = typeof params.action === "string" && params.action.trim() === "validate"
 			&& params.globalConcurrencyLimit === undefined && params.maxSubagentSpawnsPerRun !== undefined;
-		if ((params.action !== undefined && !validatesSpawnBudget) || !hasRawScript) {
-			return { ok: false, error: `Workflow capacity overrides are only supported on top-level ${RAW_SCRIPT_FORMS} calls; validate accepts maxSubagentSpawnsPerRun for static budget checks.`, mode: params.action === undefined ? "workflow" : "management" };
+		// A named workflow runs as a generated script, so it takes the same concurrency cap (#3320).
+		const namedConcurrencyLimit = hasNamedWorkflow && params.maxSubagentSpawnsPerRun === undefined;
+		if ((params.action !== undefined && !validatesSpawnBudget) || (!hasRawScript && !namedConcurrencyLimit)) {
+			return { ok: false, error: `Workflow capacity overrides are only supported on top-level ${RAW_SCRIPT_FORMS} calls; named workflow calls accept globalConcurrencyLimit only; validate accepts maxSubagentSpawnsPerRun for static budget checks.`, mode: params.action === undefined ? "workflow" : "management" };
 		}
 	}
 	if (params.preflight !== undefined && !hasWorkflowInput) {
