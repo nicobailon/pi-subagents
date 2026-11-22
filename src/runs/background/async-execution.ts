@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import * as nodeModule from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ParentProviderRegistry } from "../shared/child-session.ts";
-import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
+import { agentRunDescription, discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { createAtomicJsonWriter, writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { childCacheRetentionEnv } from "../../shared/child-cache-retention.ts";
 import { buildEffectiveSystemPrompt } from "../shared/effective-system-prompt.ts";
@@ -1826,7 +1826,7 @@ export function executeAsyncChain(
 			completionOwnerId: ctx.completionOwnerId ?? currentCompletionOwnerId(),
 			mode: resultMode,
 			agent: firstAgents[0],
-			description: agents.find((candidate) => candidate.name === firstAgents[0])?.description?.trim() || firstAgents[0],
+			description: agentRunDescription(firstAgents[0], agents.find((candidate) => candidate.name === firstAgents[0])),
 			agents: flatAgents,
 			task: firstTask?.trim() ? PROMPT_REDACTED : undefined,
 			goal: workflowGoal?.trim() ? PROMPT_REDACTED : undefined,
@@ -2461,7 +2461,7 @@ export function executeAsyncSingle(
 			mode: "single",
 			...(params.toolCallId ? { toolCallId: params.toolCallId } : {}),
 			agent,
-			description: params.label ?? (agentConfig.description?.trim() || agent),
+			description: agentRunDescription(agent, agentConfig, params.label),
 			task: task?.trim() ? PROMPT_REDACTED : undefined,
 			goal: (params.goal ?? task).trim() ? PROMPT_REDACTED : undefined,
 			cwd: runnerCwd,

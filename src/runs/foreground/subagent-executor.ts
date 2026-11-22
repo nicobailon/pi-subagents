@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatAvailableAgentLines, formatUnknownAgentError, resolveAgentName, suggestAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
+import { agentRunDescription, discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatAvailableAgentLines, formatUnknownAgentError, resolveAgentName, suggestAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir, missingForkCopyNote } from "../../shared/artifacts.ts";
 import { createAtomicJsonWriter, writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
@@ -882,9 +882,8 @@ function rememberedForegroundChild(input: RememberedForegroundRunInput, result: 
 	};
 }
 
-/** The execution outcome a finished attached run is saved with; a rejected acceptance does not change it. */
-function foregroundExecutionStatus(result: SingleResult): ReturnType<typeof resolveSubagentResultStatus> {
-	return resolveSubagentResultStatus(omitUndefinedProperties({
+function foregroundStatusInput(result: SingleResult) {
+	return omitUndefinedProperties({
 		exitCode: result.exitCode,
 		interrupted: result.interrupted,
 		detached: result.detached,
@@ -892,7 +891,12 @@ function foregroundExecutionStatus(result: SingleResult): ReturnType<typeof reso
 		timedOut: result.timedOut,
 		stopped: result.stopped,
 		turnBudgetExceeded: result.turnBudgetExceeded,
-	}));
+	});
+}
+
+/** The execution outcome a finished attached run is saved with; a rejected acceptance does not change it. */
+function foregroundExecutionStatus(result: SingleResult): ReturnType<typeof resolveSubagentResultStatus> {
+	return resolveSubagentResultStatus(foregroundStatusInput(result));
 }
 
 function rememberForegroundRun(state: SubagentState, input: RememberedForegroundRunInput & { results: SingleResult[] }): void {
@@ -2599,16 +2603,10 @@ function createForegroundControlNotifier(data: Pick<ExecutionContextData, "contr
 }
 
 export function foregroundResultIntercomStatus(result: SingleResult): ReturnType<typeof resolveSubagentResultStatus> {
-	return resolveSubagentResultStatus(omitUndefinedProperties({
-		exitCode: result.exitCode,
+	return resolveSubagentResultStatus({
+		...foregroundStatusInput(result),
 		...(result.acceptance?.status === "rejected" ? { success: false } : {}),
-		interrupted: result.interrupted,
-		detached: result.detached,
-		processSignal: result.processSignal,
-		timedOut: result.timedOut,
-		stopped: result.stopped,
-		turnBudgetExceeded: result.turnBudgetExceeded,
-	}));
+	});
 }
 
 export function shouldSuppressRoutineResultIntercom(input: { suppressRoutineResultIntercom?: boolean; results: SingleResult[] }): boolean {
@@ -4482,7 +4480,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const lifecycleBase = {
 		runId,
 		agent: params.agent!,
-		description: launchLabel(params.label) ?? (agents.find((candidate) => candidate.name === params.agent)?.description?.trim() || params.agent!),
+		description: agentRunDescription(params.agent!, agents.find((candidate) => candidate.name === params.agent), launchLabel(params.label)),
 		parentWorkflowRunId: params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId,
 		workflowKey: params.workflowKey,
 	};

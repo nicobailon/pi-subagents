@@ -369,6 +369,11 @@ export function formatAvailableAgentLines(agents: readonly AgentConfig[]): strin
 	return lines.length ? lines : ["- (none)"];
 }
 
+/** What a run is called in lifecycle events: its launch label, else the agent's description, else the agent name. */
+export function agentRunDescription<Name extends string | undefined>(agentName: Name, agent: AgentConfig | undefined, label?: string): string | Name {
+	return label ?? (agent?.description?.trim() || agentName);
+}
+
 /** The closest agent name or alias when `name` looks like a typo of one. */
 export function suggestAgentName(name: string, agents: readonly AgentConfig[]): string | undefined {
 	return closestMatch(name.trim(), new Set(agents.flatMap((agent) => [agent.name, ...(agent.localName ? [agent.localName] : []), ...(agent.aliases ?? [])])));
