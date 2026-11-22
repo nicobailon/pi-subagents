@@ -12,7 +12,7 @@ import { DIRS, type AsyncJobState, type AsyncJobStep, type Details, type FleetKe
 import { decodeUtf8Tail } from "../shared/utf8.ts";
 import { readStatus } from "../shared/utils.ts";
 import { formatAsyncRunTranscript } from "../runs/background/fleet-view.ts";
-import { listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-status.ts";
+import { attachNestedChildren, listAsyncRuns, type AsyncRunSummary } from "../runs/background/async-status.ts";
 import { steerAsyncRun } from "../runs/foreground/async-steering-action.ts";
 import type { SteerDeliveryMode } from "../runs/background/control-channel.ts";
 import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
@@ -265,6 +265,7 @@ export function collectFleetSnapshot(
 	let error: string | undefined;
 	try {
 		let runs: AsyncRunSummary[];
+		let history: AsyncRunSummary[] = [];
 		const descriptions = new Map<string, string>();
 		const tracked = [...trackedJobs.values()]
 			.filter((job) => belongsToCurrentSession(job.sessionId, state.currentSessionId));
@@ -282,18 +283,23 @@ export function collectFleetSnapshot(
 		}
 		if (options.asyncDirRoot !== undefined) {
 			const trackedIds = new Set(trackedRuns.map((run) => run.id));
-			const history = listAsyncRuns(options.asyncDirRoot, {
+			history = listAsyncRuns(options.asyncDirRoot, {
 				...(state.currentSessionId ? { sessionId: state.currentSessionId } : {}),
 				entryLimit: MAX_FLEET_HISTORY_CANDIDATES,
 				resultsDir: options.resultsDir ?? DIRS.results,
 				reconcile: false,
+				includeNested: false,
 				onCorruptStatus: (warning) => reportSessionWarning(state, warning),
 			}).filter((run) => !trackedIds.has(run.id));
 			runs = [...trackedRuns, ...history];
 		} else {
 			runs = trackedRuns;
 		}
-		for (const run of orderFleetAsyncRuns(runs, options.limit ?? MAX_RECENT_ASYNC_RUNS, trackedJobs)) {
+		const shown = orderFleetAsyncRuns(runs, options.limit ?? MAX_RECENT_ASYNC_RUNS, trackedJobs);
+		// Nested children cost a route lookup per run, so only the history runs shown pay it.
+		const historyRuns = new Set(history);
+		attachNestedChildren(shown.filter((run) => historyRuns.has(run)));
+		for (const run of shown) {
 			items.push(...asyncItems(run, descriptions.get(run.id)));
 		}
 	} catch (cause) {
