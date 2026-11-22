@@ -196,6 +196,9 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.asyncWidgetLayout !== undefined && config.asyncWidgetLayout !== "adaptive" && config.asyncWidgetLayout !== "rows") {
 		throw new Error('config.asyncWidgetLayout must be "adaptive" or "rows"');
 	}
+	if (config.fastServiceTier !== undefined && config.fastServiceTier !== "priority" && config.fastServiceTier !== "ultrafast") {
+		throw new Error('config.fastServiceTier must be "priority" or "ultrafast"');
+	}
 	if (config.programStatus !== undefined && typeof config.programStatus !== "boolean") {
 		throw new Error("config.programStatus must be a boolean");
 	}
