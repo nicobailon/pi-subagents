@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isUnsetPlaceholder } from "./subagent-options.ts";
 
 const WORKFLOW_FENCE = /^```(?:js|javascript) workflow[ \t]*$/;
 const PLAIN_JS_FENCE = /^```(?:js|javascript)[ \t]*$/;
@@ -42,8 +43,11 @@ function earlierTurnHasJsBlock(branch: ReturnType<ExtensionContext["sessionManag
 	return false;
 }
 
+/** Whether flattenSubagentToolOptions will read this call's options.script, which it does after dropping "null" placeholders. */
 function hasOptionsScript(options: unknown): boolean {
-	return typeof options === "object" && options !== null && !Array.isArray(options) && (options as Record<string, unknown>).script !== undefined;
+	if (typeof options !== "object" || options === null || Array.isArray(options)) return false;
+	const script = (options as Record<string, unknown>).script;
+	return script !== undefined && !isUnsetPlaceholder(script);
 }
 
 function scriptFromReply(content: AssistantMessage["content"], earlierBlock: () => boolean): ReplyWorkflowScript {

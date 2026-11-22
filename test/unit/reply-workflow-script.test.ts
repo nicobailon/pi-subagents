@@ -22,6 +22,9 @@ describe("reply workflow block", () => {
 	it("does not count a sibling call that passes options.script alongside workflow: true (#3320)", () => {
 		const manager = branch({ type: "text", text: "```js workflow\nreturn 1;\n```" }, call("call-1"), call("call-2", { workflow: true, options: { script: "return 2;" } }));
 		assert.deepEqual(readReplyWorkflowScript(manager, "call-1"), { script: "return 1;" });
+		// options.script: "null" is an unset placeholder, so that sibling reads the reply block too.
+		const placeholder = readReplyWorkflowScript(branch({ type: "text", text: "```js workflow\nreturn 1;\n```" }, call("call-1"), call("call-2", { workflow: true, options: { script: "null" } })), "call-1");
+		assert.ok("error" in placeholder && /2 subagent calls with workflow: true; a reply can carry only one/.test(placeholder.error), JSON.stringify(placeholder));
 	});
 
 	it("fails instead of guessing when the block or its owning call is ambiguous or missing", () => {

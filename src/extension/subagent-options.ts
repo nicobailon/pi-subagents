@@ -11,15 +11,20 @@ const optionKeys = new Set(SUBAGENT_OPTION_KEYS);
 const ALIAS_HINTS: Record<string, string> = { runId: "id (top-level)", maxRuntimeMs: "options.timeoutMs", isolation: "worktree (top-level)" };
 const optionsValidator = Compile(SubagentOptionParams);
 
+/** Some models fill every unset optional parameter with the string "null" (#3285); it means the field was left out. */
+export function isUnsetPlaceholder(value: unknown): boolean {
+	return value === "null";
+}
+
 /**
  * Lowers a model tool call's `options` into the flat params the executor reads.
  * Management fields given at the top level keep working, as in the flat shape older sessions declared.
  */
 export function flattenSubagentToolOptions(params: Record<string, unknown>, disabled?: DisabledFeatureSurface): SubagentParamsLike {
 	// Some models fill every unset optional parameter with the string "null", and the workflow union with "false" (#3285).
-	params = Object.fromEntries(Object.entries(params).filter(([key, value]) => value !== "null" && !(key === "workflow" && value === "false")));
+	params = Object.fromEntries(Object.entries(params).filter(([key, value]) => !isUnsetPlaceholder(value) && !(key === "workflow" && value === "false")));
 	if (params.options && typeof params.options === "object" && !Array.isArray(params.options)) {
-		params.options = Object.fromEntries(Object.entries(params.options).filter(([, value]) => value !== "null"));
+		params.options = Object.fromEntries(Object.entries(params.options).filter(([, value]) => !isUnsetPlaceholder(value)));
 	}
 	const removedTopLevel = removedModelWorkflowFieldError(params);
 	if (removedTopLevel) throw new Error(removedTopLevel);
