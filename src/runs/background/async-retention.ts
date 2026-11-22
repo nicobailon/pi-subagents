@@ -262,11 +262,9 @@ function workflowTreeKept(input: ReferenceInput, workflow: AsyncStatus): boolean
 	});
 }
 
-function workflowKept(input: ReferenceInput, workflowRunId: string): boolean {
-	if (!validRunId(workflowRunId)) return true;
-	if (!fs.existsSync(path.join(input.asyncDirRoot, workflowRunId))) return false;
-	const status = readStatus(path.join(input.asyncDirRoot, workflowRunId));
-	return !status || runKept(input, workflowRunId) || workflowTreeKept(input, status);
+// Only the workflow checks its tree; its children wait for its folder to go, then are judged on their own.
+function workflowFolderExists(asyncDirRoot: string, workflowRunId: string): boolean {
+	return !validRunId(workflowRunId) || fs.existsSync(path.join(asyncDirRoot, workflowRunId));
 }
 
 function workflowReferenceBlocksReclaim(input: ReferenceInput, runDir: string, status: AsyncStatus): boolean {
@@ -279,7 +277,7 @@ function workflowReferenceBlocksReclaim(input: ReferenceInput, runDir: string, s
 		workflowRunId = origin.workflowRunId;
 	}
 	if (workflowRunId === undefined) return status.workflowKey !== undefined;
-	return workflowKept(input, workflowRunId);
+	return workflowFolderExists(input.asyncDirRoot, workflowRunId);
 }
 
 function runTombstoneMarkerPath(maintenanceRoot: string, runId: string): string {
@@ -577,8 +575,8 @@ function resultSkipReason(input: {
 	if (activeMarkerExists(input.asyncDirRoot, runId)) return "active-index";
 	if (fs.existsSync(path.join(input.asyncDirRoot, runId))) return "run-present";
 	if (missionObserverIndexExists(input.resultsDir, runId)) return "mission-reference";
-	// The run dir is gone here, so a workflow's own result is an orphan; a child's result follows its workflow.
-	if (typeof input.data.parentWorkflowRunId === "string" ? workflowKept(input, input.data.parentWorkflowRunId) : typeof input.data.workflowKey === "string") return "workflow-reference";
+	// The run dir is gone here, so a workflow's own result is an orphan; a child's result waits for its workflow's folder.
+	if (typeof input.data.parentWorkflowRunId === "string" ? workflowFolderExists(input.asyncDirRoot, input.data.parentWorkflowRunId) : typeof input.data.workflowKey === "string") return "workflow-reference";
 	if (hasUnresolvedResultHandoff(input.data)) return "handoff-reference";
 	const timestamp = resultTimestamp(input.data, input.candidate.path);
 	if (resultHasResumableSession(input.data) && (timestamp === undefined || timestamp > input.resumableCutoff)) return "resumable";

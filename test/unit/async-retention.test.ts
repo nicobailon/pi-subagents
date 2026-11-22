@@ -333,16 +333,18 @@ describe("async retention cleanup", () => {
 			recordWorkflowRevival(roots.asyncDirRoot, "revived-child", "revival");
 			for (const runDir of [path.join(roots.asyncDirRoot, "revived-child"), revival]) fs.utimesSync(runDir, OLD / 1000, OLD / 1000);
 
-			const result = await cleanupAsyncRetention(cleanupOptions(roots));
+			// The workflow goes first; its child and result follow on the next pass.
+			const first = await cleanupAsyncRetention(cleanupOptions(roots));
+			const second = await cleanupAsyncRetention(cleanupOptions(roots));
 
 			for (const runId of ["old-workflow", "old-child"]) assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, runId)), false, runId);
 			for (const runId of ["live-workflow", "live-child", "recent-workflow", "recent-child", "revived-workflow", "revived-child", "revival"]) {
 				assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, runId)), true, runId);
 			}
 			assert.equal(fs.existsSync(oldChildResult), false);
-			assert.equal(result.deletedRuns, 2);
-			assert.equal(result.deletedResults, 1);
-			assert.equal(result.skipped["workflow-reference"], 4);
+			assert.equal(first.deletedRuns + second.deletedRuns, 2);
+			assert.equal(first.deletedResults + second.deletedResults, 1);
+			assert.equal(second.skipped["workflow-reference"], 4);
 		} finally {
 			fs.rmSync(roots.root, { recursive: true, force: true });
 		}
