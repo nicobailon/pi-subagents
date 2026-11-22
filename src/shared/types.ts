@@ -2714,6 +2714,7 @@ export interface ScheduledRunsConfig {
 
 export type FleetViewPlacement = "aboveEditor" | "belowEditor";
 export type AsyncWidgetLayout = "adaptive" | "rows";
+export type FastServiceTier = "priority" | "ultrafast";
 
 export const FLEET_KEYBINDING_ACTIONS = [
 	"close",
@@ -2783,6 +2784,8 @@ export interface ExtensionConfig {
 	asyncWidgetLayout?: AsyncWidgetLayout;
 	/** Report subagent run state to the terminal with OSC 7501. Defaults to true. */
 	programStatus?: boolean;
+	/** OpenAI-Codex `service_tier` that `fast: true` requests for native children. Defaults to "priority". */
+	fastServiceTier?: FastServiceTier;
 	/** Add a short `active_subagents` system prompt section listing this session's active background runs. Defaults to false. */
 	activeRunsPrompt?: boolean;
 	/** Exact provider/model candidates mapped to operator-declared equivalent response IDs. Empty arrays add no accepted IDs. */

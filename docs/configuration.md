@@ -301,6 +301,14 @@ Sets `fresh` or `fork` for every subagent launch that omits `context`. This glob
 
 With `"fork"`, the setting uses the existing implicit-fork behavior. A launch starts fresh when the parent session file or current leaf is not available. `"fresh"` starts fresh even when the selected agent defaults to fork. Scheduled runs continue to set fresh context explicitly. A runner or provider that does not support fork context keeps its existing rejection behavior.
 
+## `fastServiceTier`
+
+```json
+{ "fastServiceTier": "ultrafast" }
+```
+
+Sets the OpenAI `service_tier` that `fast: true` requests for native OpenAI-Codex children: `"priority"` (default) or `"ultrafast"`. Whether a tier is available depends on the model and account.
+
 ## `forkContext`
 
 ```json
