@@ -82,7 +82,7 @@ function boundedTaskSummary(value: string | undefined): string {
 }
 
 export function listRetainedChildren(asyncDirRoot: string, sessionId: string): RetainedChild[] {
-	const children = listAsyncRuns(asyncDirRoot, { sessionId, states: ["complete", "failed", "paused", "stopped"], entryLimit: MAX_RETAINED_CHILD_CANDIDATES, reconcile: false })
+	const children = listAsyncRuns(asyncDirRoot, { sessionId, states: ["complete", "failed", "paused", "stopped"], entryLimit: MAX_RETAINED_CHILD_CANDIDATES, reconcile: false, includeNested: false })
 		.flatMap((run) => {
 			if (!run.parentWorkflowRunId || run.steps.length !== 1) return [];
 			if (!isRetainedChildState(run.state)) return [];

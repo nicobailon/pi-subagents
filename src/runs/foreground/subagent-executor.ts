@@ -8028,7 +8028,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (error instanceof RunFanoutLimitError) return runFanoutErrorResult(error, foregroundMode);
 			return buildRequestedModeError(effectiveParams, error instanceof Error ? error.message : String(error));
 		}
-		const nestedRoute = inheritedNestedRouteValue ?? createNestedRoute(runId);
+		// Key the route by the id status.json records, so status lookups find nested children.
+		const nestedRoute = inheritedNestedRouteValue ?? createNestedRoute(effectiveAsync ? asyncRunId : runId);
 
 		const artifactConfig: ArtifactConfig = omitUndefinedProperties({
 			...DEFAULT_ARTIFACT_CONFIG,
