@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- A new `fastServiceTier` setting chooses the OpenAI service tier that `fast: true` requests for native OpenAI-Codex children: `"priority"` (the default, as before) or `"ultrafast"`. Before, fast mode could only request Priority. Thanks to [@FireSpoonYZ](https://github.com/FireSpoonYZ) for #3317.
+
 ## [0.89.2] - 2026-11-20
 
 ### Highlights
