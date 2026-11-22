@@ -10,7 +10,7 @@ import type { WorkflowScriptChildResult } from "./scripted-workflow.ts";
  * link that run back to its workflow key without writing the workflow's own status or receipt.
  * The source run is terminal, so the live workflow host never writes its directory.
  */
-const REVIVAL_LINK_FILE = "workflow-revival.json";
+export const REVIVAL_LINK_FILE = "workflow-revival.json";
 /** The same link, kept in the revived run's directory so reviving it again keeps the key. */
 export const REVIVAL_ORIGIN_FILE = "workflow-revival-origin.json";
 /** Recording refuses a deeper link, so readers bounded by this always reach the chain's end. */
