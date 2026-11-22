@@ -2316,6 +2316,12 @@ async function resumeAsyncRun(input: {
 	if (agentConfig.launcher !== undefined && !lookupRunnerLauncher(input.deps.config.runnerLaunchers, agentConfig.launcher)) {
 		return { content: [{ type: "text", text: `Cannot resume: run '${target.runId}' uses launcher '${agentConfig.launcher}', which is no longer defined in runnerLaunchers in the user subagent config.` }], isError: true, details: { mode: "management", results: [] } };
 	}
+	// A resume restores the launch's saved options, so the request-only disabled-feature check cannot see a
+	// saved `share: true`. Refuse here, before capacity moves, instead of uploading the continued session later.
+	const restoredShareDisabledBy = resolveDisabledFeatureSurface(input.deps.config).params.get("share");
+	if (recoveryDescriptor?.share === true && restoredShareDisabledBy !== undefined) {
+		return { content: [{ type: "text", text: `Cannot resume: run '${target.runId}' was launched with share enabled, which config ${restoredShareDisabledBy} now disables. Re-enable session sharing to resume it.` }], isError: true, details: { mode: "management", results: [] } };
+	}
 	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
