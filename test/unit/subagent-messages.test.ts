@@ -38,7 +38,7 @@ function renderEntry(customType: string, data: unknown, options: { expanded?: bo
 	return component.render(options.width ?? 100).map((line) => line.trimEnd());
 }
 
-function visibleLines(lines: string[]): string[] {
+function visibleLines(lines: readonly string[]): string[] {
 	return lines.map((line) => stripAnsi(line).trimEnd()).filter((line) => line.trim().length > 0);
 }
 
