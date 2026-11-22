@@ -1164,10 +1164,10 @@ syncBuiltinESMExports();
 			shareEnabled: false,
 			maxSubagentDepth: 2,
 		};
-		const startedEvent = (id: string): { task?: string; goal?: string } => {
+		const startedEvent = (id: string): { task?: string; goal?: string; description?: string } => {
 			const event = emitted.find((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT && (entry.data as { id?: string }).id === id);
 			assert.ok(event, `missing async-started event for ${id}`);
-			return event.data as { task?: string; goal?: string };
+			return event.data as { task?: string; goal?: string; description?: string };
 		};
 		mockPi.onCall({ output: "single done" });
 		const singleId = `async-handoff-single-${Date.now().toString(36)}`;
@@ -1186,6 +1186,7 @@ syncBuiltinESMExports();
 		assert.match(singleResult.content[0]?.text ?? "", /non-interactive run: Pi auto-drains current-session subagent work at agent_end/);
 		assert.equal(startedEvent(singleId).task, "[prompt redacted]");
 		assert.equal(startedEvent(singleId).goal, "[prompt redacted]");
+		assert.equal(startedEvent(singleId).description, "Test agent: worker");
 		await waitForAsyncResultFile(singleId, 30_000);
 
 		mockPi.onCall({ output: "interactive done" });
@@ -1215,6 +1216,7 @@ syncBuiltinESMExports();
 		assert.match(parallelResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
 		assert.match(parallelResult.content[0]?.text ?? "", /Use bg_wait only/i);
 		assert.equal(startedEvent(parallelId).goal, "[prompt redacted]");
+		assert.equal(startedEvent(parallelId).description, "Test agent: worker");
 		const parallelResultPath = await waitForAsyncResultFile(parallelId, 10_000);
 		const parallelPayload = JSON.parse(fs.readFileSync(parallelResultPath, "utf-8")) as { agent?: string; mode?: string };
 		assert.equal(parallelPayload.mode, "parallel");
