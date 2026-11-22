@@ -1164,7 +1164,7 @@ syncBuiltinESMExports();
 			shareEnabled: false,
 			maxSubagentDepth: 2,
 		};
-		const startedEvent = (id: string): { task?: string; goal?: string } => {
+		const startedEvent = (id: string): { task?: string; goal?: string; description?: string } => {
 			const event = emitted.find((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT && (entry.data as { id?: string }).id === id);
 			assert.ok(event, `missing async-started event for ${id}`);
 			return event.data as { task?: string; goal?: string; description?: string };
