@@ -208,6 +208,7 @@ import {
 	type WorkflowNodeStatus,
 	type WorkflowTerminalOutcome,
 	type SubagentRunMode,
+	type SubagentLifecycleEvent,
 	type SubagentState,
 	DIRS,
 	DEFAULT_ARTIFACT_CONFIG,
@@ -219,6 +220,7 @@ import {
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
+	TASK_SUBAGENT_LIFECYCLE_EVENT,
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 	checkSubagentDepth,
 	resolveChildMaxSubagentDepth,
@@ -880,6 +882,19 @@ function rememberedForegroundChild(input: RememberedForegroundRunInput, result: 
 	};
 }
 
+/** The execution outcome a finished attached run is saved with; a rejected acceptance does not change it. */
+function foregroundExecutionStatus(result: SingleResult): ReturnType<typeof resolveSubagentResultStatus> {
+	return resolveSubagentResultStatus(omitUndefinedProperties({
+		exitCode: result.exitCode,
+		interrupted: result.interrupted,
+		detached: result.detached,
+		processSignal: result.processSignal,
+		timedOut: result.timedOut,
+		stopped: result.stopped,
+		turnBudgetExceeded: result.turnBudgetExceeded,
+	}));
+}
+
 function rememberForegroundRun(state: SubagentState, input: RememberedForegroundRunInput & { results: SingleResult[] }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
@@ -891,15 +906,7 @@ function rememberForegroundRun(state: SubagentState, input: RememberedForeground
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
 		updatedAt,
 		children: input.results.map((result, index) => {
-			const child = rememberedForegroundChild(input, result, index, resolveSubagentResultStatus(omitUndefinedProperties({
-				exitCode: result.exitCode,
-				interrupted: result.interrupted,
-				detached: result.detached,
-				processSignal: result.processSignal,
-				timedOut: result.timedOut,
-				stopped: result.stopped,
-				turnBudgetExceeded: result.turnBudgetExceeded,
-			})), updatedAt);
+			const child = rememberedForegroundChild(input, result, index, foregroundExecutionStatus(result), updatedAt);
 			const recovered = previous?.children[index];
 			return child.status === "detached" && recovered && recovered.status !== "detached" ? recovered : child;
 		}),
@@ -1163,6 +1170,24 @@ function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, o
 	if (foregroundError) throw foregroundError;
 	if (asyncError) throw asyncError;
 	throw new Error("Run not found. Provide id or runId.");
+}
+
+function foregroundLifecycleStatus(status: ReturnType<typeof resolveSubagentResultStatus>): SubagentLifecycleEvent["status"] {
+	if (status === "completed") return "completed";
+	return status === "stopped" || status === "paused" ? "aborted" : "failed";
+}
+
+/** Never throws: a host listener or a stale extension runtime must not fail a child run. */
+function emitForegroundLifecycle(pi: ExtensionAPI, input: { runId: string; agent: string; description: string; status: SubagentLifecycleEvent["status"]; parentWorkflowRunId?: string; workflowKey?: string }): void {
+	const payload: SubagentLifecycleEvent = { id: input.runId, status: input.status, agent: input.agent, description: input.description, mode: "foreground" };
+	if (input.status !== "started") payload.success = input.status === "completed";
+	if (input.parentWorkflowRunId) payload.parentWorkflowRunId = input.parentWorkflowRunId;
+	if (input.workflowKey) payload.workflowKey = input.workflowKey;
+	try {
+		pi.events.emit(TASK_SUBAGENT_LIFECYCLE_EVENT, payload);
+	} catch (error) {
+		if (!isStaleExtensionContextError(error)) console.error("Failed to emit foreground lifecycle event:", error);
+	}
 }
 
 function isStaleExtensionContextError(error: unknown): boolean {
@@ -4450,6 +4475,13 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const detachedWorkflowChild = params.workflowAwaitDetached === true
 		? new Promise<Awaited<ReturnType<typeof runSync>>>((resolve) => { resolveDetachedWorkflowChild = resolve; })
 		: undefined;
+	const lifecycleBase = {
+		runId,
+		agent: params.agent!,
+		description: agents.find((candidate) => candidate.name === params.agent)?.description?.trim() || params.agent!,
+		parentWorkflowRunId: params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId,
+		workflowKey: params.workflowKey,
+	};
 	try {
 		const childSessionFile = sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent, modelOrigin);
 		rememberRunningForegroundRun({
@@ -4464,6 +4496,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			}),
 			parentWorkflowRunId: params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId,
 		});
+		emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: "started" });
 		const launched = await runSync(ctx.cwd, agents, params.agent!, task, compactOptional<Parameters<typeof runSync>[4]>({
 			machine: foregroundMachine,
 			parentProviderRegistry: ctx.modelRegistry,
@@ -4540,6 +4573,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 					resolveDetachedWorkflowChild(result);
 					return;
 				}
+				// Same status updateRememberedForegroundChild saves and sends with subagent:foreground-complete.
+				emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: foregroundLifecycleStatus(foregroundResultIntercomStatus(result)) });
 				try {
 					if (worktreeSetup) {
 						try {
@@ -4599,7 +4634,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			};
 		}
 		r = launched.detached && detachedWorkflowChild ? await detachedWorkflowChild : launched;
+		if (!r.detached) emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: foregroundLifecycleStatus(foregroundExecutionStatus(r)) });
 	} catch (error) {
+		emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: "failed" });
 		discardRunningRecord();
 		await cleanupSingleWorktree();
 		throw error;

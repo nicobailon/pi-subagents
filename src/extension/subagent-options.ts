@@ -11,15 +11,20 @@ const optionKeys = new Set(SUBAGENT_OPTION_KEYS);
 const ALIAS_HINTS: Record<string, string> = { runId: "id (top-level)", maxRuntimeMs: "options.timeoutMs", isolation: "worktree (top-level)" };
 const optionsValidator = Compile(SubagentOptionParams);
 
+/** Some models fill every unset optional parameter with the string "null" (#3285); it means the field was left out. */
+export function isUnsetPlaceholder(value: unknown): boolean {
+	return value === "null";
+}
+
 /**
  * Lowers a model tool call's `options` into the flat params the executor reads.
  * Management fields given at the top level keep working, as in the flat shape older sessions declared.
  */
 export function flattenSubagentToolOptions(params: Record<string, unknown>, disabled?: DisabledFeatureSurface): SubagentParamsLike {
 	// Some models fill every unset optional parameter with the string "null", and the workflow union with "false" (#3285).
-	params = Object.fromEntries(Object.entries(params).filter(([key, value]) => value !== "null" && !(key === "workflow" && value === "false")));
+	params = Object.fromEntries(Object.entries(params).filter(([key, value]) => !isUnsetPlaceholder(value) && !(key === "workflow" && value === "false")));
 	if (params.options && typeof params.options === "object" && !Array.isArray(params.options)) {
-		params.options = Object.fromEntries(Object.entries(params.options).filter(([, value]) => value !== "null"));
+		params.options = Object.fromEntries(Object.entries(params.options).filter(([, value]) => !isUnsetPlaceholder(value)));
 	}
 	const removedTopLevel = removedModelWorkflowFieldError(params);
 	if (removedTopLevel) throw new Error(removedTopLevel);
@@ -32,8 +37,10 @@ export function flattenSubagentToolOptions(params: Record<string, unknown>, disa
 	const { script, ...rest } = options as Record<string, unknown>;
 	if (script !== undefined) {
 		if (typeof script !== "string" || !script.trim()) throw new Error("subagent: options.script must be the workflow script's source text.");
-		if (topLevel.workflow !== undefined) throw new Error("subagent: options.script replaces workflow; pass only one of them.");
-		return { ...flattenSubagentToolOptions({ ...topLevel, options: rest }, disabled), workflowScript: script };
+		// workflow: true also means "the script is inline", so it adds nothing next to options.script (#3320).
+		const { workflow, ...withoutWorkflow } = topLevel;
+		if (workflow !== undefined && workflow !== true && workflow !== "true") throw new Error("subagent: options.script replaces workflow; pass only one of them.");
+		return { ...flattenSubagentToolOptions({ ...withoutWorkflow, options: rest }, disabled), workflowScript: script };
 	}
 	const entries = Object.entries(options);
 	const enabledKeys = SUBAGENT_OPTION_KEYS.filter((key) => !disabled?.params.has(key));
