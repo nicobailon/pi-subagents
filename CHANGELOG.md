@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Finished workflows and their subagents are now deleted from disk like other background runs. Before, async retention kept every workflow run, workflow child and revived child forever, so `async-subagent-runs` could grow to tens of gigabytes. A workflow is now removed with its children once it has finished and passed the 30-day window; it is still kept while it, any of its children, or a revival of one is running or recent. Thanks to [@youlikemodernart](https://github.com/youlikemodernart) for the report (#3326).
+
 ## [0.89.2] - 2026-11-20
 
 ### Highlights
