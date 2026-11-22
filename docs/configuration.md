@@ -132,7 +132,7 @@ Pi records each tool definition and prompt section a session declares, and decla
 { "disabledFeatures": ["watchdog", "panes", "preflight", "lane-metadata", "gates"] }
 ```
 
-Removes feature groups you do not use from the `subagent` tool. Each listed feature loses its top-level parameters from the model-facing schema and its `options` keys are rejected, and any request that still uses one of its parameters or actions fails with an error naming this setting. The check covers the parent tool, fanout-child tools, RPC, slash commands, prompt templates, scheduled launches, delegated launches, and workflow `runs.run`/`runs.all`/`runs.lanes` children, which are rejected before they launch. The built-in tool descriptions, the unknown-action list, the fanout-child tool description, and RPC `ping` no longer mention disabled features. Every `{ action: "guide" }` response starts with a notice: a topic lists what is disabled, and a section points to the `tool-reference` topic for that list. With `workflow-scripts` disabled, the notice also says to use the top-level `tasks` or `chain` fields instead. Custom tool descriptions keep their own text; only their `{{compactDescription}}` and `{{fullDescription}}` placeholders leave out disabled features. Nothing is disabled by default, and the default schema and description are unchanged. An unknown or duplicate feature name fails config loading rather than silently re-enabling every feature.
+Removes feature groups you do not use from the `subagent` tool. Each listed feature loses its top-level parameters from the model-facing schema and its `options` keys are rejected, and any request that still uses one of its parameters or actions fails with an error naming this setting. The check covers the parent tool, fanout-child tools, RPC, slash commands, prompt templates, scheduled launches, delegated launches, resumed runs whose saved launch enabled `share`, and workflow `runs.run`/`runs.all`/`runs.lanes` children, which are rejected before they launch. The built-in tool descriptions, the unknown-action list, the fanout-child tool description, and RPC `ping` no longer mention disabled features. Every `{ action: "guide" }` response starts with a notice: a topic lists what is disabled, and a section points to the `tool-reference` topic for that list. With `workflow-scripts` disabled, the notice also says to use the top-level `tasks` or `chain` fields instead. Custom tool descriptions keep their own text; only their `{{compactDescription}}` and `{{fullDescription}}` placeholders leave out disabled features. Nothing is disabled by default, and the default schema and description are unchanged. An unknown or duplicate feature name fails config loading rather than silently re-enabling every feature.
 
 | Feature | Parameters removed | Actions rejected |
 |---|---|---|
@@ -150,9 +150,10 @@ Removes feature groups you do not use from the `subagent` tool. Each listed feat
 | `control-overrides` | `control` | |
 | `extension-bindings` | `extensionBindings` | |
 | `external-machines` | `machine` | |
+| `session-sharing` | `share` | |
 | `workflow-scripts` | `workflow`, `args`, `preflight`, `globalConcurrencyLimit`, `maxSubagentSpawnsPerRun` | `validate` |
 
-Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, the watchdog still follows its own settings, missions still attach automatically when [`missions`](#missions) enables them, and agents with a `machine` in their definition still run there. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged. With every feature and [`scheduledRuns.enabled`](#scheduledruns) disabled, the default `subagent` tool declaration (name, description, and parameter schema as JSON) shrinks from 18,239 to 10,263 characters (80 to 41 parameters). Restart Pi after changing this setting. The smaller declaration applies to new sessions; a resumed session keeps the tool declaration it already sent, so its prompt cache stays valid. Disabled options and actions are still rejected in every session.
+Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, the watchdog still follows its own settings, missions still attach automatically when [`missions`](#missions) enables them, and agents with a `machine` in their definition still run there. `share` is the exception: it has no configured default, so `session-sharing` removes the only path that uploads a session to a GitHub Gist. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged. With every feature and [`scheduledRuns.enabled`](#scheduledruns) disabled, the default `subagent` tool declaration (name, description, and parameter schema as JSON) shrinks from 18,239 to 10,263 characters (80 to 41 parameters). Restart Pi after changing this setting. The smaller declaration applies to new sessions; a resumed session keeps the tool declaration it already sent, so its prompt cache stays valid. Disabled options and actions are still rejected in every session.
 
 ### Chain and tasks without workflow scripts
 
@@ -299,6 +300,14 @@ See [Sandboxing background children with a launcher](agents.md#sandboxing-backgr
 Sets `fresh` or `fork` for every subagent launch that omits `context`. This global preference replaces each agent-level `defaultContext`. Explicit `context: "fresh"` or `context: "fork"` still wins.
 
 With `"fork"`, the setting uses the existing implicit-fork behavior. A launch starts fresh when the parent session file or current leaf is not available. `"fresh"` starts fresh even when the selected agent defaults to fork. Scheduled runs continue to set fresh context explicitly. A runner or provider that does not support fork context keeps its existing rejection behavior.
+
+## `fastServiceTier`
+
+```json
+{ "fastServiceTier": "ultrafast" }
+```
+
+Sets the OpenAI `service_tier` that `fast: true` requests for native OpenAI-Codex children: `"priority"` (default) or `"ultrafast"`. Whether a tier is available depends on the model and account.
 
 ## `forkContext`
 
@@ -484,7 +493,7 @@ An explicit `subagent` call value wins over this default. Choose a value at leas
 
 Caps simultaneously running children inside one run, including durable legacy multi-child runs and workflow script launches through `runs.run`/`runs.all`. Queued workflow children retain their stable keys and begin when a running sibling releases capacity. The default is `20`. The value must be a positive integer; an invalid value fails config loading.
 
-Inline or file-backed top-level workflow calls may set a positive safe-integer `globalConcurrencyLimit` to override this value for that workflow. The override is workflow-only and is not forwarded to child calls.
+Top-level workflow calls (inline, file-backed, or named) may set a positive safe-integer `globalConcurrencyLimit` to override this value for that workflow. The override is workflow-only and is not forwarded to child calls.
 
 ## `maxSubagentSpawnsPerSession`
 

@@ -70,6 +70,13 @@ describe("subagent tool options", () => {
 		assert.deepEqual(flattenSubagentToolOptions({ agent: "reviewer", task: "check for null", workflow: "false", options: { timeoutMs: "null", skill: "review" } }), { agent: "reviewer", task: "check for null", skill: "review" });
 	});
 
+	it("runs options.script given with workflow: true, and refuses it next to a named workflow or script path (#3320)", () => {
+		assert.deepEqual(flattenSubagentToolOptions({ workflow: true, async: true, options: { script: "return 1;" } }), { async: true, workflowScript: "return 1;" });
+		assert.deepEqual(flattenSubagentToolOptions({ workflow: "true", options: { script: "return 1;" } }), { workflowScript: "return 1;" });
+		assert.throws(() => flattenSubagentToolOptions({ workflow: "parallel", options: { script: "return 1;" } }), { message: "subagent: options.script replaces workflow; pass only one of them." });
+		assert.throws(() => flattenSubagentToolOptions({ workflow: "./flow.js", options: { script: "return 1;" } }), { message: "subagent: options.script replaces workflow; pass only one of them." });
+	});
+
 	it("points typos, aliases and top-level fields inside options to the field to use", () => {
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { acceptence: "checked" } }), { message: /^subagent: unknown options key 'acceptence'\. Did you mean 'acceptance'\? Valid options: acceptance, additional, agentContract, / });
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { maxRuntimeMs: 1000 } }), { message: /^subagent: unknown options key 'maxRuntimeMs'; use options\.timeoutMs\. Valid options: / });
@@ -84,6 +91,16 @@ describe("subagent tool options", () => {
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { gate: "npm test" } }, disabled), { message: `subagent option 'options.gate' is disabled by config disabledFeatures "gates".` });
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { gat: "npm test" } }, disabled), (error: Error) => {
 			assert.doesNotMatch(error.message, /\bgate\b/);
+			return true;
+		});
+	});
+
+	it("rejects options.share when session sharing is disabled", () => {
+		const disabled = resolveDisabledFeatureSurface({ disabledFeatures: ["session-sharing"] });
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { share: true } }, disabled), { message: `subagent option 'options.share' is disabled by config disabledFeatures "session-sharing".` });
+		// A near miss must not name the option the setting removed, or the model would retry it.
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { shar: true } }, disabled), (error: Error) => {
+			assert.doesNotMatch(error.message, /\bshare\b/);
 			return true;
 		});
 	});
@@ -122,7 +139,7 @@ describe("registered subagent tools with options", () => {
 			await assert.rejects(call({ action: "steer", id: "missing-run", message: "focus", options: { mode: "plan" } }), /action='steer' mode must be/);
 			assert.match(text(await call({ action: "schedule.create", workflow: "./flow.js", options: { every: "1h", name: "nightly" } })), /Trigger: every 1h/);
 			assert.match(text(await call({ action: "validate", options: { script: "return 1;" } })), /"ok":true/);
-			await assert.rejects(call({ workflow: true, options: { script: "return 1;" } }), /options\.script replaces workflow/);
+			await assert.rejects(call({ workflow: "./flow.js", options: { script: "return 1;" } }), /options\.script replaces workflow/);
 			await assert.rejects(call({ agent: "worker", task: "scan", options: { acceptance: "checked", timeoutMs: 3000000000 } }), /timeoutMs must be a positive integer no larger/);
 			const theme = { fg(_name, value) { return value; }, bold(value) { return value; } };
 			assert.match(tools.parent.renderCall({ workflow: true, options: { preflight: { version: 1, lanes: [] } } }, theme).text, /preflight/);

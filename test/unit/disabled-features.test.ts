@@ -8,6 +8,7 @@ import { SUBAGENT_OPTION_KEYS, SubagentParams, createSubagentParamsSchema } from
 import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
 import { readSubagentGuide, SUBAGENT_GUIDE_TOPICS } from "../../src/extension/subagent-guide.ts";
 import { buildSubagentToolDescription, SUBAGENT_SAFETY_GUIDANCE } from "../../src/extension/tool-description.ts";
+import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
 import type { ExtensionConfig } from "../../src/shared/types.ts";
@@ -32,6 +33,7 @@ const GROUPS: Array<{ name: string; config: ExtensionConfig; setting: string; pa
 		["control-overrides", ["control"], []],
 		["extension-bindings", ["extensionBindings"], []],
 		["external-machines", ["machine"], []],
+		["session-sharing", ["share"], []],
 		["workflow-scripts", ["workflow", "args", "preflight", "globalConcurrencyLimit", "maxSubagentSpawnsPerRun"], ["validate"]],
 	] as const).map(([name, params, actions]) => ({ name, config: { disabledFeatures: [name] }, setting: `disabledFeatures "${name}"`, params: [...params], actions: [...actions] })),
 	{
@@ -198,6 +200,20 @@ describe("disabled feature discovery", () => {
 		const disabled = resultText(await createExecutor({ disabledFeatures: ["watchdog"] }).executePublic("guide", request, new AbortController().signal, undefined, ctx()));
 		assert.ok(disabled.endsWith(guide));
 		assert.match(disabled.slice(0, -guide.length), /^Disabled by config[^\n]*\n- disabledFeatures "watchdog": options scope, target, thinking; actions watchdog\.status, watchdog\.check, watchdog\.configure, watchdog\.recommend-model\n\n$/);
+	});
+
+	it("names session sharing in the disabled-feature notice", async () => {
+		const guide = readSubagentGuide("tool-reference");
+		const request = { action: "guide", topic: "tool-reference" };
+		const disabled = resultText(await createExecutor({ disabledFeatures: ["session-sharing"] }).executePublic("guide", request, new AbortController().signal, undefined, ctx()));
+		assert.ok(disabled.endsWith(guide));
+		assert.match(disabled.slice(0, -guide.length), /^Disabled by config[^\n]*\n- disabledFeatures "session-sharing": options share\n\n$/);
+	});
+
+	it("keeps share enabled when session-sharing is not disabled", () => {
+		assert.equal(resolveDisabledFeatureSurface({}).params.has("share"), false);
+		assert.equal(resolveDisabledFeatureSurface({ scheduledRuns: { enabled: true } }).params.has("share"), false);
+		assert.equal(flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { share: true } }).share, true);
 	});
 
 	it("tells every guide topic that workflow scripts are disabled and what replaces them", async () => {

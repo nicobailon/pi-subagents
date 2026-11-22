@@ -346,9 +346,8 @@ function isCompleteUsageCounter(value: unknown): value is number {
 }
 
 const STOPPED_BEFORE_COMPLETION_ERROR = "Subagent stopped before completion.";
-const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
-const REMAINING_TIMEOUT_MS = Symbol("remainingTimeoutMs");
-type AbortRecoverySingleResult = SingleResult & { [AFTER_COMPACTION_SETTLEMENT]?: true; [REMAINING_TIMEOUT_MS]?: number };
+// Kept off the result so the object returned in tool details stays plain JSON.
+const attemptRecoveryState = new WeakMap<SingleResult, { afterCompactionSettlement: boolean; remainingTimeoutMs?: number }>();
 
 
 async function runSingleAttempt(
@@ -374,7 +373,7 @@ async function runSingleAttempt(
 		verifyModel: boolean;
 		providerDiagnostics?: SingleResult["providerDiagnostics"];
 	},
-): Promise<AbortRecoverySingleResult> {
+): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
 	const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined);
 	assertThinkingWithinCeiling({ model: modelArg, configThinking: effectiveThinking, ceiling: options.thinkingCeiling, agent: agent.name, runId: options.runId });
@@ -476,7 +475,7 @@ async function runSingleAttempt(
 		...(options.structuredOutput ? { structuredOutputSchema: options.structuredOutput.schema } : {}),
 		...(options.extensionBindings ? { extensionBindings: options.extensionBindings } : {}),
 	});
-	const result: AbortRecoverySingleResult = withRunContext({
+	const result: SingleResult = withRunContext({
 		index: options.index ?? 0,
 		agent: agent.name,
 		task: shared.originalTask ?? task,
@@ -1534,8 +1533,7 @@ async function runSingleAttempt(
 	result.exitCode = exitCode;
 	result.providerDiagnostics = clearProviderRetry(result.providerDiagnostics);
 	progress.providerDiagnostics = result.providerDiagnostics;
-	if (afterCompactionSettlement) result[AFTER_COMPACTION_SETTLEMENT] = true;
-	result[REMAINING_TIMEOUT_MS] = remainingTimeoutMs;
+	attemptRecoveryState.set(result, { afterCompactionSettlement, remainingTimeoutMs });
 	if (interruptedByControl) {
 		result.exitCode = 0;
 		result.interrupted = true;
@@ -2025,12 +2023,12 @@ async function runSyncCompletionInner(
 			structuredOutputFailed: attemptResult.structuredOutputFailed,
 			acceptanceFailed: false,
 			currentTool: attemptResult.progress?.currentTool,
-			afterCompactionSettlement: attemptResult[AFTER_COMPACTION_SETTLEMENT],
+			afterCompactionSettlement: attemptRecoveryState.get(attemptResult)?.afterCompactionSettlement,
 		});
 		if (recovery.action === "resume") {
 			recoveryPrompt = recovery.prompt;
 			// The retry gets the budget the first attempt left, so that attempt's supervisor waits stay uncounted.
-			const remainingMs = attemptResult[REMAINING_TIMEOUT_MS];
+			const remainingMs = attemptRecoveryState.get(attemptResult)?.remainingTimeoutMs;
 			if (remainingMs !== undefined) attemptOptions.deadlineAt = Date.now() + remainingMs;
 			attemptNotes.push("[abort-recovery] compaction abort after useful progress; resuming the retained child session once on the same model.");
 			continue;

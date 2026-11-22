@@ -35,7 +35,7 @@ import {
 	type SubagentDelegationResponse,
 	type SubagentDelegationStarted,
 } from "../../src/api/delegation.ts";
-import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_PROCESS_TERMINAL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
+import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_PROCESS_TERMINAL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ChildWatchdogProgress, type ControlEvent, type SubagentLifecycleEvent, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { encodeIndexSegment } from "../../src/runs/background/index-segment.ts";
 import { removeResultIndex, writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
@@ -1022,6 +1022,66 @@ Answer only from the supplied synthetic text.
 		assert.equal(terminalChild.finalOutput, "completed after user detach");
 	});
 
+	it("emits task:subagent:lifecycle for a foreground run that completes and for one that fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const bus = createEventBus();
+		const lifecycle: SubagentLifecycleEvent[] = [];
+		// SAFETY: only the executor emits on this channel, and it always sends a SubagentLifecycleEvent.
+		bus.on("task:subagent:lifecycle", (payload) => lifecycle.push(payload as SubagentLifecycleEvent));
+		const state: SubagentState = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		const executor = createSubagentExecutor!({
+			pi: { events: bus, getSessionName: () => undefined },
+			state,
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents: [makeAgent("echo")] }),
+			allowMutatingManagementActions: true,
+		});
+
+		mockPi.onCall({ matchArgIncludes: "Secret task A", output: "A done" });
+		await executor.execute("lifecycle-ok", { agent: "echo", task: "Secret task A", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.deepEqual(lifecycle.map((event) => event.status), ["started", "completed"]);
+		const [started, completed] = lifecycle;
+		assert.ok(started!.id);
+		assert.equal(completed!.id, started!.id);
+		for (const event of lifecycle) {
+			assert.equal(event.agent, "echo");
+			assert.equal(event.description, "Test agent: echo");
+			assert.equal(event.mode, "foreground");
+			assert.doesNotMatch(JSON.stringify(event), /Secret task/);
+		}
+		assert.equal(completed!.success, true);
+
+		lifecycle.length = 0;
+		mockPi.onCall({ matchArgIncludes: "Secret task B", stderr: "child failed", exitCode: 1 });
+		await executor.execute("lifecycle-fail", { agent: "echo", task: "Secret task B", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.deepEqual(lifecycle.map((event) => event.status), ["started", "failed"]);
+		assert.equal(lifecycle[1]!.id, lifecycle[0]!.id);
+		assert.equal(lifecycle[1]!.success, false);
+
+		// An agentContract run keeps exitCode 0 when acceptance rejects, so the tool result and the saved run report success.
+		lifecycle.length = 0;
+		mockPi.onCall({ matchArgIncludes: "Secret task C", output: "C done" });
+		const contractResult = await executor.execute("lifecycle-contract-rejected", {
+			agent: "echo",
+			task: "Secret task C",
+			async: false,
+			agentContract: { version: 1 },
+			acceptance: { level: "verified", verify: [{ id: "fails", command: `${JSON.stringify(process.execPath)} -e "process.exit(1)"` }] },
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(contractResult.details?.results[0]?.acceptance?.status, "rejected");
+		assert.notEqual(contractResult.isError, true);
+		assert.deepEqual(lifecycle.map((event) => event.status), ["started", "completed"]);
+	});
+
 	it("rejects action='single' with execution fields", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const result = await executor.executePublic("single-alias", { action: "single", agent: "echo", task: "work" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
@@ -1285,6 +1345,28 @@ Answer only from the supplied synthetic text.
 		);
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "parallel workflow failed");
 		assert.equal(result.details.workflow?.resource?.name, "parallel");
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("runs the built-in parallel workflow's tasks one at a time under a top-level globalConcurrencyLimit", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const release = path.join(tempDir, "serial-parallel.release");
+		mockPi.onCall({ waitForPath: release, output: "Serial child completed" });
+		const running = makeExecutor([makeAgent("reviewer"), makeAgent("scout")]).executePublic(
+			"named-parallel-serial",
+			{ workflow: "parallel", globalConcurrencyLimit: 1, args: { tasks: [{ agent: "reviewer", task: "Review src/api" }, { agent: "scout", task: "Map the tests" }] }, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		let settled = false;
+		void running.finally(() => { settled = true; });
+		for (const deadline = Date.now() + 10_000; mockPi.callCount() < 1 && !settled && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 20));
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		const concurrent = mockPi.callCount();
+		fs.writeFileSync(release, "go");
+		const result = await running;
+		assert.equal(concurrent, 1, "the second child waits while the first holds the only slot");
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "parallel workflow failed");
 		assert.equal(mockPi.callCount(), 2);
 	});
 
