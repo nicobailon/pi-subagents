@@ -485,8 +485,8 @@ export function summarizeAsyncStatus(asyncDir: string, status: AsyncStatus & { c
 }
 
 /**
- * Projects nested children onto summaries built without them. Read-only: it
- * never reconciles descendants, so callers run it only on the runs they show.
+ * Projects nested children onto summaries built without them. It never
+ * reconciles descendants, so callers run it only on the runs they show.
  */
 export function attachNestedChildren(runs: AsyncRunSummary[], resolveRoute: (run: AsyncRunSummary) => NestedRoute | undefined = (run) => findNestedRouteForRootId(run.id)): void {
 	for (const run of runs) {
@@ -642,6 +642,8 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			} catch (error) {
 				observeStatus?.(null);
 				nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
+				// Children that failed to reconcile are not projected.
+				nestedRoute = undefined;
 			}
 		}
 		let summary: AsyncRunSummary;
