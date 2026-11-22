@@ -90,6 +90,50 @@ describe("host workflow result publication", { skip: !available }, () => {
 			notifier.dispose();
 		}
 	});
+	it("records a terminal status write failure instead of crashing the host (#3325)", async () => {
+		// A Windows rename lock that outlasts the retries makes every teardown write to
+		// status.json throw EPERM. The workflow runs in a detached promise, so a throw there
+		// would surface as an unhandled rejection that takes down the host process, and a
+		// dropped write would leave the finished run listed as running.
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+		process.on("unhandledRejection", onUnhandled);
+		const published = barrier();
+		let statusWrites = 0;
+		const originalRename = fs.renameSync;
+		fs.renameSync = ((from, to) => {
+			if (path.basename(String(to)) === "status.json" && ++statusWrites > 1) throw Object.assign(new Error(`EPERM: operation not permitted, rename '${String(from)}' -> '${String(to)}'`), { code: "EPERM" });
+			originalRename(from, to);
+			if (path.dirname(String(to)) === RESULTS_DIR) published.resolve();
+		}) as typeof fs.renameSync;
+		syncBuiltinESMExports();
+		try {
+			const state: SubagentState = { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null };
+			const executor = createSubagentExecutor!({ pi: { events: createEventBus(), getSessionName: () => undefined }, state,
+				config: {}, asyncByDefault: false, tempArtifactsDir: tempDir, getSubagentSessionRoot: () => tempDir, expandTilde: (p: string) => p, discoverAgents: () => ({ agents: [] }),
+			});
+			const launch = await executor.execute("workflow-terminal-eperm", { workflowScript: "throw new Error('every child hit a rate limit')", async: true, mission: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.notEqual(launch.isError, true, launch.content[0]?.text);
+			const id = launch.details.asyncId!;
+			await bounded(published.promise);
+			// Let the handler's teardown and finally block run, and any rejection reach the process.
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			assert.deepEqual(unhandled, []);
+			assert.equal(state.workflowControllers?.has(id), false, "finally cleanup must still run");
+			assert.equal(state.asyncJobs.get(id)?.status, "failed");
+			assert.equal((await readAsyncPayload(id)).state, "failed");
+			assert.match(fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf8"), /"type":"subagent\.workflow\.status_write_failed".*EPERM/);
+			assert.equal(JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf8")).state, "running");
+			// Once the lock clears, the retried terminal status lands and the run leaves the active index.
+			fs.renameSync = originalRename; syncBuiltinESMExports();
+			await waitForAsyncState(id, (status) => status.state === "failed");
+			assert.equal(fs.existsSync(path.join(ASYNC_DIR, ".active-runs", id)), false);
+		} finally {
+			fs.renameSync = originalRename; syncBuiltinESMExports();
+			process.off("unhandledRejection", onUnhandled);
+		}
+	});
 	for (const outcome of ["complete", "failed", "stopped", "index-error", "retry-error", "replacement-error"] as const) {
 	it(`retains real Darwin demand until deferred indexed workflow publication settles (${outcome})`, async () => {
 		const polled = barrier(), published = barrier(), delivered = barrier(), retired = barrier(), failed = barrier(), emitted = barrier();
