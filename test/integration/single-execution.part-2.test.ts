@@ -2135,16 +2135,55 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		}
 	});
 
-	it("ignores a label passed on a top-level call", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("names a direct launch by its top-level label and ignores a non-string one", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const ctx = makeMinimalCtx(tempDir);
-		for (const label of ["Top level injected", 5]) {
+		for (const [label, sessionName] of [[" Validate sanitizer tests ", "echo: Validate sanitizer tests"], [5, "echo: Run the sanitizer suite"]] as const) {
 			mockPi.onCall({ output: "done" });
 			const params = flattenSubagentToolOptions({ agent: "echo", task: "Run the sanitizer suite", label, async: false });
 			const result = await executor.executePublic(`top-level-label-${label}`, params, new AbortController().signal, undefined, ctx);
 			assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
-			assert.equal(readCall().runtime?.sessionName, "echo: Run the sanitizer suite");
+			assert.equal(readCall().runtime?.sessionName, sessionName);
 		}
+	});
+
+	it("names a labeled direct async launch in its async-started event, status step and session", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const bus = createEventBus();
+		const started: Array<Record<string, unknown>> = [];
+		bus.on(SUBAGENT_ASYNC_STARTED_EVENT, (event) => started.push(event as Record<string, unknown>));
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, bus);
+		mockPi.onCall({ output: "done" });
+		const params = flattenSubagentToolOptions({ agent: "echo", task: "Run the sanitizer suite", label: "Validate sanitizer tests", async: true });
+		const result = await executor.executePublic("labeled-async-launch", params, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
+		assert.equal(started.find((event) => event.id === result.details.asyncId)?.description, "Validate sanitizer tests");
+		const status = JSON.parse(fs.readFileSync(path.join(result.details.asyncDir!, "status.json"), "utf-8")) as AsyncStatus;
+		assert.equal(status.steps?.[0]?.label, "Validate sanitizer tests");
+		for (const deadline = Date.now() + 30_000; mockPi.callCount() < 1 && Date.now() < deadline;) await new Promise((resolve) => setTimeout(resolve, 50));
+		assert.equal(readCall().runtime?.sessionName, "echo: Validate sanitizer tests");
+	});
+
+	it("names a labeled parallel task in its async-started event and session", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const bus = createEventBus();
+		const started: Array<Record<string, unknown>> = [];
+		bus.on(SUBAGENT_ASYNC_STARTED_EVENT, (event) => started.push(event as Record<string, unknown>));
+		const executor = makeExecutor([makeAgent("echo")], {}, true, undefined, true, new Map(), undefined, undefined, bus);
+		mockPi.onCall({ output: "done" });
+		mockPi.onCall({ output: "done" });
+		const result = await executor.executePublic(
+			"labeled-parallel-task",
+			{ workflow: "parallel", args: { tasks: [{ agent: "echo", task: "Run the sanitizer suite", label: "Validate sanitizer tests" }, { agent: "echo", task: "Map the tests" }] }, async: false },
+			new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "parallel workflow failed");
+		const children = started.filter((event) => event.mode === "single").map(({ workflowKey, description }) => ({ workflowKey, description }));
+		assert.deepEqual(children.sort((a, b) => String(a.workflowKey).localeCompare(String(b.workflowKey))), [
+			{ workflowKey: "task-1", description: "Validate sanitizer tests" },
+			{ workflowKey: "task-2", description: "Test agent: echo" },
+		]);
+		const sessionNames = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+			.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as { runtime?: { sessionName?: string } }).runtime?.sessionName);
+		assert.deepEqual(sessionNames.sort(), ["echo: Map the tests", "echo: Validate sanitizer tests"]);
 	});
 
 	it("preserves original parent authority when reviving a foreground child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

@@ -23,7 +23,7 @@ does the work itself where that is cheaper.
 
 ```typescript
 subagent({ agent: "worker", task: "<brief>" })                    // one child; async by default
-subagent({ workflow: "parallel", args: { tasks: [{ agent, task, cwd?, model? }] } })  // independent children
+subagent({ workflow: "parallel", args: { tasks: [{ agent, task, cwd?, model?, label? }] } })  // independent children
 subagent({ workflow: true })              // runs the one ```js workflow block in this same reply
 subagent({ workflow: "./lane.js", args }) // script file, path relative to the request cwd
 subagent({ action: "validate", workflow: "./lane.js" })          // check a script without launching

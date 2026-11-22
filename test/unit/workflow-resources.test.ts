@@ -184,41 +184,40 @@ describe("named workflow resources", () => {
 
 	it("gives field-specific recovery advice for rejected parallel task fields", () => {
 		const errorFor = (item: Record<string, unknown>) => (resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b", ...item }] }) as { error: string }).error;
-		assert.equal(errorFor({ output: "reviews/a.md" }), "workflow 'parallel' args.tasks[0] contains unsupported fields: output. Each tasks item accepts agent and task, plus optional cwd and model. For one shared output, set output on the subagent call itself: the workflow result is written there and each child gets its own file beside it. For exact or different per-child paths, use workflow: true with runs.all items. Do not drop output if you need durable child files. No child was launched.");
-		assert.equal(errorFor({ worktree: true }), "workflow 'parallel' args.tasks[0] contains unsupported fields: worktree. Each tasks item accepts agent and task, plus optional cwd and model. Set worktree on the subagent call itself to give every child the same value; for different values per child, use workflow: true with runs.all items. No child was launched.");
-		assert.equal(errorFor({ label: "x" }), "workflow 'parallel' args.tasks[0] contains unsupported fields: label. Each tasks item accepts agent and task, plus optional cwd and model. For per-child label, use workflow: true with runs.all items. No child was launched.");
-		assert.equal(errorFor({ count: 2 }), "workflow 'parallel' args.tasks[0] contains unsupported fields: count. Each tasks item accepts agent and task, plus optional cwd and model. No child was launched.");
+		assert.equal(errorFor({ output: "reviews/a.md" }), "workflow 'parallel' args.tasks[0] contains unsupported fields: output. Each tasks item accepts agent and task, plus optional cwd, model and label. For one shared output, set output on the subagent call itself: the workflow result is written there and each child gets its own file beside it. For exact or different per-child paths, use workflow: true with runs.all items. Do not drop output if you need durable child files. No child was launched.");
+		assert.equal(errorFor({ worktree: true }), "workflow 'parallel' args.tasks[0] contains unsupported fields: worktree. Each tasks item accepts agent and task, plus optional cwd, model and label. Set worktree on the subagent call itself to give every child the same value; for different values per child, use workflow: true with runs.all items. No child was launched.");
+		assert.equal(errorFor({ count: 2 }), "workflow 'parallel' args.tasks[0] contains unsupported fields: count. Each tasks item accepts agent and task, plus optional cwd, model and label. No child was launched.");
 	});
 
-	it("passes optional per-child cwd and model from parallel args.tasks to each launch as data", async () => {
+	it("passes optional per-child cwd, model and label from parallel args.tasks to each launch as data", async () => {
 		const hostile = `"}); throw new Error("injected"); //`;
 		const resolved = resolveWorkflowResource("parallel", { tasks: [
 			{ agent: "a", task: "t", cwd: "/repo/a" },
 			{ agent: "b", task: "t", model: "provider/model" },
 			{ agent: "c", task: "t", cwd: hostile, model: hostile },
-			{ agent: "d", task: "t" },
+			{ agent: "d", task: "t", label: "Map the tests" },
 		] });
 		assert.equal(resolved.ok, true);
 		if (!resolved.ok) return;
-		const launched: Array<{ key: string; cwd: unknown; model: unknown }> = [];
+		const launched: Array<{ key: string; cwd: unknown; model: unknown; label: unknown }> = [];
 		await runWorkflowScript({
 			script: resolved.resource.script,
 			async launch(key, input) {
-				launched.push({ key, cwd: input.cwd, model: input.model });
+				launched.push({ key, cwd: input.cwd, model: input.model, label: input.label });
 				return { key, ok: true, output: "done", artifactPaths: [] };
 			},
 			async status(key) { return { key, ok: true, output: "unused", artifactPaths: [] }; },
 		});
 		assert.deepEqual(launched, [
-			{ key: "task-1", cwd: "/repo/a", model: undefined },
-			{ key: "task-2", cwd: undefined, model: "provider/model" },
-			{ key: "task-3", cwd: hostile, model: hostile },
-			{ key: "task-4", cwd: undefined, model: undefined },
+			{ key: "task-1", cwd: "/repo/a", model: undefined, label: undefined },
+			{ key: "task-2", cwd: undefined, model: "provider/model", label: undefined },
+			{ key: "task-3", cwd: hostile, model: hostile, label: undefined },
+			{ key: "task-4", cwd: undefined, model: undefined, label: "Map the tests" },
 		]);
 
 		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b", cwd: " " }] }) as { error: string }).error, /args\.tasks\[0\]\.cwd must not be empty/);
 		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b", model: 1 }] }) as { error: string }).error, /args\.tasks\[0\]\.model must be a non-empty string/);
-		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b", thinking: "high" }] }) as { error: string }).error, /unsupported fields: thinking\. Each tasks item accepts agent and task, plus optional cwd and model/);
+		assert.match((resolveWorkflowResource("parallel", { tasks: [{ agent: "a", task: "b", thinking: "high" }] }) as { error: string }).error, /unsupported fields: thinking\. Each tasks item accepts agent and task, plus optional cwd, model and label/);
 	});
 
 	it("does not authorize raw equivalent scripts or unconsumed/forged permits", () => {

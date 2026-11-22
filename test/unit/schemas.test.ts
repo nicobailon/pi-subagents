@@ -463,11 +463,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(ProviderParams, "SubagentParams schema should exist");
 		const schema = ProviderParams;
 		const serialized = JSON.stringify(schema);
-		assert.ok(serialized.length <= 2_100, `expected concise schema at or under 2,100 chars, got ${serialized.length}`);
+		assert.ok(serialized.length <= 2_250, `expected concise schema at or under 2,250 chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		const properties = schema.properties as Record<string, JsonSchemaNode>;
-		assert.deepEqual(Object.keys(properties), ["agent", "task", "workflow", "args", "async", "model", "cwd", "worktree", "output", "action", "id", "message", "options"]);
+		assert.deepEqual(Object.keys(properties), ["agent", "task", "workflow", "args", "async", "model", "cwd", "worktree", "output", "action", "id", "message", "options", "label"]);
 		assert.match(String(properties.agent?.description ?? ""), /management target/);
 		assert.equal(properties.options?.type, "object");
 		assert.equal(properties.options?.additionalProperties, true);
@@ -475,8 +475,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(properties.options?.description ?? ""), /acceptance, timeoutMs.*guide tool-reference\/parameter-reference/);
 		const { resolveDisabledFeatureSurface } = await import("../../src/shared/disabled-features.ts");
 		const structured = createProviderSchema!(resolveDisabledFeatureSurface({ disabledFeatures: ["workflow-scripts"] }));
-		assert.ok(JSON.stringify(structured).length <= 2_450, `expected structured schema at or under 2,450 chars, got ${JSON.stringify(structured).length}`);
-		assert.deepEqual(Object.keys(structured.properties as JsonSchemaNode), ["agent", "task", "tasks", "chain", "async", "model", "cwd", "worktree", "output", "action", "id", "message", "options"]);
+		assert.ok(JSON.stringify(structured).length <= 2_600, `expected structured schema at or under 2,600 chars, got ${JSON.stringify(structured).length}`);
+		assert.deepEqual(Object.keys(structured.properties as JsonSchemaNode), ["agent", "task", "tasks", "chain", "async", "model", "cwd", "worktree", "output", "action", "id", "message", "options", "label"]);
 
 		const nestedDescriptionPaths: string[] = [];
 		const stack: Array<{ path: string; value: unknown }> = [{ path: "SubagentParams", value: schema }];

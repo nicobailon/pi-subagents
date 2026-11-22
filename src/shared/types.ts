@@ -1752,6 +1752,8 @@ export interface AsyncStartedEvent {
 	completionOwnerId?: string;
 	mode?: SubagentRunMode;
 	agent?: string;
+	/** Launch label when set, else the agent's description or name; never the task prompt. */
+	description?: string;
 	agents?: string[];
 	/** Redacted prompt marker for the first child task; workflow roots may omit this field. */
 	task?: string;
@@ -2588,7 +2590,7 @@ export interface RunSyncOptions {
 	remoteReads?: string[] | false;
 	/** Original cwd input retained for launch diagnostics. */
 	requestedCwd?: string;
-	/** Workflow child label; names the child session instead of the task excerpt. */
+	/** Launch or workflow child label; names the child session instead of the task excerpt. */
 	label?: string;
 	signal?: AbortSignal;
 	/** Report a child ended by `signal` as stopped; set for workflow children, whose signal is the workflow's. */

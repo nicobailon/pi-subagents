@@ -22,6 +22,8 @@ interface TemplateScope {
 
 /** Optional per-child launch fields copied verbatim onto the generated runs.all item. */
 const CHILD_FIELDS = ["cwd", "model"] as const;
+/** tasks items also take a label, which names the child the way a runs.all item's label does. */
+const TASK_FIELDS = [...CHILD_FIELDS, "label"] as const;
 // Outer subagent-call controls that default onto every workflow child (docs/workflows.md); output gets its own advice.
 const SHARED_CHILD_CONTROLS = new Set(["worktree", "baseRef", "context", "skill", "fast", "agentScope", "outputMode", "outputSchema", "agentContract", "acceptance", "gate", "toolBudget", "toolTimeoutMs", "control"]);
 // runs.run/runs.all child fields whose outer-call form is missing or means something else (async and timeoutMs apply to the workflow).
@@ -46,7 +48,7 @@ interface StepChild {
 	key: string;
 	agent: string;
 	taskExpression: string;
-	fields: Partial<Record<(typeof CHILD_FIELDS)[number], string>>;
+	fields: Partial<Record<(typeof TASK_FIELDS)[number], string>>;
 }
 
 export function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -100,9 +102,9 @@ function prelude(originalTask: string | undefined): string[] {
 	return originalTask === undefined ? [SETTLE_HELPER] : [SETTLE_HELPER, `const originalTask = ${JSON.stringify(originalTask)};`];
 }
 
-function childFields(record: Record<string, unknown>, path: string): StepChild["fields"] {
+function childFields(record: Record<string, unknown>, path: string, allowed: readonly (typeof TASK_FIELDS)[number][] = CHILD_FIELDS): StepChild["fields"] {
 	const fields: StepChild["fields"] = {};
-	for (const field of CHILD_FIELDS) {
+	for (const field of allowed) {
 		if (record[field] !== undefined) fields[field] = nonEmptyString(record[field], `${path}.${field}`);
 	}
 	return fields;
@@ -133,7 +135,7 @@ function buildTasksScript(steps: unknown, originalTask: string | undefined, scri
 	if (!Array.isArray(steps) || steps.length === 0) throw new Error("tasks must be a non-empty array of { agent, task } items.");
 	const children = steps.map((item, index): StepChild => {
 		const path = `tasks[${index}]`;
-		const record = exactFields(item, path, ["agent", "task", ...CHILD_FIELDS], "Each tasks item accepts agent and task, plus optional cwd and model.", scripts);
+		const record = exactFields(item, path, ["agent", "task", ...TASK_FIELDS], "Each tasks item accepts agent and task, plus optional cwd, model and label.", scripts);
 		const agent = nonEmptyString(record.agent, `${path}.agent`);
 		const task = nonEmptyString(record.task, `${path}.task`);
 		const taskExpression = compileTemplate(task, {
@@ -142,7 +144,7 @@ function buildTasksScript(steps: unknown, originalTask: string | undefined, scri
 			previous: { unavailable: "tasks items may only use {task}." },
 			outputsUnavailable: "tasks items may only use {task}.",
 		});
-		return { key: `task-${index + 1}`, agent, taskExpression, fields: childFields(record, path) };
+		return { key: `task-${index + 1}`, agent, taskExpression, fields: childFields(record, path, TASK_FIELDS) };
 	});
 	return [
 		...prelude(originalTask),

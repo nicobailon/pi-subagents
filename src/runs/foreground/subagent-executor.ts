@@ -352,7 +352,7 @@ export interface SubagentParamsLike {
 	/** Internal workflow ownership metadata; not part of the public schema. */
 	workflowParentRunId?: string;
 	workflowKey?: string;
-	/** Workflow child's `runs.run` label, trimmed; names the child's own session instead of a task excerpt. */
+	/** Top-level `label` or a workflow child's `runs.run` label; names the child's own session instead of a task excerpt. */
 	label?: string;
 	lane?: import("../../shared/types.ts").WorkflowLaneMetadata;
 	/** Set by the scheduler so this run's completion can name the schedule that produced it. */
@@ -3638,6 +3638,11 @@ async function waitForWorkflowAsyncSingleResult(
 	return importWorkflowAwaitedChildResult(completed, { runId: options.runId, asyncDir, resultPath, task: options.task, parentWorkflowRunId: params.workflowParentRunId, details: launchResult.details, state: options.state, pi: options.pi });
 }
 
+/** Callers outside the tool schema can pass any value; only a non-blank string names a run. */
+function launchLabel(label: unknown): string | undefined {
+	return typeof label === "string" && label.trim() ? label.trim() : undefined;
+}
+
 async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Promise<AgentToolResult<Details> | null> {
 	const {
 		params,
@@ -3801,8 +3806,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			runFanoutBudget: data.runFanoutBudget,
 			parentWorkflowRunId: params.workflowParentRunId,
 			workflowKey: params.workflowKey,
-			// Top-level calls pass unknown keys through; only a workflow child's label is normalized.
-			label: params.workflowParentRunId !== undefined ? params.label : undefined,
+			label: launchLabel(params.label),
 			lane: params.lane,
 			workflowAwaitAsync: params.workflowAwaitAsync,
 		}));
@@ -4425,7 +4429,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			cwd: singleCwd,
 			outputPath,
 			rerun: { params: { ...params, task: authoredTask, async: params.async ?? false } },
-			description: foregroundControl.description,
+			description: launchLabel(params.label) ?? foregroundControl.description,
 			...(modelOverride ? { model: modelOverride } : {}),
 			...(thinking ? { thinking } : {}),
 			interrupt: () => {
@@ -4478,7 +4482,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const lifecycleBase = {
 		runId,
 		agent: params.agent!,
-		description: agents.find((candidate) => candidate.name === params.agent)?.description?.trim() || params.agent!,
+		description: launchLabel(params.label) ?? (agents.find((candidate) => candidate.name === params.agent)?.description?.trim() || params.agent!),
 		parentWorkflowRunId: params.workflowParentRunId ?? foregroundControl?.parentWorkflowRunId,
 		workflowKey: params.workflowKey,
 	};
@@ -4517,7 +4521,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
 			cwd: singleCwd,
 			requestedCwd: data.requestedCwd,
-			label: params.workflowParentRunId !== undefined ? params.label : undefined,
+			label: launchLabel(params.label),
 			signal,
 			abortedAsStopped: params.workflowParentRunId !== undefined,
 			interruptSignal: interruptController.signal,

@@ -165,7 +165,7 @@ function resolveParallel(args: Readonly<Record<string, unknown>>): ReturnType<Wo
 	const unsupported = Object.keys(args).filter((key) => key !== "tasks");
 	if (unsupported.length > 0) {
 		const concurrencyAdvice = unsupported.includes("concurrency") ? " To cap how many run at once, pass globalConcurrencyLimit at the top level, alongside workflow and args." : "";
-		return { error: `workflow 'parallel' args contain unsupported fields: ${unsupported.join(", ")}. Pass args.tasks: [{ agent, task, cwd?, model? }, ...].${concurrencyAdvice} ${unsupportedChildFieldAdvice(unsupported, true)}` };
+		return { error: `workflow 'parallel' args contain unsupported fields: ${unsupported.join(", ")}. Pass args.tasks: [{ agent, task, cwd?, model?, label? }, ...].${concurrencyAdvice} ${unsupportedChildFieldAdvice(unsupported, true)}` };
 	}
 	try {
 		return { script: buildStructuredWorkflowScript("tasks", args.tasks, undefined, true) };

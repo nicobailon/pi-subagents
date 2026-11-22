@@ -352,7 +352,7 @@ interface AsyncSingleParams {
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
-	/** Workflow child label; names the child session and its status step. */
+	/** Launch or workflow child label; names the child session and its status step. */
 	label?: string;
 	lane?: WorkflowLaneMetadata;
 	workflowAwaitAsync?: boolean;
@@ -2461,7 +2461,7 @@ export function executeAsyncSingle(
 			mode: "single",
 			...(params.toolCallId ? { toolCallId: params.toolCallId } : {}),
 			agent,
-			description: agentConfig.description?.trim() || agent,
+			description: params.label ?? (agentConfig.description?.trim() || agent),
 			task: task?.trim() ? PROMPT_REDACTED : undefined,
 			goal: (params.goal ?? task).trim() ? PROMPT_REDACTED : undefined,
 			cwd: runnerCwd,

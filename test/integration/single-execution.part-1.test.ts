@@ -992,7 +992,7 @@ Answer only from the supplied synthetic text.
 
 		const pending = executor.execute(
 			"user-detach-guidance",
-			{ agent: "echo", task: "Keep working", async: false },
+			{ agent: "echo", task: "Keep working", label: "Keep the fix going", async: false },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1003,6 +1003,7 @@ Answer only from the supplied synthetic text.
 			control = state.lastForegroundControlId ? state.foregroundControls.get(state.lastForegroundControlId) : undefined;
 		}
 		assert.ok(control?.detach, "foreground detach control should become available");
+		assert.equal(control.activeChildren?.get(0)?.description, "Keep the fix going", "the Fleet row reads the launch label");
 		assert.equal(control.detach(), true);
 
 		const result = await pending;
@@ -1062,8 +1063,8 @@ Answer only from the supplied synthetic text.
 
 		lifecycle.length = 0;
 		mockPi.onCall({ matchArgIncludes: "Secret task B", stderr: "child failed", exitCode: 1 });
-		await executor.execute("lifecycle-fail", { agent: "echo", task: "Secret task B", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
-		assert.deepEqual(lifecycle.map((event) => event.status), ["started", "failed"]);
+		await executor.execute("lifecycle-fail", { agent: "echo", task: "Secret task B", label: "Validate sanitizer tests", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.deepEqual(lifecycle.map(({ status, description }) => ({ status, description })), [{ status: "started", description: "Validate sanitizer tests" }, { status: "failed", description: "Validate sanitizer tests" }]);
 		assert.equal(lifecycle[1]!.id, lifecycle[0]!.id);
 		assert.equal(lifecycle[1]!.success, false);
 
