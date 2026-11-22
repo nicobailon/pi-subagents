@@ -302,6 +302,13 @@ Package skill content.
 		writeFile(configPath, JSON.stringify({ asyncWidgetLayout: "compact" }));
 		assert.deepEqual(loadConfig(), {});
 		assert.throws(() => updateConfig((config) => config), /config\.asyncWidgetLayout must be "adaptive" or "rows"/);
+		for (const fastServiceTier of ["priority", "ultrafast"]) {
+			writeFile(configPath, JSON.stringify({ fastServiceTier }));
+			assert.equal(loadConfig().fastServiceTier, fastServiceTier);
+		}
+		writeFile(configPath, JSON.stringify({ fastServiceTier: "flex" }));
+		assert.deepEqual(loadConfig(), {});
+		assert.throws(() => updateConfig((config) => config), /config\.fastServiceTier must be "priority" or "ultrafast"/);
 		writeFile(configPath, JSON.stringify({ programStatus: false }));
 		assert.equal(loadConfig().programStatus, false);
 		writeFile(configPath, JSON.stringify({ programStatus: "off" }));

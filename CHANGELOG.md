@@ -4,11 +4,14 @@
 
 ### Added
 
+- A new `fastServiceTier` setting chooses the OpenAI service tier that `fast: true` requests for native OpenAI-Codex children: `"priority"` (the default, as before) or `"ultrafast"`. Before, fast mode could only request Priority. Thanks to [@FireSpoonYZ](https://github.com/FireSpoonYZ) for #3317.
 - `disabledFeatures: ["session-sharing"]` now removes `share` from the `subagent` tool, so a run cannot upload a session to a GitHub Gist from that install. The setting rejects the option at every entry point, leaves it out of the valid-options list, and names itself in the error, through the same feature-group mechanism as `usage-budgets` and `external-machines`; nothing changes when the setting is absent. A resume whose saved launch enabled `share` is refused before it starts rather than uploading when the continued session ends, and the run stays resumable once the setting is gone. Before, the only ways to stop the upload were to remove `gh` from `PATH`, revoke the `gist` OAuth scope, or block egress at the host. Thanks to [@marcfargas](https://github.com/marcfargas) for #30.
+- A named workflow call such as `{ workflow: "parallel", args: { tasks: [...] } }` now accepts a top-level `globalConcurrencyLimit`, so `globalConcurrencyLimit: 1` runs its tasks one at a time; before, the call was refused. When `args.concurrency` is passed to `parallel`, the error now points to `globalConcurrencyLimit`. Thanks to [@mmarabel](https://github.com/mmarabel) for #3320.
 
 ### Fixed
 
 - A foreground subagent's result in the tool details (`details.results[i]`) no longer carries hidden Symbol keys, so extensions that hash or compare tool results, such as pi-fold, see a plain JSON object. Thanks to [@xiaquwan1001](https://github.com/xiaquwan1001) for the report (#3319).
+- Finished workflows and their subagents are now deleted from disk like other background runs. Before, async retention kept every workflow run, workflow child and revived child forever, so `async-subagent-runs` could grow to tens of gigabytes. A workflow is now removed with its children once it has finished and passed the 30-day window; it is still kept while it, any of its children, or a revival of one is running or recent. Thanks to [@youlikemodernart](https://github.com/youlikemodernart) for the report (#3326).
 - The session sharing section of the tool reference states again that an uploaded session can contain source code, file paths, environment variables, and credentials, that a secret Gist is unlisted rather than private, that the upload uses your `gh` account, and that the returned link hands the Gist id to a third-party site. The warning was lost when the README was split into focused guides, and it now also says how to disable the capability (#30).
 
 ## [0.89.2] - 2026-11-20

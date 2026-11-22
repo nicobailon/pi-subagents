@@ -301,6 +301,14 @@ Sets `fresh` or `fork` for every subagent launch that omits `context`. This glob
 
 With `"fork"`, the setting uses the existing implicit-fork behavior. A launch starts fresh when the parent session file or current leaf is not available. `"fresh"` starts fresh even when the selected agent defaults to fork. Scheduled runs continue to set fresh context explicitly. A runner or provider that does not support fork context keeps its existing rejection behavior.
 
+## `fastServiceTier`
+
+```json
+{ "fastServiceTier": "ultrafast" }
+```
+
+Sets the OpenAI `service_tier` that `fast: true` requests for native OpenAI-Codex children: `"priority"` (default) or `"ultrafast"`. Whether a tier is available depends on the model and account.
+
 ## `forkContext`
 
 ```json
@@ -485,7 +493,7 @@ An explicit `subagent` call value wins over this default. Choose a value at leas
 
 Caps simultaneously running children inside one run, including durable legacy multi-child runs and workflow script launches through `runs.run`/`runs.all`. Queued workflow children retain their stable keys and begin when a running sibling releases capacity. The default is `20`. The value must be a positive integer; an invalid value fails config loading.
 
-Inline or file-backed top-level workflow calls may set a positive safe-integer `globalConcurrencyLimit` to override this value for that workflow. The override is workflow-only and is not forwarded to child calls.
+Top-level workflow calls (inline, file-backed, or named) may set a positive safe-integer `globalConcurrencyLimit` to override this value for that workflow. The override is workflow-only and is not forwarded to child calls.
 
 ## `maxSubagentSpawnsPerSession`
 
