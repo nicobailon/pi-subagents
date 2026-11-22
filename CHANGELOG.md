@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A `subagent` call with `workflow: true` and `options.script` now runs the script, as `options.script` alone does. Both mean the script is inline, so the call no longer fails with `options.script replaces workflow`. A named workflow or a script path together with `options.script` is still refused. Thanks to [@mmarabel](https://github.com/mmarabel) for the report (#3320).
+
 ## [0.89.2] - 2026-11-20
 
 ### Highlights

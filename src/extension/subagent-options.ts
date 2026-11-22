@@ -32,8 +32,10 @@ export function flattenSubagentToolOptions(params: Record<string, unknown>, disa
 	const { script, ...rest } = options as Record<string, unknown>;
 	if (script !== undefined) {
 		if (typeof script !== "string" || !script.trim()) throw new Error("subagent: options.script must be the workflow script's source text.");
-		if (topLevel.workflow !== undefined) throw new Error("subagent: options.script replaces workflow; pass only one of them.");
-		return { ...flattenSubagentToolOptions({ ...topLevel, options: rest }, disabled), workflowScript: script };
+		// workflow: true also means "the script is inline", so it adds nothing next to options.script (#3320).
+		const { workflow, ...withoutWorkflow } = topLevel;
+		if (workflow !== undefined && workflow !== true && workflow !== "true") throw new Error("subagent: options.script replaces workflow; pass only one of them.");
+		return { ...flattenSubagentToolOptions({ ...withoutWorkflow, options: rest }, disabled), workflowScript: script };
 	}
 	const entries = Object.entries(options);
 	const enabledKeys = SUBAGENT_OPTION_KEYS.filter((key) => !disabled?.params.has(key));
