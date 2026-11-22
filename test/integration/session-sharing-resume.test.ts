@@ -40,7 +40,9 @@ describe("session sharing on resume", { skip: !available ? "pi packages not avai
 		assert.equal(descriptor.share, true);
 
 		const capacityBefore = getActiveAsyncCapacitySnapshot("share-resume-session", 4).used;
-		const runsBefore = fs.readdirSync(ASYNC_DIR).length;
+		// Dot entries are run indexes the finished runner may still be writing after its result lands.
+		const runDirs = () => fs.readdirSync(ASYNC_DIR).filter((entry) => !entry.startsWith(".")).sort();
+		const runsBefore = runDirs();
 		const callsBefore = mockPi.callCount();
 		const resume = (executor: ReturnType<typeof makeAsyncExecutor>, callId: string) => executor
 			.execute(callId, { action: "resume", id: sourceId, message: "Continue", acceptance: false }, new AbortController().signal, undefined, ctx);
@@ -50,7 +52,7 @@ describe("session sharing on resume", { skip: !available ? "pi packages not avai
 		assert.match(refused.content[0]?.text ?? "", new RegExp(`^Cannot resume: run '${sourceId}' was launched with share enabled, which config disabledFeatures "session-sharing" now disables\\. Re-enable session sharing to resume it\\.$`));
 		assert.equal(mockPi.callCount(), callsBefore, "the refused resume started no child");
 		assert.equal(getActiveAsyncCapacitySnapshot("share-resume-session", 4).used, capacityBefore, "the refused resume moved no capacity");
-		assert.equal(fs.readdirSync(ASYNC_DIR).length, runsBefore, "the refused resume created no run");
+		assert.deepEqual(runDirs(), runsBefore, "the refused resume created no run");
 
 		mockPi.onCall({ output: "resumed run" });
 		const allowed = await resume(makeAsyncExecutor([agent]), "share-resume-allowed");
