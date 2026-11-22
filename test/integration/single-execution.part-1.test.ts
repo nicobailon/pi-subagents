@@ -1066,6 +1066,20 @@ Answer only from the supplied synthetic text.
 		assert.deepEqual(lifecycle.map((event) => event.status), ["started", "failed"]);
 		assert.equal(lifecycle[1]!.id, lifecycle[0]!.id);
 		assert.equal(lifecycle[1]!.success, false);
+
+		// An agentContract run keeps exitCode 0 when acceptance rejects, so the tool result and the saved run report success.
+		lifecycle.length = 0;
+		mockPi.onCall({ matchArgIncludes: "Secret task C", output: "C done" });
+		const contractResult = await executor.execute("lifecycle-contract-rejected", {
+			agent: "echo",
+			task: "Secret task C",
+			async: false,
+			agentContract: { version: 1 },
+			acceptance: { level: "verified", verify: [{ id: "fails", command: `${JSON.stringify(process.execPath)} -e "process.exit(1)"` }] },
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(contractResult.details?.results[0]?.acceptance?.status, "rejected");
+		assert.notEqual(contractResult.isError, true);
+		assert.deepEqual(lifecycle.map((event) => event.status), ["started", "completed"]);
 	});
 
 	it("rejects action='single' with execution fields", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

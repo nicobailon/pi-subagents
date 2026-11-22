@@ -881,6 +881,19 @@ function rememberedForegroundChild(input: RememberedForegroundRunInput, result: 
 	};
 }
 
+/** The execution outcome a finished attached run is saved with; a rejected acceptance does not change it. */
+function foregroundExecutionStatus(result: SingleResult): ReturnType<typeof resolveSubagentResultStatus> {
+	return resolveSubagentResultStatus(omitUndefinedProperties({
+		exitCode: result.exitCode,
+		interrupted: result.interrupted,
+		detached: result.detached,
+		processSignal: result.processSignal,
+		timedOut: result.timedOut,
+		stopped: result.stopped,
+		turnBudgetExceeded: result.turnBudgetExceeded,
+	}));
+}
+
 function rememberForegroundRun(state: SubagentState, input: RememberedForegroundRunInput & { results: SingleResult[] }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
@@ -892,15 +905,7 @@ function rememberForegroundRun(state: SubagentState, input: RememberedForeground
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
 		updatedAt,
 		children: input.results.map((result, index) => {
-			const child = rememberedForegroundChild(input, result, index, resolveSubagentResultStatus(omitUndefinedProperties({
-				exitCode: result.exitCode,
-				interrupted: result.interrupted,
-				detached: result.detached,
-				processSignal: result.processSignal,
-				timedOut: result.timedOut,
-				stopped: result.stopped,
-				turnBudgetExceeded: result.turnBudgetExceeded,
-			})), updatedAt);
+			const child = rememberedForegroundChild(input, result, index, foregroundExecutionStatus(result), updatedAt);
 			const recovered = previous?.children[index];
 			return child.status === "detached" && recovered && recovered.status !== "detached" ? recovered : child;
 		}),
@@ -1166,16 +1171,7 @@ function resolveResumeTarget(params: SubagentParamsLike, state: SubagentState, o
 	throw new Error("Run not found. Provide id or runId.");
 }
 
-function foregroundLifecycleStatus(result: Pick<SingleResult, "exitCode" | "interrupted" | "stopped" | "processSignal" | "timedOut" | "turnBudgetExceeded" | "acceptance">): SubagentLifecycleEvent["status"] {
-	const status = resolveSubagentResultStatus(omitUndefinedProperties({
-		exitCode: result.exitCode,
-		success: result.acceptance?.status === "rejected" ? false : undefined,
-		interrupted: result.interrupted,
-		processSignal: result.processSignal,
-		timedOut: result.timedOut,
-		stopped: result.stopped,
-		turnBudgetExceeded: result.turnBudgetExceeded,
-	}));
+function foregroundLifecycleStatus(status: ReturnType<typeof resolveSubagentResultStatus>): SubagentLifecycleEvent["status"] {
 	if (status === "completed") return "completed";
 	return status === "stopped" || status === "paused" ? "aborted" : "failed";
 }
@@ -4572,7 +4568,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 					resolveDetachedWorkflowChild(result);
 					return;
 				}
-				emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: foregroundLifecycleStatus(result) });
+				// Same status updateRememberedForegroundChild saves and sends with subagent:foreground-complete.
+				emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: foregroundLifecycleStatus(foregroundResultIntercomStatus(result)) });
 				try {
 					if (worktreeSetup) {
 						try {
@@ -4632,7 +4629,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			};
 		}
 		r = launched.detached && detachedWorkflowChild ? await detachedWorkflowChild : launched;
-		if (!r.detached) emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: foregroundLifecycleStatus(r) });
+		if (!r.detached) emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: foregroundLifecycleStatus(foregroundExecutionStatus(r)) });
 	} catch (error) {
 		emitForegroundLifecycle(deps.pi, { ...lifecycleBase, status: "failed" });
 		discardRunningRecord();
