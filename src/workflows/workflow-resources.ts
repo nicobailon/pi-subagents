@@ -163,7 +163,7 @@ function resolveRunCi(args: Readonly<Record<string, unknown>>): ReturnType<Workf
 
 function resolveParallel(args: Readonly<Record<string, unknown>>): ReturnType<WorkflowResourceDefinition["resolve"]> {
 	const unsupported = Object.keys(args).filter((key) => key !== "tasks");
-	if (unsupported.length > 0) return { error: `workflow 'parallel' args contain unsupported fields: ${unsupported.join(", ")}. Pass args.tasks: [{ agent, task, cwd?, model? }, ...]. ${unsupportedChildFieldAdvice(unsupported, true)}` };
+	if (unsupported.length > 0) return { error: `workflow 'parallel' args contain unsupported fields: ${unsupported.join(", ")}. Pass args.tasks: [{ agent, task, cwd?, model?, label? }, ...]. ${unsupportedChildFieldAdvice(unsupported, true)}` };
 	try {
 		return { script: buildStructuredWorkflowScript("tasks", args.tasks, undefined, true) };
 	} catch (error) {

@@ -67,7 +67,7 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 
 ## Parameter reference
 
-The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `model`, `cwd`, `worktree`, `output`, `action`, `id` and `message` at the top level and every other field inside `options`, for example `subagent({ action: "status", id: "<run-id>", options: { view: "transcript" } })`. Management fields and the `runId`, `maxRuntimeMs` and `isolation` aliases also keep working at the top level, as in RPC payloads, slash commands, schedules and workflow `runs.run`/`runs.all` items; a field given in both places with different values is rejected.
+The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `model`, `cwd`, `worktree`, `output`, `action`, `id`, `message` and `label` at the top level and every other field inside `options`, for example `subagent({ action: "status", id: "<run-id>", options: { view: "transcript" } })`. Management fields and the `runId`, `maxRuntimeMs` and `isolation` aliases also keep working at the top level, as in RPC payloads, slash commands, schedules and workflow `runs.run`/`runs.all` items; a field given in both places with different values is rejected.
 
 ### Target and management parameters
 

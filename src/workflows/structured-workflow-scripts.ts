@@ -135,7 +135,7 @@ function buildTasksScript(steps: unknown, originalTask: string | undefined, scri
 	if (!Array.isArray(steps) || steps.length === 0) throw new Error("tasks must be a non-empty array of { agent, task } items.");
 	const children = steps.map((item, index): StepChild => {
 		const path = `tasks[${index}]`;
-		const record = exactFields(item, path, ["agent", "task", ...TASK_FIELDS], "Each tasks item accepts agent and task, plus optional cwd and model.", scripts);
+		const record = exactFields(item, path, ["agent", "task", ...TASK_FIELDS], "Each tasks item accepts agent and task, plus optional cwd, model and label.", scripts);
 		const agent = nonEmptyString(record.agent, `${path}.agent`);
 		const task = nonEmptyString(record.task, `${path}.task`);
 		const taskExpression = compileTemplate(task, {
