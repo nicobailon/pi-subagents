@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- A foreground subagent's result in the tool details (`details.results[i]`) no longer carries hidden Symbol keys, so extensions that hash or compare tool results, such as pi-fold, see a plain JSON object. Thanks to [@xiaquwan1001](https://github.com/xiaquwan1001) for the report (#3319).
+
 ## [0.89.2] - 2026-11-20
 
 ### Highlights

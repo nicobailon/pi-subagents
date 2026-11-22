@@ -29,7 +29,7 @@ describe("foreground tool-call compaction", () => {
 			messages: [], sessionId: "progress-test", modelId: "mock/test-model",
 		};
 		const factory: ChildSessionFactory = { async create() { return session; }, async dispose() {}, async disposeForParent() {} };
-		await runSync(process.cwd(), makeAgentConfigs(["worker"]), "worker", "test progress", {
+		const result = await runSync(process.cwd(), makeAgentConfigs(["worker"]), "worker", "test progress", {
 			childSessionFactory: factory,
 			onUpdate: (update) => {
 				const progress = update.details.progress?.[0];
@@ -39,6 +39,7 @@ describe("foreground tool-call compaction", () => {
 		assert.equal(updates.at(-1)?.progressText, "[2/3] Second");
 		assert.ok(updates.at(-1)?.progressUpdatedAt);
 		assert.ok(updates.some((update) => update.progressText === "[1/3] First"));
+		assert.deepEqual(Reflect.ownKeys(result).filter((key) => typeof key === "symbol"), []);
 	});
 	it("stores compact tool-call summaries instead of raw message payloads", () => {
 		const result = compactForegroundResult({
