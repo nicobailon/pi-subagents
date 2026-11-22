@@ -41,7 +41,7 @@ describe("fast mode provider request", () => {
 		};
 
 		assert.deepEqual(
-			rewriteFastModeProviderRequest({ type: "before_provider_request", payload }),
+			rewriteFastModeProviderRequest({ type: "before_provider_request", payload }, "priority"),
 			{
 				...payload,
 				service_tier: "priority",
@@ -51,7 +51,7 @@ describe("fast mode provider request", () => {
 
 	it("preserves a non-object provider payload", () => {
 		assert.equal(
-			rewriteFastModeProviderRequest({ type: "before_provider_request", payload: "request" }),
+			rewriteFastModeProviderRequest({ type: "before_provider_request", payload: "request" }, "priority"),
 			"request",
 		);
 	});
