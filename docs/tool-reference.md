@@ -551,9 +551,7 @@ Intentionally unsupported: native Pi child options such as model override, struc
 
 Pass `share: true` to export a full session to HTML, upload it to a secret GitHub Gist through your `gh` credentials, and return a `https://shittycodingagent.ai/session/?<gistId>` URL.
 
-A session can contain source code, file paths, environment variables, and credentials that appeared in tool output. A secret Gist is unlisted, not private: anyone holding the URL can read it, the upload is made under your GitHub account, and the returned link hands the Gist id to a third-party site. Nothing prompts before the upload, so treat `share: true` as publishing. With `context: "fork"` the exported session is a branch of the parent session, so the parent conversation is included.
-
-Setting `disabledFeatures: ["session-sharing"]` rejects `share` at every entry point (see [configuration](configuration.md#disabledfeatures)); this is the supported way to turn the capability off for an install.
+A secret Gist is unlisted, not private: anyone with the link can read it, and nothing asks before the upload, so treat `share: true` as publishing. With `context: "fork"`, the parent conversation is included. Setting `disabledFeatures: ["session-sharing"]` turns sharing off for an install.
 
 ```js workflow
 return runs.run("main", { agent: "scout", task: "..." });
