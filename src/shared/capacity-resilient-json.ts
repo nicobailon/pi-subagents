@@ -14,6 +14,8 @@ const defaultTimerApi: TimerApi = {
 export type CapacityResilientJsonWriterOptions = {
 	/** It must be atomic for each target path. */
 	write?: (filePath: string, payload: object) => void;
+	/** Replaces `write` for deferred retries, so a timer tick can skip blocking lock waits. */
+	retryWrite?: (filePath: string, payload: object) => void;
 	/** Keep retry timers referenced by the event loop (needed by child runners). */
 	keepAlive?: boolean;
 	retryDelayMs?: number;
@@ -37,6 +39,7 @@ export type CapacityResilientJsonWriter = {
  */
 export function createCapacityResilientJsonWriter(options: CapacityResilientJsonWriterOptions = {}): CapacityResilientJsonWriter {
 	const defaultWrite = options.write ?? writeAtomicJson;
+	const retryWrite = options.retryWrite ?? defaultWrite;
 	const keepAlive = options.keepAlive ?? false;
 	const retryDelayMs = options.retryDelayMs ?? 1_000;
 	const timerApi = options.timerApi ?? defaultTimerApi;
@@ -91,7 +94,7 @@ export function createCapacityResilientJsonWriter(options: CapacityResilientJson
 				notifySuccess(filePath, payload);
 			} catch (error) {
 				if (!shouldDefer(error, filePath)) throw error;
-				pending.set(filePath, { payload, write: writeOperation });
+				pending.set(filePath, { payload, write: writeOperation === defaultWrite ? retryWrite : writeOperation });
 				scheduleRetry();
 			}
 		},

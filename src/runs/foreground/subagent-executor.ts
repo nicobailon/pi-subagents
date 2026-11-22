@@ -5,7 +5,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatAvailableAgentLines, formatUnknownAgentError, resolveAgentName, suggestAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir, missingForkCopyNote } from "../../shared/artifacts.ts";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { createAtomicJsonWriter, writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
 import { isRetryableFileSystemError, isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { reportSessionWarning } from "../../shared/session-warnings.ts";
@@ -3911,6 +3911,8 @@ function appendWorkflowOutputWarning(text: string, warning: string | undefined):
 const WORKFLOW_TRACE_ERROR_MAX_CHARS = 500;
 // How long an async workflow keeps retrying a status.json write that a file lock blocks.
 const WORKFLOW_STATUS_LOCK_RETRY_WINDOW_MS = 60_000;
+// Deferred retries make one quick attempt per tick instead of blocking the event loop on a lock.
+const writeAtomicJsonWithoutLockWaits = createAtomicJsonWriter({ retryRenameErrors: false });
 
 // Return, emits, console, and trace errors (which carry child text) have no size limit of their
 // own, so only they are cut; other host sections stay whole. The saved full result is uncut.
@@ -5976,6 +5978,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					write: (filePath, payload) => filePath === resultPath
 						? writeAsyncResultFile(filePath, payload as Record<string, unknown>)
 						: writeAtomicJson(filePath, payload),
+					retryWrite: (filePath, payload) => filePath === resultPath
+						? writeAsyncResultFile(filePath, payload as Record<string, unknown>)
+						: writeAtomicJsonWithoutLockWaits(filePath, payload),
 				});
 				let initialPersistenceComplete = false;
 				let persistClosed = false;

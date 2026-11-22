@@ -97,6 +97,30 @@ describe("createCapacityResilientJsonWriter", () => {
 		assert.equal(writer.pendingCount(), 0);
 	});
 
+	it("uses retryWrite for deferred retries and write for the first attempt", () => {
+		const timers = createTimers();
+		const calls: string[] = [];
+		let locked = true;
+		const writer = createCapacityResilientJsonWriter({
+			timerApi: timers.timerApi,
+			shouldDefer: (error) => (error as NodeJS.ErrnoException).code === "EPERM",
+			write: () => {
+				calls.push("write");
+				throw capacityError("EPERM");
+			},
+			retryWrite: () => {
+				calls.push("retryWrite");
+				if (locked) throw capacityError("EPERM");
+			},
+		});
+		writer.write("status.json", { state: "complete" });
+		timers.runNext();
+		locked = false;
+		timers.runNext();
+		assert.deepEqual(calls, ["write", "retryWrite", "retryWrite"]);
+		assert.equal(writer.pendingCount(), 0);
+	});
+
 	it("preserves synchronous throwing for non-capacity failures", () => {
 		const writer = createCapacityResilientJsonWriter({ write: () => { throw new Error("invalid path"); } });
 		assert.throws(() => writer.write("status.json", {}), /invalid path/);
