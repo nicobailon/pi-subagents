@@ -39,7 +39,7 @@ import { capSummaryOutputs } from "../shared/single-output.ts";
 import { formatParallelHandoffLines } from "../shared/kept-branch-text.ts";
 import { ownsRun } from "../shared/run-ownership.ts";
 import { foregroundChildStateLabel } from "../foreground/foreground-history.ts";
-import { subagentCallText, waitForRunText } from "../../shared/wait-tool-name.ts";
+import { waitForRunText } from "../../shared/wait-tool-name.ts";
 
 /** A step whose structured output has a path line needs only a short inline preview. */
 const STRUCTURED_PREVIEW_WITH_PATH_CHARS = 500;
@@ -147,7 +147,7 @@ function formatResumeGuidance(runId: string | undefined, children: Array<{ agent
 	const resumableWorkflowChildren = workflowChildren.filter(({ child }) => !(child.status === "paused" && child.activityState === "needs_attention"));
 	if (workflowChildren.length > 0) {
 		return [
-			...supervisorDetachedWorkflowChildren.map(({ child }) => `Recovery workflow child${typeof child.workflowKey === "string" && child.workflowKey.trim() ? ` '${child.workflowKey}'` : ""}: reply to the supervisor request first, then ${waitForRunText(String(child.runId))}. Use ${subagentCallText(`subagent({ action: "status", id: "${child.runId}" })`)} to recover the result; do not resume or launch a replacement while it remains detached.`),
+			...supervisorDetachedWorkflowChildren.map(({ child }) => `Recovery workflow child${typeof child.workflowKey === "string" && child.workflowKey.trim() ? ` '${child.workflowKey}'` : ""}: reply to the supervisor request first, then ${waitForRunText(String(child.runId))}. Use subagent({ action: "status", id: "${child.runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.`),
 			...resumableWorkflowChildren.map(({ child }) => `Revive workflow child${typeof child.workflowKey === "string" && child.workflowKey.trim() ? ` '${child.workflowKey}'` : ""}: subagent({ action: "resume", id: "${child.runId}", message: "..." })`),
 		].join("\n");
 	}

@@ -19,8 +19,9 @@ let declared = true;
 
 /**
  * Whether the parent declares its pi-subagents tools: with `toolExposure: "deferred"` it declares none, so parent-facing
- * text points to the completion notice and names script calls. Set by the parent from config; child runtimes and
- * runners keep the default.
+ * text points to the completion notice. Set by the parent from config, once per process: async runners keep the
+ * default, but in-process foreground children share this value, so in a deferred session their own launch receipts
+ * use the deferred wording too.
  */
 export function parentToolsDeclared(): boolean {
 	return declared;
@@ -33,9 +34,4 @@ export function setParentToolsDeclared(value: boolean): void {
 /** How parent-facing text tells the model to wait for one run. */
 export function waitForRunText(id: string): string {
 	return declared ? `wait with ${current}({ id: "${id}" })` : "wait for its completion notice, which wakes this session";
-}
-
-/** A `subagent(...)` call as parent-facing text names it; codemode scripts call it as `tools.subagent(...)`. */
-export function subagentCallText(call: string): string {
-	return declared ? call : `tools.${call}`;
 }
