@@ -13,7 +13,6 @@
     ".pi/**",
     ".roo/**",
     ".windsurf/**",
-    "test/fixtures/pi-coding-agent-shim/dist/**",
     "node_modules/**",
     "tools/oxlint/anti-slop/**"
   ],
