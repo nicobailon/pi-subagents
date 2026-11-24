@@ -17,13 +17,15 @@ const toolResults = (messages: readonly unknown[]) => (messages as Array<{ role:
 	.filter((message) => message.role === "toolResult")
 	.map((message) => ({ tool: message.toolName, isError: message.isError === true, text: (message.content ?? []).map((part) => part.text ?? "").join("\n") }));
 
-async function runDeferredSession(responses: FauxResponseStep[], options: { codemode?: boolean; afterPrompt?: (cwd: string) => Promise<void> } = {}) {
+async function runDeferredSession(responses: FauxResponseStep[], options: { codemode?: boolean; agents?: Record<string, string>; afterPrompt?: (cwd: string) => Promise<void> } = {}) {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-codemode-"));
 	const cwd = path.join(root, "project");
 	const agentDir = path.join(root, "agent");
 	fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
 	fs.mkdirSync(cwd);
 	fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ toolExposure: "deferred" }));
+	fs.mkdirSync(path.join(agentDir, "agents"));
+	for (const [name, content] of Object.entries(options.agents ?? {})) fs.writeFileSync(path.join(agentDir, "agents", `${name}.md`), content);
 	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -102,7 +104,7 @@ return JSON.stringify(refusals);`),
 		assert.ok(launchedId, launched!.text);
 		assert.match(unawaited!.text, /Output:\n\nreturned$/);
 		const refusals = JSON.parse(refused!.text.split("Output:\n\n")[1]!) as string[];
-		assert.match(refusals[0]!, /must be async: pass async:true/);
+		assert.match(refusals[0]!, /must be async: omit async or pass async:true/);
 		assert.match(refusals[1]!, /workflow:true reads a ```js block.*options\.script/);
 		assert.match(refusals[2]!, /action 'grant-spawn-budget' cannot run from a codemode script: authorityPolicy\.spawnBudgetGrant is "confirm"/);
 		assert.match(refusals[3]!, /action 'refine' cannot run from a codemode script: it waits for a foreground reviewer child/);
@@ -115,6 +117,26 @@ return JSON.stringify(refusals);`),
 		assert.equal(sizes.cold, 0);
 		assert.equal(sizes.afterDelegation, 0);
 		console.log(`deferred package tool characters cold=${sizes.cold} afterDelegation=${sizes.afterDelegation} promptLine=${DEFERRED_PROMPT.length}`);
+	} finally {
+		mockPi.uninstall();
+	}
+});
+
+test("deferred exposure: a script launch runs async even when the agent defaults to foreground", { timeout: 60_000 }, async () => {
+	const mockPi = createMockPi();
+	mockPi.install();
+	mockPi.onCall({ output: "probe done", delay: 2_000 });
+	try {
+		const messages = await runDeferredSession([
+			() => script(`return await tools.subagent({ agent: "foreground-probe", task: "Probe" });`),
+			() => script(`return await tools.subagent({ action: "status" });`),
+			() => fauxAssistantMessage("Done."),
+		], { agents: { "foreground-probe": "---\nname: foreground-probe\ndescription: Defaults to foreground\nasync: false\n---\nProbe.\n" } });
+		const [launched, status] = toolResults(messages);
+		assert.equal(launched?.isError, false, launched?.text);
+		const id = launched!.text.match(/Async: foreground-probe \[([0-9a-f-]+)\]/)?.[1];
+		assert.ok(id, launched!.text);
+		assert.match(status!.text, new RegExp(`${id} \\| running \\|`));
 	} finally {
 		mockPi.uninstall();
 	}

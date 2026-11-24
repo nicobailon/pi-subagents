@@ -239,9 +239,9 @@ function providedWait(available: ReturnType<ExtensionAPI["getAllTools"]>): boole
 }
 
 /**
- * Tool selection for `toolExposure: "deferred"`: `subagent` is never declared and there is no loader, so the tools
- * declared with subagent (contact_supervisor, and bg_wait and subagent_supervisor unless the session already
- * declared them) stay undeclared. The supervisor channel still declares subagent_supervisor when a child asks.
+ * Tool selection for `toolExposure: "deferred"`: there is no loader, and subagent and the tools declared with it stay
+ * undeclared unless the session already declared them, for example after Pi's tool_search activated subagent. The
+ * supervisor channel still declares subagent_supervisor when a child asks.
  */
 export function registerDeferredSubagentSelection(pi: ExtensionAPI, options: { hasPendingSupervisorRequest?: () => boolean }): void {
 	const decide = (ctx: ExtensionContext) => {
@@ -254,9 +254,9 @@ export function registerDeferredSubagentSelection(pi: ExtensionAPI, options: { h
 			for (const tool of message.toolsRemoved ?? []) declared.delete(tool.name);
 			for (const tool of message.toolsAdded ?? []) declared.add(tool.name);
 		}
-		const keepSupervisor = declared.has(PARENT_SUPERVISOR_NAME) || options.hasPendingSupervisorRequest?.() === true;
-		const keepWait = declared.has(waitToolName());
-		setSelection(pi, false, false, keepWait, keepSupervisor ? [PARENT_SUPERVISOR_NAME] : [], keepSupervisor);
+		if (options.hasPendingSupervisorRequest?.() === true) declared.add(PARENT_SUPERVISOR_NAME);
+		const managed = [SUBAGENT_NAME, SUPERVISOR_NAME, PARENT_SUPERVISOR_NAME, waitToolName()];
+		pi.setActiveTools([...pi.getActiveTools().filter((name) => !managed.includes(name)), ...managed.filter((name) => declared.has(name))]);
 	};
 	pi.on("session_start", (_event, ctx) => decide(ctx));
 	pi.on("session_tree", (_event, ctx) => decide(ctx));

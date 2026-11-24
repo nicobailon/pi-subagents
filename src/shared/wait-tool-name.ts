@@ -18,18 +18,24 @@ export function setWaitToolName(name: string): void {
 let declared = true;
 
 /**
- * Whether the parent declares its wait tool: `toolExposure: "deferred"` declares none, so parent-facing text points to
- * the completion notice instead. Set by the parent from config; child runtimes and runners keep the default.
+ * Whether the parent declares its pi-subagents tools: with `toolExposure: "deferred"` it declares none, so parent-facing
+ * text points to the completion notice and names script calls. Set by the parent from config; child runtimes and
+ * runners keep the default.
  */
-export function waitToolDeclared(): boolean {
+export function parentToolsDeclared(): boolean {
 	return declared;
 }
 
-export function setWaitToolDeclared(value: boolean): void {
+export function setParentToolsDeclared(value: boolean): void {
 	declared = value;
 }
 
 /** How parent-facing text tells the model to wait for one run. */
 export function waitForRunText(id: string): string {
 	return declared ? `wait with ${current}({ id: "${id}" })` : "wait for its completion notice, which wakes this session";
+}
+
+/** A `subagent(...)` call as parent-facing text names it; codemode scripts call it as `tools.subagent(...)`. */
+export function subagentCallText(call: string): string {
+	return declared ? call : `tools.${call}`;
 }
