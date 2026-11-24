@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentSystemPrompt, getCurrentTools, type FauxResponseStep } from "@earendil-works/pi-ai";
 import { createCodemodeExtension, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
-import { createMockPi } from "../support/helpers.ts";
+import { createMockPi, removeTempDir } from "../support/helpers.ts";
 import { setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
 
 const DEFERRED_PROMPT = 'pi-subagents: codemode tools.subagent({agent,task}) starts an async child; {action:"list"} lists agents; describeTool("subagent") for usage. Delegate only when the operator asked.';
@@ -62,7 +62,8 @@ async function runDeferredSession(responses: FauxResponseStep[], options: { code
 			session.dispose();
 		}
 		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
-		fs.rmSync(root, { recursive: true, force: true });
+		// Windows keeps the runner's files locked briefly after the child exits.
+		removeTempDir(root);
 	}
 }
 
