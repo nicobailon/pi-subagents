@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `toolExposure: "deferred"` in `config.json` keeps the pi-subagents tools out of the model's tool list, which saves about 5 KB on every request once a session has delegated. Codemode scripts start background runs with `tools.subagent({...})`; the runs show in the async widget, FleetView and `status` as usual, and a child's question still reaches the session. The default stays `"direct"`. See [configuration](docs/configuration.md#toolexposure).
+
 ### Changed
 
 - The `subagent` tool description now says to use a messaging tool, not `subagent`, to message a Pi session that is already running. With a peer-messaging extension also installed, asking to message another open session is less likely to launch a new subagent instead. Two redundant hints were cut so the tool text stays within its per-request budget. Thanks to [@Pl8tinium](https://github.com/Pl8tinium) for the report (#3337).

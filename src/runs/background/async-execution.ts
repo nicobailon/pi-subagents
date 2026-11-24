@@ -93,7 +93,7 @@ import { omitGitRoutingEnv } from "../shared/git-environment.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 import { recoveryDescriptorPath } from "../shared/run-launch-folder.ts";
 import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, writeRetainedRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
-import { DEFAULT_WAIT_TOOL_NAME, waitToolName } from "../../shared/wait-tool-name.ts";
+import { DEFAULT_WAIT_TOOL_NAME, parentToolsDeclared, waitToolName } from "../../shared/wait-tool-name.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
 // Cache failures as well as roots: management must remain loadable, and launches must not retry another SDK.
@@ -430,7 +430,13 @@ export type AsyncRunnerStepBuildResult =
 	| { error: string };
 
 export function formatAsyncStartedMessage(headline: string, interactive: boolean): string {
-	const guidance = interactive
+	// Without declared tools (toolExposure "deferred"), the completion notice is the only way to wait.
+	const guidance = !parentToolsDeclared()
+		? [
+			"Detached. Its completion wakes this session, so do not sleep or poll for it.",
+			"One-shot check: tools.subagent({ action: \"status\", id: \"...\" }).",
+		]
+		: interactive
 		? [
 			`Detached. Return control now: native completion wakes you, so do not sleep, poll, or call ${waitToolName()} for it.`,
 			"One-shot check: subagent({ action: \"status\", id: \"...\" }).",

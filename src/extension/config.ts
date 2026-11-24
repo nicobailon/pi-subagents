@@ -14,7 +14,7 @@ import { validateDisabledFeatures } from "../shared/disabled-features.ts";
 
 // Explicit route identity, worktree, checkpoint, and tool-surface policies must not be silently
 // discarded and replaced by the built-in defaults after validation fails.
-const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers", "globalConcurrencyLimit"];
+const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "toolExposure", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers", "globalConcurrencyLimit"];
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -216,6 +216,9 @@ function validateConfig(config: Record<string, unknown>): void {
 	}
 	if (config.toolActivation !== undefined && config.toolActivation !== "auto" && config.toolActivation !== "dynamic" && config.toolActivation !== "eager") {
 		throw new Error('config.toolActivation must be "auto", "dynamic", or "eager"');
+	}
+	if (config.toolExposure !== undefined && config.toolExposure !== "direct" && config.toolExposure !== "deferred") {
+		throw new Error('config.toolExposure must be "direct" or "deferred"');
 	}
 	validateMissionStoreConfig(config.missions);
 	validateAuthorityPolicy(config.authorityPolicy);

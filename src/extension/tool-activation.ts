@@ -71,58 +71,68 @@ function addsToolsWithoutCheckpoint(model: ExtensionContext["model"]): boolean {
 	}
 }
 
+/** The branch's transcript messages, with a compaction checkpoint expanded into the system messages it folded. */
+function selectionMessages(ctx: ExtensionContext): ToolSelectionMessage[] {
+	// SAFETY: The running Pi session manager exposes buildSessionContext, but its read-only extension type omits it.
+	const messages = (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: ToolSelectionMessage[] } }).buildSessionContext().messages;
+	// A compaction checkpoint (the system message before the summary) folds the branch's earlier system messages into
+	// one declaration, which hides an extension unload before the compaction. Replay those messages instead, as Pi
+	// restores the session's tools from them.
+	if (messages[0]?.role !== "system" || messages[1]?.role !== "compactionSummary") return messages;
+	const branch = ctx.sessionManager.getBranch();
+	const history = branch.slice(0, branch.findLastIndex((entry) => entry.type === "compaction"))
+		.flatMap((entry) => entry.type === "message" && entry.message.role === "system" ? [entry.message as ToolSelectionMessage] : []);
+	return [...history, ...messages.slice(1)];
+}
+
+/** Replays the tools a transcript declared, keeping the selection from before an extension unload. */
+function replayToolSelection(messages: readonly ToolSelectionMessage[]): { recorded: Set<string>; unloadedNames: Set<string>; evidenced: Set<string>; legacyWaitIsOwn: boolean } {
+	// Replayed here because a package-local pi-ai may be older than the running Pi.
+	const recorded = new Set<string>();
+	const unloadedNames = new Set<string>();
+	const declaredSentinels = new Set<string>();
+	// Tools the surviving transcript says something about: an addition, or a removal that is not an unload.
+	const evidenced = new Set<string>();
+	// Whether the latest bg_wait declaration was this extension's wait tool, from before a waitTool.name rename.
+	let legacyWaitIsOwn = false;
+	for (const message of messages) {
+		if (message.role !== "system") continue;
+		// Pi records an extension unload (update, reload) as a removal of each of its active tools, with no cause.
+		// While this extension is loaded, the loader, subagent or bg_wait stays declared, so a removal of declared
+		// sentinels that leaves none of them is that unload, not a choice, and the selection from before it stands.
+		// Pi removes only declared tools, so a removal naming an undeclared sentinel is a choice.
+		const removedSentinels = (message.toolsRemoved ?? []).filter((tool) => isUnloadSentinel(tool.name));
+		const allDeclared = removedSentinels.every((tool) => declaredSentinels.has(tool.name));
+		for (const tool of message.toolsRemoved ?? []) declaredSentinels.delete(tool.name);
+		for (const tool of message.toolsAdded ?? []) if (isUnloadSentinel(tool.name)) declaredSentinels.add(tool.name);
+		const unloaded = removedSentinels.length > 0 && allDeclared && declaredSentinels.size === 0;
+		for (const tool of message.toolsRemoved ?? []) {
+			if (unloaded) unloadedNames.add(tool.name);
+			else {
+				recorded.delete(tool.name);
+				evidenced.add(tool.name);
+			}
+		}
+		for (const tool of message.toolsAdded ?? []) {
+			recorded.add(tool.name);
+			evidenced.add(tool.name);
+			if (tool.name === DEFAULT_WAIT_TOOL_NAME) legacyWaitIsOwn = isOwnWaitDefinition(tool);
+		}
+	}
+	return { recorded, unloadedNames, evidenced, legacyWaitIsOwn };
+}
+
 // Returns whether the loader is selected for this session. `replyOwed`: a child request already woke this session.
 function applyRecordedSelection(pi: ExtensionAPI, ctx: ExtensionContext, mode: "auto" | "dynamic", replyOwed: boolean): boolean {
 	const available = pi.getAllTools();
 	if (!Array.isArray(available) || !Array.isArray(pi.getActiveTools())) return true;
 	if (!available.some((tool) => tool.name === LOADER_NAME)) return true;
-	// SAFETY: The running Pi session manager exposes buildSessionContext, but its read-only extension type omits it.
-	let messages = (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: ToolSelectionMessage[] } }).buildSessionContext().messages;
-	// A compaction checkpoint (the system message before the summary) folds the branch's earlier system messages into
-	// one declaration, which hides an extension unload before the compaction. Replay those messages instead, as Pi
-	// restores the session's tools from them.
-	if (messages[0]?.role === "system" && messages[1]?.role === "compactionSummary") {
-		const branch = ctx.sessionManager.getBranch();
-		const history = branch.slice(0, branch.findLastIndex((entry) => entry.type === "compaction"))
-			.flatMap((entry) => entry.type === "message" && entry.message.role === "system" ? [entry.message as ToolSelectionMessage] : []);
-		messages = [...history, ...messages.slice(1)];
-	}
+	const messages = selectionMessages(ctx);
 	// A compaction without a checkpoint leaves its summary first, with no system message before it: the
 	// declarations from before it are lost, even when no tool selection was recorded after it.
 	const lost = messages.find((message) => message.role === "system" || message.role === "compactionSummary")?.role === "compactionSummary";
 	if (lost || hasNativeToolSelection(messages)) {
-		// Replayed here because a package-local pi-ai may be older than the running Pi.
-		const recorded = new Set<string>();
-		const unloadedNames = new Set<string>();
-		const declaredSentinels = new Set<string>();
-		// Tools the surviving transcript says something about: an addition, or a removal that is not an unload.
-		const evidenced = new Set<string>();
-		// Whether the latest bg_wait declaration was this extension's wait tool, from before a waitTool.name rename.
-		let legacyWaitIsOwn = false;
-		for (const message of messages) {
-			if (message.role !== "system") continue;
-			// Pi records an extension unload (update, reload) as a removal of each of its active tools, with no cause.
-			// While this extension is loaded, the loader, subagent or bg_wait stays declared, so a removal of declared
-			// sentinels that leaves none of them is that unload, not a choice, and the selection from before it stands.
-			// Pi removes only declared tools, so a removal naming an undeclared sentinel is a choice.
-			const removedSentinels = (message.toolsRemoved ?? []).filter((tool) => isUnloadSentinel(tool.name));
-			const allDeclared = removedSentinels.every((tool) => declaredSentinels.has(tool.name));
-			for (const tool of message.toolsRemoved ?? []) declaredSentinels.delete(tool.name);
-			for (const tool of message.toolsAdded ?? []) if (isUnloadSentinel(tool.name)) declaredSentinels.add(tool.name);
-			const unloaded = removedSentinels.length > 0 && allDeclared && declaredSentinels.size === 0;
-			for (const tool of message.toolsRemoved ?? []) {
-				if (unloaded) unloadedNames.add(tool.name);
-				else {
-					recorded.delete(tool.name);
-					evidenced.add(tool.name);
-				}
-			}
-			for (const tool of message.toolsAdded ?? []) {
-				recorded.add(tool.name);
-				evidenced.add(tool.name);
-				if (tool.name === DEFAULT_WAIT_TOOL_NAME) legacyWaitIsOwn = isOwnWaitDefinition(tool);
-			}
-		}
+		const { recorded, unloadedNames, evidenced, legacyWaitIsOwn } = replayToolSelection(messages);
 		// The loader and subagent record one activation state (cold, warm, eager); bg_wait and subagent_supervisor
 		// are declared on their own. Only when the activation state itself is lost is it decided as for a new
 		// session. The live tools are no evidence: Pi restores them from this transcript, or activates every
@@ -223,14 +233,39 @@ export function registerSubagentToolActivation(
 	pi.on("before_agent_start", (event) => {
 		const available = pi.getAllTools();
 		if (!Array.isArray(available) || !available.some((tool) => tool.name === LOADER_NAME)) return;
-		// Another extension's background-work provider reports work only bg_wait can wait for, so a session with one
-		// declares bg_wait without enabling subagent, including when the provider registered after session start.
-		const providedWait = available.some((tool) => tool.name === waitToolName()) && listBackgroundWorkProviders().length > 0;
-		const names = [...(loaderSelected ? [LOADER_NAME] : []), ...(providedWait ? [waitToolName()] : [])];
+		const names = [...(loaderSelected ? [LOADER_NAME] : []), ...(providedWait(available) ? [waitToolName()] : [])];
 		if (names.length === 0) return;
 		const selectedTools = event.systemPromptOptions.selectedTools ??= [...pi.getActiveTools()];
 		for (const name of names) if (!selectedTools.includes(name)) selectedTools.push(name);
 		const inactive = names.filter((name) => !pi.getActiveTools().includes(name));
 		if (inactive.length > 0) pi.setActiveTools([...pi.getActiveTools(), ...inactive]);
+	});
+}
+
+// Another extension's background-work provider reports work only bg_wait can wait for, so a session with one
+// declares bg_wait without enabling subagent, including when the provider registered after session start.
+function providedWait(available: ReturnType<ExtensionAPI["getAllTools"]>): boolean {
+	return available.some((tool) => tool.name === waitToolName()) && listBackgroundWorkProviders().length > 0;
+}
+
+/**
+ * Tool selection for `toolExposure: "deferred"`: there is no loader, and subagent and the tools declared with it stay
+ * undeclared unless the session already declared them, for example after Pi's tool_search activated subagent. The
+ * supervisor channel still declares subagent_supervisor when a child asks.
+ */
+export function registerDeferredSubagentSelection(pi: ExtensionAPI, hasPendingSupervisorRequest: () => boolean): void {
+	const decide = (ctx: ExtensionContext) => {
+		const declared = replayToolSelection(selectionMessages(ctx)).recorded;
+		if (hasPendingSupervisorRequest()) declared.add(PARENT_SUPERVISOR_NAME);
+		const managed = [SUBAGENT_NAME, SUPERVISOR_NAME, PARENT_SUPERVISOR_NAME, waitToolName()];
+		pi.setActiveTools([...pi.getActiveTools().filter((name) => !managed.includes(name)), ...managed.filter((name) => declared.has(name))]);
+	};
+	pi.on("session_start", (_event, ctx) => decide(ctx));
+	pi.on("session_tree", (_event, ctx) => decide(ctx));
+	pi.on("before_agent_start", (event) => {
+		if (!providedWait(pi.getAllTools()) || pi.getActiveTools().includes(waitToolName())) return;
+		const selectedTools = event.systemPromptOptions.selectedTools ??= [...pi.getActiveTools()];
+		if (!selectedTools.includes(waitToolName())) selectedTools.push(waitToolName());
+		pi.setActiveTools([...pi.getActiveTools(), waitToolName()]);
 	});
 }

@@ -2717,6 +2717,7 @@ export interface ProactiveSkillSubagentsConfig {
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
 export type ToolActivationMode = "auto" | "dynamic" | "eager";
+export type SubagentToolExposure = "direct" | "deferred";
 export type InlineToolDisplay = "rich" | "summary";
 
 export interface ScheduledRunsConfig {
@@ -2810,6 +2811,8 @@ export interface ExtensionConfig {
 	toolDescriptionMode?: ToolDescriptionMode;
 	/** How a new parent session offers the subagent tool. Defaults to auto. */
 	toolActivation?: ToolActivationMode;
+	/** "deferred" keeps `subagent` out of the model's tool list; codemode scripts launch async runs with tools.subagent(...). Defaults to "direct". */
+	toolExposure?: SubagentToolExposure;
 	/** Keep a resumed session on the pi-subagents tool definitions and prompt text it already declared. Defaults to true. */
 	pinToolDeclarations?: boolean;
 	/** Register the pi-subagents slash commands and the foreground-detach shortcut. Defaults to true. */
