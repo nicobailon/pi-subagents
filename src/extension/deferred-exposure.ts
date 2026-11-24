@@ -6,7 +6,7 @@ export const DEFERRED_SUBAGENT_PROMPT = 'pi-subagents: codemode tools.subagent({
 
 export const DEFERRED_SUBAGENT_PROMPT_SECTION = "subagents_codemode";
 
-export const DEFERRED_WITHOUT_CODEMODE_ERROR = 'pi-subagents: toolExposure "deferred" needs the codemode tool, which this session does not have active, so subagent cannot be reached. Enable codemode or set toolExposure to "direct" in config.json.';
+export const DEFERRED_WITHOUT_CODEMODE_ERROR = 'pi-subagents: toolExposure "deferred" needs the codemode tool for tools.subagent, and this session does not have it active; only Pi\'s tool_search can still activate subagent. Enable codemode or set toolExposure to "direct" in config.json.';
 
 /**
  * The request a call from a codemode script (or any other tool) runs, or why it cannot run. Pi cancels a script's

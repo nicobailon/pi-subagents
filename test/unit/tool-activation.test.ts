@@ -701,6 +701,20 @@ describe("toolActivation modes", () => {
 		assert.throws(() => createRuntime([], [], [], { config: { toolExposure: "codemode" } }), /config\.toolExposure must be "direct" or "deferred"/);
 	});
 
+	it("keeps a subagent that tool_search declared in a deferred session across an extension unload", async () => {
+		const deferred = { config: { toolExposure: "deferred" }, model: COMPATIBLE };
+		const activated = declared(["read", "subagent", "bg_wait"]);
+		const cases: Array<[string, any[], boolean]> = [
+			["unload", [activated, declared([], ["subagent", "bg_wait"])], true],
+			["deliberate removal", [activated, declared([], ["subagent"])], false],
+		];
+		for (const [label, messages, kept] of cases) {
+			const runtime = createRuntime(messages, [], [], deferred);
+			await runtime.emit("session_start", { type: "session_start", reason: "reload" });
+			assert.equal(runtime.active().includes("subagent"), kept, label);
+		}
+	});
+
 	it("keeps subagent_supervisor declared for a child request already pending when the session starts", async () => {
 		const runId = `run-${randomUUID()}`;
 		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
