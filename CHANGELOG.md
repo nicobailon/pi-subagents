@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The `subagent` tool description now says it starts and controls child agents this session launches, and that messaging a Pi session that is already running needs a session-messaging tool. With a peer-messaging extension also installed, asking to message another open session is less likely to launch a new subagent instead. Thanks to [@Pl8tinium](https://github.com/Pl8tinium) for the report (#3337).
+
 ## [0.90.0] - 2026-11-22
 
 ### Highlights
