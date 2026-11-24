@@ -71,7 +71,7 @@ describe("registered subagent tool description", () => {
 			for (const contract of [
 				/One child: \{agent,task\}/,
 				/exactly one top-level subagent workflow call with async:true; write one ```js workflow block in this reply, then call subagent\(\{workflow:true\}\)/,
-				/\{action,id\?,options:\{\.\.\.\}\}; fields not in this schema go in options/,
+				/Management: \{action,id\?,options:\{\.\.\.\}\}/,
 				/Launch agents by name and pass models as exact provider\/id; an unknown agent or model returns the valid choices/,
 				/Native async completion wakes this session: return control; do not sleep, poll or call bg_wait for it/,
 				/One writer per cwd\/worktree/,
