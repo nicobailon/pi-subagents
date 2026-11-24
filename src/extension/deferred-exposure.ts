@@ -14,7 +14,7 @@ export const DEFERRED_WITHOUT_CODEMODE_ERROR = 'pi-subagents: toolExposure "defe
  * whose frontmatter defaults to foreground.
  */
 export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolicy: AuthorityPolicyConfig | undefined): SubagentParamsLike | string {
-	const action = typeof params.action === "string" ? params.action.trim() : undefined;
+	const action = params.action?.trim();
 	if (action === "refine") {
 		return "subagent action 'refine' cannot run from a codemode script: it waits for a foreground reviewer child to finish.";
 	}

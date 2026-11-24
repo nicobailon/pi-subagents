@@ -1326,7 +1326,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	// The channel's session_start poll already declared the reply tool for these; the replay must not drop it.
 	const hasPendingSupervisorRequest = () => [...supervisorChannel.pending.values()].some((request) => request.expectsReply);
-	if (deferred) registerDeferredSubagentSelection(pi, { hasPendingSupervisorRequest });
+	if (deferred) registerDeferredSubagentSelection(pi, hasPendingSupervisorRequest);
 	else registerSubagentToolActivation(pi, {
 		mode: config.toolActivation,
 		hasPendingSupervisorRequest,

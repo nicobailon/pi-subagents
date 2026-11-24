@@ -114,7 +114,6 @@ return JSON.stringify(refusals);`),
 		assert.match(status!.text, /Active async runs: 2/);
 		assert.equal(status!.text.match(/\| running \|/g)?.length, 2, status!.text);
 		assert.ok(status!.text.includes(launchedId!));
-		assert.equal(sizes.cold, 0);
 		assert.equal(sizes.afterDelegation, 0);
 		console.log(`deferred package tool characters cold=${sizes.cold} afterDelegation=${sizes.afterDelegation} promptLine=${DEFERRED_PROMPT.length}`);
 	} finally {

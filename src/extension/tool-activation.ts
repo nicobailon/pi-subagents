@@ -243,9 +243,8 @@ function providedWait(available: ReturnType<ExtensionAPI["getAllTools"]>): boole
  * undeclared unless the session already declared them, for example after Pi's tool_search activated subagent. The
  * supervisor channel still declares subagent_supervisor when a child asks.
  */
-export function registerDeferredSubagentSelection(pi: ExtensionAPI, options: { hasPendingSupervisorRequest?: () => boolean }): void {
+export function registerDeferredSubagentSelection(pi: ExtensionAPI, hasPendingSupervisorRequest: () => boolean): void {
 	const decide = (ctx: ExtensionContext) => {
-		if (!Array.isArray(pi.getActiveTools())) return;
 		// SAFETY: as in applyRecordedSelection.
 		const messages = (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: ToolSelectionMessage[] } }).buildSessionContext().messages;
 		const declared = new Set<string>();
@@ -254,15 +253,14 @@ export function registerDeferredSubagentSelection(pi: ExtensionAPI, options: { h
 			for (const tool of message.toolsRemoved ?? []) declared.delete(tool.name);
 			for (const tool of message.toolsAdded ?? []) declared.add(tool.name);
 		}
-		if (options.hasPendingSupervisorRequest?.() === true) declared.add(PARENT_SUPERVISOR_NAME);
+		if (hasPendingSupervisorRequest()) declared.add(PARENT_SUPERVISOR_NAME);
 		const managed = [SUBAGENT_NAME, SUPERVISOR_NAME, PARENT_SUPERVISOR_NAME, waitToolName()];
 		pi.setActiveTools([...pi.getActiveTools().filter((name) => !managed.includes(name)), ...managed.filter((name) => declared.has(name))]);
 	};
 	pi.on("session_start", (_event, ctx) => decide(ctx));
 	pi.on("session_tree", (_event, ctx) => decide(ctx));
 	pi.on("before_agent_start", (event) => {
-		const available = pi.getAllTools();
-		if (!Array.isArray(available) || !providedWait(available) || pi.getActiveTools().includes(waitToolName())) return;
+		if (!providedWait(pi.getAllTools()) || pi.getActiveTools().includes(waitToolName())) return;
 		const selectedTools = event.systemPromptOptions.selectedTools ??= [...pi.getActiveTools()];
 		if (!selectedTools.includes(waitToolName())) selectedTools.push(waitToolName());
 		pi.setActiveTools([...pi.getActiveTools(), waitToolName()]);
