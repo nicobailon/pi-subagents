@@ -52,7 +52,8 @@ import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDet
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { DEFAULT_WAIT_TOOL_NAME, setWaitToolName } from "../shared/wait-tool-name.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
-import { registerSubagentToolActivation } from "./tool-activation.ts";
+import { registerDeferredSubagentSelection, registerSubagentToolActivation } from "./tool-activation.ts";
+import { DEFERRED_SUBAGENT_PROMPT, DEFERRED_SUBAGENT_PROMPT_SECTION, DEFERRED_WITHOUT_CODEMODE_ERROR, nestedSubagentRefusal } from "./deferred-exposure.ts";
 import { recordedPromptSection, registerPinnedTool, setDeclarationPinning } from "./declaration-pinning.ts";
 import { buildActiveRunsSection } from "./active-runs-prompt.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
@@ -749,16 +750,30 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 
 	const parameters = createSubagentParamsSchema(disabledFeatures);
+	const deferred = config.toolExposure === "deferred";
+	let warnedDeferredWithoutCodemode = false;
+	// Pi passes parentToolCallId only to tool_call handlers, so record which subagent calls another tool made.
+	const nestedCallIds = new Set<string>();
+	if (deferred) pi.on("tool_call", (event) => {
+		if (event.toolName === "subagent" && event.parentToolCallId) nestedCallIds.add(event.toolCallId);
+	});
 	const tool: ToolDefinition<typeof parameters, Details> = {
 		name: "subagent",
-		...MODEL_ONLY_TOOL,
+		...(deferred ? { exposure: "deferred" as const } : MODEL_ONLY_TOOL),
 		label: "Subagent",
 		description: buildSubagentToolDescription(config, { disabledFeatures }),
-		...buildSubagentToolPromptMetadata(config, disabledFeatures),
+		...(deferred ? {} : buildSubagentToolPromptMetadata(config, disabledFeatures)),
 		parameters,
 
 		async execute(id, params, signal, onUpdate, ctx) {
-			return finalizeToolResult(await executeSubagentCollapsed(id, flattenSubagentToolOptions(params, disabledFeatures), signal ?? new AbortController().signal, onUpdate, ctx));
+			const flattened = flattenSubagentToolOptions(params, disabledFeatures);
+			if (!nestedCallIds.delete(id)) return finalizeToolResult(await executeSubagentCollapsed(id, flattened, signal ?? new AbortController().signal, onUpdate, ctx));
+			const refusal = nestedSubagentRefusal(flattened, asyncByDefault);
+			if (refusal) return { content: [{ type: "text", text: refusal }], isError: true, details: { mode: "management", results: [] } };
+			if (signal?.aborted) return { content: [{ type: "text", text: "subagent call was cancelled before it started; nothing was launched." }], isError: true, details: { mode: "management", results: [] } };
+			// Once started, a launch runs to completion without the script's signal: Pi cancels a script's unawaited
+			// calls when it ends, and a cancelled half-launch could leave a child that no status view tracks.
+			return finalizeToolResult(await executeSubagentReady(id, flattened, new AbortController().signal, onUpdate, ctx));
 		},
 
 		renderCall(args, theme) {
@@ -810,6 +825,16 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		// Active runs are listed even when only subagents_enable is selected, e.g. runs re-adopted after a resume.
 		const activeRuns = config.activeRunsPrompt === true ? buildActiveRunsSection(state.asyncJobs.values(), sessionId) : undefined;
 		if (activeRuns) event.systemPromptOptions.sections.active_subagents = activeRuns;
+		if (deferred) {
+			if ((event.systemPromptOptions.selectedTools ?? pi.getActiveTools()).includes("codemode")) {
+				event.systemPromptOptions.sections[DEFERRED_SUBAGENT_PROMPT_SECTION] = DEFERRED_SUBAGENT_PROMPT;
+			} else if (!warnedDeferredWithoutCodemode) {
+				warnedDeferredWithoutCodemode = true;
+				console.error(DEFERRED_WITHOUT_CODEMODE_ERROR);
+				if (ctx.hasUI) ctx.ui.notify(DEFERRED_WITHOUT_CODEMODE_ERROR, "error");
+			}
+			return;
+		}
 		if (!event.systemPromptOptions.selectedTools.includes("subagent")) return;
 		const catalog = buildAdvertisedAgentCatalog(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(ctx.sessionManager.getSessionId() ?? undefined), recordedPromptSection(pi, "advertised_subagents"));
 		if (catalog) event.systemPromptOptions.sections.advertised_subagents = catalog;
@@ -1298,10 +1323,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => void showUpgradeNotice(ctx).catch((error) => console.error("Failed to show the pi-subagents upgrade notice:", error)));
 	pi.on("session_start", (_event, ctx) => beginAdvertisement(ctx));
 
-	registerSubagentToolActivation(pi, {
+	// The channel's session_start poll already declared the reply tool for these; the replay must not drop it.
+	const hasPendingSupervisorRequest = () => [...supervisorChannel.pending.values()].some((request) => request.expectsReply);
+	if (deferred) registerDeferredSubagentSelection(pi, { hasPendingSupervisorRequest });
+	else registerSubagentToolActivation(pi, {
 		mode: config.toolActivation,
-		// The channel's session_start poll already declared the reply tool for these; the replay must not drop it.
-		hasPendingSupervisorRequest: () => [...supervisorChannel.pending.values()].some((request) => request.expectsReply),
+		hasPendingSupervisorRequest,
 		advertisedPrompt: async () => {
 			await waitForAdvertisement();
 			return buildAdvertisedAgentPrompt(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(state.supervisorOwnerSessionId ?? undefined));

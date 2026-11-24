@@ -223,14 +223,48 @@ export function registerSubagentToolActivation(
 	pi.on("before_agent_start", (event) => {
 		const available = pi.getAllTools();
 		if (!Array.isArray(available) || !available.some((tool) => tool.name === LOADER_NAME)) return;
-		// Another extension's background-work provider reports work only bg_wait can wait for, so a session with one
-		// declares bg_wait without enabling subagent, including when the provider registered after session start.
-		const providedWait = available.some((tool) => tool.name === waitToolName()) && listBackgroundWorkProviders().length > 0;
-		const names = [...(loaderSelected ? [LOADER_NAME] : []), ...(providedWait ? [waitToolName()] : [])];
+		const names = [...(loaderSelected ? [LOADER_NAME] : []), ...(providedWait(available) ? [waitToolName()] : [])];
 		if (names.length === 0) return;
 		const selectedTools = event.systemPromptOptions.selectedTools ??= [...pi.getActiveTools()];
 		for (const name of names) if (!selectedTools.includes(name)) selectedTools.push(name);
 		const inactive = names.filter((name) => !pi.getActiveTools().includes(name));
 		if (inactive.length > 0) pi.setActiveTools([...pi.getActiveTools(), ...inactive]);
+	});
+}
+
+// Another extension's background-work provider reports work only bg_wait can wait for, so a session with one
+// declares bg_wait without enabling subagent, including when the provider registered after session start.
+function providedWait(available: ReturnType<ExtensionAPI["getAllTools"]>): boolean {
+	return available.some((tool) => tool.name === waitToolName()) && listBackgroundWorkProviders().length > 0;
+}
+
+/**
+ * Tool selection for `toolExposure: "deferred"`: `subagent` is never declared and there is no loader, so the tools
+ * declared with subagent (contact_supervisor, and bg_wait and subagent_supervisor unless the session already
+ * declared them) stay undeclared. The supervisor channel still declares subagent_supervisor when a child asks.
+ */
+export function registerDeferredSubagentSelection(pi: ExtensionAPI, options: { hasPendingSupervisorRequest?: () => boolean }): void {
+	const decide = (ctx: ExtensionContext) => {
+		if (!Array.isArray(pi.getActiveTools())) return;
+		// SAFETY: as in applyRecordedSelection.
+		const messages = (ctx.sessionManager as typeof ctx.sessionManager & { buildSessionContext(): { messages: ToolSelectionMessage[] } }).buildSessionContext().messages;
+		const declared = new Set<string>();
+		for (const message of messages) {
+			if (message.role !== "system") continue;
+			for (const tool of message.toolsRemoved ?? []) declared.delete(tool.name);
+			for (const tool of message.toolsAdded ?? []) declared.add(tool.name);
+		}
+		const keepSupervisor = declared.has(PARENT_SUPERVISOR_NAME) || options.hasPendingSupervisorRequest?.() === true;
+		const keepWait = declared.has(waitToolName());
+		setSelection(pi, false, false, keepWait, keepSupervisor ? [PARENT_SUPERVISOR_NAME] : [], keepSupervisor);
+	};
+	pi.on("session_start", (_event, ctx) => decide(ctx));
+	pi.on("session_tree", (_event, ctx) => decide(ctx));
+	pi.on("before_agent_start", (event) => {
+		const available = pi.getAllTools();
+		if (!Array.isArray(available) || !providedWait(available) || pi.getActiveTools().includes(waitToolName())) return;
+		const selectedTools = event.systemPromptOptions.selectedTools ??= [...pi.getActiveTools()];
+		if (!selectedTools.includes(waitToolName())) selectedTools.push(waitToolName());
+		pi.setActiveTools([...pi.getActiveTools(), waitToolName()]);
 	});
 }

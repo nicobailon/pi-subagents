@@ -697,6 +697,10 @@ describe("toolActivation modes", () => {
 		assert.throws(() => createRuntime([], [], [], { config: { toolActivation: "lazy" } }), /config\.toolActivation must be "auto", "dynamic", or "eager"/);
 	});
 
+	it("rejects an unknown toolExposure value instead of falling back to direct", () => {
+		assert.throws(() => createRuntime([], [], [], { config: { toolExposure: "codemode" } }), /config\.toolExposure must be "direct" or "deferred"/);
+	});
+
 	it("keeps subagent_supervisor declared for a child request already pending when the session starts", async () => {
 		const runId = `run-${randomUUID()}`;
 		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);

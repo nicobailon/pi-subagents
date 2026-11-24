@@ -108,6 +108,18 @@ Controls how a new parent session offers the `subagent` tool. The default is `"a
 
 The choice is made only for a session with no messages, using the model selected before its first prompt. Switching models after that prompt does not change it. If a compaction that kept no tool checkpoint dropped the record of this choice, the session is decided again as a new session would be; tool selections recorded after that compaction (for `bg_wait` or another extension's tools) are not evidence that the choice survived. Under `"auto"`, resumed sessions keep the tools they recorded. `"dynamic"` also adds the loader to recorded sessions that did not have it. `"auto"` avoids only the loader's cache miss; other tool-list or provider changes can still miss the cache. An active `subagent` sends its full schema on every request. An invalid value is a config error, not a fallback to the default. Restart Pi after changing it.
 
+## `toolExposure`
+
+```json
+{ "toolExposure": "deferred" }
+```
+
+Controls how the model reaches the `subagent` tool. The default `"direct"` declares it to the model as described in [`toolActivation`](#toolactivation). `"deferred"` keeps every pi-subagents tool out of the model's tool list and adds one line to the system prompt instead; codemode scripts call `tools.subagent({...})`, and `describeTool("subagent")` returns its description. `toolActivation` does not apply, and there is no `subagents_enable` loader. With nothing delegated, pi-subagents then adds no tool text to a request; after a delegation it adds none either, until a child asks this session a question, which declares `subagent_supervisor` (about 420 characters) so the model can answer.
+
+A script call may only start background runs or use quick actions on existing ones (`status`, `list`, `get`, `models`, `guide`, `doctor`, `validate`, `steer`, `stop`, `interrupt`, `resume`, `children.list`, `debug.run`). A launch must be async; a foreground launch, `workflow: true` (which reads a reply block a script does not have; pass `options.script` or a script path instead), and every other action are refused with an error. A launch that has started finishes even when Pi cancels the script's call, so a run either never started or shows in the async widget, FleetView, and `status` like any background run, and its completion wakes the session as usual.
+
+`"deferred"` needs Pi's `codemode` tool active in the session. Without it, `subagent` cannot be reached, and pi-subagents reports that once per session instead of falling back to `"direct"`. The setting applies at startup; restart Pi after changing it.
+
 ## `toolDescriptionMode`
 
 ```json
