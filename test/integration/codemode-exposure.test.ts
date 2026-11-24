@@ -9,7 +9,7 @@ import { createCodemodeExtension, DefaultResourceLoader, ModelRuntime, SessionMa
 import { createMockPi } from "../support/helpers.ts";
 import { setChildSessionFactoryModule } from "../../src/runs/shared/child-session.ts";
 
-const DEFERRED_PROMPT = 'pi-subagents: start child agents from codemode with tools.subagent({agent,task}) (async only); describeTool("subagent") for usage. Delegate only when the operator asked.';
+const DEFERRED_PROMPT = 'pi-subagents: codemode tools.subagent({agent,task}) starts an async child; {action:"list"} lists agents; describeTool("subagent") for usage. Delegate only when the operator asked.';
 const packageToolNames = new Set(["subagents_enable", "bg_wait", "subagent_supervisor", "contact_supervisor", "subagent"]);
 const packageToolChars = (tools: ReturnType<typeof getCurrentTools>) => tools.filter((tool) => packageToolNames.has(tool.name)).reduce((total, tool) => total + JSON.stringify(tool).length, 0);
 const script = (code: string) => fauxAssistantMessage(fauxToolCall("codemode", { code }), { stopReason: "toolUse" });
@@ -82,7 +82,7 @@ test("deferred exposure: codemode scripts launch tracked async runs and nothing 
 			// Not awaited: Pi cancels the call when the script returns.
 			() => script(`tools.subagent({ agent: "worker", task: "Probe B", async: true }); return "returned";`),
 			() => script(`const refusals = [];
-for (const args of [{ agent: "worker", task: "Probe C", async: false }, { workflow: true, async: true }, { action: "create", config: { name: "x" } }]) {
+for (const args of [{ agent: "worker", task: "Probe C", async: false }, { workflow: true, async: true }, { action: "grant-spawn-budget", additional: 1 }, { action: "refine", agent: "worker" }, { action: "list" }]) {
 	try { await tools.subagent(args); refusals.push("ran"); } catch (error) { refusals.push(String(error.message)); }
 }
 return JSON.stringify(refusals);`),
@@ -95,13 +95,18 @@ return JSON.stringify(refusals);`),
 		const [launched, unawaited, refused, status] = toolResults(messages);
 		assert.ok(prompt.includes(DEFERRED_PROMPT), "the prompt line carries the call shape and the authorization rule");
 		assert.equal(launched?.isError, false, launched?.text);
+		assert.doesNotMatch(launched!.text, /bg_wait/);
+		assert.match(launched!.text, /completion wakes this session/);
+		assert.match(launched!.text, /One-shot check: tools\.subagent\(\{ action: "status"/);
 		const launchedId = launched!.text.match(/Async: worker \[([0-9a-f-]+)\]/)?.[1];
 		assert.ok(launchedId, launched!.text);
 		assert.match(unawaited!.text, /Output:\n\nreturned$/);
 		const refusals = JSON.parse(refused!.text.split("Output:\n\n")[1]!) as string[];
 		assert.match(refusals[0]!, /must be async: pass async:true/);
 		assert.match(refusals[1]!, /workflow:true reads a ```js block.*options\.script/);
-		assert.match(refusals[2]!, /action 'create' cannot run from a codemode script/);
+		assert.match(refusals[2]!, /action 'grant-spawn-budget' cannot run from a codemode script: authorityPolicy\.spawnBudgetGrant is "confirm"/);
+		assert.match(refusals[3]!, /action 'refine' cannot run from a codemode script: it waits for a foreground reviewer child/);
+		assert.equal(refusals[4], "ran", "actions that neither confirm nor wait on a child run from scripts");
 		assert.equal(mockPi.callCount(), 2, "only the two async launches started children");
 		// Both children run after their scripts ended, including the one whose call was never awaited.
 		assert.match(status!.text, /Active async runs: 2/);

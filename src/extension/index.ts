@@ -50,10 +50,10 @@ import { listHerdrProjectPaneRoots, restoreHerdrProjectPaneSnapshots } from "../
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
-import { DEFAULT_WAIT_TOOL_NAME, setWaitToolName } from "../shared/wait-tool-name.ts";
+import { DEFAULT_WAIT_TOOL_NAME, setWaitToolDeclared, setWaitToolName } from "../shared/wait-tool-name.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { registerDeferredSubagentSelection, registerSubagentToolActivation } from "./tool-activation.ts";
-import { DEFERRED_SUBAGENT_PROMPT, DEFERRED_SUBAGENT_PROMPT_SECTION, DEFERRED_WITHOUT_CODEMODE_ERROR, nestedSubagentRefusal } from "./deferred-exposure.ts";
+import { DEFERRED_SUBAGENT_PROMPT, DEFERRED_SUBAGENT_PROMPT_SECTION, DEFERRED_WITHOUT_CODEMODE_ERROR, inScriptForm, nestedSubagentRefusal } from "./deferred-exposure.ts";
 import { recordedPromptSection, registerPinnedTool, setDeclarationPinning } from "./declaration-pinning.ts";
 import { buildActiveRunsSection } from "./active-runs-prompt.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
@@ -289,6 +289,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	setDeclarationPinning(pi, config.pinToolDeclarations !== false);
 	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	setWaitToolName(waitToolConfig.name ?? DEFAULT_WAIT_TOOL_NAME);
+	setWaitToolDeclared(config.toolExposure !== "deferred");
 	const asyncByDefault = resolveAsyncByDefault(config);
 	const fleetViewEnabled = config.fleetView !== false;
 	const slashCommandsEnabled = config.enableSlashCommands !== false;
@@ -768,12 +769,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		async execute(id, params, signal, onUpdate, ctx) {
 			const flattened = flattenSubagentToolOptions(params, disabledFeatures);
 			if (!nestedCallIds.delete(id)) return finalizeToolResult(await executeSubagentCollapsed(id, flattened, signal ?? new AbortController().signal, onUpdate, ctx));
-			const refusal = nestedSubagentRefusal(flattened, asyncByDefault);
+			const refusal = nestedSubagentRefusal(flattened, asyncByDefault, config.authorityPolicy);
 			if (refusal) return { content: [{ type: "text", text: refusal }], isError: true, details: { mode: "management", results: [] } };
 			if (signal?.aborted) return { content: [{ type: "text", text: "subagent call was cancelled before it started; nothing was launched." }], isError: true, details: { mode: "management", results: [] } };
 			// Once started, a launch runs to completion without the script's signal: Pi cancels a script's unawaited
 			// calls when it ends, and a cancelled half-launch could leave a child that no status view tracks.
-			return finalizeToolResult(await executeSubagentReady(id, flattened, new AbortController().signal, onUpdate, ctx));
+			return finalizeToolResult(inScriptForm(await executeSubagentReady(id, flattened, new AbortController().signal, onUpdate, ctx)));
 		},
 
 		renderCall(args, theme) {

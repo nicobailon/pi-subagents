@@ -14,3 +14,22 @@ export function waitToolName(): string {
 export function setWaitToolName(name: string): void {
 	current = name;
 }
+
+let declared = true;
+
+/**
+ * Whether the parent declares its wait tool: `toolExposure: "deferred"` declares none, so parent-facing text points to
+ * the completion notice instead. Set by the parent from config; child runtimes and runners keep the default.
+ */
+export function waitToolDeclared(): boolean {
+	return declared;
+}
+
+export function setWaitToolDeclared(value: boolean): void {
+	declared = value;
+}
+
+/** How parent-facing text tells the model to wait for one run. */
+export function waitForRunText(id: string): string {
+	return declared ? `wait with ${current}({ id: "${id}" })` : "wait for its completion notice, which wakes this session";
+}
