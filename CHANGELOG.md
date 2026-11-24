@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The `subagent` tool description now says to use a messaging tool, not `subagent`, to message a Pi session that is already running. With a peer-messaging extension also installed, asking to message another open session is less likely to launch a new subagent instead. Two redundant hints were cut so the tool text stays within its per-request budget. Thanks to [@Pl8tinium](https://github.com/Pl8tinium) for the report (#3337).
+
 ## [0.90.0] - 2026-11-22
 
 ### Highlights
