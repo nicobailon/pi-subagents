@@ -275,6 +275,23 @@ describe("async runner execution", () => {
 		assert.deepEqual(parallel.parallel.map((step) => step.timeoutMs), [undefined, 7_000]);
 	});
 
+	it("bounds async children with config timeoutMs when their agent sets none, in any session", () => {
+		for (const interactive of [true, false]) {
+			const result = buildAsyncRunnerSteps("config-timeout-run", {
+				chain: [{ parallel: [{ agent: "default-worker", task: "default" }, { agent: "custom-worker", task: "custom" }] }],
+				agents: [agent("default-worker"), { ...agent("custom-worker"), defaultTimeoutMs: 7_000 }],
+				ctx: { ...ctx, interactive },
+				asyncDir: path.join(process.cwd(), ".tmp-async-timeout-test"),
+				maxSubagentDepth: 2,
+				configTimeoutMs: 5_400_000,
+			});
+			assert.ok("steps" in result, "expected successful step build");
+			const parallel = result.steps[0];
+			assert.ok(parallel && "parallel" in parallel && Array.isArray(parallel.parallel));
+			assert.deepEqual(parallel.parallel.map((step) => step.timeoutMs), [5_400_000, 7_000]);
+		}
+	});
+
 	it("uses agent tool budget before config default when no run override exists", () => {
 		const result = buildAsyncRunnerSteps("run-2", {
 			chain: [{ agent: "worker", task: "agent beats config" }],

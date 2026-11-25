@@ -27,7 +27,12 @@ let agentDir: string;
 
 type RequestContext = { messages: Parameters<typeof getCurrentTools>[0] };
 
-async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void, provider = "guided-tool"): Promise<Session> {
+const UI_CONTEXT = {
+	...Object.fromEntries(["select", "confirm", "input", "onTerminalInput", "setStatus", "setWorkingMessage", "setWorkingVisible", "setWorkingIndicator", "setHiddenThinkingLabel", "setWidget", "setFooter", "setHeader", "setTitle", "custom", "pasteToEditor", "setEditorText", "getEditorText", "editor", "addAutocompleteProvider", "setEditorComponent", "getEditorComponent", "getAllThemes", "getTheme", "setTheme", "getToolsExpanded", "setToolsExpanded", "notify"].map((name) => [name, () => undefined])),
+	theme: new Proxy({}, { get: () => (...args: unknown[]) => String(args.at(-1) ?? "") }),
+};
+
+async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void, provider = "guided-tool", ui = false): Promise<Session> {
 	const faux = fauxProvider({ provider, models: [{ id: "local" }], tokensPerSecond: 100_000 });
 	faux.setResponses(Array.from({ length: 40 }, () => (context: RequestContext) => {
 		onRequest?.(context);
@@ -45,7 +50,7 @@ async function startParent(steps: Step[], onRequest?: (context: RequestContext) 
 	await resourceLoader.reload();
 	const modelRuntime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: path.join(agentDir, "models.json"), allowModelNetwork: false });
 	const { session } = await createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader, modelRuntime, model: faux.getModel("local"), sessionManager: SessionManager.inMemory(root), noTools: "builtin" });
-	await session.bindExtensions({});
+	await session.bindExtensions(ui ? { uiContext: UI_CONTEXT as never } : {});
 	sessions.push(session);
 	return session;
 }
@@ -54,6 +59,12 @@ function subagentReplies(session: Session): string[] {
 	return (session.messages as Array<{ role: string; toolName?: string; content?: Array<{ text?: string }> }>)
 		.filter((message) => message.role === "toolResult" && message.toolName === "subagent")
 		.map((message) => (message.content ?? []).map((part) => part.text ?? "").join("\n"));
+}
+
+function subagentDetails(session: Session): Array<{ timeoutMs?: number }> {
+	return (session.messages as Array<{ role: string; toolName?: string; details?: { timeoutMs?: number } }>)
+		.filter((message) => message.role === "toolResult" && message.toolName === "subagent")
+		.map((message) => message.details ?? {});
 }
 
 before(() => {
@@ -96,6 +107,24 @@ describe("guide first", () => {
 		assert.equal(mockPi.callCount(), 2);
 	});
 
+	it("gives default background launches and resumes no deadline with a UI, and 30 minutes without one", { timeout: 90_000 }, async () => {
+		for (const ui of [true, false]) {
+			mockPi.reset();
+			mockPi.onCall({ output: "done" });
+			mockPi.onCall({ output: "slow", delay: 20_000 });
+			mockPi.onCall({ output: "slow", delay: 20_000 });
+			const steps: Step[] = [{}, { agent: "probe", task: "Inspect", async: false }, { agent: "probe", task: "Background", async: true }, "launched"];
+			const session = await startParent(steps, undefined, "guided-tool", ui);
+			await session.prompt("go");
+			const id = /\nRun ([0-9a-f]{8}) is done\./.exec(subagentReplies(session)[1]!)?.[1];
+			assert.ok(id, subagentReplies(session)[1]);
+			steps.push({ action: "resume", id, message: "More" }, "resumed");
+			await session.prompt("go");
+			const [, , launched, resumed] = subagentDetails(session);
+			assert.deepEqual([launched?.timeoutMs, resumed?.timeoutMs], ui ? [undefined, undefined] : [1_800_000, 1_800_000], subagentReplies(session).join("\n---\n"));
+		}
+	});
+
 	it("names a foreground run's id with the call that resumes it", { timeout: 60_000 }, async () => {
 		mockPi.reset();
 		mockPi.onCall({ output: "done" });
@@ -135,7 +164,7 @@ describe("guide first", () => {
 		const session = await startParent([{}, { action: "guide", topic: "schedule" }, { action: "guide", topic: "workflows" }, { action: "guide", topic: "nope" }, "done"]);
 		await session.prompt("go");
 		const [guide, action, subject, wrong] = subagentReplies(session);
-		assert.match(guide!, /^- unsure\? \{action:"guide", topic:"<action, family or subject, e\.g\. workflows>"\}; a wrong guess lists the topics$/m);
+		assert.match(guide!, /^- unsure\? \{action:"guide", topic:"<action, family or subject, e\.g\. workflows>"\}; a wrong guess lists topics$/m);
 		assert.match(action!, /^schedule\.create: name or id/);
 		assert.match(subject!, /^Sections of guide topic 'workflows'\./m);
 		assert.match(wrong!, /^Unknown subagents guide topic 'nope'\. Valid topics: overview, workflows, /);
@@ -148,11 +177,13 @@ describe("guide first", () => {
 	});
 
 	it("refuses a blanked number field from a provider that gets declared fields, instead of launching with it", { timeout: 60_000 }, async () => {
-		const session = await startParent([{}, { agent: "probe", task: "Inspect", timeoutMs: true }, "done"], undefined, "xai");
+		const session = await startParent([{}, { agent: "probe", task: "Inspect", timeoutMs: true }, { workflow: "parallel", args: { tasks: [{ agent: "probe", task: "Inspect" }] }, timeoutMs: true }, "done"], undefined, "xai");
 		await session.prompt("go");
-		const reply = subagentReplies(session)[1]!;
+		const [, reply, workflowReply] = subagentReplies(session);
 		assert.match(reply, /'timeoutMs' must be a number, not true\. If your fields arrive missing or changed, pass them inside args/);
 		assert.doesNotMatch(reply, /Async:|Run [0-9a-f]{8}/);
+		assert.match(workflowReply!, /'timeoutMs' must be a number, not true\. For a workflow call, set timeoutMs on each child in a workflow: true script\./);
+		assert.doesNotMatch(workflowReply!, /inside args|Async/);
 	});
 
 	const listTool = (answer: boolean) => {
@@ -524,6 +555,6 @@ describe("guided tool surface", () => {
 		const topics = [...guide.matchAll(/topic:"([^"<]+)"/g)].map((match) => match[1]!);
 		assert.ok(topics.includes("workflows/parallel-sequential-lanes"), `guide topics: ${topics.join(", ")}`);
 		for (const topic of topics) assert.doesNotMatch(readSubagentGuide(topic), /^Unknown/, topic);
-		assert.match(guide, /^- timeoutMs: hard deadline in ms; without one a check-in wakes you every 30 min \(no UI: 30-min deadline\)$/m);
+		assert.match(guide, /^- timeoutMs: hard deadline in ms; with none \(call\/agent\/config\) a check-in wakes you every 30 min \(no UI: 30-min stop\)$/m);
 	});
 });

@@ -39,7 +39,7 @@ function parseJsonText(text: string): unknown {
 	}
 }
 
-function convertField(key: string, value: unknown, schema: TSchema): unknown {
+function convertField(key: string, value: unknown, schema: TSchema, workflowCall: boolean): unknown {
 	const validator = fieldValidator(schema);
 	if (typeof value === "string" && validator.Check(value)) {
 		const spelled = value === "true" ? true : value === "false" ? false : parseJsonText(value);
@@ -48,7 +48,10 @@ function convertField(key: string, value: unknown, schema: TSchema): unknown {
 	if (validator.Check(value)) return value;
 	const numeric = (schema as { type?: unknown }).type === "integer" || (schema as { type?: unknown }).type === "number";
 	if (numeric && (typeof value === "boolean" || value === "true" || value === "false")) {
-		throw new Error(`subagent: '${key}' must be a number, not ${JSON.stringify(value)}. If your fields arrive missing or changed, pass them inside args: subagent({..., args:{${key}: <number>}}).`);
+		const hint = workflowCall
+			? `For a workflow call, set ${key} on each child in a workflow: true script.`
+			: `If your fields arrive missing or changed, pass them inside args: subagent({..., args:{${key}: <number>}}).`;
+		throw new Error(`subagent: '${key}' must be a number, not ${JSON.stringify(value)}. ${hint}`);
 	}
 	const converted = Value.Convert(schema, structuredClone(value));
 	if (validator.Check(converted)) return converted;
@@ -61,12 +64,12 @@ function convertField(key: string, value: unknown, schema: TSchema): unknown {
 	return parsed;
 }
 
-function convertFields(fields: Record<string, unknown>, schemas: Record<string, TSchema>): Record<string, unknown> {
+function convertFields(fields: Record<string, unknown>, schemas: Record<string, TSchema>, workflowCall: boolean): Record<string, unknown> {
 	let converted: Record<string, unknown> | undefined;
 	for (const [key, value] of Object.entries(fields)) {
 		const schema = schemas[key];
 		if (!schema || isUnsetPlaceholder(value)) continue;
-		const next = convertField(key, value, schema);
+		const next = convertField(key, value, schema, workflowCall);
 		if (next !== value) (converted ??= { ...fields })[key] = next;
 	}
 	return converted ?? fields;
@@ -74,9 +77,10 @@ function convertFields(fields: Record<string, unknown>, schemas: Record<string, 
 
 export function prepareSubagentToolArguments(args: unknown): unknown {
 	if (!isPlainObject(args)) return args;
-	const converted = convertFields(args, MODEL_FIELDS);
+	const workflowCall = args.workflow !== undefined && !isUnsetPlaceholder(args.workflow) && args.workflow !== false && args.workflow !== "false";
+	const converted = convertFields(args, MODEL_FIELDS, workflowCall);
 	if (!isPlainObject(converted.options)) return converted;
-	const options = convertFields(converted.options, SubagentOptionParams.properties);
+	const options = convertFields(converted.options, SubagentOptionParams.properties, workflowCall);
 	return options === converted.options ? converted : { ...converted, options };
 }
 

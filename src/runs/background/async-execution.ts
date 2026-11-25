@@ -269,6 +269,7 @@ interface AsyncChainParams {
 	workflowKey?: string;
 	lane?: WorkflowLaneMetadata;
 	activeAsyncCapacity?: ActiveAsyncCapacityHandle;
+	configTimeoutMs?: number;
 }
 
 interface AsyncSingleParams {
@@ -409,6 +410,7 @@ export interface AsyncRunnerStepBuildParams {
 	/** Retained snapshot from the launch being continued; takes precedence over the live registry, as in single launches. */
 	requiredExtensions?: RequiredChildExtensionSnapshot;
 	thinkingCeiling?: ThinkingLevel;
+	configTimeoutMs?: number;
 }
 
 export type AsyncRunnerStepBuildResult =
@@ -1340,7 +1342,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			outputMode: behavior.outputMode,
 			sessionFile,
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
-			timeoutMs: a.defaultTimeoutMs ?? (ctx.interactive === true ? undefined : DEFAULT_ASYNC_TIMEOUT_MS),
+			timeoutMs: a.defaultTimeoutMs ?? params.configTimeoutMs ?? (ctx.interactive === true ? undefined : DEFAULT_ASYNC_TIMEOUT_MS),
 			toolTimeoutMs: resolvedToolTimeout.toolTimeoutMs,
 			effectiveAcceptance: resolveEffectiveAcceptance({
 				explicit: s.acceptance,
@@ -1589,6 +1591,7 @@ export function executeAsyncChain(
 		callToolTimeoutMs: params.callToolTimeoutMs,
 		configToolTimeoutMs: params.configToolTimeoutMs,
 		toolTimeoutMsEnv: params.toolTimeoutMsEnv ?? toolTimeoutFromEnv(),
+		configTimeoutMs: params.configTimeoutMs,
 		capabilityCeiling,
 		thinkingCeiling: params.thinkingCeiling,
 		requiredExtensions: params.requiredExtensions,

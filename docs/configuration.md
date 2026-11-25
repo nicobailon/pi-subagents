@@ -421,9 +421,9 @@ This deadline bounds the whole run. The wait for a single model response is boun
 
 In a non-interactive session (`pi -p`), the same value is how long Pi stays open at the end of a turn waiting for background subagent work to finish. When it is unset, Pi waits 30 minutes, then fails and exits if that work is still running.
 
-Use it when foreground orchestration needs a longer default than 30 minutes, or when background runs should have a hard default deadline. It does not set async composite top-level deadlines, and it does not replace async fan-out child deadlines.
+Use it when foreground orchestration needs a longer default than 30 minutes, or when background runs should have a hard default deadline.
 
-Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Their runner children are bounded individually by their own agent or runner defaults, so this value does not cap them. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
+Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Each child is its own run: it takes its agent's `timeoutMs`, else this value. With neither, a child has no deadline in an interactive session, where the parent gets its 30-minute check-ins, and 30 minutes in a session without a UI. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
 
 ## `toolTimeoutMs`
 

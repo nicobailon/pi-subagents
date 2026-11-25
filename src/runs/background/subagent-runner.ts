@@ -1928,6 +1928,7 @@ export async function runSubagent(
 
 	const flatSteps = flattenSteps(steps);
 	const initialFlatStepCount = flatSteps.length;
+	const stepTimeouts: Array<number | undefined> = steps.flatMap((step) => isParallelGroup(step) ? step.parallel.map((task) => task.timeoutMs) : isDynamicRunnerGroup(step) ? [step.parallel.timeoutMs] : [step.timeoutMs]);
 	const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
 	const initialStatusSteps: RunnerStatusStep[] = [];
 	let flatStepCount = 0;
@@ -2854,7 +2855,7 @@ export async function runSubagent(
 	const checkInAfterMs = controlConfig.checkInAfterMs ?? CHECK_IN_INTERVAL_MS;
 	const checkInsSent = new Map<number, number>();
 	const maybeEmitCheckIn = (flatIndex: number, now: number): void => {
-		if (config.deadlineAt !== undefined || config.timeoutMs !== undefined || flatSteps[flatIndex]?.timeoutMs !== undefined) return;
+		if (config.deadlineAt !== undefined || config.timeoutMs !== undefined || stepTimeouts[flatIndex] !== undefined) return;
 		const step = statusPayload.steps[flatIndex];
 		if (!step || step.status !== "running") return;
 		const elapsedMs = Math.max(0, now - (step.startedAt ?? overallStartTime));
@@ -3777,6 +3778,7 @@ export async function runSubagent(
 				});
 			});
 			statusPayload.steps.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps);
+			stepTimeouts.splice(groupStartFlatIndex, 1, ...dynamicSteps.map((task) => task.timeoutMs));
 			if (config.childIntercomTargets) {
 				config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
 			}

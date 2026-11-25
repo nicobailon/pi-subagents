@@ -1516,6 +1516,7 @@ function appendStepToAsyncChain(input: {
 		chainSkills,
 		dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
+		configTimeoutMs: resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs),
 		contextForAgent: contextPolicy.contextForAgent,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
 		worktreeProvider: input.deps.config.worktreeProvider,
@@ -2280,6 +2281,7 @@ async function resumeAsyncRun(input: {
 			dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
 			worktreeSetupHook: input.deps.config.worktreeSetupHook,
+			configTimeoutMs: resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs),
 			worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: input.deps.config.worktreeBaseDir,
 			baseRef: input.params.baseRef ?? target.recoveryDescriptor?.baseRef,
@@ -2388,6 +2390,8 @@ async function resumeAsyncRun(input: {
 	const inheritedOutputPath = input.params.output === undefined && input.params.workflowParentRunId === undefined
 		? (target.source === "foreground" ? target.savedOutputPath : undefined) ?? resolveSingleOutputPath(inheritedOutput, input.requestCwd, effectiveCwd, revivalOutputBaseDir)
 		: undefined;
+	const resumeTimeout = input.absoluteDeadlineAt !== undefined ? {} : resolveSingleAgentLaunchTimeout(input.params, true, resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs), input.ctx.hasUI === true);
+	if (resumeTimeout.error) return { content: [{ type: "text", text: resumeTimeout.error }], isError: true, details: { mode: "management", results: [] } };
 	const result = await executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target as Parameters<typeof buildRevivedAsyncTask>[0], effectiveFollowUp),
@@ -2462,7 +2466,7 @@ async function resumeAsyncRun(input: {
 		...(outputSchema ? { structuredOutputSchema: outputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
 		...(acceptance !== undefined ? { acceptance } : {}),
-		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
+		...(resumeTimeout.timeoutMs !== undefined ? { timeoutMs: resumeTimeout.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
 		// Recovery descriptors, remembered foreground runs, and current workflow roots
