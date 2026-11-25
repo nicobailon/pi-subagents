@@ -1123,7 +1123,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(result.isError, undefined);
 			assert.match(result.content[0]?.text ?? "", /Revived async subagent from/);
 			assert.match(result.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
-			assert.match(result.content[0]?.text ?? "", /Use bg_wait only/);
+			assert.match(result.content[0]?.text ?? "", /Use subagent\(\{ action: "wait" \}\) only/);
 			assert.match(result.content[0]?.text ?? "", /Status if needed: subagent\(\{ action: "status"/);
 			assert.doesNotMatch(result.content[0]?.text ?? "", /Follow:/);
 			const revivedId = result.details?.asyncId;
@@ -1696,7 +1696,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const runId = original.details?.runId;
 		assert.ok(runId, "expected foreground run id");
 		assert.equal(original.details?.results?.[0]?.acceptance?.status, "pending");
-		assert.match(original.content[0]?.text ?? "", /bg_wait\(\{ id:/);
+		assert.match(original.content[0]?.text ?? "", /subagent\(\{ action: "wait", id:/);
 		const metadataPath = original.details?.results?.[0]?.artifactPaths?.metadataPath;
 		assert.ok(metadataPath);
 		const pendingMetadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as { acceptance?: { status?: string } };

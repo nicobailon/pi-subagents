@@ -63,7 +63,7 @@ export async function steerAsyncRun(input: {
 		&& (snapshot.steps[0]?.status === "running" || snapshot.steps[0]?.status === "pending")) {
 		const asks = input.findPendingAsks?.({ runId: snapshot.runId, agent: snapshot.steps[0].agent, childIndex: 0 }) ?? [];
 		if (asks.length > 0) {
-			const replies = asks.map(replyTo => `subagent_supervisor(${JSON.stringify({ action: "reply", replyTo, message: "<explicit answer>" })})`).join("\n");
+			const replies = asks.map(replyTo => `subagent(${JSON.stringify({ action: "reply", replyTo, message: "<explicit answer>" })})`).join("\n");
 			return {
 				content: [{ type: "text", text: `Steering not delivered or queued: async run ${snapshot.runId} is blocked on ${asks.length === 1 ? "a pending supervisor ask" : "ambiguous pending supervisor asks"}. No reply or recovery was attempted. Reply explicitly${asks.length > 1 ? " to the intended request ID" : ""}:\n${replies}` }],
 				isError: true,

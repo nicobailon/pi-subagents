@@ -7,9 +7,8 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { SUBAGENT_OPTION_KEYS, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { normalizePublicSubagentExecution } from "../../src/extension/public-execution.ts";
-import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
+import { flattenSubagentToolOptions, prepareSubagentToolArguments } from "../../src/extension/subagent-options.ts";
 import { resolveDisabledFeatureSurface } from "../../src/shared/disabled-features.ts";
-import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/subagent-wait.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -18,7 +17,8 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const OPTION_SAMPLES: Record<string, unknown> = {
 	extensionBindings: { "pkg/1": {} }, capabilities: true, search: "review", name: "nightly", dir: "/tmp/run", handoffPath: "handoff.json",
 	repo: "/repo", planId: "plan-1", laneId: "lane-1", merge: {}, supersession: {}, index: 0, childId: "child-1", drain: true,
-	toolCallId: "call-1", view: "transcript", lines: 5, topic: "workflows", mode: "follow_up", steeringRecovery: false,
+	toolCallId: "call-1", view: "transcript", lines: 5, topic: "workflows", all: true, nonBlocking: false, stopOnAttention: false,
+	replyTo: "request-1", to: "run-1", mode: "follow_up", steeringRecovery: false,
 	additional: 1, scope: "session", target: "children", focus: true, thinking: "low", at: "10m", every: "1h",
 	sessionOnly: true, quiet: true, on: ["mon"], timezone: "UTC", overlap: "skip", catchUp: "none", missionId: "mission-1",
 	mission: false, missionUpdate: {}, missionStatus: "open", missionScope: "project", runMode: "single", runStatus: "running",
@@ -67,7 +67,8 @@ describe("subagent tool options", () => {
 		assert.deepEqual(normalizePublicSubagentExecution(workflowCall), { ok: true, params: { workflow: true, async: true, worktree: false } });
 		assert.deepEqual(flattenSubagentToolOptions({ action: "validate", agent: "null", task: "null", workflow: "./review.workflow.js" }), { action: "validate", workflow: "./review.workflow.js" });
 		assert.deepEqual(flattenSubagentToolOptions({ action: "list", id: "null", workflow: "false" }), { action: "list" });
-		assert.deepEqual(flattenSubagentToolOptions({ agent: "reviewer", task: "check for null", workflow: "false", options: { timeoutMs: "null", skill: "review" } }), { agent: "reviewer", task: "check for null", skill: "review" });
+		const placeholder = prepareSubagentToolArguments({ agent: "reviewer", task: "check for null", workflow: "false", options: { timeoutMs: "null", skill: "review" } }) as Record<string, unknown>;
+		assert.deepEqual(flattenSubagentToolOptions(placeholder), { agent: "reviewer", task: "check for null", skill: "review" });
 	});
 
 	it("runs options.script given with workflow: true, and refuses it next to a named workflow or script path (#3320)", () => {
@@ -104,6 +105,28 @@ describe("subagent tool options", () => {
 			return true;
 		});
 	});
+
+	it("converts fields a provider sent as text to the type each field takes, and leaves real text alone", () => {
+		assert.deepEqual(prepareSubagentToolArguments({
+			agent: "worker", task: "true", message: "{\"a\":1}", worktree: "true", timeoutMs: "600000", context: "fork",
+			args: "{\"tasks\":[{\"agent\":\"scout\",\"task\":\"map\"}]}", on: "[\"mon\",\"fri\"]", id: "null",
+			workflow: "true", output: "false", gate: "{\"command\":\"npm test\"}", thinking: "false",
+			options: { all: "true", toolBudget: "{\"hard\":3}" },
+		}), {
+			agent: "worker", task: "true", message: "{\"a\":1}", worktree: true, timeoutMs: 600000, context: "fork",
+			args: { tasks: [{ agent: "scout", task: "map" }] }, on: ["mon", "fri"], id: "null",
+			workflow: true, output: false, gate: { command: "npm test" }, thinking: false,
+			options: { all: true, toolBudget: { hard: 3 } },
+		});
+		assert.deepEqual(prepareSubagentToolArguments({ workflow: "./flow.js", output: "reviews/a.md", gate: "npm test", thinking: "high" }), { workflow: "./flow.js", output: "reviews/a.md", gate: "npm test", thinking: "high" });
+		assert.throws(() => prepareSubagentToolArguments({ workflow: "parallel", args: "{\"tasks\": [" }), { message: "subagent: 'args' must be an object, and its text is not valid JSON. Pass the value itself, e.g. args: {...}, not a string." });
+	});
+
+	it("rejects an unknown or wrongly typed top-level field with the fix", () => {
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", contxt: "fork" }), { message: /^subagent: unknown field 'contxt'\. Did you mean 'context'\? Launch fields: agent, task, cwd, context, model, output, label, worktree\./ });
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", worktree: "yes" }), { message: /^subagent: 'worktree' must be boolean \(got "yes"\)\.$/ });
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", context: "forked" }), { message: /^subagent: 'context' must be equal to one of the allowed values/ });
+	});
 });
 
 describe("registered subagent tools with options", () => {
@@ -121,10 +144,10 @@ describe("registered subagent tools with options", () => {
 				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
 			registerSubagentExtension(makePi("parent"));
-			registerFanoutChildSubagentExtension(makePi("fanout"), { fanoutChild: true, depth: 1, waitTool: { enabled: true }, fast: false });
+			registerFanoutChildSubagentExtension(makePi("fanout"), { fanoutChild: true, depth: 1, fast: false });
 			const ctx = {
 				cwd: ${JSON.stringify(cwd)}, isIdle() { return true; }, hasUI: false,
-				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; }, getBranch() { return []; }, getEntries() { return []; } },
+				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; }, getBranch() { return []; }, getEntries() { return []; }, buildContextEntries() { return []; } },
 				modelRegistry: { getAvailable() { return []; } },
 			};
 			const text = (result) => result.content.map((part) => part.text ?? "").join("\n");
@@ -134,7 +157,9 @@ describe("registered subagent tools with options", () => {
 			assert.match(text(await call({ action: "status", options: { view: "fleet" } })), /No active subagent fleet/);
 			assert.match(text(await call({ action: "status", view: "fleet" })), /No active subagent fleet/);
 			await assert.rejects(call({ action: "status", runId: "missing-run", view: "transcript" }), /Transcript target: run missing-run/);
-			await assert.rejects(call({ action: "status", options: { view: "fleet" } }, tools.fanout), /Child-safe subagent fleet view is unavailable/);
+			const childFleet = await call({ action: "status", options: { view: "fleet" } }, tools.fanout);
+			assert.equal(childFleet.isError, true);
+			assert.match(text(childFleet), /Child-safe subagent fleet view is unavailable/);
 			await assert.rejects(call({ action: "status", id: "missing-run", options: { view: "transcript", lines: 5 } }), /Transcript target: run missing-run/);
 			await assert.rejects(call({ action: "steer", id: "missing-run", message: "focus", options: { mode: "plan" } }), /action='steer' mode must be/);
 			assert.match(text(await call({ action: "schedule.create", workflow: "./flow.js", options: { every: "1h", name: "nightly" } })), /Trigger: every 1h/);
@@ -147,7 +172,6 @@ describe("registered subagent tools with options", () => {
 		`;
 		const env = { ...process.env };
 		delete env[SUBAGENT_CHILD_ENV];
-		delete env[WAIT_TOOL_ENABLED_ENV];
 		try {
 			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
 		} finally {

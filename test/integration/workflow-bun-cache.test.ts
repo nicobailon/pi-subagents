@@ -78,13 +78,14 @@ export default function(pi) {
     try {
       if (!process.versions.bun) throw new Error("The test binary must use Bun");
       const signal = new AbortController().signal;
+      await tools.get("subagent").execute("cache-package-guide", {}, signal, undefined, ctx);
       const launched = await tools.get("subagent").execute("cache-package-launch", {
         workflow:${JSON.stringify(workflow)}, async:true, cwd:${JSON.stringify(root)}, output:false, options:{mission:false}
       }, signal, undefined, ctx);
       if (launched.isError) throw new Error("Workflow launch failed");
       const id = launched.details?.runId || launched.details?.asyncId;
       if (!id) throw new Error("Workflow launch did not return a run id");
-      const finished = await tools.get("bg_wait").execute("cache-package-wait", {id, timeoutMs:5000}, signal, undefined, ctx);
+      const finished = await tools.get("subagent").execute("cache-package-wait", {action:"wait", id, timeoutMs:5000}, signal, undefined, ctx);
       const completed = finished.details?.completions;
       if (completed?.length !== 1) throw new Error("Expected one terminal workflow result");
       const result = completed[0];

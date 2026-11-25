@@ -15,7 +15,7 @@ import { writeWorkflowLaunchRecord, type WorkflowLaunch } from "../../src/workfl
 import { readWorkflowResumeClaim } from "../../src/workflows/workflow-resume-claim.ts";
 import { resolveWorkflowResource } from "../../src/workflows/workflow-resources.ts";
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
-import { createEventBus, makeMinimalCtx } from "../support/helpers.ts";
+import { createEventBus, guideTaughtEntries, makeMinimalCtx } from "../support/helpers.ts";
 import { available, createSubagentExecutor, installSingleExecutionHooks, mockPi, tempDir } from "../support/single-execution-fixture.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -105,7 +105,7 @@ describe("auto-resuming interrupted workflows at session start", { skip: !availa
 			// A session with a UI (interactive or RPC) that records its notices, unless `ui: false` (a print run); any other UI call does nothing.
 			hasUI: options.ui !== false,
 			ui: new Proxy({ notify: (text: string, level: string) => { notifications.push({ text, level }); } }, { get: (target, prop) => prop in target ? target[prop as keyof typeof target] : () => undefined }),
-			sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFileFor(sessionId), getEntries: () => [], getBranch: () => [] },
+			sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFileFor(sessionId), getEntries: () => [], getBranch: () => [], buildContextEntries: guideTaughtEntries },
 		};
 		const previousChildEnv = process.env[SUBAGENT_CHILD_ENV];
 		delete process.env[SUBAGENT_CHILD_ENV];

@@ -25,12 +25,12 @@ const script = String.raw`
 	const ctx = {
 		cwd: process.cwd(), isIdle() { return false; }, hasUI: false, model: { provider: "test", id: "test" },
 		modelRegistry: { getAvailable() { return []; }, getAll() { return []; } },
-		sessionManager: { getSessionId() { return "active-runs"; }, getSessionFile() { return undefined; }, getBranch() { return []; }, getEntries() { return []; } },
+		sessionManager: { getSessionId() { return "active-runs"; }, getSessionFile() { return undefined; }, getBranch() { return []; }, getEntries() { return []; }, buildContextEntries() { return []; } },
 	};
 	for (const handler of handlers.get("session_start")) await handler({ reason: "startup" }, ctx);
 	const prompt = async (selectedTools = ["subagent"]) => {
 		const sections = {};
-		await handlers.get("before_agent_start").at(-2)({ systemPrompt: "base", systemPromptOptions: { selectedTools, sections } }, ctx);
+		await handlers.get("before_agent_start").at(-1)({ systemPrompt: "base", systemPromptOptions: { selectedTools, sections } }, ctx);
 		return sections.active_subagents ?? null;
 	};
 	const start = (id, sessionId) => events.emit("subagent:async-started", { id, pid: process.pid, sessionId, mode: "single", agent: "researcher", task: "[prompt redacted]", asyncDir: path.join(os.tmpdir(), "active-runs-" + id) });
@@ -40,7 +40,6 @@ const script = String.raw`
 	start("run-a", "active-runs");
 	seen.first = await prompt();
 	seen.second = await prompt();
-	seen.unselected = await prompt(["subagents_enable"]);
 	events.emit("subagent:async-complete", { id: "run-a", sessionId: "active-runs", agent: "researcher", success: true, summary: "done" });
 	seen.done = await prompt();
 	for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
@@ -66,7 +65,7 @@ function promptSections(config: Record<string, unknown>): Record<string, string 
 
 it("lists this session's active background runs only when activeRunsPrompt is on", () => {
 	const off = promptSections({});
-	assert.deepEqual(off, { idle: null, foreign: null, first: null, second: null, unselected: null, done: null });
+	assert.deepEqual(off, { idle: null, foreign: null, first: null, second: null, done: null });
 
 	const on = promptSections({ activeRunsPrompt: true });
 	assert.equal(on.idle, null);
@@ -75,6 +74,5 @@ it("lists this session's active background runs only when activeRunsPrompt is on
 	assert.match(on.first ?? "", /^- run-a researcher \(single\)$/m);
 	assert.ok(!on.first?.includes("[prompt redacted]"));
 	assert.equal(on.second, on.first, "an unchanged run keeps the same section text");
-	assert.equal(on.unselected, on.first, "listed while only subagents_enable is selected");
 	assert.equal(on.done, null, "a finished run drops the section");
 });

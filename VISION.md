@@ -90,7 +90,7 @@ It does not own CI, merge policy, or release policy; it reports evidence into th
 It does not add integrations for niche tools without clear demand.
 It does not add a second path to an outcome the operator can already reach with one ordinary action.
 It does not treat external agents as native Pi children before their capabilities are proven.
-It does not run background reviewers on every edit by default; delegation happens because the operator asked for it, directly or through their instructions.
+It does not decide when to delegate: the `subagent` tool says what it does, and when to delegate is the user's or project's policy. It does not run background reviewers on every edit by default.
 It does not accept a slower status loop, watcher, or common workflow just to make the machinery look richer.
 It does not accept a change that breaks the prompt cache of the parent or its children without measurement and owner approval.
 

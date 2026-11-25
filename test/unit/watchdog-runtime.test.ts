@@ -122,7 +122,7 @@ describe("main watchdog runtime", () => {
 			assert.match(requests[0]!.delta, /explicitly held pending CI/);
 			assert.match(requests[0]!.delta, /waits\/holds are not evidence of neglect/);
 			assert.equal(runtime.getSnapshot().lastWarning, undefined, "a pending/held outcome is evidence, not an automatic finding");
-			runtime.handleTurnEnd(activityTurn("bg_wait", { id: "ci-gate" }, "CI gate completed successfully"), ctx);
+			runtime.handleTurnEnd(activityTurn("subagent", { action: "wait", id: "ci-gate" }, "CI gate completed successfully"), ctx);
 			await runtime.handleAgentEnd({}, ctx);
 			assert.equal(requests.length, 1, "one additional activity review per prompt");
 			runtime.handleBeforeAgentStart({ prompt: "Side question: explain this acronym" }, ctx);
@@ -136,7 +136,7 @@ describe("main watchdog runtime", () => {
 			assert.equal(requests.length, 2, "warning continuations and side prompts alone cannot create fresh activity");
 			runtime.reset("compact", { clearScope: true });
 			runtime.handleBeforeAgentStart({ prompt: "New scope" }, ctx);
-			runtime.handleTurnEnd(activityTurn("subagent_supervisor", { action: "pending" }, "No pending requests"), ctx);
+			runtime.handleTurnEnd(activityTurn("subagent", { action: "reply", replyTo: "r-1", message: "ok" }, "No pending requests"), ctx);
 			await runtime.handleAgentEnd({}, ctx);
 			assert.doesNotMatch(requests.at(-1)!.delta, /CI gate completed successfully/);
 		} finally { runtime.dispose(); }
@@ -162,10 +162,10 @@ describe("main watchdog runtime", () => {
 			runtime.handleBeforeAgentStart({ prompt: "Next task" }, ctx);
 			await runtime.handleAgentEnd({}, ctx);
 			assert.equal(requests.length, 1, "question continuation and watchdog status did not create activity");
-			runtime.handleTurnEnd(activityTurn("bg_wait", {}, `New unclear outcome ${"x".repeat(40_000)}`), ctx);
+			runtime.handleTurnEnd(activityTurn("subagent", { action: "wait" }, `New unclear outcome ${"x".repeat(40_000)}`), ctx);
 			await runtime.handleAgentEnd({}, ctx);
 			assert.ok(requests.at(-1)!.delta.length <= 24_000, "activity and delta share the input cap");
-			runtime.handleTurnEnd(activityTurn("bg_wait", {}, "Gate changed again"), ctx);
+			runtime.handleTurnEnd(activityTurn("subagent", { action: "wait" }, "Gate changed again"), ctx);
 			await runtime.handleAgentEnd({}, ctx);
 			assert.equal(requests.length, 2, "one additional activity review per prompt");
 		} finally { runtime.dispose(); }

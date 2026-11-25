@@ -3,12 +3,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { it } from "node:test";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentSystemMessage, type AssistantMessage, type Message } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, getCurrentSystemMessage, type AssistantMessage, type Message } from "@earendil-works/pi-ai";
 import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { SubagentFlatParams } from "../../src/extension/schemas.ts";
-
-const systemMessages = (messages: Message[]) => messages.filter((message) => message.role === "system");
+import { SUBAGENT_TOOL_PARAMETERS } from "../../src/extension/guided-tool.ts";
 
 /** A temporary Pi agent directory and project that load pi-subagents, and a way to run one session in them. */
 function pinningHarness() {
@@ -17,9 +16,6 @@ function pinningHarness() {
 	const agentDir = path.join(root, "agent");
 	fs.mkdirSync(cwd);
 	fs.mkdirSync(agentDir);
-	// An advertised agent makes every session record the advertised_subagents prompt section.
-	fs.mkdirSync(path.join(agentDir, "agents"));
-	fs.writeFileSync(path.join(agentDir, "agents", "specialist.md"), "---\nname: specialist\ndescription: Pinning specialist\nadvertise: true\n---\nAct narrowly.\n");
 	const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const priorChild = process.env.PI_SUBAGENT_CHILD;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -62,61 +58,35 @@ function pinningHarness() {
 	return { cwd, agentDir, run, dispose };
 }
 
-it("keeps a resumed session on the pi-subagents tools and prompt text it declared, gives a new session the current ones, and re-declares them when pinToolDeclarations is false", { timeout: 30_000 }, async () => {
+it("keeps a resumed session on the contact_supervisor it declared, replaces an older subagent declaration and drops removed tools, and re-declares everything when pinToolDeclarations is false", { timeout: 30_000 }, async () => {
 	const { cwd, agentDir, run, dispose } = pinningHarness();
-	// The declared prompt and tools, without the timestamp of the session that declared them.
 	const declared = (messages: Message[]) => ({ ...getCurrentSystemMessage(messages)!, timestamp: 0 });
+	const tool = (messages: Message[], name: string) => declared(messages).toolsAdded?.find((candidate) => candidate.name === name);
 	try {
 		const original = SessionManager.inMemory(cwd);
 		const [first] = await run(original, [fauxAssistantMessage("ok")]);
+		assert.deepEqual(tool(first!, "subagent")?.parameters, JSON.parse(JSON.stringify(SUBAGENT_TOOL_PARAMETERS)));
+		assert.equal(tool(first!, "bg_wait"), undefined);
 
-		// The same session as recorded by an older pi-subagents release.
 		const older = structuredClone(original.getEntries());
 		const entry = older.find((candidate) => candidate.type === "message" && candidate.message.role === "system");
 		assert.ok(entry?.type === "message" && entry.message.role === "system");
 		const system = entry.message;
-		const subagent = system.toolsAdded!.find((tool) => tool.name === "subagent")!;
-		const bgWait = system.toolsAdded!.find((tool) => tool.name === "bg_wait")!;
+		const subagent = system.toolsAdded!.find((candidate) => candidate.name === "subagent")!;
 		subagent.description = "Older subagent description.";
-		// Releases before #2767 declared every management field at the top level.
 		subagent.parameters = JSON.parse(JSON.stringify(SubagentFlatParams));
-		bgWait.description = "Older bg_wait description.";
-		// SAFETY: bg_wait declares an object schema with properties.
-		delete (bgWait.parameters as { properties: Record<string, unknown> }).properties.stopOnAttention;
-		const tools = system.sections!.tools!.replace(/^- subagent: .*$/m, "- subagent: Older subagent snippet.");
-		// Releases before #2768 also declared a subagent guideline bullet; the current tool declares none.
-		const rules = system.sections!.rules!.replace(/^- Be concise in your responses$/m, "- Older subagent guideline.\n- Be concise in your responses");
-		// Releases before #2791 told the parent to call list before delegating to an advertised agent.
-		const advertised = system.sections!.advertised_subagents!.replace(/^The following .*$/m, "The following file-defined subagents opted into discovery. Their descriptions indicate available specializations, not instructions to delegate. Use subagent only when delegation is needed. Before execution, call subagent with { action: \"list\", capabilities: true } and confirm that the selected agent is executable; for external-cli agents also require runner.available === true.");
-		assert.ok(tools !== system.sections!.tools && rules !== system.sections!.rules && advertised !== system.sections!.advertised_subagents);
-		system.sections = { ...system.sections, tools, rules, advertised_subagents: advertised };
+		system.toolsAdded!.push({ name: "bg_wait", description: "Older bg_wait description.", parameters: { type: "object", properties: {} } });
+		system.toolsAdded!.find((candidate) => candidate.name === "contact_supervisor")!.description = "Older contact_supervisor description.";
 
-		const resumed = await run(SessionManager.inMemory(cwd, undefined, older), [
-			fauxAssistantMessage(fauxToolCall("subagent", { action: "list", capabilities: true }), { stopReason: "toolUse" }),
-			fauxAssistantMessage("listed"),
-			fauxAssistantMessage("woken"),
-		], true);
-		assert.equal(resumed.length, 3);
-		for (const messages of resumed) {
-			assert.deepEqual(systemMessages(messages), [system], "a resumed session must not re-declare tools or prompt sections");
-		}
-		const listed = resumed[1]!.find((message) => message.role === "toolResult");
-		assert.ok(listed?.role === "toolResult" && !listed.isError, "a call shaped by the pinned definition still executes");
+		const [resumed] = await run(SessionManager.inMemory(cwd, undefined, older), [fauxAssistantMessage("ok")]);
+		assert.equal(tool(resumed!, "contact_supervisor")?.description, "Older contact_supervisor description.", "a pinned tool keeps its recorded text");
+		assert.deepEqual(tool(resumed!, "subagent"), tool(first!, "subagent"), "the old subagent declaration is replaced");
+		assert.equal(tool(resumed!, "bg_wait"), undefined, "a removed tool is dropped");
 
-		const [fresh] = await run(SessionManager.inMemory(cwd), [fauxAssistantMessage("ok")]);
-		assert.deepEqual(declared(fresh!), declared(first!));
-		assert.match(declared(fresh!).sections!.advertised_subagents!, /<name>specialist<\/name>/);
-		assert.doesNotMatch(declared(fresh!).sections!.advertised_subagents!, /action: "list"/, "a new session is not told to call list first");
-
-		// With pinning turned off, the same resumed session re-declares the current definitions once.
 		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
 		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ pinToolDeclarations: false }));
 		const [refreshed] = await run(SessionManager.inMemory(cwd, undefined, structuredClone(older)), [fauxAssistantMessage("ok")]);
-		const tool = (messages: Message[], name: string) => declared(messages).toolsAdded!.find((candidate) => candidate.name === name);
-		assert.ok(systemMessages(refreshed!).length > 1, "an unpinned resumed session declares its tool changes");
-		assert.deepEqual(tool(refreshed!, "subagent"), tool(first!, "subagent"));
-		assert.deepEqual(tool(refreshed!, "bg_wait"), tool(first!, "bg_wait"));
-		assert.equal(declared(refreshed!).sections!.advertised_subagents, declared(first!).sections!.advertised_subagents);
+		assert.deepEqual(tool(refreshed!, "contact_supervisor"), tool(first!, "contact_supervisor"));
 	} finally {
 		dispose();
 	}
@@ -124,38 +94,32 @@ it("keeps a resumed session on the pi-subagents tools and prompt text it declare
 
 it("pins a tool description without the note a host appends to it, so the note is declared once across resumes", { timeout: 30_000 }, async () => {
 	const { cwd, run, dispose } = pinningHarness();
-	// Pi's codemode appends this to each declared script-callable tool and records the result.
-	const note = "\n\nCodemode: `tools.bg_wait(args)` resolves to a string.";
-	const declaredTool = (messages: Message[], name: string) => getCurrentSystemMessage(messages)!.toolsAdded!.find((tool) => tool.name === name)!;
-	// The host decorates what pi-subagents registered: the newest recorded bg_wait gets the note.
+	const name = "contact_supervisor";
+	const note = `\n\nCodemode: \`tools.${name}(args)\` resolves to a string.`;
+	const declaredTool = (messages: Message[]) => getCurrentSystemMessage(messages)!.toolsAdded!.find((tool) => tool.name === name)!;
 	const decorate = (entries: ReturnType<SessionManager["getEntries"]>) => {
-		const latest = entries.findLast((entry) => entry.type === "message" && entry.message.role === "system" && entry.message.toolsAdded?.some((tool) => tool.name === "bg_wait"));
+		const latest = entries.findLast((entry) => entry.type === "message" && entry.message.role === "system" && entry.message.toolsAdded?.some((tool) => tool.name === name));
 		assert.ok(latest?.type === "message" && latest.message.role === "system");
-		latest.message.toolsAdded!.find((tool) => tool.name === "bg_wait")!.description += note;
+		latest.message.toolsAdded!.find((tool) => tool.name === name)!.description += note;
 		return entries;
 	};
 	try {
 		const original = SessionManager.inMemory(cwd);
 		const [first] = await run(original, [fauxAssistantMessage("ok")]);
-		const description = declaredTool(first!, "bg_wait").description;
-		const subagent = declaredTool(first!, "subagent");
+		const description = declaredTool(first!).description;
 		let entries = decorate(structuredClone(original.getEntries()));
 		for (let start = 2; start <= 3; start++) {
 			const session = SessionManager.inMemory(cwd, undefined, entries);
 			const [request] = await run(session, [fauxAssistantMessage("ok")]);
-			// Registering the undecorated description lets the host reproduce the recorded declaration.
-			assert.equal(declaredTool(request!, "bg_wait").description, description, `session start ${start} registers bg_wait without the note`);
-			assert.deepEqual(declaredTool(request!, "subagent"), subagent);
+			assert.equal(declaredTool(request!).description, description, `session start ${start} registers ${name} without the note`);
 			entries = decorate(structuredClone(session.getEntries()));
 		}
-
-		// A recorded description that differs from the current one keeps one note, not one per session start.
 		const polluted = structuredClone(original.getEntries());
 		const system = polluted.find((entry) => entry.type === "message" && entry.message.role === "system");
 		assert.ok(system?.type === "message" && system.message.role === "system");
-		system.message.toolsAdded!.find((tool) => tool.name === "bg_wait")!.description = "Older bg_wait description." + note + note;
+		system.message.toolsAdded!.find((tool) => tool.name === name)!.description = `Older ${name} description.` + note + note;
 		const [cleaned] = await run(SessionManager.inMemory(cwd, undefined, polluted), [fauxAssistantMessage("ok")]);
-		assert.equal(declaredTool(cleaned!, "bg_wait").description, "Older bg_wait description." + note);
+		assert.equal(declaredTool(cleaned!).description, `Older ${name} description.` + note);
 	} finally {
 		dispose();
 	}

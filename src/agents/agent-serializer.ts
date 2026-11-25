@@ -6,7 +6,6 @@ export const KNOWN_FIELDS = new Set([
 	"name",
 	"package",
 	"description",
-	"advertise",
 	"alias",
 	"aliases",
 	"tools",
@@ -72,7 +71,6 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	} else {
 		lines.push(`description: ${config.description}`);
 	}
-	if (config.advertise === true || preserve("advertise")) lines.push(`advertise: ${config.advertise === true ? "true" : "false"}`);
 	const aliasesValue = joinComma(config.aliases);
 	if (aliasesValue || preserve("alias", "aliases")) lines.push(`aliases: ${aliasesValue ?? ""}`);
 

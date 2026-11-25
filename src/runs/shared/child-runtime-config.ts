@@ -3,7 +3,6 @@ import type { ThinkingLevel } from "../../shared/model-info.ts";
 import type { NestedPathEntry } from "./nested-path.ts";
 import type { PermissionRules } from "./permissions.ts";
 import type { ChildWatchdogConfig, ChildWatchdogStatusEvent } from "../../watchdog/child-status.ts";
-import type { ResolvedWaitToolConfig } from "../background/wait-config.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "./capability-ceiling.ts";
 import type { RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
@@ -96,7 +95,6 @@ export interface ChildRuntimeConfig {
 	toolBudget?: ResolvedToolBudget;
 	childWatchdog?: ChildWatchdogConfig;
 	watchdogStatus?: (event: ChildWatchdogStatusEvent) => void;
-	waitTool: ResolvedWaitToolConfig;
 	runtimeState?: SubagentState;
 	holdFinalDrain?: (held: boolean) => void;
 	/** Installation-local downward owner-channel barrier; never inherited or serialized into descendants. */

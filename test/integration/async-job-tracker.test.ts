@@ -1854,7 +1854,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		const sessionId = `session-${Date.now()}`;
 		const runId = `run-${Date.now()}`;
 		const toolCallId = `call-${Date.now()}`;
-		const { channel, tools, sent } = createNativeSupervisorHarness(sessionId);
+		const { channel, sent } = createNativeSupervisorHarness(sessionId);
 		const { channelDir, requestId } = writeSupervisorRequest({ sessionId, runId, toolCallId });
 		try {
 			const runDir = path.join(asyncRoot, runId);
@@ -1871,7 +1871,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				supervisorRequestState: channel.getSupervisorRequestState,
 			});
 			tracker.handleStarted({ id: runId, asyncDir: runDir, agent: "worker", sessionId });
-			await tools.get("subagent_supervisor")!.execute("reply", { action: "reply", replyTo: requestId, message: "Approved" });
+			await channel.runParentAction({ action: "reply", replyTo: requestId, message: "Approved" });
 			assert.equal(channel.getSupervisorRequestState(event), "resolved");
 			await waitForCondition(() => (state.asyncJobs.get(runId)?.controlEventCursor ?? 0) > 0, "resolved control event cursor");
 
@@ -1923,7 +1923,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		const sessionId = `session-${Date.now()}`;
 		const runId = `run-${Date.now()}`;
 		const toolCallId = `call-${Date.now()}`;
-		const { channel, tools } = createNativeSupervisorHarness(sessionId);
+		const { channel } = createNativeSupervisorHarness(sessionId);
 		const { channelDir, requestId } = writeSupervisorRequest({ sessionId, runId, toolCallId });
 		try {
 			const runDir = path.join(asyncRoot, runId);
@@ -1941,7 +1941,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			tracker.handleStarted({ id: runId, asyncDir: runDir, agent: "worker", sessionId });
 			await waitForCondition(() => recorder.events.filter((entry) => entry.channel === SUBAGENT_CONTROL_EVENT).length === 1, "first control event replay");
 
-			await tools.get("subagent_supervisor")!.execute("reply", { action: "reply", replyTo: requestId, message: "Approved" });
+			await channel.runParentAction({ action: "reply", replyTo: requestId, message: "Approved" });
 			writeControlRecord(runDir, event);
 			const eventSize = fs.statSync(path.join(runDir, "events.jsonl")).size;
 			await waitForCondition(() => (state.asyncJobs.get(runId)?.controlEventCursor ?? 0) >= eventSize, "resolved replay cursor");

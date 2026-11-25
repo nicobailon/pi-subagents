@@ -44,6 +44,10 @@ const MANAGEMENT_ACTION_AUTHORITY: Readonly<Record<string, AuthorityAction>> = {
 	"project.open": "projectOpen",
 };
 
+export function authorityConfirmTitle(action: string, targets?: readonly string[]): string {
+	return targets ? `Authorize subagent ${action} of ${targets.join(", ")}?` : `Authorize subagent ${action}?`;
+}
+
 /** The authority a `subagent` management action needs and its decision; `worktree.cleanup` needs one only with mode "apply". */
 export function managementActionAuthority(action: string, mode: unknown, policy: AuthorityPolicyConfig | undefined): { authority: AuthorityAction; decision: AuthorityDecision } | undefined {
 	if (!Object.hasOwn(MANAGEMENT_ACTION_AUTHORITY, action) || (action === "worktree.cleanup" && mode !== "apply")) return undefined;

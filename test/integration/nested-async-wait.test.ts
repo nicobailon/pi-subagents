@@ -26,17 +26,17 @@ it("native reviewer consumes nested persona results via exact, prefix, and aggre
 	for (const name of ["arm-a", "arm-b", "persona"]) {
 		fs.writeFileSync(path.join(agentDir, "agents", `${name}.md`), [
 			"---", `name: ${name}`, "description: Native nested wait test", `model: nested-wait-fixture/${name}`,
-			`tools: ${name === "persona" ? "read" : "read, subagent, bg_wait"}`, `extensions: ${extension}`,
+			`tools: ${name === "persona" ? "read" : "read, subagent"}`, `extensions: ${extension}`,
 			"inheritGlobalContext: false", "inheritProjectContext: false", "inheritSkills: false", "acceptanceRole: read-only", "---", "Complete only the fixture task.",
 		].join("\n"));
 	}
 	const factory = createDefaultChildSessionFactory();
 	setChildSessionFactory(factory);
 	try {
-		const reviewer = makeAgent("reviewer", { model: "nested-wait-fixture/reviewer", tools: ["read", "subagent", "bg_wait"], extensions: [extension], inheritGlobalContext: false, inheritProjectContext: false, inheritSkills: false });
+		const reviewer = makeAgent("reviewer", { model: "nested-wait-fixture/reviewer", tools: ["read", "subagent"], extensions: [extension], inheritGlobalContext: false, inheritProjectContext: false, inheritSkills: false });
 		const result = await runSync(root, [reviewer], "reviewer", "Review using the two assigned arms", {
 			runId: "native-nested-wait", sessionDir: path.join(root, "sessions"), share: true, maxSubagentDepth: 4,
-			timeoutMs: 45000, waitToolDefaultTimeoutMs: 25000, childSessionFactory: factory,
+			timeoutMs: 45000, childSessionFactory: factory,
 		});
 		assert.equal(result.exitCode, 0, `${result.error}\nAudit: ${fs.readFileSync(auditPath, "utf8")}`);
 		assert.equal(result.finalOutput, "CONSUMED_reviewer: PERSONA_EVIDENCE");

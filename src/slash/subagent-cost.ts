@@ -7,7 +7,6 @@ import { DIRS, SLASH_RESULT_TYPE, type Details, type SubagentState, type Usage }
 import { readStatus } from "../shared/utils.ts";
 import { readWorkflowReceipt } from "../workflows/workflow-receipt.ts";
 import { resolveSlashMessageDetails } from "./slash-live-state.ts";
-import { DEFAULT_WAIT_TOOL_NAME, waitToolName } from "../shared/wait-tool-name.ts";
 
 /** Structured parent-plus-child accounting for one session; the source of `/subagent-cost` and the RPC `cost` method. */
 export interface SubagentCostReport {
@@ -118,8 +117,7 @@ function detailsFromSessionEntry(entry: unknown): Details | undefined {
 	}
 	if (record.type !== "message" || !record.message || typeof record.message !== "object") return undefined;
 	const message = record.message as { role?: unknown; toolName?: unknown; details?: unknown };
-	// Results saved before a waitTool.name rename carry bg_wait; another extension's bg_wait results fail isSubagentDetails.
-	if (message.role !== "toolResult" || (message.toolName !== "subagent" && message.toolName !== waitToolName() && message.toolName !== DEFAULT_WAIT_TOOL_NAME)) return undefined;
+	if (message.role !== "toolResult" || (message.toolName !== "subagent" && message.toolName !== "bg_wait")) return undefined;
 	return isSubagentDetails(message.details) ? message.details : undefined;
 }
 
@@ -158,13 +156,6 @@ function metadataUsage(
 	return undefined;
 }
 
-/**
- * Collect parent and child usage for the current session branch. Foreground
- * children come from persisted `subagent`/`bg_wait` tool-result details; async
- * runs come from those results and `subagent-notify` completions. Async workflow
- * children are resolved through receipts, and other async runs through their
- * status steps, then artifact metadata.
- */
 export function collectSubagentCost(
 	ctx: ExtensionContext,
 	state: Pick<SubagentState, "baseCwd" | "artifactDirPreference">,
@@ -264,7 +255,6 @@ export function collectSubagentCost(
 				if (!usage || !addChild({ ...ref, usage })) unresolvedAsyncChildren += 1;
 			}
 		} catch (error) {
-			// Without a receipt, a bg_wait completion cannot prove it reported every child (a stopped workflow may omit one).
 			unresolvedAsyncChildren += 1;
 			// A running workflow has no receipt yet; readWorkflowReceipt keeps the ENOENT as its cause.
 			const missing = (error as NodeJS.ErrnoException).code === "ENOENT" || ((error as Error).cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
@@ -273,7 +263,6 @@ export function collectSubagentCost(
 	}
 
 	for (const asyncRunId of asyncRunIds) {
-		// A bg_wait completion already reported this run's results; its children carry no child runId.
 		if (completedRunIds.has(asyncRunId)) continue;
 		try {
 			const status = readStatus(path.join(DIRS.async, asyncRunId));

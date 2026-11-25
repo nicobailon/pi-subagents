@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { AsyncRunSummary } from "./async-status.ts";
 import { readAsyncRecoveryDescriptor } from "./async-resume.ts";
 import { errorWithoutReplyText } from "../shared/model-resolution.ts";
-import { waitForRunText } from "../../shared/wait-tool-name.ts";
+import { waitForRunText } from "../../shared/wait-call.ts";
 
 const INTERCOM_DETACH_ERROR = "detached for intercom coordination";
 

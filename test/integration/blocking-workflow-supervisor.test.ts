@@ -74,7 +74,7 @@ describe("supervisor asks in blocking workflows", { skip: !available }, () => {
 					while (notices.filter(notice => notice.details?.requestId).length < expectedChildren && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
 					const requests = notices.flatMap(notice => notice.details?.requestId ? [notice.details.requestId] : []);
 					assert.equal(requests.length, expectedChildren, "a non-blocking parent can see every real question");
-					for (const requestId of requests) await tools.get("subagent_supervisor")!.execute("reply", { action: "reply", replyTo: requestId, message: "Proceed with approach A" });
+					for (const requestId of requests) await channel.runParentAction({ action: "reply", replyTo: requestId, message: "Proceed with approach A" });
 					await readAsyncPayload(mode === "async" ? result.details.asyncId! : childIds[0]!);
 				}
 				assert.equal(childIds.length, expectedChildren);

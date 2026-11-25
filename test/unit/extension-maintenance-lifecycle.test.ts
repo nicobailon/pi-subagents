@@ -31,7 +31,7 @@ const script = String.raw`
 	const ctx = {
 		cwd: process.cwd(), isIdle() { return false; }, hasUI: false, model: undefined,
 		ui: { setWidget() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
-		sessionManager: { getSessionId() { return "lifecycle-session"; }, getSessionFile() { return null; }, getEntries() { return []; } },
+		sessionManager: { getSessionId() { return "lifecycle-session"; }, getSessionFile() { return null; }, getEntries() { return []; }, buildContextEntries() { return []; } },
 		modelRegistry: { getAvailable() { return []; } },
 	};
 	registerSubagentExtension(pi);
