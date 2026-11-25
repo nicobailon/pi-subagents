@@ -2135,16 +2135,15 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		}
 	});
 
-	it("names a direct launch by its top-level label and ignores a non-string one", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("names a direct launch by its top-level label and rejects a non-string one", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const ctx = makeMinimalCtx(tempDir);
-		for (const [label, sessionName] of [[" Validate sanitizer tests ", "echo: Validate sanitizer tests"], [5, "echo: Run the sanitizer suite"]] as const) {
-			mockPi.onCall({ output: "done" });
-			const params = flattenSubagentToolOptions({ agent: "echo", task: "Run the sanitizer suite", label, async: false });
-			const result = await executor.executePublic(`top-level-label-${label}`, params, new AbortController().signal, undefined, ctx);
-			assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
-			assert.equal(readCall().runtime?.sessionName, sessionName);
-		}
+		mockPi.onCall({ output: "done" });
+		const params = flattenSubagentToolOptions({ agent: "echo", task: "Run the sanitizer suite", label: " Validate sanitizer tests ", async: false });
+		const result = await executor.executePublic("top-level-label", params, new AbortController().signal, undefined, ctx);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
+		assert.equal(readCall().runtime?.sessionName, "echo: Validate sanitizer tests");
+		assert.throws(() => flattenSubagentToolOptions({ agent: "echo", task: "Run the sanitizer suite", label: 5, async: false }), { message: "subagent: 'label' must be string (got 5)." });
 	});
 
 	it("names a labeled direct async launch in its async-started event, status step and session", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
