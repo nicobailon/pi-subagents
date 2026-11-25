@@ -102,6 +102,6 @@ it("native Pi delivers a yielded question and continues without a reply action o
 		session?.dispose();
 		globalThis.fetch = previousFetch;
 		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousDir;
-		rmSync(cwd, { recursive: true, force: true });
+		rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 });

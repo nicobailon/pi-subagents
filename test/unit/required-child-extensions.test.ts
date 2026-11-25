@@ -33,7 +33,7 @@ async function rejectsChildCreate(dir: string, agentDir: string, pi: PiCodingAge
 		await factory.dispose();
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		fs.rmSync(dir, { recursive: true, force: true });
+		fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 }
 
@@ -53,7 +53,7 @@ describe("required child extension host policy", () => {
 			handle.dispose();
 			assert.equal(resolveRequiredChildExtensions(sessionId)[0]?.id, "replacement");
 			replacement.dispose();
-		} finally { fs.rmSync(dir, { recursive: true, force: true }); }
+		} finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
 	it("appends required paths after ordinary resolution and exposes only safe IDs", () => {
@@ -67,7 +67,7 @@ describe("required child extension host policy", () => {
 				assert.deepEqual(launch.launchResolvedExtensions.required, ["host-provider"]);
 				assert.equal(JSON.stringify(launch.launchResolvedExtensions).includes(file), false);
 			}
-		} finally { handle.dispose(); fs.rmSync(dir, { recursive: true, force: true }); }
+		} finally { handle.dispose(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
 	it("fails closed when the capability ceiling denies a nonempty required set", () => {
@@ -89,7 +89,7 @@ describe("required child extension host policy", () => {
 			const launch = buildRunnerChildLaunch({ agent: "worker", task: "test", inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, requiredExtensions: snapshot }, { cwd: process.cwd(), id: "run", flatIndex: 0 }, { sessionEnabled: false, watchdogStatus() {} });
 			assert.equal(launch.session.extensionPaths.at(-1), fs.realpathSync(file));
 			assert.deepEqual(launch.launchResolvedExtensions.required, ["runner-provider"]);
-		} finally { fs.rmSync(dir, { recursive: true, force: true }); }
+		} finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
 	it("propagates the root snapshot through nested child runtime inheritance", () => {
@@ -100,7 +100,7 @@ describe("required child extension host policy", () => {
 			const nested = buildInProcessChildLaunch({ ...baseInput("nested-child"), inherited: { depth: 1, requiredExtensions: parent.config.requiredExtensions } });
 			assert.equal(nested.session.extensionPaths.at(-1), fs.realpathSync(file));
 			assert.deepEqual(nested.launchResolvedExtensions.required, ["nested-provider"]);
-		} finally { fs.rmSync(dir, { recursive: true, force: true }); }
+		} finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 });
 
@@ -262,7 +262,7 @@ describe("require-for-all-runners admission", () => {
 			assert.equal(snapshot[0]?.requireForAllRunners, true);
 			assert.equal(snapshotRequiredChildExtensions(snapshot, "requiredExtensions")[0]?.requireForAllRunners, true);
 			assert.throws(() => snapshotRequiredChildExtensions([{ id: "host-policy", path: fs.realpathSync(file), requireForAllRunners: false }], "requiredExtensions"), /must be true when present/);
-		} finally { handle.dispose(); fs.rmSync(dir, { recursive: true, force: true }); }
+		} finally { handle.dispose(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
 
 	it("admits every runner for a legacy registration but rejects non-native routes for an opt-in one", () => {
