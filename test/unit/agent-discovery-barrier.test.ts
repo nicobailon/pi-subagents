@@ -74,7 +74,7 @@ if (phase === "old") {
 			};
 			// The last session_start handler starts agent discovery.
 			const start = (reason) => hooks.get("session_start").at(-1)({ reason }, ctx);
-			const guide = async () => (await tools.get("subagent").execute("guide", {}, new AbortController().signal, undefined, ctx)).content[0].text;
+			const guide = async () => (await tools.get("subagent").execute("guide", { action: "guide" }, new AbortController().signal, undefined, ctx)).content[0].text;
 			const waitForFile = async (file, message, ms = 3000) => {
 				const deadline = Date.now() + ms;
 				while (!fs.existsSync(file) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));

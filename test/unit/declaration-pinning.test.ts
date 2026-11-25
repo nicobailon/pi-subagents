@@ -7,6 +7,7 @@ import { fauxAssistantMessage, fauxProvider, getCurrentSystemMessage, type Assis
 import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { SubagentFlatParams } from "../../src/extension/schemas.ts";
+import { SUBAGENT_TOOL_PARAMETERS } from "../../src/extension/guided-tool.ts";
 
 /** A temporary Pi agent directory and project that load pi-subagents, and a way to run one session in them. */
 function pinningHarness() {
@@ -64,7 +65,7 @@ it("keeps a resumed session on the contact_supervisor it declared, replaces an o
 	try {
 		const original = SessionManager.inMemory(cwd);
 		const [first] = await run(original, [fauxAssistantMessage("ok")]);
-		assert.deepEqual(tool(first!, "subagent")?.parameters, { type: "object", properties: {}, additionalProperties: true });
+		assert.deepEqual(tool(first!, "subagent")?.parameters, JSON.parse(JSON.stringify(SUBAGENT_TOOL_PARAMETERS)));
 		assert.equal(tool(first!, "bg_wait"), undefined);
 
 		// The same session as recorded by an older pi-subagents release: the full subagent schema, bg_wait, and an older contact_supervisor text.

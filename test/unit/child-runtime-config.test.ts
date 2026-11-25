@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { createChildHooks } from "../../src/runs/shared/child-hooks.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { childSupervisorMetadata, evaluateChildToolDiagnostic, type ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
-import { SUBAGENT_TOOL_DESCRIPTION } from "../../src/extension/guided-tool.ts";
+import { SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_PARAMETERS } from "../../src/extension/guided-tool.ts";
 
 function baseConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
 	return { fanoutChild: false, depth: 1, fast: false, ...overrides };
@@ -53,7 +53,7 @@ describe("child runtime config", () => {
 				const declared = pi.tools.filter((tool) => tool.name === "subagent") as unknown as Array<{ description: string; parameters: unknown; execute: (id: string, params: object, signal: undefined, onUpdate: undefined, ctx: object) => Promise<{ content: Array<{ text: string }> }> }>;
 				assert.equal(declared.length, 1);
 				assert.equal(declared[0]!.description, SUBAGENT_TOOL_DESCRIPTION);
-				assert.deepEqual(declared[0]!.parameters, { type: "object", properties: {}, additionalProperties: true });
+				assert.deepEqual(declared[0]!.parameters, JSON.parse(JSON.stringify(SUBAGENT_TOOL_PARAMETERS)));
 				const guide = (await declared[0]!.execute("guide", {}, undefined, undefined, ctx)).content[0]!.text;
 				assert.equal(/cannot launch runs/.test(guide), !tools.includes("subagent"));
 				assert.deepEqual(launch.session.tools, tools, "registration must not expand explicit tools");
