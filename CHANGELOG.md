@@ -18,10 +18,7 @@
 ### Fixed
 
 - When a builtin agent was disabled in user settings and project settings changed some other field of it, `enable` with `agentScope: "project"` failed with a message that pointed back to the project scope and project settings file, so following it never worked. The message now names the user scope and user settings file that keep the agent disabled.
-
-### Fixed
-
-- A background completion notification that fires after Pi replaced or reloaded the session no longer crashes the host. The delayed settle-hook subscription called `pi.on("agent_before_settle")` on a stale extension ctx and threw `This extension ctx is stale after session replacement or reload.` as an uncaught exception, taking down the whole process (for example a Feishu bridge daemon). The subscription error is now swallowed; `sessionShutdown`/`dispose` still tears the subscription down.
+- A background completion that came due after the host disposed the session without `session_shutdown` (for example an SDK host calling `session.dispose()`) no longer crashes the process. Subscribing the settle hook on the stale extension ctx threw `This extension ctx is stale after session replacement or reload.` from a timer, as an uncaught exception. The stale-ctx error is now ignored; the notice is not sent to the disposed session and its result stays saved. Thanks to [@suveng](https://github.com/suveng) for #3345.
 
 ## [0.90.0] - 2026-11-22
 

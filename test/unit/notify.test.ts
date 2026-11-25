@@ -1567,31 +1567,18 @@ describe("completion notice output size", () => {
 	});
 });
 
-// Regression: a completion timer firing after Pi replaced/reloaded the session must not
-// crash the host. pi.on then throws "ctx is stale"; updateSettleSubscription must swallow it.
-it("survives a stale extension ctx when subscribing the settle hook after session replacement", async () => {
+it("does not crash when a completion arrives after the extension ctx went stale", async () => {
 	const events = createEventBus();
-	const sent: Array<{ message: unknown; options: unknown }> = [];
-	const pi = {
-		events,
-		isHeld: () => false,
-		sendMessage(message: unknown, options: unknown) { sent.push({ message, options }); },
-		// Simulate Pi's assertActive(): subscribing once the session ctx is invalidated throws.
-		on() { throw new Error("This extension ctx is stale after session replacement or reload."); },
-	};
+	const stale = () => { throw new Error("This extension ctx is stale after session replacement or reload."); };
+	const pi = { events, isHeld: () => false, sendMessage: stale, on: stale };
 	const notifier = registerSubagentNotify(pi as never, { currentSessionId: "session-a", completionOwnerId: COMPLETION_OWNER_ID }, {
 		batchConfig: { enabled: false },
 		sendRegistry: createCompletionSendRegistry(),
 	});
 	try {
-		// Async completions default to triggerTurn=true, so sendCompletion reaches
-		// updateSettleSubscription -> pi.on (which throws); the error must not propagate.
 		const delivered = await notifier.deliver(completionResult({ id: "stale-ctx-wake" }));
-		assert.equal(delivered, true);
-		assert.equal(sent.length, 1);
-		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
-		// dispose() also calls updateSettleSubscription; it must not throw either.
-		notifier.dispose();
+		assert.equal(delivered, false);
+		assert.equal(notifier.hasPendingDelivery(), false);
 	} finally {
 		notifier.dispose();
 	}
