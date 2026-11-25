@@ -217,7 +217,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		authorityPolicy: config.authorityPolicy,
 		run: (id, request, _nested, signal, onUpdate, ctx) => executor.executePublic(id, request, signal ?? new AbortController().signal, onUpdate, ctx),
 		// A child gets the event guidance; the parent owns the run-state warnings.
-		notes: (request, result) => callNotes(request, result, {}),
+		notes: (request, result) => callNotes(request, result, { child: true }),
 	});
 	pi.registerTool(tool);
 	const bridgeSweeper = createChildExternalJobBridgeSweeper();

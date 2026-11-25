@@ -79,7 +79,10 @@ export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch:
 	if (!options.canLaunch) {
 		return `subagent guide (child run). This child cannot launch runs. {action:"wait"} (or all:true) blocks until this child's own background work finishes. Ask your parent with contact_supervisor.`;
 	}
-	const intro = `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll.${options.child ? " You are a child run: your launches are your own children; agent changes (create, update, delete …) are blocked here." : ""}`;
+	// A child run has no completion notifier: its children's results reach it only through wait.
+	const intro = options.child
+		? `subagent guide (child run). Your launches are your own children and run in the background; their results do not wake you. Collect them with {action:"wait"} (or all:true) before you finish. Agent changes (create, update, delete …) are blocked here.`
+		: `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll.`;
 	// An "<agent>-writer" variant shares its base agent's line, so the guide grows by agent, not by mode.
 	const names = new Set(agents.map((agent) => agent.name));
 	const writerVariant = (name: string) => name.endsWith("-writer") && names.has(name.slice(0, -"-writer".length));
@@ -144,7 +147,10 @@ export function liftArgsFields(params: Record<string, unknown>): Record<string, 
 	const options = params.options && typeof params.options === "object" ? params.options as Record<string, unknown> : {};
 	const args = params.args;
 	if (!args || typeof args !== "object" || Array.isArray(args)) return params;
-	if (params.workflow !== undefined || options.script !== undefined) return params;
+	// "null", false and "false" are placeholders some providers send for an unset workflow.
+	const workflow = params.workflow;
+	const hasWorkflow = workflow !== undefined && workflow !== "null" && workflow !== false && workflow !== "false";
+	if (hasWorkflow || options.script !== undefined) return params;
 	const { args: _args, ...rest } = params;
 	return { ...(args as Record<string, unknown>), ...rest };
 }
@@ -168,7 +174,7 @@ export function misplacedGuideCall(action: string): string | undefined {
 
 /** A launch: no action, and a child or workflow to start. */
 export function isLaunchRequest(params: Record<string, unknown>): boolean {
-	return params.action === undefined && (params.agent !== undefined || params.task !== undefined || params.workflow !== undefined || params.tasks !== undefined || params.chain !== undefined);
+	return params.action === undefined && (params.agent !== undefined || params.task !== undefined || params.workflow !== undefined || params.workflowScript !== undefined || params.tasks !== undefined || params.chain !== undefined);
 }
 
 export function holdText(params: Record<string, unknown>, sibling: boolean): string {
@@ -276,6 +282,7 @@ export class TaughtState {
 // Event guidance: each note is added once while it is still in the chat, to the reply about its event.
 export const EVENT_NOTES = {
 	launch: 'Next: {action:"status", id} checks it; {action:"steer", id, message} redirects it; {action:"wait", id} only if this same turn needs the result. Completion wakes you: keep working or end your turn.',
+	childLaunch: 'Next: {action:"status", id} checks it; {action:"steer", id, message} redirects it. Its result does not wake you: collect it with {action:"wait", id} (or all:true) before you finish.',
 	worktree: "Worktree: the child edits its own git worktree, made from a clean checkout (untracked files count). One writer per folder: give each writer its own worktree; parallelize reading and review.",
 	workflow: 'Workflow scripts: a statement body with top-level await and an explicit return; no nested async functions or arrows. Every runs.run / runs.all item needs a stable key and a short verb + behavior label. Bind a report to a file with output:"plans/x.md" (a filename in the task text does not route output). runs.all resolves to an ordered array.',
 	resume: "resume returns a new id: always use the latest. A finished run takes resume; a live one takes steer.",
@@ -303,6 +310,8 @@ export interface CallFacts {
 	liveRunsInCwd?: { cwd: string; count: number };
 	/** The launched agent when it is a writer (acceptanceRole: writer) given a toolBudget. */
 	cappedWriter?: string;
+	/** A child run: its children's results do not wake it. */
+	child?: boolean;
 	fork?: { sessionBytes: number; folder: string; freeBytes?: number };
 }
 
@@ -312,7 +321,7 @@ export function callNotes(request: SubagentParamsLike, result: AgentToolResult<D
 	const notes: TeachingNote[] = [];
 	const params = request as Record<string, unknown>;
 	if (isLaunchRequest(params)) {
-		notes.push({ key: "event:launch", text: EVENT_NOTES.launch });
+		notes.push({ key: "event:launch", text: facts.child ? EVENT_NOTES.childLaunch : EVENT_NOTES.launch });
 		if (facts.fork) notes.push({ key: "event:fork", text: forkNote(facts.fork) });
 		if (params.worktree === true) notes.push({ key: "event:worktree", text: EVENT_NOTES.worktree });
 		if (params.workflow !== undefined || params.workflowScript !== undefined) notes.push({ key: "event:workflow", text: EVENT_NOTES.workflow });

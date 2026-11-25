@@ -981,7 +981,7 @@ describe("subagent prompt runtime", () => {
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "OK" };
 		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "delegate" } }] };
 		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "Subagent orchestration is enabled." };
-		assert.deepEqual(stripParentOnlySubagentMessages([user, subagentCall, subagentResult, instruction], { preserveFanoutToolHistory: true }), [user, subagentCall, subagentResult]);
+		assert.deepEqual(stripParentOnlySubagentMessages([user, subagentCall, subagentResult, instruction], { ownSubagentHistorySince: 0 }), [user, subagentCall, subagentResult]);
 	});
 
 	it("defers native supervisor registration until runtime events and respects installed pi-intercom tools", async () => {
@@ -1235,7 +1235,7 @@ describe("subagent prompt runtime", () => {
 		assert.equal(handlers[0]!({ systemPrompt: finalized!.systemPrompt }), undefined);
 	});
 
-	it("strips subagent history without moving Pi's system messages", async () => {
+	it("strips parent-only messages and keeps the child's own subagent history without moving Pi's system messages", async () => {
 		const handlers = new Map<string, Function[]>();
 		registerSubagentPromptRuntime({
 			on: (name: string, fn: Function) => handlers.set(name, [...(handlers.get(name) ?? []), fn]),
@@ -1247,11 +1247,12 @@ describe("subagent prompt runtime", () => {
 		const task = { role: "user", content: "Task", timestamp: 1 };
 		const call = { role: "assistant", content: [{ type: "toolCall", id: "call_1", name: "subagent", arguments: {} }], timestamp: 2 };
 		const result = { role: "toolResult", toolCallId: "call_1", toolName: "subagent", content: [], isError: false, timestamp: 3 };
+		const notice = { role: "custom", customType: "subagent-notify", content: "done", display: false, timestamp: 3 };
 		// A mid-conversation system message must stay where it is, or the cached prefix ends at the tools.
 		const sectionUpdate = { role: "system", content: "", sections: { time: "Now: 10:00" }, timestamp: 4 };
 		const next = { role: "user", content: "Continue", timestamp: 5 };
 
-		assert.deepEqual(await runner.emitContext([leading, task, call, result, sectionUpdate, next] as never), [leading, task, sectionUpdate, next]);
+		assert.deepEqual(await runner.emitContext([leading, task, call, result, notice, sectionUpdate, next] as never), [leading, task, call, result, sectionUpdate, next]);
 	});
 
 	it("filters parent-only artifacts from polluted fork context while preserving ordinary history", () => {
@@ -1272,8 +1273,9 @@ describe("subagent prompt runtime", () => {
 		const childWatchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
 		const otherCustom = { role: "custom", customType: "other", content: "keep" };
 
+		// With no session header every subagent call counts as the child's own and stays; parent-only artifacts go.
 		assert.deepEqual(contextHandler?.({ messages: [priorParentTurn, instruction, slashResult, subagentCall, subagentResult, watchdogWarning, childWatchdogWarning, otherCustom, currentTask] }), {
-			messages: [priorParentTurn, otherCustom, currentTask],
+			messages: [priorParentTurn, subagentCall, subagentResult, otherCustom, currentTask],
 		});
 	});
 

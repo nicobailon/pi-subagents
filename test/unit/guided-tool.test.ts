@@ -101,10 +101,28 @@ describe("guide first", () => {
 		assert.equal(sibling, "Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.");
 		assert.equal(workflow, `${sibling} Repeat the call with its \`\`\`js workflow block in that reply.`);
 		assert.equal(mockPi.callCount(), 0);
+		// An inline script (options.script) is a launch too: as the first call it is held with the guide.
+		const scripted = await startParent([{ async: true, options: { script: `return runs.run("one", { agent: "probe", task: "Inspect" });` } }, "held"]);
+		await scripted.prompt("go");
+		assert.match(subagentReplies(scripted)[0]!, /^subagent guide\.[^]*Not launched yet: this is the session's first subagent call/);
+		assert.equal(mockPi.callCount(), 0);
 	});
 });
 
 describe("taught state", () => {
+	it("reads a reply's fields from args when workflow is a placeholder", async () => {
+		const pi = { on: () => {} };
+		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] } };
+		const runs: Array<Record<string, unknown>> = [];
+		const { tool } = createGuidedSubagentTool(pi as never, {
+			guide: async () => "GUIDE",
+			flatten: (params) => flattenSubagentToolOptions(params),
+			run: async (_id, request) => { runs.push(request as Record<string, unknown>); return { content: [{ type: "text", text: "replied" }], details: { mode: "management", results: [] } }; },
+		});
+		await tool.execute("id", { action: "reply", workflow: "null", args: { replyTo: "q-1", message: "Use option A" } } as never, undefined, undefined, ctx as never);
+		assert.deepEqual(runs, [{ action: "reply", replyTo: "q-1", message: "Use option A" }]);
+	});
+
 	it("answers an empty call with one line once the guide is in the chat", { timeout: 60_000 }, async () => {
 		const session = await startParent([{}, "read", {}, "again"]);
 		await session.prompt("go");

@@ -524,23 +524,33 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
  * `inheritedBefore`, set in a forked child to the fork's time, keeps the history the child
  * inherited as the parent sent it, so its requests can reuse the parent's prompt cache; only tool
  * ids are still made portable there. The child cannot run `subagent` either way.
+ *
+ * `ownSubagentHistorySince`, the child session's start, keeps the child's own `subagent` calls and
+ * results from then on (every child declares `subagent`; a non-fanout child waits with it). Earlier
+ * ones, a parent's in a session file that was forked without a fork launch, are still stripped.
  */
-export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean; preserveBoundedCompositeToolIds?: boolean; preserveFanoutToolHistory?: boolean; inheritedBefore?: number } = {}): unknown[] {
-	const preserveCurrentFanoutToolHistory = options.preserveFanoutToolHistory === true;
+export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean; preserveBoundedCompositeToolIds?: boolean; ownSubagentHistorySince?: number; inheritedBefore?: number } = {}): unknown[] {
+	const ownSince = options.ownSubagentHistorySince;
 	const sanitizeToolIds = options.sanitizeToolIds ?? true;
 	const inheritedBefore = options.inheritedBefore;
 	// Every message Pi projects from a session has a timestamp, so one without it was added at
 	// request time and is treated as the child's own.
 	const inherited = (message: unknown) => inheritedBefore !== undefined && typeof (message as { timestamp?: unknown })?.timestamp === "number" && (message as { timestamp: number }).timestamp < inheritedBefore;
+	const own = (message: unknown) => {
+		if (ownSince === undefined) return false;
+		const timestamp = (message as { timestamp?: unknown })?.timestamp;
+		return typeof timestamp !== "number" || timestamp >= ownSince;
+	};
 	let changed = false;
 	const filtered: unknown[] = [];
 	for (const message of messages) {
 		const keep = inherited(message);
-		if (!keep && (isParentOnlySubagentMessage(message) || (!preserveCurrentFanoutToolHistory && isSubagentToolResultMessage(message)))) {
+		const ownHistory = own(message);
+		if (!keep && (isParentOnlySubagentMessage(message) || (!ownHistory && isSubagentToolResultMessage(message)))) {
 			changed = true;
 			continue;
 		}
-		const stripped = keep || preserveCurrentFanoutToolHistory ? message : stripAssistantSubagentToolCallBlocks(message);
+		const stripped = keep || ownHistory ? message : stripAssistantSubagentToolCallBlocks(message);
 		if (stripped === undefined) {
 			changed = true;
 			continue;
@@ -790,11 +800,18 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	onRuntimeEvent("context_with_system", (event: unknown, ctx?: ExtensionContext) => {
 		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
 		const fork = config.forkCacheKey ? readInherited(ctx) : undefined;
+		// The child session's start: its own subagent history begins there (a header-less ctx keeps all of it).
+		let sessionStart = 0;
+		try {
+			const started = Date.parse(ctx?.sessionManager?.getHeader?.()?.timestamp ?? "");
+			if (Number.isFinite(started)) sessionStart = started;
+		} catch {}
 		const stripped = stripParentOnlySubagentMessages(event.messages, {
 			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
 			// Providers that reuse the Codex Responses wire under their own api id (e.g. cliproxyapi-codex-responses) split call_id|item_id the same way.
 			preserveBoundedCompositeToolIds: ctx?.model?.api?.endsWith("-codex-responses") === true,
-			preserveFanoutToolHistory: config.fanoutChild,
+			// Every child declares subagent (a non-fanout child waits with it), so its own calls and results stay.
+			ownSubagentHistorySince: sessionStart,
 			...(fork ? { inheritedBefore: fork.forkedAt } : {}),
 		});
 		const messages = fork ? projectForkRequest(stripped as Array<{ role: string }>, fork.system, fork.forkedAt, { boundary }) : stripped;
