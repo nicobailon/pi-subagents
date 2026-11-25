@@ -13,6 +13,11 @@ const ALIAS_HINTS: Record<string, string> = { runId: "id (top-level)", maxRuntim
 const optionsValidator = Compile(SubagentOptionParams);
 const FLAT_FIELDS: Record<string, TSchema> = SubagentFlatParams.properties;
 const MODEL_FIELDS: Record<string, TSchema> = { ...FLAT_FIELDS, ...SubagentParams.properties };
+
+/** True for a field name the subagent tool takes at the top level. */
+export function isSubagentFieldName(key: string): boolean {
+	return Object.hasOwn(MODEL_FIELDS, key);
+}
 const LAUNCH_FIELDS = "agent, task, cwd, context, model, output, label, worktree";
 const fieldValidators = new Map<TSchema, ReturnType<typeof Compile>>();
 const fieldValidator = (schema: TSchema) => {

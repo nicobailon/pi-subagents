@@ -6,12 +6,24 @@ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts
 import { disabledFeatureSectionNotice, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import type { Details } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
-import { prepareSubagentToolArguments } from "./subagent-options.ts";
+import { isSubagentFieldName, prepareSubagentToolArguments } from "./subagent-options.ts";
 
-// The model sees only this name, description and an empty schema; the guide (the reply to the session's first call)
-// and later replies teach everything else, so the declaration never changes and the prompt cache holds on every model.
+// The model sees this name, description and the 13 main fields, without descriptions; the guide (the reply to the
+// session's first call) and later replies teach everything else, so the declaration never changes and the prompt
+// cache holds on every model. The fields are declared because some providers drop or blank undeclared ones; other
+// fields are still accepted, and rare-action fields can ride inside `args`.
 export const SUBAGENT_TOOL_DESCRIPTION = "Delegate work to child agents and manage their runs. Call subagent({}) first for the guide: agents, fields, all actions.";
-export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({ type: "object", properties: {}, additionalProperties: true });
+const declaredString = { type: "string" } as const;
+// `output:false` and `workflow:true` still work: Pi's validation turns them into "false"/"true", which execute converts back.
+export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({
+	type: "object",
+	properties: {
+		action: declaredString, agent: declaredString, task: declaredString, id: declaredString, message: declaredString,
+		cwd: declaredString, context: { type: "string", enum: ["fresh", "fork"] }, model: declaredString, output: declaredString,
+		label: declaredString, worktree: { type: "boolean" }, workflow: declaredString, args: { type: "object", additionalProperties: true },
+	},
+	additionalProperties: true,
+});
 
 export interface GuideAgent {
 	name: string;
@@ -118,9 +130,31 @@ export function actionTopicKey(name: string): string | undefined {
 	return undefined;
 }
 
-export function actionTopicText(key: string): string {
-	return ACTION_TOPICS[key]!;
+/** An action's fields and example, and how to send them when a provider drops undeclared fields. */
+export function actionTopicText(key: string, action = key): string {
+	return `${ACTION_TOPICS[key]!}\nIf your fields arrive missing, pass them inside args: subagent({action:"${action}", args:{…}}).`;
 }
+
+/**
+ * A call that is not a workflow launch reads its fields from `args` too (top-level wins): some providers drop
+ * undeclared fields. An action that also runs a workflow (schedule.create, validate) keeps `args` as script input
+ * and lifts only the tool's own field names from it.
+ */
+export function liftArgsFields(params: Record<string, unknown>): Record<string, unknown> {
+	const options = params.options && typeof params.options === "object" ? params.options as Record<string, unknown> : {};
+	const args = params.args;
+	if (!args || typeof args !== "object" || Array.isArray(args)) return params;
+	const runsWorkflow = params.workflow !== undefined || options.script !== undefined;
+	if (runsWorkflow && params.action === undefined) return params;
+	if (runsWorkflow) {
+		const lifted = Object.entries(args).filter(([key]) => isSubagentFieldName(key) && key !== "args" && params[key] === undefined);
+		return lifted.length ? { ...Object.fromEntries(lifted), ...params } : params;
+	}
+	const { args: _args, ...rest } = params;
+	return { ...(args as Record<string, unknown>), ...rest };
+}
+
+export const EMPTY_CALL_TEXT = 'This call arrived with no fields. If you sent fields, this provider may drop them; pass the fields an action needs inside args. The full guide: subagent({action:"guide"}).';
 
 // Actions the guide itself teaches; any other action's first use adds its fields to the reply.
 const TAUGHT_BY_GUIDE = new Set(["status", "steer", "resume", "stop", "interrupt", "wait", "reply", "list", "guide"]);
@@ -365,19 +399,24 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 		description: SUBAGENT_TOOL_DESCRIPTION,
 		parameters: SUBAGENT_TOOL_PARAMETERS,
 		prepareArguments: (args) => prepareSubagentToolArguments(args) as Record<string, unknown>,
-		async execute(id, params, signal, onUpdate, ctx) {
+		async execute(id, rawParams, signal, onUpdate, ctx) {
 			const nested = nestedCallIds.delete(id);
 			taught.ensure(ctx);
+			// Again after Pi's validation, which turns output:false and workflow:true into text for the declared strings.
+			const params = liftArgsFields(prepareSubagentToolArguments(rawParams) as Record<string, unknown>);
 			const options = params.options && typeof params.options === "object" ? params.options as Record<string, unknown> : {};
 			const topic = params.topic ?? options.topic;
-			if (Object.keys(params).length === 0 || (params.action === "guide" && topic === undefined)) {
+			const empty = Object.keys(params).length === 0;
+			// A provider that drops fields can loop on empty calls; once the guide is in the chat, answer with one line.
+			if (empty && taught.has("guide")) return guideResult(EMPTY_CALL_TEXT, []);
+			if (empty || (params.action === "guide" && topic === undefined)) {
 				taught.teach("guide");
 				return guideResult(await deps.guide(ctx), ["guide"]);
 			}
 			const topicKey = params.action === "guide" && typeof topic === "string" ? actionTopicKey(topic) : undefined;
 			if (topicKey) {
 				taught.teach(`topic:${topicKey}`);
-				return guideResult(actionTopicText(topicKey), [`topic:${topicKey}`]);
+				return guideResult(actionTopicText(topicKey, topic as string), [`topic:${topicKey}`]);
 			}
 			const misplaced = typeof params.action === "string" ? misplacedGuideCall(params.action) : undefined;
 			if (misplaced) throw new Error(misplaced);
@@ -398,15 +437,22 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				if (taught.guideArrivedThisTurn()) return guideResult(holdText(params, true), []);
 			}
 			let result: AgentToolResult<Details>;
-			if (nested) {
-				const scriptRequest = nestedSubagentRequest(request, deps.authorityPolicy);
-				result = typeof scriptRequest === "string"
-					? { content: [{ type: "text", text: scriptRequest }], isError: true, details: { mode: "management", results: [] } }
-					: signal?.aborted
-						? { content: [{ type: "text", text: "subagent call was cancelled before it started; nothing was launched." }], isError: true, details: { mode: "management", results: [] } }
-						: await deps.run(id, scriptRequest, true, signal, onUpdate, ctx);
-			} else {
-				result = await deps.run(id, request, false, signal, onUpdate, ctx);
+			const rare = request.action ? rareActionTopic(request.action) : undefined;
+			try {
+				if (nested) {
+					const scriptRequest = nestedSubagentRequest(request, deps.authorityPolicy);
+					result = typeof scriptRequest === "string"
+						? { content: [{ type: "text", text: scriptRequest }], isError: true, details: { mode: "management", results: [] } }
+						: signal?.aborted
+							? { content: [{ type: "text", text: "subagent call was cancelled before it started; nothing was launched." }], isError: true, details: { mode: "management", results: [] } }
+							: await deps.run(id, scriptRequest, true, signal, onUpdate, ctx);
+				} else {
+					result = await deps.run(id, request, false, signal, onUpdate, ctx);
+				}
+			} catch (error) {
+				// A rare action's failure (often a missing field) shows that action's fields and the args fallback.
+				if (!rare) throw error;
+				throw new Error(`${error instanceof Error ? error.message : String(error)}\n\n${actionTopicText(rare, request.action)}`);
 			}
 			const notes: string[] = [];
 			const keys: string[] = [];
@@ -414,10 +460,10 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				notes.push(await deps.guide(ctx));
 				keys.push(...taught.teach("guide"));
 			}
-			const rare = request.action ? rareActionTopic(request.action) : undefined;
-			if (rare && taught.teach(`topic:${rare}`).length) {
-				notes.push(actionTopicText(rare));
-				keys.push(`topic:${rare}`);
+			const freshTopic = rare ? taught.teach(`topic:${rare}`).length > 0 : false;
+			if (rare && (freshTopic || result.isError)) {
+				notes.push(actionTopicText(rare, request.action));
+				if (freshTopic) keys.push(`topic:${rare}`);
 			}
 			for (const note of await deps.notes?.(request, result, ctx) ?? []) {
 				if (note.key && !taught.teach(note.key).length) continue;

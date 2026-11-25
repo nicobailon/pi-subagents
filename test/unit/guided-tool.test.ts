@@ -8,7 +8,7 @@ import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, c
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { createGuidedSubagentTool, EVENT_NOTES, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_PARAMETERS } from "../../src/extension/guided-tool.ts";
+import { createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_PARAMETERS } from "../../src/extension/guided-tool.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
@@ -104,6 +104,24 @@ describe("guide first", () => {
 });
 
 describe("taught state", () => {
+	it("answers an empty call with one line once the guide is in the chat", { timeout: 60_000 }, async () => {
+		const session = await startParent([{}, "read", {}, "again"]);
+		await session.prompt("go");
+		await session.prompt("go");
+		const [guide, empty] = subagentReplies(session);
+		assert.match(guide!, /^subagent guide\./);
+		assert.equal(empty, EMPTY_CALL_TEXT);
+	});
+
+	it("creates a schedule whose fields arrive only inside args", { timeout: 60_000 }, async () => {
+		fs.writeFileSync(path.join(root, "nightly.js"), `return runs.run("main", { agent: "probe", task: "Check" });`);
+		const session = await startParent([{}, { action: "schedule.create", args: { name: "nightly-args", workflow: "./nightly.js", every: "day", at: "09:00", timezone: "UTC" } }, { action: "schedule.list" }, "done"]);
+		await session.prompt("go");
+		const [, created, listed] = subagentReplies(session);
+		assert.doesNotMatch(created!, /error|requires|unknown field/i, created);
+		assert.match(listed!, /nightly-args/);
+	});
+
 	it("shows the guide again once compaction removed it from the chat", async () => {
 		const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => void>>();
 		const pi = { on: (name: string, handler: (event: unknown, ctx: unknown) => void) => handlers.set(name, [...(handlers.get(name) ?? []), handler]) };
@@ -132,7 +150,7 @@ describe("taught state", () => {
 });
 
 describe("guided tool surface", () => {
-	it("keeps the description and the guide with the bundled agents within 2,100 chars", () => {
+	it("keeps the declaration within 650 chars, and the description and the guide with the bundled agents within 2,100", () => {
 		const empty = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-size-"));
 		process.env.PI_CODING_AGENT_DIR = empty;
 		try {
@@ -140,7 +158,10 @@ describe("guided tool surface", () => {
 			assert.ok(agents.some((agent) => agent.name === "scout"), "bundled agents are listed");
 			const size = SUBAGENT_TOOL_DESCRIPTION.length + formatGuide(agents, { canLaunch: true }).length;
 			assert.ok(size <= 2_100, `description + guide is ${size} chars`);
-			assert.deepEqual(SUBAGENT_TOOL_PARAMETERS, { type: "object", properties: {}, additionalProperties: true });
+			assert.deepEqual(Object.keys(SUBAGENT_TOOL_PARAMETERS.properties), ["action", "agent", "task", "id", "message", "cwd", "context", "model", "output", "label", "worktree", "workflow", "args"]);
+			assert.equal(SUBAGENT_TOOL_PARAMETERS.additionalProperties, true);
+			const declaration = JSON.stringify({ name: "subagent", description: SUBAGENT_TOOL_DESCRIPTION, parameters: SUBAGENT_TOOL_PARAMETERS }).length;
+			assert.ok(declaration <= 650, `declaration is ${declaration} chars`);
 		} finally {
 			process.env.PI_CODING_AGENT_DIR = agentDir;
 			fs.rmSync(empty, { recursive: true, force: true });
