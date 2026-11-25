@@ -1,12 +1,9 @@
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
-import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
-import { resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "./pi-spawn.ts";
-import type { JsonSchemaObject } from "../../shared/types.ts";
+import { Compile } from "typebox/compile";
+import { assertJsonSchemaObject, type JsonSchemaObject } from "../../shared/types.ts";
 import type { ResolvedAcceptanceReportMode } from "./acceptance.ts";
 
 export const MISSING_STRUCTURED_OUTPUT_CALL_ERROR = "Missing structured_output call; this step has outputSchema and must finish by calling structured_output.";
@@ -14,7 +11,6 @@ export const STRUCTURED_OUTPUT_FOLLOW_UP = "You ended without calling `structure
 export const MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR = "Missing acceptanceReport in structured_output call; acceptance.report is \"on\".";
 export const STRUCTURED_OUTPUT_REJECTION_ERROR = "structured_output was invoked but no valid output was captured.";
 export const INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR = "Structured output invocation was rejected: invalid outputSchema.";
-export const STRUCTURED_OUTPUT_VALIDATOR_UNAVAILABLE_ERROR = "Structured output invocation was rejected: validator unavailable.";
 export const MAX_STRUCTURED_OUTPUT_REJECTION_ERROR_BYTES = 4096;
 const MAX_LISTED_ALLOWED_VALUES = 20;
 
@@ -45,7 +41,6 @@ function messageText(content: unknown): string {
 function sanitizeStructuredOutputRejection(text: string): string {
 	const withoutControls = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
 	if (/invalid outputSchema(?:\s*:|$)/i.test(withoutControls)) return INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR;
-	if (/failed to validate structured output:|cannot load typebox\/compile/i.test(withoutControls)) return STRUCTURED_OUTPUT_VALIDATOR_UNAVAILABLE_ERROR;
 	const validationMarker = "Structured output validation failed:";
 	const markerIndex = withoutControls.indexOf(validationMarker);
 	const diagnostic = markerIndex >= 0 ? withoutControls.slice(markerIndex) : withoutControls;
@@ -154,71 +149,8 @@ interface JsonSchemaValidationError {
 	keyword?: string;
 	schemaPath?: string;
 	instancePath?: string;
-	params?: { failingKeyword?: string; requiredProperties?: string[]; allowedValues?: unknown[]; allowedValue?: unknown };
+	params?: { failingKeyword?: string; requiredProperties?: string[]; allowedValues?: unknown[]; allowedValue?: unknown; [key: string]: unknown };
 	message?: string;
-}
-
-type CompileJsonSchema = (schema: unknown) => CompiledJsonSchema;
-
-let cachedCompile: Promise<CompileJsonSchema> | undefined;
-// prepareArguments is synchronous, so it can only use a compiler that has already loaded.
-let loadedCompile: CompileJsonSchema | undefined;
-let compileLoadError: unknown;
-
-export async function resolveCompileFromPackageRoot(packageRoot: string): Promise<CompileJsonSchema | undefined> {
-	const requireFromRoot = createRequire(path.join(packageRoot, "package.json"));
-	const resolved = requireFromRoot.resolve("typebox/compile");
-	const mod = (await import(pathToFileURL(resolved).href)) as { Compile?: unknown };
-	return typeof mod.Compile === "function" ? (mod.Compile as CompileJsonSchema) : undefined;
-}
-
-async function importCompile(): Promise<CompileJsonSchema> {
-	const failures: string[] = [];
-	try {
-		const mod = (await import("typebox/compile")) as { Compile?: unknown };
-		if (typeof mod.Compile === "function") return mod.Compile as CompileJsonSchema;
-		failures.push("typebox/compile did not export a Compile function");
-	} catch (error) {
-		failures.push(`direct import failed: ${error instanceof Error ? error.message : String(error)}`);
-	}
-	// Pi's extension loader imports this compiled file natively, so the lazy import above misses
-	// Pi's host-package aliases when TypeBox is installed only in Pi's own tree.
-	const envRoot = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() || undefined;
-	if (!envRoot) failures.push(`${PI_CODING_AGENT_PACKAGE_ROOT_ENV} is not set`);
-	const roots = new Map<string, string>();
-	for (const [label, root] of [[PI_CODING_AGENT_PACKAGE_ROOT_ENV, envRoot], ["running Pi package root", resolvePiPackageRoot()], ["installed Pi package root", resolveInstalledPiPackageRoot()]] as const) {
-		if (root && !roots.has(root)) roots.set(root, label);
-	}
-	if (roots.size === 0) failures.push("no Pi package root found");
-	for (const [root, label] of roots) {
-		try {
-			const compile = await resolveCompileFromPackageRoot(root);
-			if (compile) return compile;
-			failures.push(`${label} ${root}: typebox/compile did not export a Compile function`);
-		} catch (error) {
-			failures.push(`${label} ${root}: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
-	throw new Error(`Cannot load typebox/compile for structured output validation (${failures.join("; ")})`);
-}
-
-function loadCompile(): Promise<CompileJsonSchema> {
-	if (!cachedCompile) {
-		cachedCompile = importCompile().then((compile) => {
-			loadedCompile = compile;
-			return compile;
-		}, (error) => {
-			cachedCompile = undefined;
-			compileLoadError = error;
-			throw error;
-		});
-	}
-	return cachedCompile;
-}
-
-/** Resolves once the validator has loaded or failed; a failure is reported by the structured_output call. */
-export function structuredOutputValidatorReady(): Promise<void> {
-	return loadCompile().then(() => undefined, () => undefined);
 }
 
 function jsonPointerTarget(root: unknown, pointer: string): unknown {
@@ -319,14 +251,14 @@ function branchDiagnosticSchema(schema: JsonSchemaObject, steps: InstanceSchemaS
 	return diagnostic as JsonSchemaObject;
 }
 
-function expandConditionalError(compile: CompileJsonSchema, schema: JsonSchemaObject, value: unknown, error: JsonSchemaValidationError): { schema: JsonSchemaObject; errors: JsonSchemaValidationError[] } | undefined {
+function expandConditionalError(schema: JsonSchemaObject, value: unknown, error: JsonSchemaValidationError): { schema: JsonSchemaObject; errors: JsonSchemaValidationError[] } | undefined {
 	const branch = error.params?.failingKeyword;
 	if (error.keyword !== "if" || (branch !== "then" && branch !== "else") || !error.schemaPath) return undefined;
 	try {
 		const target = conditionalTarget(schema, error.schemaPath, error.instancePath);
 		if (!target || target.node[branch] === undefined) return undefined;
 		const expandedSchema = branchDiagnosticSchema(schema, target.steps, target.node[branch]);
-		const expandedErrors = [...compile(expandedSchema).Errors(value)];
+		const expandedErrors = [...Compile(expandedSchema).Errors(value)];
 		if (expandedErrors.length === 0) return undefined;
 		return { schema: expandedSchema, errors: expandedErrors };
 	} catch {
@@ -350,25 +282,19 @@ function formatValidationError(error: JsonSchemaValidationError): string[] {
 	return [`${pathText}: ${error.message}`];
 }
 
-function expandedErrorMessages(compile: CompileJsonSchema, schema: JsonSchemaObject, value: unknown, error: JsonSchemaValidationError, limit: number, seen: Set<string>): string[] {
+function expandedErrorMessages(schema: JsonSchemaObject, value: unknown, error: JsonSchemaValidationError, limit: number, seen: Set<string>): string[] {
 	if (limit <= 0) return [];
 	const state = `${errorKey(error)}\0${JSON.stringify(schema)}`;
 	if (seen.has(state)) return formatValidationError(error).slice(0, limit);
 	seen.add(state);
-	const expanded = expandConditionalError(compile, schema, value, error);
+	const expanded = expandConditionalError(schema, value, error);
 	if (!expanded) return formatValidationError(error).slice(0, limit);
 	const messages: string[] = [];
 	for (const candidate of expanded.errors) {
-		messages.push(...expandedErrorMessages(compile, expanded.schema, value, candidate, limit - messages.length, seen));
+		messages.push(...expandedErrorMessages(expanded.schema, value, candidate, limit - messages.length, seen));
 		if (messages.length >= limit) break;
 	}
 	return messages;
-}
-
-export function assertJsonSchemaObject(schema: unknown, label = "outputSchema"): asserts schema is JsonSchemaObject {
-	if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
-		throw new Error(`${label} must be a JSON Schema object.`);
-	}
 }
 
 export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?: string, options: { acceptanceReport?: ResolvedAcceptanceReportMode } = {}): StructuredOutputRuntime {
@@ -390,26 +316,25 @@ export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?
 }
 
 export async function validateStructuredOutputValue(schema: JsonSchemaObject, value: unknown): Promise<{ status: "valid" } | { status: "invalid"; message: string }> {
-	return validateWithCompile(await loadCompile(), schema, value);
+	return validateWithCompile(schema, value);
 }
 
 /**
  * The tool's `prepareArguments` hook: checks the raw `value` before Pi converts tool arguments
  * (Pi can turn `"x"` into `["x"]` or `null` into `"null"`), so only a value that already matches
- * the schema is captured. Fails closed when the validator has not loaded.
+ * the schema is captured.
  */
 export function prepareStructuredOutputArguments(schema: JsonSchemaObject, args: unknown): unknown {
 	if (!args || typeof args !== "object" || !("value" in args)) return args;
-	if (!loadedCompile) throw compileLoadError ?? new Error("Structured output validator is still loading; call structured_output again.");
-	const validation = validateWithCompile(loadedCompile, schema, args.value);
+	const validation = validateWithCompile(schema, args.value);
 	if (validation.status === "invalid") throw new Error(`Structured output validation failed: ${validation.message}`);
 	return args;
 }
 
-function validateWithCompile(compile: CompileJsonSchema, schema: JsonSchemaObject, value: unknown): { status: "valid" } | { status: "invalid"; message: string } {
+function validateWithCompile(schema: JsonSchemaObject, value: unknown): { status: "valid" } | { status: "invalid"; message: string } {
 	let validator: CompiledJsonSchema;
 	try {
-		validator = compile(schema);
+		validator = Compile(schema);
 	} catch (error) {
 		return { status: "invalid", message: `invalid outputSchema: ${error instanceof Error ? error.message : String(error)}` };
 	}
@@ -425,7 +350,7 @@ function validateWithCompile(compile: CompileJsonSchema, schema: JsonSchemaObjec
 	const uniqueErrors = new Set<string>();
 	const seen = new Set<string>();
 	for (const error of originalErrors) {
-		for (const message of expandedErrorMessages(compile, schema, value, error, 8 - errors.length, seen)) {
+		for (const message of expandedErrorMessages(schema, value, error, 8 - errors.length, seen)) {
 			if (!uniqueErrors.has(message)) {
 				uniqueErrors.add(message);
 				errors.push(message);
@@ -446,12 +371,8 @@ export async function readStructuredOutput(runtime: StructuredOutputRuntime): Pr
 	} catch (error) {
 		return { error: `Failed to read structured output: ${error instanceof Error ? error.message : String(error)}` };
 	}
-	try {
-		const validation = await validateStructuredOutputValue(runtime.schema, value);
-		if (validation.status === "invalid") return { error: `Structured output validation failed: ${validation.message}` };
-	} catch (error) {
-		return { error: `Failed to validate structured output: ${error instanceof Error ? error.message : String(error)}` };
-	}
+	const validation = await validateStructuredOutputValue(runtime.schema, value);
+	if (validation.status === "invalid") return { error: `Structured output validation failed: ${validation.message}` };
 	return { value };
 }
 

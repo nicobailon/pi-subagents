@@ -6,9 +6,9 @@ import {
 	collectDynamicResults,
 	materializeDynamicParallelStep,
 	resolveJsonPointer,
-	validateDynamicCollection,
 	validateDynamicStepShape,
 } from "../../src/runs/shared/dynamic-fanout.ts";
+import { validateDynamicCollection } from "../../src/runs/background/subagent-runner.ts";
 import type { ChainStep } from "../../src/shared/settings.ts";
 import type { ChainOutputMap, SingleResult } from "../../src/shared/types.ts";
 

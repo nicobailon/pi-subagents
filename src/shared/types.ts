@@ -29,6 +29,12 @@ export type AcceptanceRole = "read-only" | "writer";
 
 export type JsonSchemaObject = Record<string, unknown>;
 
+export function assertJsonSchemaObject(schema: unknown, label = "outputSchema"): asserts schema is JsonSchemaObject {
+	if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+		throw new Error(`${label} must be a JSON Schema object.`);
+	}
+}
+
 export interface ChainOutputMapEntry {
 	text: string;
 	structured?: unknown;

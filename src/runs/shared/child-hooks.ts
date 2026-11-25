@@ -2,7 +2,6 @@ import { listBackgroundWorkProviders } from "../../api/background-work.ts";
 import { ReadonlyDrainObservation } from "./readonly-drain-observation.ts";
 import registerFanoutChildSubagentExtension, { createChildSafeState } from "../../extension/fanout-child.ts";
 import registerSubagentPromptRuntime, { registerSubagentPromptBoundary } from "./subagent-prompt-runtime.ts";
-import { structuredOutputValidatorReady } from "./structured-output.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import type { ChildToolDiagnostic } from "./tool-availability.ts";
 import type { ChildHookExtension, ChildSessionLaunch } from "./child-session.ts";
@@ -155,9 +154,6 @@ function childHooks(config: ChildRuntimeConfig, capture?: OwnedCapture, holdFina
 				proof.observeNext = undefined;
 				registerSubagentPromptRuntime(pi, runtime, proof.observation);
 			}
-			// Pi awaits extension factories, so structured_output's synchronous prepareArguments has its
-			// validator before the model can call it.
-			if (runtime.structuredOutput) return structuredOutputValidatorReady();
 		} },
 	];
 	if (config.fanoutChild) hooks.push({ name: "pi-subagents:fanout-child", factory: (pi) => registerFanoutChildSubagentExtension(pi, runtime) });
