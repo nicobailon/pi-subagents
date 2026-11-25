@@ -751,6 +751,16 @@ Unset by default, so children inherit the parent's retention and behaviour is un
 
 Provider-reported `cacheWrite1h` usage confirms which tier a request used: it matches `cacheWrite` on the 1h tier and is `0` on the short one.
 
+## `PI_SUBAGENT_STRICT_THINKING`
+
+Set to `1` to refuse a native child whose requested thinking level its model does not support. Environment-only; there is no config key.
+
+Pi runs a level the model does not support at the nearest one it does, so `provider/model:high` on a model without `high` silently runs at `medium`. With this set, that child fails before its first request, and the error lists the levels the model supports. A level the launch did not request, such as Pi's default, is still adjusted as before. The level is checked wherever the launch asked for it: the `:level` suffix, the `thinking` option or the agent's `thinking` field.
+
+This is for setups where the requested level has to be honoured exactly or not at all, for example when a provider forwards it to another agent or service whose levels differ from Pi's.
+
+Unset by default, so behaviour is unchanged unless you opt in. Background runners inherit it from the parent's environment. A child placed on a machine (`machine`) is checked against the level its remote Pi reports, and its error names the level that remote Pi applied instead of listing the supported ones.
+
 ## `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS`
 
 Caps the total time a single retried filesystem operation may sleep, in milliseconds. Environment-only; there is no config key.

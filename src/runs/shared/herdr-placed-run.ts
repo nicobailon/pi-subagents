@@ -15,6 +15,7 @@ import { RexPlacedRunOwner } from "./rex-pane-host.ts";
 import { ensureSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
 import { editsLocalDisk } from "./rex-machine.ts";
 import { PLACED_RESTORE_UNSUPPORTED } from "./herdr-machine.ts";
+import { assertPlacedChildThinkingApplied } from "../../shared/child-strict-thinking.ts";
 
 export interface HerdrRunIdentity { runId: string; machineId: string; target: string; session: string | null; workspaceId: string; tabId: string; paneId: string; terminalId: string; agentName: string; nativeSessionId: string; cwd: string; runtimeDir: string }
 export interface HerdrRunSnapshot { connection: "connected" | "unknown" | "closed"; state: PlacementRunState; identity?: HerdrRunIdentity; revision: number }
@@ -165,6 +166,7 @@ async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSes
 		const missingRequired = (launch.runtime.requiredTools ?? []).filter((tool) => !(configured.tools as unknown[]).includes(tool));
 		if (missingRequired.length) throw new Error(`Remote Pi agent '${policy.resources.agent}' did not activate required tools: ${missingRequired.join(", ")}.`);
 		if (launch.model && configured.model !== launch.model.split(":")[0]) throw new Error(`Remote Pi model '${launch.model}' did not resolve to the requested provider/model.`);
+		assertPlacedChildThinkingApplied({ model: launch.model, applied: configured.thinkingLevel });
 		const identity: HerdrRunIdentity = { runId, machineId: machine.id, target: editsLocalDisk(machine) ? machine.id : machine.target, session: owner.host.sessionOf(connection), workspaceId: owned.workspaceId, tabId: owned.tabId, paneId: owned.paneId, terminalId, agentName, nativeSessionId: manifest.nativeSessionId, cwd: machine.cwd, runtimeDir };
 		owner.journal(identity);
 		const session = new HerdrPiSession(owner, bridgeForward, bridge, (configured.tools as string[] | undefined), typeof ready.model === "string" ? ready.model : undefined, launch.runtime, ready.initialGit as HerdrRemoteGitStatus | undefined); reconnectSession = session; session.armReconnect(() => reconnectHerdrPiSession(session, launch)); return session;

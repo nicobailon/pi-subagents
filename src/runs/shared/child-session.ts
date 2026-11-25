@@ -17,6 +17,7 @@ import { CHILD_COMMAND_TOOL, createChildCommandRuntime } from "./child-commands.
 import { supervisorChannelDir } from "./child-tool-plan.ts";
 import { installChildFastMode } from "./child-fast-mode.ts";
 import { pinChildCacheRetention } from "../../shared/child-cache-retention.ts";
+import { assertChildThinkingApplied } from "../../shared/child-strict-thinking.ts";
 import { parseAcceptanceReport } from "./acceptance.ts";
 import { getAgentDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import { resolvePackageSubpath } from "../background/runner-aliases.ts";
@@ -647,6 +648,12 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					settingsManager,
 					sessionStartEvent: { type: "session_start", reason: "startup" },
 				});
+				try {
+					assertChildThinkingApplied({ requested: resolvedModel?.thinkingLevel, session });
+				} catch (error) {
+					disposeChildSession(session);
+					throw error;
+				}
 				pinChildCacheRetention(session.agent);
 				// Pi reports handler failures through onError instead of throwing, so required startup failures must be collected here.
 				const requiredStartupErrors: string[] = [];
