@@ -8,7 +8,7 @@ import { nestedRunScope } from "../../src/runs/shared/nested-events.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { writeAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
-import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
+import { waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
 import { recoveryDescriptorPath } from "../../src/runs/shared/run-launch-folder.ts";
@@ -100,7 +100,7 @@ function baseDeps(root: string, state: SubagentState, overrides: Partial<Subagen
 	};
 }
 
-describe("bg_wait tool", () => {
+describe("subagent wait action", () => {
 	for (const alreadyTerminal of [false, true]) {
 		for (const prefix of [false, true]) {
 			it(`collects nested results by ${prefix ? "prefix" : "exact id"} ${alreadyTerminal ? "after early completion" : "across active-to-terminal transition"}`, async (t) => {
@@ -221,54 +221,6 @@ describe("bg_wait tool", () => {
 		const changed = await waitForSubagents({ id: runId }, undefined, { ...deps, sleep: async () => { state.currentSessionId = "sibling"; } });
 		assert.equal(changed.isError, true);
 		assert.match(textOf(changed), /session changed/);
-	});
-
-	it("resolves waitTool config and environment overrides strictly", () => {
-		assert.deepEqual(resolveWaitToolConfig(undefined, {}), { enabled: true });
-		assert.deepEqual(resolveWaitToolConfig(false, {}), { enabled: false });
-		assert.deepEqual(resolveWaitToolConfig({ enabled: false }, {}), { enabled: false });
-		assert.deepEqual(resolveWaitToolConfig({ defaultTimeoutMs: 120_000 }, {}), { enabled: true, defaultTimeoutMs: 120_000 });
-		assert.deepEqual(resolveWaitToolConfig({ defaultTimeoutMs: 120_000 }, { [WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV]: "3000" }), { enabled: true, defaultTimeoutMs: 3_000 });
-		assert.deepEqual(resolveWaitToolConfig({ enabled: false }, { [WAIT_TOOL_ENABLED_ENV]: "true" }), { enabled: true });
-		assert.deepEqual(resolveWaitToolConfig(true, { [WAIT_TOOL_ENABLED_ENV]: "off" }), { enabled: false });
-		assert.throws(() => resolveWaitToolConfig("false" as never, {}), /config\.waitTool/);
-		assert.throws(() => resolveWaitToolConfig({ enabled: "false" } as never, {}), /config\.waitTool\.enabled/);
-		assert.throws(() => resolveWaitToolConfig({ defaultTimeoutMs: 0 }, {}), /config\.waitTool\.defaultTimeoutMs/);
-		assert.throws(() => resolveWaitToolConfig({ defaultTimeoutMs: 1.5 }, {}), /config\.waitTool\.defaultTimeoutMs/);
-		assert.throws(() => resolveWaitToolConfig(undefined, { [WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV]: "0" }), /PI_SUBAGENT_WAIT_TOOL_DEFAULT_TIMEOUT_MS/);
-		assert.throws(() => resolveWaitToolConfig(undefined, { [WAIT_TOOL_ENABLED_ENV]: "maybe" }), /PI_SUBAGENT_WAIT_TOOL_ENABLED/);
-	});
-
-	it("accepts a waitTool.name that is a plain tool name and not one of pi-subagents' own tools", () => {
-		assert.deepEqual(resolveWaitToolConfig({ name: "subagent_wait" }, {}), { enabled: true, name: "subagent_wait" });
-		assert.deepEqual(resolveWaitToolConfig({ name: "bg_wait" }, {}), { enabled: true });
-		assert.throws(() => resolveWaitToolConfig({ name: "subagent-wait" }, {}), /config\.waitTool\.name/);
-		assert.throws(() => resolveWaitToolConfig({ name: 7 } as never, {}), /config\.waitTool\.name/);
-		assert.throws(() => resolveWaitToolConfig({ name: "subagent" }, {}), /already a pi-subagents tool/);
-	});
-
-	it("returns immediately without polling when waitTool is disabled", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-disabled-"));
-		try {
-			const asyncRoot = path.join(root, "runs");
-			const state = makeState("sess-1");
-			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
-			let slept = false;
-			const result = await waitForSubagents({}, undefined, baseDeps(root, state, {
-				enabled: false,
-				sleep: async () => {
-					slept = true;
-					throw new Error("disabled bg_wait should not sleep");
-				},
-			}));
-
-			assert.equal(result.isError, undefined);
-			assert.match(textOf(result), /disabled/i);
-			assert.match(textOf(result), /without blocking/i);
-			assert.equal(slept, false);
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
 	});
 
 	it("returns immediately when there is nothing to wait for", async () => {
@@ -454,7 +406,7 @@ describe("bg_wait tool", () => {
 
 			const text = textOf(result);
 			assert.match(text, /Reply to the supervisor request first/);
-			assert.match(text, /wait with bg_wait/);
+			assert.match(text, /wait with subagent\(\{ action: "wait", id: /);
 			assert.match(text, /do not resume or launch a replacement/);
 			assert.doesNotMatch(text, /Resume-first/);
 		} finally {
@@ -749,7 +701,7 @@ describe("bg_wait tool", () => {
 		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 		const asyncRoot = path.join(root, "runs");
 		const state = makeState("sess-1");
-		const hint = /still running and none is waiting on a supervisor reply\. To keep waiting through this kind of attention, call bg_wait again with stopOnAttention: false/;
+		const hint = /still running and none is waiting on a supervisor reply\. To keep waiting through this kind of attention, call subagent\(\{ action: "wait", stopOnAttention: false \}\) again/;
 
 		writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999, activityState: "needs_attention", currentTool: "bash" });
 		const watchdog = await waitForSubagents({ id: "run-a" }, undefined, baseDeps(root, state));
@@ -1656,7 +1608,7 @@ describe("bg_wait tool", () => {
 				clock += ms + 10_000;
 			};
 
-			const result = await waitForSubagents({ timeoutMs: 5_000 }, undefined, baseDeps(root, state, { now, sleep, defaultTimeoutMs: 1_000 }));
+			const result = await waitForSubagents({ timeoutMs: 5_000 }, undefined, baseDeps(root, state, { now, sleep }));
 			assert.equal(result.isError, undefined);
 			const text = textOf(result);
 			assert.match(text, /window elapsed after 5\.0s/i, "explicit timeoutMs must override the configured default");
@@ -1667,27 +1619,6 @@ describe("bg_wait tool", () => {
 				activeRunIds: ["run-stuck"],
 				activeProviderItems: [],
 			});
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("uses the configured wait window when timeoutMs is omitted", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-config-timeout-"));
-		try {
-			const asyncRoot = path.join(root, "runs");
-			const state = makeState("sess-1");
-			writeStatus(asyncRoot, "run-configured", "running", { sessionId: "sess-1", pid: 999999 });
-			let clock = 0;
-			const result = await waitForSubagents({}, undefined, baseDeps(root, state, {
-				now: () => clock,
-				sleep: async (ms) => { clock += ms + 10_000; },
-				defaultTimeoutMs: 2_000,
-			}));
-
-			assert.equal(result.isError, undefined);
-			assert.match(textOf(result), /window elapsed after 2\.0s/i);
-			assert.equal(result.details.wait?.reason, "window_elapsed");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

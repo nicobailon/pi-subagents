@@ -22,8 +22,6 @@ interface Pins {
 	current: Map<string, PinnableTool>;
 	declared: Map<string, DeclaredPin>;
 	registered: Map<string, string>;
-	/** The prompt sections the session transcript recorded, read on session events only. */
-	sections: Record<string, string | null>;
 	/** False when the session should get the current definitions instead of the recorded ones. */
 	pinned: boolean;
 }
@@ -145,27 +143,17 @@ function declaredPins(pi: ExtensionAPI, pins: Pins, ctx: ExtensionContext | unde
 function pinsFor(pi: ExtensionAPI): Pins {
 	const existing = pinsByApi.get(pi);
 	if (existing) return existing;
-	const pins: Pins = { current: new Map(), declared: new Map(), registered: new Map(), sections: {}, pinned: true };
+	const pins: Pins = { current: new Map(), declared: new Map(), registered: new Map(), pinned: true };
 	pinsByApi.set(pi, pins);
 	// Pi restores the transcript's active tools before both events, so handler order does not matter.
 	const refresh = (ctx: ExtensionContext | undefined) => {
 		const system = pins.pinned ? recordedSystemMessage(ctx) : undefined;
-		pins.sections = system?.sections ?? {};
 		pins.declared = declaredPins(pi, pins, ctx, system);
 		for (const name of pins.current.keys()) register(pi, pins, name);
 	};
 	pi.on("session_start", (_event, ctx) => refresh(ctx));
 	pi.on("session_tree", (_event, ctx) => refresh(ctx));
 	return pins;
-}
-
-/**
- * The text, without its tags, that the session transcript recorded for one of the prompt sections
- * pi-subagents adds, so that section can keep the wording the session already sent.
- * A session that never recorded the section gets undefined.
- */
-export function recordedPromptSection(pi: ExtensionAPI, name: string): string | undefined {
-	return sectionLines(pinsFor(pi).sections[name] ?? undefined, name)?.join("\n");
 }
 
 /**

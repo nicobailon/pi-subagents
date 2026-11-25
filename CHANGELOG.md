@@ -2,13 +2,10 @@
 
 ## [Unreleased]
 
-### Added
-
-- `toolExposure: "deferred"` in `config.json` keeps the pi-subagents tools out of the model's tool list, which saves about 5 KB on every request once a session has delegated. Codemode scripts start background runs with `tools.subagent({...})`; the runs show in the async widget, FleetView and `status` as usual, and a child's question still reaches the session. The default stays `"direct"`. See [configuration](docs/configuration.md#toolexposure).
-
 ### Changed
 
-- The `subagent` tool description now says to use a messaging tool, not `subagent`, to message a Pi session that is already running. With a peer-messaging extension also installed, asking to message another open session is less likely to launch a new subagent instead. Two redundant hints were cut so the tool text stays within its per-request budget. Thanks to [@Pl8tinium](https://github.com/Pl8tinium) for the report (#3337).
+- **Breaking:** Delegating used to cost a parent session several thousand tokens on every request: a loader tool, a large `subagent` schema, `bg_wait`, `subagent_supervisor`, a bundled skill and a prompt list of agents, with settings to juggle them and a prompt-cache miss when the loader swapped tools. Now every session declares one small `subagent` tool with a one-line description and no declared fields (about 110 tokens on Claude) plus `contact_supervisor`. Providers known to blank undeclared fields get the 14 main fields declared instead, and any other provider that blanks them switches once its calls arrive blank, at the cost of one cache miss. The tool's first reply is the guide, with your agents, the launch fields and the actions; a launch made before that is held once. Later replies explain each new thing once, when it first happens. Removed: `subagents_enable`, `bg_wait` (use `subagent({ action: "wait", id })`), `subagent_supervisor` (`subagent({ action: "status" })` lists child questions and `subagent({ action: "reply", replyTo, message })` answers them), the bundled `pi-subagents` skill, the agent `advertise` field and its prompt catalog, and the settings `toolActivation`, `toolDescriptionMode` and `waitTool`. A config that still sets one of those settings fails to load with a message saying what replaces it. A session resumed from an earlier version takes the new tool definition with one prompt-cache miss. See [the `subagent` tool](docs/configuration.md#the-subagent-tool).
+- The `subagent` guide says it doesn't message a Pi session that is already open, so asking to message another open session is less likely to start a new subagent. Thanks to [@Pl8tinium](https://github.com/Pl8tinium) for the report (#3337).
 
 ### Fixed
 

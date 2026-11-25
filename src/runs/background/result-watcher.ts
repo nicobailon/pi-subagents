@@ -462,8 +462,6 @@ export function createResultWatcher(
 			}
 			const epoch = deliveryEpoch;
 			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
-			// Recorded before dedupe and before the unlink below so bg_wait can
-			// use the in-memory record or its bounded durable replay after cleanup.
 			const completionPersisted = recordWaitCompletion(state, runId, data, Date.now(), completionTtlMs, {
 				resultsDir,
 				sessionId,

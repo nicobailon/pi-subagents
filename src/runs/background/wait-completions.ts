@@ -137,13 +137,6 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 	};
 }
 
-/**
- * Record a consumed terminal payload for later surfacing by bg_wait, pruning
- * stale entries with the same TTL that dedupes completion notifications. The result
- * file is deleted after durable replay succeeds, so this record is the in-process
- * source once the watcher has consumed it. Payload ownership must be explicit and
- * agree with persistence ownership. Returns whether that replay is durable.
- */
 export function recordWaitCompletion(
 	state: SubagentState,
 	runId: string,

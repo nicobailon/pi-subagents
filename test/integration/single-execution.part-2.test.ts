@@ -23,6 +23,7 @@ import {
 	makeAgent,
 	makeMinimalCtx,
 	events,
+	guideTaughtEntries,
 	resolveMockPiCallArgs,
 } from "../support/helpers.ts";
 import registerSubagentExtension from "../../src/extension/index.ts";
@@ -854,6 +855,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 					getSessionId: () => "replaced-runtime-session",
 					getSessionFile: () => path.join(tempDir, "replaced-runtime-session.jsonl"),
 					getEntries: () => [],
+					buildContextEntries: guideTaughtEntries,
 				},
 			};
 			const startRuntime = async (reason: string) => {
@@ -1071,6 +1073,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 				getSessionId: () => "registered-delegation-session",
 				getSessionFile: () => path.join(tempDir, "registered-delegation-session.jsonl"),
 				getEntries: () => [],
+				buildContextEntries: () => [],
 			},
 		};
 		const started: SubagentDelegationStarted[] = [];
@@ -2135,16 +2138,15 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		}
 	});
 
-	it("names a direct launch by its top-level label and ignores a non-string one", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("names a direct launch by its top-level label and rejects a non-string one", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const ctx = makeMinimalCtx(tempDir);
-		for (const [label, sessionName] of [[" Validate sanitizer tests ", "echo: Validate sanitizer tests"], [5, "echo: Run the sanitizer suite"]] as const) {
-			mockPi.onCall({ output: "done" });
-			const params = flattenSubagentToolOptions({ agent: "echo", task: "Run the sanitizer suite", label, async: false });
-			const result = await executor.executePublic(`top-level-label-${label}`, params, new AbortController().signal, undefined, ctx);
-			assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
-			assert.equal(readCall().runtime?.sessionName, sessionName);
-		}
+		mockPi.onCall({ output: "done" });
+		const params = flattenSubagentToolOptions({ agent: "echo", task: "Run the sanitizer suite", label: " Validate sanitizer tests ", async: false });
+		const result = await executor.executePublic("top-level-label", params, new AbortController().signal, undefined, ctx);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "launch failed");
+		assert.equal(readCall().runtime?.sessionName, "echo: Validate sanitizer tests");
+		assert.throws(() => flattenSubagentToolOptions({ agent: "echo", task: "Run the sanitizer suite", label: 5, async: false }), { message: "subagent: 'label' must be string (got 5)." });
 	});
 
 	it("names a labeled direct async launch in its async-started event, status step and session", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -4714,16 +4716,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			if (prevMaxDepth === undefined) delete process.env.PI_SUBAGENT_MAX_DEPTH;
 			else process.env.PI_SUBAGENT_MAX_DEPTH = prevMaxDepth;
 		}
-	});
-
-	it("passes the effective wait-tool setting through to child execution", async () => {
-		mockPi.onCall({ output: "ok" });
-		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
-			runId: "wait-tool-env",
-			waitToolEnabled: false,
-		});
-		assert.equal(result.exitCode, 0);
-		assert.deepEqual(readCall().runtime?.waitTool, { enabled: false });
 	});
 
 	it("passes prompt inheritance flags through to child execution", async () => {

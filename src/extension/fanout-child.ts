@@ -1,26 +1,23 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { discoverAgents } from "../agents/agents.ts";
 import { getArtifactsDir } from "../shared/artifacts.ts";
 import { createSubagentExecutor } from "../runs/foreground/subagent-executor.ts";
-import { resolveWaitToolConfig } from "../runs/background/wait-config.ts";
+import { createWaitExecute } from "../runs/background/wait-tool.ts";
 import type { ChildRuntimeConfig } from "../runs/shared/child-runtime-config.ts";
-import { nestedRunNotActiveMessage, readNestedControlRequests, resolveInheritedNestedRoute, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
+import { inheritedNestedRouteOf, nestedRunNotActiveMessage, readNestedControlRequests, resolveInheritedNestedRoute, type NestedRoute, writeNestedControlResult } from "../runs/shared/nested-events.ts";
 import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom.ts";
-import { createNativeSupervisorChannel, NATIVE_SUPERVISOR_TOOL_NAME, resolveSupervisorChannelDir } from "../intercom/native-supervisor-channel.ts";
+import { createNativeSupervisorChannel, resolveSupervisorChannelDir } from "../intercom/native-supervisor-channel.ts";
 import { readStatus } from "../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
-import { createSubagentParamsSchema } from "./schemas.ts";
-import { registerPinnedTool } from "./declaration-pinning.ts";
 import { resolveDisabledFeatureSurface } from "../shared/disabled-features.ts";
-import { finalizeToolResult } from "./tool-result.ts";
 import { flattenSubagentToolOptions } from "./subagent-options.ts";
+import { callNotes, createGuidedSubagentTool, formatGuide } from "./guided-tool.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
-import { SUBAGENT_ASYNC_STARTED_EVENT, type AsyncStartedEvent, type Details, type SubagentState } from "../shared/types.ts";
+import { SUBAGENT_ASYNC_STARTED_EVENT, type AsyncStartedEvent, type SubagentState } from "../shared/types.ts";
 import { createChildExternalJobBridgeSweeper } from "../runs/shared/external-job-bridge.ts";
-import { MODEL_ONLY_TOOL } from "../shared/extension-context.ts";
 
 function getSubagentSessionRoot(parentSessionFile: string | null): string {
 	if (parentSessionFile) {
@@ -162,7 +159,6 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 	registeredApis.add(pi);
 
 	const config = loadConfig();
-	const waitToolConfig = resolveWaitToolConfig(config.waitTool);
 	const state = childConfig.runtimeState ?? createChildSafeState();
 	const asyncChildren = new Map<string, { dir: string; agents: string[] }>();
 	const foregroundChannels = new Set<string>();
@@ -202,8 +198,8 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		state,
 		config,
 		asyncByDefault: resolveAsyncByDefault(config),
-		waitToolEnabled: waitToolConfig.enabled,
-		waitToolDefaultTimeoutMs: waitToolConfig.defaultTimeoutMs,
+		wait: createWaitExecute(pi, state, undefined, { nestedRootRunId: inheritedNestedRouteOf(childConfig)?.rootRunId }, hasPendingSupervisorRequest),
+		runSupervisorAction: supervisorChannel.runParentAction,
 		tempArtifactsDir: getArtifactsDir(null),
 		getSubagentSessionRoot,
 		expandTilde,
@@ -215,25 +211,14 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 	});
 
 	const disabledFeatures = resolveDisabledFeatureSurface(config);
-	const listEnabled = (actions: string[]) => actions.filter((action) => !disabledFeatures.actions.has(action)).join(", ");
-	const blockedActions = listEnabled(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "lane.recordMerge", "lane.recordSupersession"]);
-	const params = createSubagentParamsSchema(disabledFeatures);
-	const tool: ToolDefinition<typeof params, Details> = {
-		name: "subagent",
-		...MODEL_ONLY_TOOL,
-		label: "Subagent",
-		description: [
-			"Delegate to subagents from child-safe fanout mode.",
-			`Allowed management/control actions: ${listEnabled(["list", "get", "status", "lane.status", "interrupt", "resume", "steer", "doctor"])}.`,
-			...(blockedActions ? [`Mutating management actions (${blockedActions}) are blocked in this mode.`] : []),
-		].join("\n"),
-		parameters: params,
-		async execute(id, params, signal, onUpdate, ctx) {
-			return finalizeToolResult(await executor.executePublic(id, flattenSubagentToolOptions(params, disabledFeatures), signal ?? new AbortController().signal, onUpdate, ctx));
-		},
-	};
-
-	registerPinnedTool(pi, tool);
+	const { tool } = createGuidedSubagentTool(pi, {
+		guide: async (ctx) => formatGuide(discoverAgents(ctx.cwd, "both", ctx.model?.provider).agents, { canLaunch: true, child: true, disabled: disabledFeatures }),
+		flatten: (params) => flattenSubagentToolOptions(params, disabledFeatures),
+		authorityPolicy: config.authorityPolicy,
+		run: (id, request, _nested, signal, onUpdate, ctx) => executor.executePublic(id, request, signal ?? new AbortController().signal, onUpdate, ctx),
+		notes: (request, result) => callNotes(request, result, { child: true }),
+	});
+	pi.registerTool(tool);
 	const bridgeSweeper = createChildExternalJobBridgeSweeper();
 	const unsubscribeBridgeStarted = pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload: unknown) => {
 		const info = payload as AsyncStartedEvent;
@@ -241,9 +226,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 	});
 	let unsubscribeAsyncStarted: (() => void) | undefined;
 	pi.on("session_start", (_event, ctx) => {
-		supervisorChannel.registerTools();
-		// The host applies the explicit allowlist to dynamic registration too.
-		if (!pi.getAllTools().some(tool => tool.name === NATIVE_SUPERVISOR_TOOL_NAME)) return;
+		if (!pi.getAllTools().some(tool => tool.name === "subagent")) return;
 		// Downward asks belong to this coordinator, not its parent or persisted session file.
 		state.supervisorOwnerSessionId = ctx.sessionManager.getSessionId() || null;
 		unsubscribeAsyncStarted = pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload: unknown) => {

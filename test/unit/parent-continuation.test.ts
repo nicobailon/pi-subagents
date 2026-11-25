@@ -56,7 +56,7 @@ try {
   assert.equal(settle(), undefined, 'no infinite reminders or warning spam');
   assert.equal(fs.existsSync(path.join(dir, 'replies', 'first.json')), false, 'guard never approves');
   fs.mkdirSync(path.join(dir, 'replies'), { recursive: true });
-  await tools.get('subagent_supervisor').execute('tool', { action: 'reply', replyTo: 'first', message: 'Preserve strict targets.' });
+  await channel.runParentAction({ action: 'reply', replyTo: 'first', message: 'Preserve strict targets.' });
   assert.equal(settle(), undefined, 'answered request no longer blocks');
   assert.equal(handlers.has('agent_before_settle'), false);
 
@@ -89,7 +89,7 @@ try {
   assert.equal(handlers.has('agent_before_settle'), false, 'visible escalation stays acknowledged while request remains pending');
   assert.equal(channel.pending.has('approval'), true);
   request('reply-before-settle');
-  await tools.get('subagent_supervisor').execute('tool', { action: 'reply', replyTo: 'reply-before-settle', message: 'Approved by existing authority.' });
+  await channel.runParentAction({ action: 'reply', replyTo: 'reply-before-settle', message: 'Approved by existing authority.' });
   assert.equal(handlers.has('agent_before_settle'), false, 'reply immediately clears settle subscription');
   channel.dispose();
   assert.equal(settle(), undefined, 'disposed runtime inert');

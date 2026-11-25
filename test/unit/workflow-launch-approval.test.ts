@@ -29,14 +29,19 @@ it("offers each workflow child start to tool_call handlers and does not start a 
 	const respond = (context: { messages: Array<{ role: string; content: unknown }> }) => {
 		const last = context.messages.at(-1)!;
 		const text = JSON.stringify(last.content);
-		const background = text.includes("background review");
-		if (last.role === "user" && (background || text.includes("foreground review"))) {
+		const prompt = JSON.stringify([...context.messages].reverse().find((message) => message.role === "user")?.content);
+		const background = prompt.includes("background review");
+		if (last.role === "user" && text.includes("background review") && !JSON.stringify(context.messages).includes("subagent guide.")) {
+			return fauxAssistantMessage(fauxToolCall("subagent", {}), { stopReason: "toolUse" });
+		}
+		const guideReply = last.role === "toolResult" && text.includes("subagent guide.");
+		if (guideReply || (last.role === "user" && (background || prompt.includes("foreground review")))) {
 			return fauxAssistantMessage(fauxToolCall("subagent", { async: background, options: { script: script(background ? "Review in the background" : "Review now") } }), { stopReason: "toolUse" });
 		}
 		if (last.role === "toolResult") toolResults.push((last.content as Array<{ type: string; text?: string }>).flatMap((block) => block.type === "text" ? [block.text!] : []).join("\n"));
 		return fauxAssistantMessage("ok");
 	};
-	faux.setResponses(Array.from({ length: 8 }, () => respond));
+	faux.setResponses(Array.from({ length: 12 }, () => respond));
 	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
 	try {
 		const settingsManager = SettingsManager.inMemory({});

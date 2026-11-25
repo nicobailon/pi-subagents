@@ -57,7 +57,7 @@ async function startParent(config: Record<string, unknown> = {}): Promise<Parent
 
 async function callSubagent(parent: Parent, args: Record<string, unknown>): Promise<void> {
 	await parent.session.waitForIdle();
-	parent.replies.push(args, "ok");
+	parent.replies.push({}, args, "ok");
 	await parent.session.prompt("go");
 }
 

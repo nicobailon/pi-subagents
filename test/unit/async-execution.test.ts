@@ -167,15 +167,15 @@ describe("async runner execution", () => {
 	it("formats interactive yield and headless auto-drain guidance separately", () => {
 		const interactive = formatAsyncStartedMessage("Async: worker [interactive]", true);
 		assert.match(interactive, /^Async: worker \[interactive\]\n/);
-		assert.match(interactive, /Return control now: native completion wakes you, so do not sleep, poll, or call bg_wait for it\./);
+		assert.match(interactive, /Completion wakes you; keep working or end your turn\. Do not sleep or poll for it\./);
 		assert.match(interactive, /subagent\(\{ action: "status", id: "\.\.\." \}\)/);
 		assert.ok(interactive.length <= 400, `interactive receipt is ${interactive.length} chars`);
-		assert.doesNotMatch(interactive, /bg_wait\(\{ id:/i);
+		assert.doesNotMatch(interactive, /action: "wait"/);
 		assert.doesNotMatch(interactive, /auto-drains current-session background work/i);
 
 		const headless = formatAsyncStartedMessage("Async: worker [headless]", false);
 		assert.match(headless, /non-interactive run.*auto-drains current-session subagent work at agent_end/i);
-		assert.match(headless, /use bg_wait only for results this turn needs from work without native notification/i);
+		assert.match(headless, /use subagent\(\{ action: "wait" \}\) only when this turn needs the result/i);
 		assert.equal(headless.split("\n").length, 3);
 		assert.doesNotMatch(headless, /nonBlocking: true/);
 		assert.doesNotMatch(headless, /By default, return control to the user/i);
@@ -203,14 +203,12 @@ describe("async runner execution", () => {
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,
-			waitToolEnabled: false,
 			toolBudget: { hard: 3, block: ["find"] },
 			configToolBudget: { hard: 5, block: ["ls"] },
 		});
 
 		assert.ok("steps" in result, "expected successful step build");
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 3, block: ["find"] });
-		assert.equal(result.steps[0]?.waitToolEnabled, false);
 		assert.deepEqual(result.steps[1]?.toolBudget, { hard: 2, block: ["grep"] });
 	});
 	it("carries the resolved model context window into async runner steps", () => {

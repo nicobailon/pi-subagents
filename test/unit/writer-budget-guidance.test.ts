@@ -8,10 +8,9 @@ const readProjectFile = (file: string): string => readFileSync(join(process.cwd(
 describe("writer budget guidance", () => {
 	it("keeps hard tool and usage caps off mutation-capable workers", () => {
 		const toolReference = readProjectFile("docs/tool-reference.md");
-		const skill = readProjectFile("skills/pi-subagents/SKILL.md");
 		const reviewLoop = readProjectFile("prompts/review-loop.md");
 
-		for (const text of [toolReference, skill, reviewLoop]) {
+		for (const text of [toolReference, reviewLoop]) {
 			assert.match(text, /do not (?:pass|set) a hard `toolBudget`/i);
 			assert.match(text, /default tool budget blocks read\/search tools rather than mutation tools/i);
 			assert.match(text, /checkpoint after the current tool returns/);

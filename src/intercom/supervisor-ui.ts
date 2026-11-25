@@ -29,7 +29,7 @@ export interface SupervisorReplyEntryData {
 }
 
 export function supervisorReplyHint(requestId: string): string {
-	return `subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`;
+	return `subagent({ action: "reply", replyTo: "${requestId}", message: "..." })`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

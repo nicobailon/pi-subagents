@@ -431,26 +431,6 @@ describe("builtin agent overrides", () => {
 		assert.equal(agents.find((agent) => agent.name === "implementer")?.description, "Priced implementer");
 	});
 
-	it("lets a project advertise override beat a user one and clear it again", () => {
-		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-			subagents: { agentOverrides: { oracle: { advertise: true }, reviewer: { advertise: true } } },
-		});
-		writeJson(path.join(tempProject, ".pi", "settings.json"), {
-			subagents: { agentOverrides: { oracle: { advertise: false } } },
-		});
-
-		const agents = discoverAgents(tempProject, "both").agents;
-		assert.equal(agents.find((agent) => agent.name === "oracle")?.advertise, false);
-		assert.equal(agents.find((agent) => agent.name === "reviewer")?.advertise, true);
-	});
-
-	it("rejects malformed advertise override values", () => {
-		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-			subagents: { agentOverrides: { reviewer: { advertise: "yes" } } },
-		});
-		assert.throws(() => discoverAgentsAll(tempProject), /invalid 'advertise'; expected a boolean/u);
-	});
-
 	it("applies user settings overrides to builtin agents", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: {

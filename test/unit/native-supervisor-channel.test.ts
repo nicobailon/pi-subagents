@@ -6,7 +6,6 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
 import {
-	NATIVE_SUPERVISOR_TOOL_NAME,
 	createNativeSupervisorChannel,
 	ensureSupervisorChannelDir,
 	registerNativeSupervisorClient,
@@ -190,9 +189,6 @@ describe("native supervisor channel", () => {
 			}) as typeof fsDefault.readdirSync;
 			syncBuiltinESMExports();
 			try {
-				channel.registerTools();
-				assert.ok(tools.has(NATIVE_SUPERVISOR_TOOL_NAME));
-				assert.equal(scans, 0, "tool registration does not start transport");
 				channel.start();
 				assert.equal(tick, undefined, "idle coordinator has no polling timer");
 				assert.equal(scans, 0);
@@ -201,7 +197,7 @@ describe("native supervisor channel", () => {
 				assert.equal(scans, 1, "one owned mailbox read regardless of 100 retained foreign channels");
 				assert.equal(notices.length, 1);
 				assert.equal(typeof tick, "function");
-				await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: requestId, message: "Proceed" });
+				await channel.runParentAction({ action: "reply", replyTo: requestId, message: "Proceed" });
 				dirs = [];
 				const scansBeforeIdle = scans;
 				tick!();
@@ -299,39 +295,12 @@ describe("native supervisor channel", () => {
 		assert.equal(channel.hasPendingRequests(), true, "fresh owned reply-bearing request is a drain barrier");
 		channel.dispose();
 
-		assert.deepEqual(registeredTools.map((tool) => tool.name), [NATIVE_SUPERVISOR_TOOL_NAME]);
-		assert.deepEqual(registeredTools[0]?.parameters.properties.action, { type: "string", enum: ["list", "pending", "status", "reply"] });
+		assert.deepEqual(registeredTools, [], "replies go through the subagent tool's reply action");
 		assert.deepEqual(sent.map(({ message }) => message.details?.id), [matchingId]);
 		assert.deepEqual(sent[0]?.options, { triggerTurn: true });
 		assert.equal(channel.pending.has(matchingId), false, "disposed channel clears pending requests");
 		assert.equal(channel.hasPendingRequests(), false, "disposed and foreign requests are not barriers");
 		assert.equal(sent.some(({ message }) => message.details?.id === otherId), false);
-	});
-
-	it("declares the reply tool before surfacing a request to a session that does not declare it", () => {
-		const currentSessionId = `session-${randomUUID()}`;
-		const tools = new Map<string, unknown>();
-		let active = ["read"];
-		const activeAtNotice: string[][] = [];
-		const pi = {
-			getAllTools: () => [...tools.keys()].map((name) => ({ name })),
-			registerTool: (tool: { name: string }) => { tools.set(tool.name, tool); },
-			getActiveTools: () => [...active],
-			setActiveTools: (names: string[]) => { active = [...names]; },
-			sendMessage: () => { activeAtNotice.push([...active]); },
-			getSessionName: () => "shared-name",
-		};
-		const ctx = { sessionManager: { getSessionId: () => currentSessionId, getSessionFile: () => null, getEntries: () => [] } };
-		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx), { platform: "darwin" });
-		try {
-			channel.start();
-			assert.deepEqual(active, ["read"], "an idle session keeps its tools");
-			writeRequest({ sessionId: currentSessionId, runId: `run-${randomUUID()}` });
-			assert.equal(channel.hasPendingRequests(), true);
-			assert.deepEqual(activeAtNotice, [["read", NATIVE_SUPERVISOR_TOOL_NAME]]);
-		} finally {
-			channel.dispose();
-		}
 	});
 
 	it("does not inject progress updates into the parent session or wake a turn", () => {
@@ -506,7 +475,7 @@ describe("native supervisor channel", () => {
 
 			// A failed scan is not "no pending requests" for callers whose answer a model or a drain decision reads.
 			assert.throws(() => channel.hasPendingRequests(), /ENFILE/);
-			await assert.rejects(tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" }), /ENFILE/);
+			await assert.rejects(channel.runParentAction({ action: "pending" }), /ENFILE/);
 
 			failScans = false;
 			const requestId = writeRequest({ sessionId: currentSessionId, runId });
@@ -822,7 +791,7 @@ describe("native supervisor channel", () => {
 			assert.equal(child.activityState, "needs_attention");
 			assert.equal(child.currentTool, "contact_supervisor");
 
-			await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", {
+			await channel.runParentAction({
 				action: "reply",
 				replyTo: requestId,
 				message: "Approved",
@@ -899,7 +868,7 @@ describe("native supervisor channel", () => {
 				registeredTools.set(tool.name, tool);
 			},
 			sendMessage: () => {
-				void registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", {
+				void channel.runParentAction({
 					action: "reply",
 					replyTo: requestId,
 					message: "Approved",
@@ -967,7 +936,7 @@ describe("native supervisor channel", () => {
 		try {
 			channel.start();
 			state.foregroundRuns.get(runId)!.children[0]!.currentTool = "edit";
-			await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", {
+			await channel.runParentAction({
 				action: "reply",
 				replyTo: requestId,
 				message: "Approved",
@@ -1040,14 +1009,14 @@ describe("native supervisor channel", () => {
 
 		try {
 			channel.start();
-			const pending = await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			const pending = await channel.runParentAction({ action: "pending" });
 			assert.match(pending.content[0]!.text, /Inherited question/);
 			assert.doesNotMatch(pending.content[0]!.text, /Foreign question/);
 			assert.doesNotMatch(pending.content[0]!.text, /Unreadable question/);
 
-			await tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: inheritedAsk, message: "Go ahead" });
+			await channel.runParentAction({ action: "reply", replyTo: inheritedAsk, message: "Go ahead" });
 			assert.equal((JSON.parse(fs.readFileSync(replyFile(inheritedRun, inheritedAsk), "utf-8")) as { message?: string }).message, "Go ahead");
-			await assert.rejects(() => tools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: foreignAsk, message: "No" }));
+			await assert.rejects(() => channel.runParentAction({ action: "reply", replyTo: foreignAsk, message: "No" }));
 			assert.equal(fs.existsSync(replyFile(foreignRun, foreignAsk)), false);
 		} finally {
 			channel.dispose();
@@ -1082,8 +1051,8 @@ describe("native supervisor channel", () => {
 			assert.deepEqual([...registeredTools.keys()], []);
 			channel.start();
 
-			assert.deepEqual([...registeredTools.keys()], [NATIVE_SUPERVISOR_TOOL_NAME]);
-			await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)?.execute("reply", { action: "reply", replyTo: requestId, message: "Approved" });
+			assert.deepEqual([...registeredTools.keys()], []);
+			await channel.runParentAction({ action: "reply", replyTo: requestId, message: "Approved" });
 			const reply = JSON.parse(fs.readFileSync(replyFile(runId, requestId), "utf-8")) as { message?: string; requestId?: string };
 			assert.equal(reply.requestId, requestId);
 			assert.equal(reply.message, "Approved");
@@ -1140,7 +1109,7 @@ describe("native supervisor channel", () => {
 			assert.equal(sent[0]?.customType, SUPERVISOR_REQUEST_MESSAGE_TYPE);
 			assert.match(sent[0]?.content ?? "", /Subagent requests a structured supervisor interview\./);
 			assert.match(sent[0]?.content ?? "", /Should this change be applied\?/);
-			assert.ok(sent[0]?.content?.includes(`Reply with: subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`));
+			assert.ok(sent[0]?.content?.includes(`Reply with: subagent({ action: "reply", replyTo: "${requestId}", message: "..." })`));
 			assert.ok(sent[0]?.content?.includes(`Live guidance: subagent({ action: "steer", id: "${runId}", message: "...", options: { index: 2 } }) (Reply to the pending request first.)`));
 			assert.doesNotMatch(sent[0]?.content ?? "", /Child intercom target:|child-worker/);
 			assert.deepEqual(sent[0]?.details, {
@@ -1154,10 +1123,10 @@ describe("native supervisor channel", () => {
 				childTarget: "child-worker",
 				interview: { approved: "boolean", rationale: "string" },
 				requestBody: "Should this change be applied?",
-				replyHint: `subagent_supervisor({ action: "reply", replyTo: "${requestId}", message: "..." })`,
+				replyHint: `subagent({ action: "reply", replyTo: "${requestId}", message: "..." })`,
 			});
 
-			await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", {
+			await channel.runParentAction({
 				action: "reply",
 				replyTo: requestId,
 				message: "Approved with rationale",
@@ -1292,7 +1261,7 @@ describe("native supervisor channel", () => {
 		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
 		try {
 			channel.start();
-			const result = await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			const result = await channel.runParentAction({ action: "pending" });
 			const text = result.content[0]!.text;
 			assert.match(text, new RegExp(`^- ${requestId}: `));
 			assert.match(text, /\n {2}Rerun each failed job separately\?\n {2}Or rerun the whole run\?/);
@@ -1332,13 +1301,13 @@ describe("native supervisor channel", () => {
 			assert.equal(channel.pending.has(requestId), true);
 
 			fs.rmSync(requestFile(runId, requestId), { force: true });
-			const pendingResult = await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			const pendingResult = await channel.runParentAction({ action: "pending" });
 
 			assert.match(pendingResult.content[0]!.text, /No pending supervisor requests/);
 			assert.deepEqual(pendingResult.details?.pending, []);
 			assert.equal(channel.pending.has(requestId), false);
 			await assert.rejects(
-				() => registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply", replyTo: requestId, message: "Too late" }),
+				() => channel.runParentAction({ action: "reply", replyTo: requestId, message: "Too late" }),
 				new RegExp(`Supervisor request '${requestId}' from worker \\[${runId}#0\\] was withdrawn by the child before its ask deadline \\(noticed at \\d{4}-\\d\\d-\\d\\dT[^ ]+Z\\)\\. A child withdraws its request when its run is stopped, interrupted or times out`),
 			);
 		} finally {

@@ -54,7 +54,7 @@ describe("in-process foreground child", () => {
 		process.env.PI_SUBAGENT_CHILD_AGENT = "leaked-parent-value";
 		try {
 			mockPi.onCall({ output: "done" });
-			const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "hooks-config", index: 3, waitToolEnabled: false });
+			const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "hooks-config", index: 3 });
 			assert.equal(result.exitCode, 0);
 			const [session] = mockPi.sessions;
 			assert.ok(session, "child session was created");
@@ -62,7 +62,6 @@ describe("in-process foreground child", () => {
 			assert.equal(session.launch.runtime.runId, "hooks-config");
 			assert.equal(session.launch.runtime.childIndex, 3);
 			assert.equal(session.launch.runtime.fanoutChild, false);
-			assert.equal(session.launch.runtime.waitTool.enabled, false);
 			assert.equal(session.launch.runtime.steerInbox, undefined, "in-process children have no steer inbox");
 			assert.equal(session.launch.runtime.depth, 1);
 			assert.equal(session.task?.startsWith("Task: Task"), true);

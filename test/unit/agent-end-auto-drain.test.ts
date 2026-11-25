@@ -33,6 +33,7 @@ const script = String.raw`
 			getSessionId() { return "agent-end-drain-session"; },
 			getSessionFile() { return null; },
 			getEntries() { return []; },
+			buildContextEntries() { return []; },
 		},
 		modelRegistry: { getAvailable() { return []; } },
 	};

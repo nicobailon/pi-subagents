@@ -7,7 +7,7 @@ import { SUBAGENT_FEATURES, resolveDisabledFeatureSurface, validateDisabledFeatu
 import { SUBAGENT_OPTION_KEYS, SubagentParams, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
 import { readSubagentGuide, SUBAGENT_GUIDE_TOPICS } from "../../src/extension/subagent-guide.ts";
-import { buildSubagentToolDescription, SUBAGENT_SAFETY_GUIDANCE } from "../../src/extension/tool-description.ts";
+import { formatGuide } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
@@ -153,36 +153,12 @@ describe("disabled feature execution boundaries", () => {
 });
 
 describe("disabled feature discovery", () => {
-	const featureText = [
-		"not watchdog-only thinking",
-		"tool budget, fast",
-		"usageBudget is shared",
-		"unless options.mission:false",
-		"create/update/delete",
-		"mission.*",
-		"schedule.*",
-		"watchdog.*",
-		"inspector.*",
-		"lane.status",
-		"worktree.discard",
-		"grant-spawn-budget",
-		"Schedules take script inputs",
-	];
-
-	it("removes disabled-feature text from the built-in descriptions and keeps the safety guidance", () => {
-		const enabled = buildSubagentToolDescription({ toolDescriptionMode: "full" });
-		for (const text of featureText) assert.ok(enabled.includes(text), `enabled description lacks ${text}`);
-		assert.match(enabled, /Management discovery: list\/get\/models\/guide; create\/update\/delete\/eject\/disable\/enable\/reset\/refine; mission\.\*, schedule\.\*, watchdog\.\*, inspector\.\*, project\.\*, lane\.status\/recordMerge\/recordSupersession; worktree\.discard and reviewed worktree\.cleanup; doctor and grant-spawn-budget\. /);
-
-		const disabledFeatures = resolveDisabledFeatureSurface(ALL_DISABLED);
-		for (const toolDescriptionMode of [undefined, "full"] as const) {
-			const description = buildSubagentToolDescription({ toolDescriptionMode }, { disabledFeatures });
-			for (const text of featureText) assert.ok(!description.includes(text), `${toolDescriptionMode ?? "default"} description still has ${text}`);
-			// Every safety line stays; with workflow-scripts disabled only the script-writing wording changes.
-			for (const line of SUBAGENT_SAFETY_GUIDANCE.split("\n").filter((text) => !/runs\.|workflow call/.test(text))) assert.ok(description.includes(line), `${toolDescriptionMode ?? "default"} description lacks safety line ${line}`);
-			if (toolDescriptionMode === "full") assert.match(description, /Thinking uses model suffix\./);
-		}
-		assert.match(buildSubagentToolDescription({ toolDescriptionMode: "full" }, { disabledFeatures }), /Management discovery: list\/get\/models\/guide; doctor\. Use guide topics agents, observability, tool-reference, configuration, models or extension-api for/);
+	it("tells the guide's reader that config disabled some features and keeps the launch and manage lines", () => {
+		const enabled = formatGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface({}) });
+		assert.doesNotMatch(enabled, /disabled by config/);
+		const guide = formatGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface(ALL_DISABLED) });
+		assert.match(guide, /Some options and actions are disabled by config in this session; guide topic tool-reference lists them\./);
+		for (const line of ["Launch: subagent({agent, task, ...})", '{action:"status"} lists all runs', '{action:"reply", replyTo, message}']) assert.ok(guide.includes(line), `guide lacks ${line}`);
 	});
 
 	it("lists only enabled actions for an unknown action", async () => {

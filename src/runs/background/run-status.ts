@@ -39,7 +39,7 @@ import { capSummaryOutputs } from "../shared/single-output.ts";
 import { formatParallelHandoffLines } from "../shared/kept-branch-text.ts";
 import { ownsRun } from "../shared/run-ownership.ts";
 import { foregroundChildStateLabel } from "../foreground/foreground-history.ts";
-import { waitForRunText } from "../../shared/wait-tool-name.ts";
+import { waitForRunText } from "../../shared/wait-call.ts";
 
 /** A step whose structured output has a path line needs only a short inline preview. */
 const STRUCTURED_PREVIEW_WITH_PATH_CHARS = 500;
