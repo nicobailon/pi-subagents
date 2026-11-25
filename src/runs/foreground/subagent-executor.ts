@@ -8473,7 +8473,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const workflow = publicParams.workflow;
 		const errorResult = (text: string): Promise<AgentToolResult<Details>> => Promise.resolve({ content: [{ type: "text", text }], isError: true, details: { mode: publicParams.action ? "management" : "workflow", results: [] } });
 		// Models tend to put script text in the workflow string; say how to pass it instead.
-		const scriptTextHint = " A workflow string is a named workflow resource or a script file path. To run script text, write it in one ```js workflow block in the same reply and call subagent({ workflow: true }).";
+		const scriptTextHint = " A workflow string is a named workflow resource or a script file path. To run script text, pass it as options.script, or write it in one ```js workflow block in the same reply and call subagent({ workflow: true }).";
 		let workflowLaunch: WorkflowLaunch | undefined;
 		const workflowResumeLaunch = workflowResumeLaunches.get(params);
 		if (publicParams.tasks !== undefined || publicParams.chain !== undefined) {
@@ -8485,6 +8485,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			publicParams = { ...withoutStructuredInput, workflowScript: resolved.resource.script };
 			workflowResourcePermits.set(publicParams, resolved.resource.permit);
 			workflowLaunch = { source: "structured" };
+		} else if (typeof workflow === "string" && /[\r\n]/.test(workflow)) {
+			return errorResult(`The workflow string has line breaks, so it is script text, not a file path, and was not run.${scriptTextHint}`);
 		} else if (typeof workflow === "string" && !isWorkflowScriptPath(workflow)) {
 			const resolved = resolveWorkflowResource(workflow, publicParams.args, ctx.sessionManager.getSessionId() ?? undefined);
 			// A resumed resource is resolved with current authority and must still be the script that ran.

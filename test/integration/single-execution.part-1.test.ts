@@ -1765,6 +1765,13 @@ Answer only from the supplied synthetic text.
 		const scriptText = await executor.executePublic("script-text", { workflow: "return 1", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(scriptText.isError, true);
 		assert.match(scriptText.content[0]?.text ?? "", /write it in one ```js workflow block in the same reply and call subagent\(\{ workflow: true \}\)/);
+		assert.match(missing.content[0]?.text ?? "", /pass it as options\.script/);
+
+		const multiLine = `const r = await runs.run("scan", { agent: "echo", task: "Read /Users/someone/repo/src/index.ts" });\nreturn r.output;`;
+		const multiLineText = await executor.executePublic("multi-line-script-text", { workflow: multiLine, async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(multiLineText.isError, true);
+		assert.match(multiLineText.content[0]?.text ?? "", /line breaks, so it is script text, not a file path.*pass it as options\.script/);
+		assert.doesNotMatch(multiLineText.content[0]?.text ?? "", /Failed to read workflow script|ENOENT|ENAMETOOLONG/);
 		assert.doesNotMatch(empty.content[0]?.text ?? "", /validation failed|valid JavaScript/);
 		assert.equal(mockPi.callCount(), 0);
 	});
