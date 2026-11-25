@@ -8,6 +8,7 @@ import { getAgentDir } from "../../shared/utils.ts";
 export type PlacementRunState = "ready" | "working" | "blocked" | "settled" | "unknown";
 export type PlacementAgentKind = "pi" | "claude" | "cursor" | "codex";
 export interface PlacementOwnedPane { workspaceId: string; tabId: string; paneId: string }
+export interface PlacementOwnedRun { runId: string; terminalId?: string; agentName?: string }
 export interface PlacementBridgeIdentity { runId?: string; nativeSessionId?: string; packageVersion?: string; protocol?: number; evidenceCursor?: number; evidenceFloor?: number }
 export type PlacementEvidenceProof = { ok: true; cursor: number } | { ok: false; reason: string };
 export type PlacementReconnectCheck = { ok: true; state: PlacementRunState; paneId: string; cursor: number } | { ok: false; reason: string };
@@ -41,7 +42,7 @@ export interface PlacementPaneHost<C extends PlacementSockets = PlacementSockets
 	paneEvent(event: unknown, fallback: PlacementRunState): { terminalId: unknown; paneId: unknown; state: PlacementRunState } | undefined;
 	panes(connection: C, identity: HerdrRunIdentity): Promise<P>;
 	reconcile(identity: HerdrRunIdentity, panes: P, proveEvidence: () => PlacementEvidenceProof): PlacementReconnectCheck;
-	closeOwnedPane(connection: C, owned: PlacementOwnedPane, terminalId: string | undefined, agentName: string | undefined): Promise<void>;
+	closeOwnedPane(connection: C, owned: PlacementOwnedPane, run: PlacementOwnedRun): Promise<void>;
 }
 
 const HERDR_ALLOCATION_LOCK_TIMEOUT_MS = 10_000, HERDR_ALLOCATION_LOCK_POLL_MS = 25;
