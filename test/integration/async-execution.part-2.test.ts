@@ -1198,7 +1198,7 @@ syncBuiltinESMExports();
 			...commonParams,
 			ctx: { ...commonParams.ctx, interactive: true },
 		});
-		assert.match(interactiveResult.content[0]?.text ?? "", /Return control now: native completion wakes you/);
+		assert.match(interactiveResult.content[0]?.text ?? "", /Completion wakes you; keep working or end your turn/);
 		assert.doesNotMatch(interactiveResult.content[0]?.text ?? "", /subagent\(\{ action: "wait", id:/);
 		assert.doesNotMatch(interactiveResult.content[0]?.text ?? "", /auto-drain/);
 		await waitForAsyncResultFile(interactiveId, 30_000);
