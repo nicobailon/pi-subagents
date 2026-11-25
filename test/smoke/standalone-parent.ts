@@ -64,7 +64,6 @@ export default function registerSmoke(pi: ExtensionAPI) {
 			if (workflowScript !== undefined) fs.writeFileSync("/stage/work/smoke-workflow.js", workflowScript);
 			const request = workflowScript !== undefined ? { workflow: "/stage/work/smoke-workflow.js" } : { agent: "binary-smoke", task: "Return the scripted response." };
 			fs.writeFileSync("/stage/parent-initialized", String(process.pid));
-			// The session's first subagent call returns the guide; a first launch would be held, starting no child.
 			const guide = await tool.execute("standalone-guide", {}, new AbortController().signal, undefined, ctx);
 			assert.match(guide.content.map((part) => part.type === "text" ? part.text : "").join("\n"), /^subagent guide\./);
 			if (mode === "shared-run" || mode === "parallel-stop") {

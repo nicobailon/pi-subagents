@@ -1408,10 +1408,6 @@ export interface WaitCompletionChild {
 	timeoutRecovery?: TimeoutRecoveryProjection;
 }
 
-/**
- * Terminal completion observed for a run a wait call covered. Carries run
- * identity and the artifact trail; output text stays in the tool result content.
- */
 export interface WaitCompletion {
 	runId: string;
 	workflowReceiptPath?: string;
@@ -1450,7 +1446,6 @@ export interface AgentCapabilityRow {
 export interface Details {
 	commands?: import("../runs/shared/child-commands.ts").ChildCommandSnapshot[];
 	mode: SubagentResultMode | "management";
-	/** What this reply taught the model (the guide, an event note); rebuilt from the session to teach each once. */
 	taught?: string[];
 	workflowReceiptPath?: string;
 	runId?: string;
@@ -1461,12 +1456,6 @@ export interface Details {
 	results: SingleResult[];
 	workflowChildren?: WorkflowChildSummary;
 	workflowTerminalProof?: WorkflowTerminalProof;
-	/**
-	 * Terminal completion payloads for runs this wait call observed
-	 * finishing. Async completions travel as result files that are consumed and
-	 * deleted after text delivery, so without this field their run and artifact
-	 * identity never reaches tool_result details.
-	 */
 	completions?: WaitCompletion[];
 	wait?: {
 		reason: "window_elapsed";

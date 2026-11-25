@@ -9,7 +9,6 @@ import { finalizeToolResult } from "../../extension/tool-result.ts";
 
 export type WaitExecute = (id: string, params: Static<typeof SubagentWaitParams>, signal: AbortSignal | undefined, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext | undefined) => Promise<AgentToolResult<Details>>;
 
-/** What subagent's `action: "wait"` runs. */
 export function createWaitExecute(
 	pi: ExtensionAPI,
 	state: SubagentState,

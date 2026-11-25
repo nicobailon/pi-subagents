@@ -26,7 +26,6 @@ export default function (pi: ExtensionAPI) {
 					const textOf = (message: { content: Array<{ type: string; text?: string }> }) => message.content.map((part) => part.text ?? "").join("\n");
 					const failed = results.find((message) => message.isError);
 					if (failed) throw new Error(`Native fixture tool failed: ${textOf(failed)}`);
-					// Every subagent call shares one tool: tell the guide, launches and waits apart by the call's arguments.
 					const callArgs = new Map(context.messages.flatMap((message) => message.role === "assistant"
 						? message.content.flatMap((part) => part.type === "toolCall" ? [[part.id, part.arguments as Record<string, unknown>] as const] : [])
 						: []));
@@ -48,7 +47,6 @@ export default function (pi: ExtensionAPI) {
 						}
 						output.content = [{ type: "text", text: "PERSONA_EVIDENCE" }];
 					} else if (!guides.length) {
-						// The session's first subagent call returns the guide; a first launch would be held.
 						output.content = [call("subagent", {})];
 					} else if (!spawned.length) {
 						output.content = model.id === "reviewer"

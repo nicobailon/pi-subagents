@@ -70,7 +70,6 @@ test("direct exposure: a codemode script's launch runs async, and its wait is re
 				declared = getCurrentTools(context.messages).map((tool) => tool.name);
 				return fauxAssistantMessage(fauxToolCall("subagent", {}), { stopReason: "toolUse" });
 			},
-			// The agent defaults to foreground; a script's launch must not block on it.
 			() => script(`return await tools.subagent({ agent: "foreground-probe", task: "Probe" });`),
 			() => script(`const out = [];
 for (const args of [{ action: "wait", all: true }, { agent: "foreground-probe", task: "Probe B", async: false }]) {

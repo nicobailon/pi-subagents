@@ -41,7 +41,6 @@ if (phase === "old") {
 	process.on("SIGTERM", () => process.exit(0));
 	process.on("exit", () => fs.writeFileSync(${JSON.stringify(oldDone)}, "done"));
 	fs.writeFileSync(${JSON.stringify(oldPid)}, String(process.pid));
-	// The stale lookup answers only after the test releases it; the cap only ends an orphan.
 	const cap = Date.now() + 30000;
 	const poll = setInterval(() => { if (fs.existsSync(${JSON.stringify(oldRelease)}) || Date.now() > cap) { clearInterval(poll); print(); } }, 25);
 } else setTimeout(print, phase === "timeout" ? 6000 : phase === "seed" || phase === "latest" ? 150 : 300);
@@ -72,7 +71,6 @@ if (phase === "old") {
 				modelRegistry: { getAvailable() { return []; }, getAll() { return []; } },
 				sessionManager: { getSessionId() { return "barrier-test"; }, getSessionFile() { return undefined; }, getBranch() { return []; }, buildContextEntries() { return []; } },
 			};
-			// The last session_start handler starts agent discovery.
 			const start = (reason) => hooks.get("session_start").at(-1)({ reason }, ctx);
 			const guide = async () => (await tools.get("subagent").execute("guide", { action: "guide" }, new AbortController().signal, undefined, ctx)).content[0].text;
 			const waitForFile = async (file, message, ms = 3000) => {
@@ -94,7 +92,6 @@ if (phase === "old") {
 			assert.match(text, /- global-specialist/);
 			assert.match(text, /- local-specialist/);
 			assert.match(JSON.stringify(listed), /global-specialist/);
-			// The launch comes in the model's next turn, after it read the guide.
 			for (const handler of hooks.get("turn_start")) handler({ turnIndex: 1 }, ctx);
 			const firstRun = await tools.get("subagent").execute("immediate", { agent: "global-specialist", task: "Probe", async: false }, new AbortController().signal, undefined, ctx)
 				.then((result) => JSON.stringify(result), (error) => error.message);
@@ -108,7 +105,6 @@ if (phase === "old") {
 			process.env.TEST_NPM_PHASE = "latest";
 			void start("reload");
 			const latest = await waitingOnOld;
-			// The latest catalog must not wait for the obsolete lookup.
 			assert.ok(Date.now() - oldStarted < 5000, "old lookup held the new session's guide");
 			if (process.platform !== "win32") await waitForFile(process.env.TEST_OLD_DONE, "superseded owned lookup must exit without release");
 			fs.writeFileSync(process.env.TEST_OLD_RELEASE, "release");

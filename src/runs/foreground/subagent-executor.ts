@@ -338,11 +338,9 @@ export interface SubagentParamsLike {
 	/** Retained async child run id. Valid only on workflow runs.run items. */
 	resume?: string;
 	message?: string;
-	/** wait: all work active at call time. */
 	all?: boolean;
 	nonBlocking?: boolean;
 	stopOnAttention?: boolean;
-	/** reply: the pending child question, or the run or agent that asked. */
 	replyTo?: string;
 	to?: string;
 	steeringRecovery?: boolean;
@@ -468,9 +466,7 @@ interface ExecutorDeps {
 	state: SubagentState;
 	config: ExtensionConfig;
 	asyncByDefault: boolean;
-	/** Runs `action: "wait"`, the same wait as the wait tool. */
 	wait?: WaitExecute;
-	/** Runs `action: "reply"` and lists the child questions `status` shows. */
 	runSupervisorAction?: (input: { action: "pending" | "reply"; to?: string; replyTo?: string; message?: string }) => Promise<AgentToolResult<Record<string, unknown>>>;
 	handleScheduledRunAction?: (params: SubagentParamsLike, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>;
 	watchdog?: MainWatchdogRuntime;
@@ -7474,13 +7470,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							: item),
 					};
 				};
-				// The run list also shows child questions waiting for an answer, so one status call finds them.
 				const withChildQuestions = async (result: AgentToolResult<Details>): Promise<AgentToolResult<Details>> => {
 					if (!deps.runSupervisorAction) return result;
 					const pending = await deps.runSupervisorAction({ action: "pending" });
 					if (!(pending.details.pending as Array<{ expectsReply?: boolean }> | undefined)?.some((request) => request.expectsReply)) return result;
 					const questions = { type: "text" as const, text: `Child questions waiting for an answer (subagent({action:"reply", replyTo, message})):\n${pending.content.flatMap((item) => item.type === "text" ? [item.text] : []).join("\n")}` };
-					// A child-safe status without an id lists no runs, but its questions still answer the call.
 					if (result.isError) return { content: [questions], details: result.details };
 					return { ...result, content: [...result.content, questions] };
 				};

@@ -115,7 +115,6 @@ describe("subagent extension child mode", () => {
 				modelRegistry: { getAvailable() { return []; } },
 			};
 			for (const tool of [tools.parent, tools.fanout]) {
-				// The session's first call returns its error with the guide it taught.
 				const first = await tool.execute("model-script", { workflowScript: "return 1" }, new AbortController().signal, undefined, ctx);
 				assert.equal(first.isError, true);
 				assert.match(first.content[0].text, /workflowScript was removed.*subagent\(\{ workflow: true \}\)/);
@@ -1794,7 +1793,6 @@ describe("subagent extension child mode", () => {
 			};
 			const list = await registeredTool.execute("list-check", { action: "list" }, new AbortController().signal, undefined, ctx);
 			if (list.isError) throw new Error("list should be allowed: " + JSON.stringify(list.content));
-			// A rare action's first use returns its error with the action's fields it taught.
 			const refused = async (params, pattern, callCtx = ctx) => {
 				const result = await registeredTool.execute("refused", params, new AbortController().signal, undefined, callCtx);
 				assert.equal(result.isError, true);

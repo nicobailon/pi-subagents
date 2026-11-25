@@ -524,10 +524,6 @@ function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undef
  * `inheritedBefore`, set in a forked child to the fork's time, keeps the history the child
  * inherited as the parent sent it, so its requests can reuse the parent's prompt cache; only tool
  * ids are still made portable there. The child cannot run `subagent` either way.
- *
- * `ownSubagentHistorySince`, the child session's start, keeps the child's own `subagent` calls and
- * results from then on (every child declares `subagent`; a non-fanout child waits with it). Earlier
- * ones, a parent's in a session file that was forked without a fork launch, are still stripped.
  */
 export function stripParentOnlySubagentMessages(messages: unknown[], options: { sanitizeToolIds?: boolean; preserveBoundedCompositeToolIds?: boolean; ownSubagentHistorySince?: number; inheritedBefore?: number } = {}): unknown[] {
 	const ownSince = options.ownSubagentHistorySince;
@@ -721,7 +717,6 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		resultFileCoalescer: { schedule: () => false, clear: () => {} },
 	} as unknown as SubagentState;
 	const nestedRootRunId = inheritedNestedRouteOf(config)?.rootRunId;
-	// A fanout child declares the launching subagent tool itself; every other child gets the same declaration, which only waits.
 	if (!config.fanoutChild && typeof pi.registerTool === "function") {
 		const wait = createWaitExecute(pi, waitState, undefined, { nestedRootRunId });
 		pi.registerTool(createGuidedSubagentTool(pi, {
@@ -800,7 +795,6 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	onRuntimeEvent("context_with_system", (event: unknown, ctx?: ExtensionContext) => {
 		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
 		const fork = config.forkCacheKey ? readInherited(ctx) : undefined;
-		// The child session's start: its own subagent history begins there (a header-less ctx keeps all of it).
 		let sessionStart = 0;
 		try {
 			const started = Date.parse(ctx?.sessionManager?.getHeader?.()?.timestamp ?? "");
@@ -810,7 +804,6 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
 			// Providers that reuse the Codex Responses wire under their own api id (e.g. cliproxyapi-codex-responses) split call_id|item_id the same way.
 			preserveBoundedCompositeToolIds: ctx?.model?.api?.endsWith("-codex-responses") === true,
-			// Every child declares subagent (a non-fanout child waits with it), so its own calls and results stay.
 			ownSubagentHistorySince: sessionStart,
 			...(fork ? { inheritedBefore: fork.forkedAt } : {}),
 		});

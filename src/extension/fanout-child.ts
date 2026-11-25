@@ -216,7 +216,6 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		flatten: (params) => flattenSubagentToolOptions(params, disabledFeatures),
 		authorityPolicy: config.authorityPolicy,
 		run: (id, request, _nested, signal, onUpdate, ctx) => executor.executePublic(id, request, signal ?? new AbortController().signal, onUpdate, ctx),
-		// A child gets the event guidance; the parent owns the run-state warnings.
 		notes: (request, result) => callNotes(request, result, { child: true }),
 	});
 	pi.registerTool(tool);
@@ -227,7 +226,6 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 	});
 	let unsubscribeAsyncStarted: (() => void) | undefined;
 	pi.on("session_start", (_event, ctx) => {
-		// The host applies the explicit allowlist to dynamic registration too: without subagent there is nothing to answer with.
 		if (!pi.getAllTools().some(tool => tool.name === "subagent")) return;
 		// Downward asks belong to this coordinator, not its parent or persisted session file.
 		state.supervisorOwnerSessionId = ctx.sessionManager.getSessionId() || null;

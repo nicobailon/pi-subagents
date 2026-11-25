@@ -1,43 +1,3 @@
-/**
- * subagent's `wait` action: block the current turn until outstanding async runs
- * or a named remembered detached foreground run finishes.
- *
- * Background subagent runs are detached. In an interactive session the parent
- * can end its turn and Pi will wake it with a completion notification. That
- * does not work when the parent is a skill that must run to completion, and it
- * cannot work at all non-interactively (`pi -p ...`), where the run is a single
- * turn: once the turn ends there is nothing left to receive the notification.
- *
- * The wait closes that gap. It keeps the turn alive until a tracked async
- * run for this session reaches a terminal state (complete / failed / paused),
- * the caller-supplied timeout elapses, or the turn is aborted. Because it awaits
- * inside the turn, the completion the model was told to wait for is actually
- * observed before the tool returns.
- *
- * By default the wait returns as soon as ONE run finishes, so a fleet
- * manager can use it in a rolling-replacement loop: launch N workers, wait for
- * the next one to finish, spawn its replacement, then wait
- * again — keeping N in flight instead of draining to zero between batches.
- * Pass `all: true` to block until every tracked async run is terminal, or `id`
- * to block on one specific async or remembered detached foreground run.
- *
- * The wait also returns when a run needs attention — not just on
- * completion. A child that goes idle or blocks for a decision surfaces
- * `needs_attention` (the same signal Pi shows as a control notice and,
- * interactively, wakes the parent with). Since the wait is used exactly
- * where there is no next turn to receive that notice, it must break on it too,
- * or a stuck child would stall the loop until the timeout. Attention runs are
- * reported so the caller can inspect / nudge / resume / interrupt them.
- *
- * Wake mechanism: when given Pi's event bus (`deps.events`), the wait
- * subscribes to the subagent completion/control channels and wakes the instant
- * any fires, rather than waiting out a fixed poll interval. A poll still runs
- * on the interval as a reconciliation fallback (crashed runners, missed
- * events), and the poll is the source of truth for what actually changed — the
- * event only ends the sleep early. With no bus, the wait degrades to pure
- * polling.
- */
-
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -87,7 +47,6 @@ export interface SubagentWaitParams {
 	 * item finishes or needs attention. Ignored when `id` targets a single run.
 	 */
 	all?: boolean;
-	/** Give up after this many milliseconds. Defaults to 30 minutes. */
 	timeoutMs?: number;
 	/** False keeps a blocking wait open through all attention except supervisor/contact requests, such as idle time, a tool held open, or repeated tool failures. */
 	stopOnAttention?: boolean;
@@ -452,7 +411,6 @@ function yieldForScope(reason: WaitYieldReason, scope: InitialWaitScope, params:
 	}
 }
 
-/** Build the live status shown while async work keeps a wait call blocked. */
 function asyncWaitUpdate(runs: AsyncRunSummary[], providerCount: number, elapsedMs: number): AgentToolResult<Details> {
 	const activity = runs.flatMap((run) => {
 		const activeSteps = run.steps.filter((step) => step.status === "pending" || step.status === "running");

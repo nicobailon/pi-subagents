@@ -68,7 +68,6 @@ it("keeps a resumed session on the contact_supervisor it declared, replaces an o
 		assert.deepEqual(tool(first!, "subagent")?.parameters, JSON.parse(JSON.stringify(SUBAGENT_TOOL_PARAMETERS)));
 		assert.equal(tool(first!, "bg_wait"), undefined);
 
-		// The same session as recorded by an older pi-subagents release: the full subagent schema, bg_wait, and an older contact_supervisor text.
 		const older = structuredClone(original.getEntries());
 		const entry = older.find((candidate) => candidate.type === "message" && candidate.message.role === "system");
 		assert.ok(entry?.type === "message" && entry.message.role === "system");
@@ -98,7 +97,6 @@ it("pins a tool description without the note a host appends to it, so the note i
 	const name = "contact_supervisor";
 	const note = `\n\nCodemode: \`tools.${name}(args)\` resolves to a string.`;
 	const declaredTool = (messages: Message[]) => getCurrentSystemMessage(messages)!.toolsAdded!.find((tool) => tool.name === name)!;
-	// A host decorates what pi-subagents registered: the newest recorded declaration gets the note.
 	const decorate = (entries: ReturnType<SessionManager["getEntries"]>) => {
 		const latest = entries.findLast((entry) => entry.type === "message" && entry.message.role === "system" && entry.message.toolsAdded?.some((tool) => tool.name === name));
 		assert.ok(latest?.type === "message" && latest.message.role === "system");

@@ -158,7 +158,6 @@ export interface RegisterSubagentNotifyOptions {
 	now?: () => number;
 	ownership?: Pick<ResultDeliveryOwnership, "owns">;
 	sendRegistry?: CompletionSendRegistry;
-	/** Event guidance a notice adds once while it is in the chat, and the keys it taught. */
 	noticeNotes?: (runs: SubagentNotifyDetails[]) => { text: string; taught: string[] } | undefined;
 }
 

@@ -9,14 +9,9 @@ import type { Details } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { prepareSubagentToolArguments } from "./subagent-options.ts";
 
-// The model sees this name, description and no declared fields; the guide (the reply to the session's first call)
-// and later replies teach everything else, so the declaration stays the same for a model and the prompt cache holds.
-// Providers that drop or blank undeclared fields get the 14 main fields instead (see needsDeclaredFields); every
-// other field is still accepted, and rare-action fields can ride inside `args`.
 export const SUBAGENT_TOOL_DESCRIPTION = "Delegate work to child agents and manage their runs. Call subagent({}) first for the guide: agents, fields, all actions.";
 export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({ type: "object", properties: {}, additionalProperties: true });
 const declaredString = { type: "string" } as const;
-// `output:false` and `workflow:true` still work: Pi's validation turns them into "false"/"true", which execute converts back.
 export const SUBAGENT_TOOL_FIELD_PARAMETERS = Type.Unsafe<Record<string, unknown>>({
 	type: "object",
 	properties: {
@@ -28,13 +23,8 @@ export const SUBAGENT_TOOL_FIELD_PARAMETERS = Type.Unsafe<Record<string, unknown
 	additionalProperties: true,
 });
 
-// Models (provider/id) whose calls arrived blank this process: they get the declared fields from then on.
 const modelsNeedingFields = new Set<string>();
 
-/**
- * Providers known to drop or blank undeclared fields get the 14 main fields from the start: xAI (every value arrives
- * as `true`) and GitHub Copilot's Kimi (undeclared fields are dropped). Any other model joins after a blank call.
- */
 export function needsDeclaredFields(model: { provider?: string; id?: string } | undefined): boolean {
 	if (!model?.provider) return false;
 	if (model.provider === "xai") return true;
@@ -42,16 +32,10 @@ export function needsDeclaredFields(model: { provider?: string; id?: string } | 
 	return modelsNeedingFields.has(`${model.provider}/${model.id ?? ""}`);
 }
 
-// Fields a real call can set to a bare true, so {workflow:true, async:true} stays a real call.
 const TRUE_VALUED_FIELDS = new Set(["workflow", "async", "worktree", "all", "nonBlocking", "stopOnAttention", "clarify", "share", "fast", "foregroundOnly"]);
 const blankValue = (value: unknown) => value === true || value === "true" || value === null || value === "null"
 	|| (typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === 0);
 
-/**
- * A call whose fields a provider dropped or blanked: no fields, or every top-level value true, null, "null" or {}
- * (Pi's argument conversion can turn true into "true"), unless it is only what a real call sets that way: true-valued
- * flags and empty `args` or `options` ({workflow:true, args:{}}).
- */
 export function isBlankCall(params: Record<string, unknown>): boolean {
 	const entries = Object.entries(params);
 	if (entries.length === 0) return true;
@@ -61,7 +45,6 @@ export function isBlankCall(params: Record<string, unknown>): boolean {
 	return !entries.every(realAsBlank);
 }
 
-/** The taught key a session records when a model's calls arrived blank, so a resumed session declares fields at once. */
 export function fieldsTaughtKey(model: { provider?: string; id?: string }): string {
 	return `fields:${model.provider}/${model.id ?? ""}`;
 }
@@ -74,7 +57,6 @@ export interface GuideAgent {
 }
 
 const AGENT_SUMMARY_MAX_CHARS = 32;
-// A summary cut mid-phrase must not end on a word that needs the rest of the phrase.
 const DANGLING_WORD = /\s+(?:a|an|the|for|of|to|and|or|with|through|that|in|on|by)$/i;
 
 function agentSummary(description: string | undefined): string {
@@ -99,7 +81,6 @@ Parallel: subagent({workflow:"parallel", args:{tasks:[{agent, task, cwd?, model?
 Dependent steps: {action:"guide", topic:"workflows"}
 `;
 
-// With workflow scripts disabled by config, the top-level tasks and chain fields replace them.
 const NO_SCRIPTS_GUIDE = `
 Parallel: subagent({tasks:[{agent, task, cwd?, model?}]})
 Dependent steps: subagent({task, chain:[{agent, task?, as?}]}); a step's task can use {task}, {previous}, {outputs.<as>}
@@ -116,16 +97,13 @@ const MANAGE_GUIDE = `Manage (id from the launch reply, or a prefix):
 - families: schedule, mission, worktree, lane, inspector, project, watchdog, command, refine
 - an action's fields: {action:"guide", topic:"<action or family>"}`;
 
-/** The reply to the session's first call. A child that cannot launch learns only what it can do. */
 export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch: boolean; child?: boolean; disabled?: DisabledFeatureSurface }): string {
 	if (!options.canLaunch) {
 		return `subagent guide (child run). This child cannot launch runs. {action:"wait"} (or all:true) blocks until this child's own background work finishes. Ask your parent with contact_supervisor.`;
 	}
-	// A child run has no completion notifier: its children's results reach it only through wait.
 	const intro = options.child
 		? `subagent guide (child run). Your launches are your own children and run in the background; their results do not wake you. Collect them with {action:"wait"} (or all:true) before you finish. Agent changes (create, update, delete …) are blocked here.`
 		: `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll.`;
-	// An "<agent>-writer" variant shares its base agent's line, so the guide grows by agent, not by mode.
 	const names = new Set(agents.map((agent) => agent.name));
 	const writerVariant = (name: string) => name.endsWith("-writer") && names.has(name.slice(0, -"-writer".length));
 	const agentLines = agents.filter((agent) => !writerVariant(agent.name)).map((agent) => {
@@ -138,7 +116,6 @@ export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch:
 	return [intro, `${launch}\n${MANAGE_GUIDE}`, ...(notice ? [notice] : []), agentLines.length ? `Agents:\n${agentLines.join("\n")}` : "Agents: none found; {action:\"list\"} shows why."].join("\n\n");
 }
 
-/** Fields and one example per action family, returned for {action:"guide", topic} and with a rare action's first use. */
 const ACTION_TOPICS: Record<string, string> = {
 	status: 'status: no id lists all runs and child questions; id (a prefix works) shows one run; view:"fleet"|"transcript" with index, lines. Example: subagent({action:"status", id:"r-1f3"})',
 	steer: 'steer: id, message; a live run only (a finished run needs resume). Example: subagent({action:"steer", id:"r-1f3", message:"focus on ..."})',
@@ -167,7 +144,6 @@ const TOPIC_ALIASES: Record<string, string> = {
 	"children.list": "other", dismiss: "other", "debug.run": "other", doctor: "other", "grant-spawn-budget": "other",
 };
 
-/** The help topic for an action or family name, or undefined when the name is neither. */
 export function actionTopicKey(name: string): string | undefined {
 	const family = name.includes(".") ? name.slice(0, name.indexOf(".")) : name;
 	if (Object.hasOwn(ACTION_TOPICS, name)) return name;
@@ -176,20 +152,14 @@ export function actionTopicKey(name: string): string | undefined {
 	return undefined;
 }
 
-/** An action's fields and example, and how to send them when a provider drops undeclared fields. */
 export function actionTopicText(key: string, action = key): string {
 	return `${ACTION_TOPICS[key]!}\nIf your fields arrive missing, pass them inside args: subagent({action:"${action}", args:{…}}).`;
 }
 
-/**
- * A call that is not a workflow launch reads its fields from `args` too (top-level wins): some providers drop
- * undeclared fields. With a top-level workflow (a launch, schedule.create, validate), `args` is script input.
- */
 export function liftArgsFields(params: Record<string, unknown>): Record<string, unknown> {
 	const options = params.options && typeof params.options === "object" ? params.options as Record<string, unknown> : {};
 	const args = params.args;
 	if (!args || typeof args !== "object" || Array.isArray(args)) return params;
-	// "null", false and "false" are placeholders some providers send for an unset workflow.
 	const workflow = params.workflow;
 	const hasWorkflow = workflow !== undefined && workflow !== "null" && workflow !== false && workflow !== "false";
 	if (hasWorkflow || options.script !== undefined) return params;
@@ -199,14 +169,12 @@ export function liftArgsFields(params: Record<string, unknown>): Record<string, 
 
 export const EMPTY_CALL_TEXT = 'This call arrived with no fields. If you sent fields, this provider may drop them; pass the fields an action needs inside args. The full guide: subagent({action:"guide"}).';
 
-// Actions the guide itself teaches; any other action's first use adds its fields to the reply.
 const TAUGHT_BY_GUIDE = new Set(["status", "steer", "resume", "stop", "interrupt", "wait", "reply", "list", "guide"]);
 
 export function rareActionTopic(action: string): string | undefined {
 	return TAUGHT_BY_GUIDE.has(action) ? undefined : actionTopicKey(action);
 }
 
-/** `{action:"schedule.guide"}`-style calls: the right call, or undefined when the action is not that mistake. */
 export function misplacedGuideCall(action: string): string | undefined {
 	const match = /^(?:(.+)\.guide|guide\.(.+))$/.exec(action);
 	if (!match) return undefined;
@@ -214,7 +182,6 @@ export function misplacedGuideCall(action: string): string | undefined {
 	return `subagent: '${action}' is not an action. For ${topic}'s fields call subagent({action:"guide", topic:"${topic}"}).`;
 }
 
-/** A launch: no action, and a child or workflow to start. */
 export function isLaunchRequest(params: Record<string, unknown>): boolean {
 	return params.action === undefined && (params.agent !== undefined || params.task !== undefined || params.workflow !== undefined || params.workflowScript !== undefined || params.tasks !== undefined || params.chain !== undefined);
 }
@@ -226,11 +193,6 @@ export function holdText(params: Record<string, unknown>, sibling: boolean): str
 		: `Not launched yet: this is the session's first subagent call, so here is the guide. Call again to launch.${block}`;
 }
 
-/**
- * The request a call from a codemode script (or any other tool) runs, or why it cannot run. Pi cancels a script's
- * calls when the script ends, so a call must not wait on a child or the user: launches run async, even for an agent
- * whose frontmatter defaults to foreground.
- */
 export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolicy: AuthorityPolicyConfig | undefined): SubagentParamsLike | string {
 	const action = params.action?.trim();
 	if (action === "wait") {
@@ -254,10 +216,8 @@ export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolic
 	return { ...params, async: true };
 }
 
-/** What replies still in the model's context taught: each teaching reply lists its keys in `details.taught`. */
 export function taughtInContext(ctx: Pick<ExtensionContext, "sessionManager">): Set<string> {
 	const taught = new Set<string>();
-	// Compaction-aware: entries a compaction summarized are gone from the model's context, and so is what they taught.
 	for (const entry of ctx.sessionManager.buildContextEntries()) {
 		const details = entry.type === "message" && entry.message.role === "toolResult" ? entry.message.details : entry.type === "custom_message" ? entry.details : undefined;
 		const keys = (details as { taught?: unknown } | undefined)?.taught;
@@ -266,11 +226,6 @@ export function taughtInContext(ctx: Pick<ExtensionContext, "sessionManager">): 
 	return taught;
 }
 
-/**
- * What this session's model has been taught, and in which turn the guide arrived. Rebuilt from the session's
- * context on the first call after session start, tree navigation or compaction, so a guide lost to compaction is
- * shown again.
- */
 export class TaughtState {
 	readonly keys = new Set<string>();
 	private turn = 0;
@@ -278,7 +233,6 @@ export class TaughtState {
 	private stale = true;
 	private sessionCtx: Pick<ExtensionContext, "sessionManager"> | undefined;
 
-	/** Rebuild on next use, from `ctx` when given (notices have no call ctx of their own). */
 	invalidate(ctx?: Pick<ExtensionContext, "sessionManager">): void {
 		this.stale = true;
 		if (ctx) this.sessionCtx = ctx;
@@ -291,7 +245,6 @@ export class TaughtState {
 		this.guideTurn = undefined;
 		if (ctx) this.sessionCtx = ctx;
 		let keys = new Set<string>();
-		// A replaced session's ctx throws; then nothing counts as taught and a note is shown again.
 		try {
 			if (ctx) keys = taughtInContext(ctx);
 		} catch (error) {
@@ -308,7 +261,6 @@ export class TaughtState {
 		return this.keys.has(key);
 	}
 
-	/** Marks keys taught; returns the ones that were new. */
 	teach(...keys: string[]): string[] {
 		const fresh = keys.filter((key) => !this.keys.has(key));
 		for (const key of fresh) this.keys.add(key);
@@ -316,16 +268,11 @@ export class TaughtState {
 		return fresh;
 	}
 
-	/**
-	 * The guide arrived in this turn's batch: the model has not read it yet. Pi starts a turn before any model tool
-	 * call, so with no turn seen the call did not come from a model's batch.
-	 */
 	guideArrivedThisTurn(): boolean {
 		return this.turn > 0 && this.guideTurn === this.turn;
 	}
 }
 
-// Event guidance: each note is added once while it is still in the chat, to the reply about its event.
 export const EVENT_NOTES = {
 	launch: 'Next: {action:"status", id} checks it; {action:"steer", id, message} redirects it; {action:"wait", id} only if this same turn needs the result. Completion wakes you: keep working or end your turn.',
 	childLaunch: 'Next: {action:"status", id} checks it; {action:"steer", id, message} redirects it. Its result does not wake you: collect it with {action:"wait", id} (or all:true) before you finish.',
@@ -350,18 +297,13 @@ export function forkNote(fork: { sessionBytes: number; folder: string; freeBytes
 	return `Fork: the child got a copy of this session (${formatBytes(fork.sessionBytes)}) under ${fork.folder}${free}. Each fork adds one. Once a forked child is accepted or dropped and won't be resumed, delete its <run id> folder there; never one whose run is still active.`;
 }
 
-/** What a call's notes need to know beyond the call and its result. */
 export interface CallFacts {
-	/** Other live runs in the launch's cwd. */
 	liveRunsInCwd?: { cwd: string; count: number };
-	/** The launched agent when it is a writer (acceptanceRole: writer) given a toolBudget. */
 	cappedWriter?: string;
-	/** A child run: its children's results do not wake it. */
 	child?: boolean;
 	fork?: { sessionBytes: number; folder: string; freeBytes?: number };
 }
 
-/** Event guidance (keyed, once) and warnings (every time) for a model's call. Checks read fields and run state only. */
 export function callNotes(request: SubagentParamsLike, result: AgentToolResult<Details>, facts: CallFacts): TeachingNote[] {
 	if (result.isError) return [];
 	const notes: TeachingNote[] = [];
@@ -380,7 +322,6 @@ export function callNotes(request: SubagentParamsLike, result: AgentToolResult<D
 	return notes;
 }
 
-/** Event guidance for a completion notice, each note once while in the chat. */
 export function noticeNotes(runs: ReadonlyArray<{ agent: string; status: string }>, taught: TaughtState): { text: string; taught: string[] } | undefined {
 	taught.ensure();
 	const notes: Array<[string, string]> = [];
@@ -395,7 +336,6 @@ export function guideResult(text: string, taught: string[], isError = false): Ag
 	return { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}), details: { mode: "management", results: [], ...(taught.length ? { taught } : {}) } };
 }
 
-/** Adds a teaching note to a result and records what it taught. */
 export function withTeaching(result: AgentToolResult<Details>, notes: string[], taught: string[]): AgentToolResult<Details> {
 	if (notes.length === 0 && taught.length === 0) return result;
 	const details = result.details ?? { mode: "management", results: [] };
@@ -406,54 +346,39 @@ export function withTeaching(result: AgentToolResult<Details>, notes: string[], 
 	};
 }
 
-/** A note a reply adds: with a key, once while it is in the chat (event guidance); without one, every time (a warning). */
 export interface TeachingNote {
 	key?: string;
 	text: string;
 }
 
 export interface GuidedSubagentToolDeps {
-	/** The guide for this session's agents and what this runtime can do. */
 	guide(ctx: ExtensionContext): Promise<string>;
-	/** Lowers and checks the call's fields; throws with the fix. */
 	flatten(params: Record<string, unknown>): SubagentParamsLike;
-	/** Runs the call. `nested` calls come from a codemode script and already passed the script guard. */
 	run(id: string, request: SubagentParamsLike, nested: boolean, signal: AbortSignal | undefined, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Details>>;
 	authorityPolicy?: AuthorityPolicyConfig;
-	/** False for a child that cannot launch: its launches are refused, never held. */
 	canLaunch?: boolean;
-	/** Event guidance and warnings for this call's result, each note once while it is in the chat. */
 	notes?(request: SubagentParamsLike, result: AgentToolResult<Details>, ctx: ExtensionContext): Promise<TeachingNote[]> | TeachingNote[];
 	renderCall?: ToolDefinition<typeof SUBAGENT_TOOL_PARAMETERS, Details>["renderCall"];
 	renderResult?: ToolDefinition<typeof SUBAGENT_TOOL_PARAMETERS, Details>["renderResult"];
 }
 
-/**
- * The `subagent` tool every runtime declares: the same name, description and empty schema. The first call of any
- * kind returns the guide; a first launch is held once until the guide is in the chat. Only this model-facing path
- * holds: slash commands, RPC and prompt templates call the executor directly.
- */
 export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentToolDeps): { tool: ToolDefinition<typeof SUBAGENT_TOOL_PARAMETERS, Details>; taught: TaughtState } {
 	const taught = new TaughtState();
 	pi.on("session_start", (_event, ctx) => taught.invalidate(ctx));
 	pi.on("session_tree", (_event, ctx) => taught.invalidate(ctx));
 	pi.on("session_compact", (_event, ctx) => taught.invalidate(ctx));
 	pi.on("turn_start", () => taught.nextTurn());
-	// Pi passes parentToolCallId only to tool_call handlers, so record which calls another tool (a codemode script) made.
 	const nestedCallIds = new Set<string>();
 	let emptyCallsInARow = 0;
 	pi.on("tool_call", (event) => {
 		if (event.toolName === "subagent" && event.parentToolCallId) nestedCallIds.add(event.toolCallId);
 	});
-	// The declaration follows the model: no fields, or the 14 main fields for a provider that drops undeclared ones.
-	// It is re-registered only when that choice changes; a model switch already starts a new prompt cache.
 	const declare = (fields: boolean) => {
 		const parameters = fields ? SUBAGENT_TOOL_FIELD_PARAMETERS : SUBAGENT_TOOL_PARAMETERS;
 		if (tool.parameters === parameters) return;
 		tool.parameters = parameters;
 		pi.registerTool(tool);
 	};
-	// A session whose replies recorded a blank call on this model (fieldsTaughtKey) declares the fields after a restart.
 	const fieldsFor = (model: { provider?: string; id?: string } | undefined) => needsDeclaredFields(model) || (model?.provider !== undefined && taught.has(fieldsTaughtKey(model)));
 	pi.on("session_start", (_event, ctx) => {
 		taught.ensure(ctx);
@@ -473,11 +398,8 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 		async execute(id, rawParams, signal, onUpdate, ctx) {
 			const nested = nestedCallIds.delete(id);
 			taught.ensure(ctx);
-			// After the guide, a blank call means the provider dropped or blanked the fields: declare them once, so
-			// this model's next call carries them (one cache miss, only on such a provider).
 			const blank = !nested && taught.has("guide") && isBlankCall(rawParams as Record<string, unknown>);
 			const noFields = Object.keys(rawParams as Record<string, unknown>).length === 0;
-			// A lone {} may be a model asking again; blanked values (true, null) or a second {} in a row is the provider.
 			emptyCallsInARow = blank && noFields ? emptyCallsInARow + 1 : 0;
 			if (blank) {
 				if (tool.parameters !== SUBAGENT_TOOL_FIELD_PARAMETERS && (!noFields || emptyCallsInARow >= 2)) {
@@ -488,17 +410,13 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				}
 				return guideResult(EMPTY_CALL_TEXT, []);
 			}
-			// Again after Pi's validation, which turns output:false and workflow:true into text for the declared strings.
 			const prepared = prepareSubagentToolArguments(rawParams) as Record<string, unknown>;
 			const lifted = liftArgsFields(prepared);
-			// Fields lifted from args get the same text conversion (args:{all:"true"} → all:true).
 			const params = lifted === prepared ? prepared : prepareSubagentToolArguments(lifted) as Record<string, unknown>;
 			const options = params.options && typeof params.options === "object" ? params.options as Record<string, unknown> : {};
-			// A "null" topic is a provider's placeholder for an unset field.
 			const rawTopic = params.topic ?? options.topic;
 			const topic = rawTopic === "null" ? undefined : rawTopic;
 			const empty = Object.keys(params).length === 0;
-			// A provider that drops fields can loop on empty calls; once the guide is in the chat, answer with one line.
 			if (empty && taught.has("guide")) return guideResult(EMPTY_CALL_TEXT, []);
 			if (empty || (params.action === "guide" && topic === undefined)) {
 				taught.teach("guide");
@@ -518,7 +436,6 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			} catch (error) {
 				if (!firstCall) throw error;
 				taught.teach("guide");
-				// Returned, not thrown, so details.taught reaches the session and the guide is not shown twice.
 				return guideResult(`${error instanceof Error ? error.message : String(error)}\n\n${await deps.guide(ctx)}`, ["guide"], true);
 			}
 			if (deps.canLaunch !== false && isLaunchRequest(request as Record<string, unknown>)) {
@@ -531,7 +448,6 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			let result: AgentToolResult<Details>;
 			const rare = request.action ? rareActionTopic(request.action) : undefined;
 			const record = request as Record<string, unknown>;
-			// A reply whose fields a provider dropped: say how to send them.
 			const replyHint = request.action === "reply" && (record.replyTo === undefined || record.message === undefined)
 				? 'If your fields arrive missing, pass them inside args: subagent({action:"reply", args:{replyTo, message}}).'
 				: undefined;
@@ -547,13 +463,11 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 					result = await deps.run(id, request, false, signal, onUpdate, ctx);
 				}
 			} catch (error) {
-				// The reply below adds a rare action's fields and the args fallback, and the guide on a first call.
 				result = { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
 			}
 			const notes: string[] = [];
 			const keys: string[] = [];
 			if (firstCall) {
-				// Once per batch: a sibling call in the same message already carried it.
 				const fresh = taught.teach("guide");
 				if (fresh.length) {
 					notes.push(await deps.guide(ctx));
@@ -571,7 +485,6 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				notes.push(note.text);
 				if (note.key) keys.push(note.key);
 			}
-			// An error that taught something is returned (Pi honors isError), so details.taught survives.
 			return keys.length > 0 ? withTeaching(result, notes, keys) : finalizeToolResult(withTeaching(result, notes, keys));
 		},
 		...(deps.renderCall ? { renderCall: deps.renderCall } : {}),

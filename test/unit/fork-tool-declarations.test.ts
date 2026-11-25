@@ -446,7 +446,6 @@ describe("a child's context handler", () => {
 	});
 
 	it("keeps a non-fanout child's own subagent wait call and result, and strips the parent's subagent history and parent-only messages, fanout or not", () => {
-		// The session header (FORKED_AT) starts the child's own history; earlier messages came from the parent.
 		const wait = { role: "assistant", content: [{ type: "toolCall", id: "call_wait", name: "subagent", arguments: { action: "wait", id: "r-1" } }], timestamp: FORKED_AT + 3 };
 		const waited = { role: "toolResult", toolCallId: "call_wait", toolName: "subagent", content: [{ type: "text", text: "Result [r-1]: /tmp/r-1.json" }], isError: false, timestamp: FORKED_AT + 4 };
 		const messages = [user(10), notice(20), call(30), result(40), user(FORKED_AT + 1), notice(FORKED_AT + 2), wait, waited];

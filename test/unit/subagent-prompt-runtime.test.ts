@@ -36,7 +36,6 @@ import registerSubagentPromptRuntime, {
 	stripSubagentOrchestrationSkill,
 } from "../../src/runs/shared/subagent-prompt-runtime.ts";
 
-// The child's model already has the guide in its chat, so its calls run instead of returning the guide.
 const taughtEntries = () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }];
 
 function childConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
@@ -243,7 +242,6 @@ it("fanout child subagent wait yields to a descendant's supervisor request while
 			startedAt: Date.now(), lastUpdate: Date.now(), steps: [{ agent: "worker", status: "running" }],
 		}));
 		updateActiveRunIndex(asyncDir, "running");
-		// Real hook order: the prompt runtime hook runs before fanout-child registers subagent and installs the supervisor channel.
 		for (const hook of createChildHooks(childConfig({ fanoutChild: true, nestedRoute: route }))) hook.factory(pi);
 		for (const fn of handlers.get("session_start") ?? []) await fn({ reason: "startup" }, ctx);
 		events.emit(SUBAGENT_ASYNC_STARTED_EVENT, { id: runId, asyncDir, sessionId: sessionFile, agents: ["worker"] });
@@ -1273,7 +1271,6 @@ describe("subagent prompt runtime", () => {
 		const childWatchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
 		const otherCustom = { role: "custom", customType: "other", content: "keep" };
 
-		// With no session header every subagent call counts as the child's own and stays; parent-only artifacts go.
 		assert.deepEqual(contextHandler?.({ messages: [priorParentTurn, instruction, slashResult, subagentCall, subagentResult, watchdogWarning, childWatchdogWarning, otherCustom, currentTask] }), {
 			messages: [priorParentTurn, subagentCall, subagentResult, otherCustom, currentTask],
 		});

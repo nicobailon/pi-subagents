@@ -16,7 +16,6 @@ import { validateDisabledFeatures } from "../shared/disabled-features.ts";
 // discarded and replaced by the built-in defaults after validation fails.
 const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers", "globalConcurrencyLimit"];
 
-/** Settings the guided subagent tool replaced: a leftover one fails loading with what replaces it. */
 const REMOVED_CONFIG_KEYS: Record<string, string> = {
 	toolActivation: "the subagent tool is now always declared, small and unchanging; remove the key",
 	toolExposure: 'codemode scripts can always call subagent, and codemode.mode "only" in Pi settings hides it from the model; remove the key',

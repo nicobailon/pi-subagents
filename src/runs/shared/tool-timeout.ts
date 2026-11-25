@@ -15,7 +15,6 @@ export const DEFAULT_FAST_TOOL_TIMEOUT_TOOLS = new Set([
 	"structured_output",
 ]);
 
-/** Tools whose normal job can be to wait for a person or another run; subagent waits with action "wait". */
 export const TOOL_TIMEOUT_EXEMPT_TOOLS = new Set(["contact_supervisor", "intercom", "subagent"]);
 
 // Backward-compatible export name for existing callers/tests.

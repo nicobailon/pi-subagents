@@ -668,10 +668,8 @@ function publicPendingRequests(pending: Map<string, PendingSupervisorRequest>): 
 	}));
 }
 
-/** subagent's `reply` action and the child questions `status` lists. */
 function createParentActions(pi: ExtensionAPI, pending: Map<string, PendingSupervisorRequest>, state: SubagentState, onLifecycle: SupervisorRequestLifecycleObserver, discover: () => void, runState: (request: SupervisorRequest) => SubagentState, ended: Map<string, EndedSupervisorRequest>): (input: ParentActionInput) => Promise<AgentToolResult<Record<string, unknown>>> {
 	return async (input) => {
-		// Discover new request files even when demand-gated polling is idle.
 		discover();
 		refreshPendingRequests(pending, state, onLifecycle, runState);
 		if (input.action === "pending") {
@@ -696,7 +694,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	dispose: () => void;
 	pending: Map<string, PendingSupervisorRequest>;
 	getSupervisorRequestState: (event: ControlEvent) => SupervisorRequestState;
-	/** subagent's `reply` action and the child questions `status` lists. */
 	runParentAction: (input: ParentActionInput) => Promise<AgentToolResult<Record<string, unknown>>>;
 } {
 	const watch = deps.watch ?? fs.watch;

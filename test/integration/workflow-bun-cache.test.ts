@@ -78,7 +78,6 @@ export default function(pi) {
     try {
       if (!process.versions.bun) throw new Error("The test binary must use Bun");
       const signal = new AbortController().signal;
-      // The session's first subagent call returns the guide; a first launch would be held.
       await tools.get("subagent").execute("cache-package-guide", {}, signal, undefined, ctx);
       const launched = await tools.get("subagent").execute("cache-package-launch", {
         workflow:${JSON.stringify(workflow)}, async:true, cwd:${JSON.stringify(root)}, output:false, options:{mission:false}

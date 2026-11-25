@@ -57,7 +57,6 @@ async function startParent(config: Record<string, unknown> = {}): Promise<Parent
 
 async function callSubagent(parent: Parent, args: Record<string, unknown>): Promise<void> {
 	await parent.session.waitForIdle();
-	// The model reads the guide first, as the tool description asks; a first launch before it is held.
 	parent.replies.push({}, args, "ok");
 	await parent.session.prompt("go");
 }

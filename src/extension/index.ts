@@ -352,7 +352,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const waitSubscriptionManager = createWaitSubscriptionManager(wakingPi, state);
 	const mainWatchdog = registerMainWatchdog(pi, { slashCommand: slashCommandsEnabled });
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
-	// Bound once the subagent tool exists; a notice teaches through the same taught state as the tool's replies.
 	let taughtState: TaughtState | undefined;
 	const completionNotifier = registerSubagentNotify(wakingPi, state, {
 		batchConfig: config.completionBatch,
@@ -399,7 +398,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		reportWarning: (message, key) => reportSessionWarning(state, message, key),
 	});
 	let refreshResultDelivery = () => {};
-	// Agent discovery needs the global npm root (package agents); launches and the guide wait for its lookup.
 	let discoveryGeneration = 0;
 	let discoveryLookup: AbortController | undefined;
 	let globalRoot: string | null = null;
@@ -664,7 +662,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const launchWorkflowAutoResume = async (entry: PendingWorkflowAutoResume, ctx: ExtensionContext): Promise<void> => {
 		const { prepared } = entry;
 		try {
-			// Let the rest of session start (agent discovery, other handlers) run first.
 			await new Promise((resolve) => setImmediate(resolve));
 			await waitForAgentDiscovery();
 			const executor = await getExecutor();
@@ -738,7 +735,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		const projectTrusted = typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;
 		return formatGuide(discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider, { projectTrusted }).agents, { canLaunch: true, disabled: disabledFeatures });
 	};
-	// Run state a launch's warnings and fork note read; never the task's wording.
 	const callFacts = (request: SubagentParamsLike, result: AgentToolResult<Details>, ctx: ExtensionContext): CallFacts => {
 		const params = request as Record<string, unknown>;
 		const facts: CallFacts = {};
@@ -756,7 +752,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		if (sessionFile && (params.context === "fork" || result.details?.context === "fork" || result.details?.context === "mixed")) {
 			try {
-				// Each fork copies the parent's session file to <session file without .jsonl>/forks/<run id>/.
 				const folder = path.join(path.dirname(sessionFile), path.basename(sessionFile, ".jsonl"), "forks");
 				let freeBytes: number | undefined;
 				try {
@@ -774,8 +769,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		authorityPolicy: config.authorityPolicy,
 		notes: (request, result, ctx) => callNotes(request, result, callFacts(request, result, ctx)),
 		run: (id, request, nested, signal, onUpdate, ctx) => nested
-			// Once started, a script's launch runs to completion without the script's signal: Pi cancels a script's
-			// unawaited calls when it ends, and a cancelled half-launch could leave a child that no status view tracks.
 			? executeSubagentReady(id, request, new AbortController().signal, onUpdate, ctx)
 			: executeSubagentCollapsed(id, request, signal ?? new AbortController().signal, onUpdate, ctx),
 		renderCall(args, theme) {
@@ -812,7 +805,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				: renderSubagentResult(renderedResult, options, theme, undefined, config.mainWindowRenderer, foregroundDetachShortcut);
 		},
 	});
-	// Registered without pinning: a resumed session's old declaration is replaced in the same cache miss as the removed tools.
 	pi.registerTool(tool);
 	taughtState = taught;
 	// Declared with the same definition children use, so a fork's tool list equals this session's.

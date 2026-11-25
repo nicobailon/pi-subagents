@@ -67,7 +67,6 @@ describe("subagent tool options", () => {
 		assert.deepEqual(normalizePublicSubagentExecution(workflowCall), { ok: true, params: { workflow: true, async: true, worktree: false } });
 		assert.deepEqual(flattenSubagentToolOptions({ action: "validate", agent: "null", task: "null", workflow: "./review.workflow.js" }), { action: "validate", workflow: "./review.workflow.js" });
 		assert.deepEqual(flattenSubagentToolOptions({ action: "list", id: "null", workflow: "false" }), { action: "list" });
-		// The real path converts arguments first, so "false" arrives as false.
 		const placeholder = prepareSubagentToolArguments({ agent: "reviewer", task: "check for null", workflow: "false", options: { timeoutMs: "null", skill: "review" } }) as Record<string, unknown>;
 		assert.deepEqual(flattenSubagentToolOptions(placeholder), { agent: "reviewer", task: "check for null", skill: "review" });
 	});
@@ -119,7 +118,6 @@ describe("subagent tool options", () => {
 			workflow: true, output: false, gate: { command: "npm test" }, thinking: false,
 			options: { all: true, toolBudget: { hard: 3 } },
 		});
-		// Text that is valid for the field stays text: a script path, a report path, a gate command, a thinking level.
 		assert.deepEqual(prepareSubagentToolArguments({ workflow: "./flow.js", output: "reviews/a.md", gate: "npm test", thinking: "high" }), { workflow: "./flow.js", output: "reviews/a.md", gate: "npm test", thinking: "high" });
 		assert.throws(() => prepareSubagentToolArguments({ workflow: "parallel", args: "{\"tasks\": [" }), { message: "subagent: 'args' must be an object, and its text is not valid JSON. Pass the value itself, e.g. args: {...}, not a string." });
 	});
@@ -159,7 +157,6 @@ describe("registered subagent tools with options", () => {
 			assert.match(text(await call({ action: "status", options: { view: "fleet" } })), /No active subagent fleet/);
 			assert.match(text(await call({ action: "status", view: "fleet" })), /No active subagent fleet/);
 			await assert.rejects(call({ action: "status", runId: "missing-run", view: "transcript" }), /Transcript target: run missing-run/);
-			// The fanout child's first call: its error is returned with the guide it taught.
 			const childFleet = await call({ action: "status", options: { view: "fleet" } }, tools.fanout);
 			assert.equal(childFleet.isError, true);
 			assert.match(text(childFleet), /Child-safe subagent fleet view is unavailable/);

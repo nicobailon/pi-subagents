@@ -31,7 +31,6 @@ it("offers each workflow child start to tool_call handlers and does not start a 
 		const text = JSON.stringify(last.content);
 		const prompt = JSON.stringify([...context.messages].reverse().find((message) => message.role === "user")?.content);
 		const background = prompt.includes("background review");
-		// The session's first subagent call returns the guide; the inline-script launch follows it.
 		if (last.role === "user" && text.includes("background review") && !JSON.stringify(context.messages).includes("subagent guide.")) {
 			return fauxAssistantMessage(fauxToolCall("subagent", {}), { stopReason: "toolUse" });
 		}

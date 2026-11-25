@@ -21,7 +21,6 @@ const sessions: Session[] = [];
 let root: string;
 let agentDir: string;
 
-/** A parent session on a scripted model: each step is one assistant message (subagent calls, or text). */
 type RequestContext = { messages: Parameters<typeof getCurrentTools>[0] };
 
 async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void): Promise<Session> {
@@ -47,7 +46,6 @@ async function startParent(steps: Step[], onRequest?: (context: RequestContext) 
 	return session;
 }
 
-/** The text of each subagent tool result, in order. */
 function subagentReplies(session: Session): string[] {
 	return (session.messages as Array<{ role: string; toolName?: string; content?: Array<{ text?: string }> }>)
 		.filter((message) => message.role === "toolResult" && message.toolName === "subagent")
@@ -78,7 +76,6 @@ describe("guide first", () => {
 		mockPi.reset();
 		mockPi.onCall({ output: "done", delay: 3_000 });
 		const launch = { agent: "probe", task: "Inspect", async: true };
-		// The second launch comes in the same turn, before Pi drains the first run at agent_end.
 		const session = await startParent([launch, "held", launch, launch, "launched"]);
 		await session.prompt("go");
 		assert.equal(mockPi.callCount(), 0, "a launch before the guide is in the chat does not start a child");
@@ -104,7 +101,6 @@ describe("guide first", () => {
 		assert.equal(sibling, "Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.");
 		assert.equal(workflow, `${sibling} Repeat the call with its \`\`\`js workflow block in that reply.`);
 		assert.equal(mockPi.callCount(), 0);
-		// An inline script (options.script) is a launch too: as the first call it is held with the guide.
 		const scripted = await startParent([{ async: true, options: { script: `return runs.run("one", { agent: "probe", task: "Inspect" });` } }, "held"]);
 		await scripted.prompt("go");
 		assert.match(subagentReplies(scripted)[0]!, /^subagent guide\.[^]*Not launched yet: this is the session's first subagent call/);
@@ -134,7 +130,6 @@ describe("taught state", () => {
 			const subagent = getCurrentTools(context.messages).find((tool) => tool.name === "subagent") as { parameters?: { properties?: object } } | undefined;
 			declared.push(Object.keys(subagent?.parameters?.properties ?? {}).length);
 		};
-		// After the guide, a call whose every value arrived as true is blank: the provider dropped the fields.
 		const session = await startParent([{}, "read", { agent: true, task: true }, { agent: "probe", task: "Inspect", async: false }, "launched"], fieldCount);
 		await session.prompt("go");
 		await session.prompt("go");
@@ -145,7 +140,6 @@ describe("taught state", () => {
 		assert.equal(mockPi.callCount(), 1, "the next real launch runs");
 		assert.equal(declared[0], 0, "a provider not on the known list starts with no declared fields");
 		assert.equal(declared.at(-1), 14, "after the blank call the tool declares its 14 main fields");
-		// Once the fields are declared, a later empty call gets the one-line reminder.
 		const again = await startParent([{}, "read", {}, "again"]);
 		await again.prompt("go");
 		await again.prompt("go");
@@ -163,7 +157,6 @@ describe("taught state", () => {
 
 	it("keeps args as script input when the call has a top-level workflow (schedule.create, validate)", { timeout: 60_000 }, async () => {
 		fs.writeFileSync(path.join(root, "backlog.js"), `return runs.run("main", { agent: "probe", task: args.task });`);
-		// docs/missions.md: a fixed recurring workflow from a script file.
 		const session = await startParent([{}, { action: "schedule.create", id: "backlog", workflow: "./backlog.js", args: { task: "Maintain core" }, options: { every: "6h", catchUp: "latest" } }, { action: "validate", workflow: "./backlog.js", args: { task: "review" } }, { action: "schedule.list" }, "done"]);
 		await session.prompt("go");
 		const [, created, validated, listed] = subagentReplies(session);
@@ -213,7 +206,6 @@ describe("taught state", () => {
 		entries = [{ type: "message", message: { role: "toolResult", details: guide.details } }];
 		await call({ agent: "probe", task: "one" });
 		assert.equal(runs.length, 1);
-		// Compaction summarized the guide away.
 		entries = [];
 		for (const handler of handlers.get("session_compact") ?? []) handler({}, ctx);
 		const held = await call({ agent: "probe", task: "two" });
@@ -223,7 +215,6 @@ describe("taught state", () => {
 });
 
 describe("guided tool surface", () => {
-	/** The tool on a fake host that records each declaration Pi would send. */
 	const declaredTool = () => {
 		const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => void>>();
 		const declarations: number[] = [];
@@ -278,7 +269,6 @@ describe("guided tool surface", () => {
 		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
 		await tool.execute("list", { action: "list", agent: true } as never, undefined, undefined, ctx as never);
 		assert.deepEqual(declarations, [0]);
-		// One {} after the guide may be the model asking again; only a second {} in a row counts as the provider.
 		await tool.execute("again", {} as never, undefined, undefined, ctx as never);
 		assert.deepEqual(declarations, [0]);
 		await tool.execute("again-2", {} as never, undefined, undefined, ctx as never);

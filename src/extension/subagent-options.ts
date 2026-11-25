@@ -39,10 +39,6 @@ function parseJsonText(text: string): unknown {
 	}
 }
 
-/**
- * One field's value as its schema needs it. Text that is valid for the field stays text unless a boolean or
- * JSON value it spells is valid too, so `output: "false"` becomes false and a gate command stays a command.
- */
 function convertField(key: string, value: unknown, schema: TSchema): unknown {
 	const validator = fieldValidator(schema);
 	if (typeof value === "string" && validator.Check(value)) {
@@ -72,10 +68,6 @@ function convertFields(fields: Record<string, unknown>, schemas: Record<string, 
 	return converted ?? fields;
 }
 
-/**
- * The tool's `prepareArguments` hook, which runs before Pi validates and before tool_call handlers see the call.
- * Providers send undeclared fields as text ("true", "600000", JSON text); each becomes the type its field takes.
- */
 export function prepareSubagentToolArguments(args: unknown): unknown {
 	if (!isPlainObject(args)) return args;
 	const converted = convertFields(args, MODEL_FIELDS);
@@ -84,7 +76,6 @@ export function prepareSubagentToolArguments(args: unknown): unknown {
 	return options === converted.options ? converted : { ...converted, options };
 }
 
-/** Rejects a top-level field the tool does not take, and a value of the wrong type, with how to fix it. */
 function checkTopLevelFields(params: Record<string, unknown>, disabled: DisabledFeatureSurface | undefined): void {
 	const modelFields: Record<string, TSchema> = createSubagentParamsSchema(disabled).properties;
 	const known = (key: string) => Object.hasOwn(modelFields, key) || Object.hasOwn(FLAT_FIELDS, key);
@@ -96,7 +87,6 @@ function checkTopLevelFields(params: Record<string, unknown>, disabled: Disabled
 		});
 		throw new Error(`subagent: ${hints.join(" ")} Launch fields: ${LAUNCH_FIELDS}. Every field: subagent({action:"guide", topic:"tool-reference/parameter-reference"}).`);
 	}
-	// The executor checks action itself, naming the valid actions.
 	const errors = Object.entries(params).filter(([key]) => key !== "action").flatMap(([key, value]) => {
 		const validator = fieldValidator(modelFields[key] ?? FLAT_FIELDS[key]!);
 		if (validator.Check(value)) return [];

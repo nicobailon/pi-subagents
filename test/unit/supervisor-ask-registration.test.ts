@@ -53,7 +53,6 @@ function makeCtx(sessionId: string, sessionFile: string | null = null): { cwd: s
 			getSessionId: () => sessionId,
 			getSessionFile: () => sessionFile,
 			getEntries: () => [],
-			// The guide is already in the chat, so the model's launches run.
 			buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }],
 		},
 	};
@@ -259,7 +258,6 @@ describe("supervisor ask registration", () => {
 					assert.equal(polling.intervals.size, 0, "last drain retires the poller");
 					const scans = polling.scans.length;
 					polling.tick();
-					// A child's status without an id fails when it has no runs or questions, after the question lookup ran.
 					await runtime.call("subagent", { action: "status" }).catch(() => undefined);
 					assert.equal(polling.scans.length, scans, "retired mailboxes are not scanned by idle queries");
 					assert.equal(runtime.notices.length, 0, "progress updates do not notify the parent");
@@ -744,7 +742,6 @@ describe("supervisor ask registration", () => {
 				stale = true;
 				// Exercise the production stale-context clearing path, not direct state assignment.
 				for (const handler of handlers.get("session_before_compact") ?? []) await handler({ reason: "threshold", signal: new AbortController().signal });
-				// Pi hands each tool call a live ctx; only the cached UI context went stale.
 				const live = { cwd: root, hasUI: false, isIdle() { return false; }, ui: ctx.ui, modelRegistry: ctx.modelRegistry, sessionManager: { getSessionId() { return owner; }, getSessionFile() { return sessionFile; }, getEntries() { return []; }, buildContextEntries() { return [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }]; } } };
 				const tool = tools.get("subagent");
 				return { call: (params) => tool.execute(randomUUID(), params, undefined, undefined, live), shutdown: async () => { for (const handler of handlers.get("session_shutdown") ?? []) await handler(); } };

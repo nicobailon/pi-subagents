@@ -111,7 +111,6 @@ interface MinimalCtx {
 	model?: { provider: string; id?: string };
 }
 
-/** Context entries of a chat that already holds the subagent guide, so the tool runs calls instead of holding them. */
 export function guideTaughtEntries(): unknown[] {
 	return [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }];
 }
