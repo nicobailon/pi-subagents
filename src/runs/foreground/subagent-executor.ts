@@ -1874,6 +1874,7 @@ function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"
 async function resumeExternalJobFollowUp(input: {
 	target: AsyncResumeSourceTarget;
 	followUp: string;
+	requestedTimeout: Pick<SubagentParamsLike, "timeoutMs" | "maxRuntimeMs">;
 	baseAgentConfig: AgentConfig;
 	effectiveCwd: string;
 	requestCwd: string;
@@ -1918,7 +1919,10 @@ async function resumeExternalJobFollowUp(input: {
 		return { content: [{ type: "text", text: `Nested subagent resume blocked (depth=${depthState.depth}, max=${depthState.maxDepth}). Complete the follow-up directly instead.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const topLevelResume = depthState.depth === 0 && !inheritedNestedRoute(input.deps) && !input.deps.state.workflowControllers?.has(input.target.runId);
-	const followUpTimeoutMs = input.absoluteDeadlineAt !== undefined ? undefined : resolveSingleAgentLaunchTimeout({ timeoutMs: input.baseAgentConfig.defaultTimeoutMs }, true, resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs), input.ctx.hasUI === true).timeoutMs;
+	const requested = input.requestedTimeout.timeoutMs === undefined && input.requestedTimeout.maxRuntimeMs === undefined ? { timeoutMs: input.baseAgentConfig.defaultTimeoutMs } : input.requestedTimeout;
+	const followUpTimeout = input.absoluteDeadlineAt !== undefined ? {} : resolveSingleAgentLaunchTimeout(requested, true, resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs), input.ctx.hasUI === true);
+	if (followUpTimeout.error) return { content: [{ type: "text", text: followUpTimeout.error }], isError: true, details: { mode: "management", results: [] } };
+	const followUpTimeoutMs = followUpTimeout.timeoutMs;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
 	try {
 		activeAsyncCapacity = topLevelResume ? acquireActiveAsyncCapacity({
@@ -2179,6 +2183,7 @@ async function resumeAsyncRun(input: {
 		const resumed = await resumeExternalJobFollowUp({
 			target,
 			followUp,
+			requestedTimeout: { timeoutMs: input.params.timeoutMs, maxRuntimeMs: input.params.maxRuntimeMs },
 			baseAgentConfig,
 			effectiveCwd,
 			requestCwd: input.requestCwd,
