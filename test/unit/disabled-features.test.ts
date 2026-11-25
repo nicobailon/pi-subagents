@@ -112,7 +112,8 @@ describe("disabled feature groups", () => {
 			const param = group.params[0]!;
 			const result = await executor.executePublic("disabled-option", { agent: "worker", task: "scan", [param]: "x" }, new AbortController().signal, undefined, ctx());
 			assert.equal(result.isError, true);
-			assert.equal(resultText(result), `subagent option '${param}' is disabled by config ${group.setting}.`);
+			const replacement = group.name === "workflow-scripts" ? " Instead of workflow scripts, use the top-level tasks or chain fields." : "";
+			assert.equal(resultText(result), `subagent option '${param}' is disabled by config ${group.setting}.${replacement}`);
 			assert.equal(result.details.mode, param === "workflow" ? "workflow" : "single");
 		});
 	}

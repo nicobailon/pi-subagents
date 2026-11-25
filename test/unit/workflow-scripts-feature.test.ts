@@ -17,7 +17,8 @@ const SETTING = `disabledFeatures "workflow-scripts"`;
 const DISABLED: ExtensionConfig = { disabledFeatures: ["workflow-scripts"] };
 const surface = resolveDisabledFeatureSurface(DISABLED);
 const LEGACY_ERROR = "Legacy top-level chain and parallel inputs were removed; use a workflow script (workflow: true or a workflow script path).";
-const SCRIPTS_DISABLED = `subagent workflow scripts are disabled by config ${SETTING}.`;
+const REPLACEMENT = " Instead of workflow scripts, use the top-level tasks or chain fields.";
+const SCRIPTS_DISABLED = `subagent workflow scripts are disabled by config ${SETTING}.${REPLACEMENT}`;
 
 function createExecutor(config: ExtensionConfig) {
 	return createSubagentExecutor({
@@ -78,7 +79,7 @@ describe("workflow-scripts admission", () => {
 		const executor = createExecutor(DISABLED);
 		for (const workflow of [true, "./flow.js", "review"]) {
 			const result = await executor.executePublic("workflow", { workflow } as SubagentParamsLike, new AbortController().signal, undefined, ctx());
-			assert.equal(resultText(result), `subagent option 'workflow' is disabled by config ${SETTING}.`);
+			assert.equal(resultText(result), `subagent option 'workflow' is disabled by config ${SETTING}.${REPLACEMENT}`);
 		}
 		const script = { workflowScript: "return 1;", async: true };
 		assert.equal(resultText(await executor.executePublic("public", script, new AbortController().signal, undefined, ctx())), SCRIPTS_DISABLED);

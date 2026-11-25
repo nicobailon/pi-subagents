@@ -8,8 +8,9 @@ import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, c
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { callNotes, createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
+import { actionTopicKey, callNotes, createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
+import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
@@ -82,7 +83,7 @@ describe("guide first", () => {
 		await session.prompt("go");
 		const [held, first, second] = subagentReplies(session);
 		assert.match(held!, /- probe: Probe/);
-		assert.match(held!, /^Not launched yet: this is the session's first subagent call, so here is the guide\. Call again to launch\.\n\nsubagent guide\./);
+		assert.match(held!, /^Not launched yet: this is the session's first subagent call, so here is the guide\. Call again to launch\.\nWould launch probe, task "Inspect"\.\n\nsubagent guide\./);
 		assert.match(first!, /Async: probe \[/);
 		assert.ok(first!.includes(EVENT_NOTES.launch), first);
 		assert.doesNotMatch(first!, /subagent guide\./, "the guide is not repeated");
@@ -90,6 +91,22 @@ describe("guide first", () => {
 		assert.match(second!, new RegExp(`⚠ Also running from ${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: probe [0-9a-f]{8}\\.`));
 		assert.ok(second!.includes("One writer per folder; readers, reviewers and worktree runs can share it."), second);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("names a foreground run's id with the call that resumes it", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const steps: Step[] = [{}, { agent: "probe", task: "Inspect", async: false }, "ran"];
+		const session = await startParent(steps);
+		await session.prompt("go");
+		const ran = subagentReplies(session)[1]!;
+		const id = /\nRun ([0-9a-f]{8}) is done\. To continue it: subagent\(\{action:"resume", id:"\1", message\}\)/.exec(ran)?.[1];
+		assert.ok(id, ran);
+		assert.ok(!ran.includes(EVENT_NOTES.launch), "a finished foreground run gets no detached-run advice");
+		steps.push({ action: "resume", id, message: "More", async: false }, "resumed");
+		await session.prompt("go");
+		assert.equal(mockPi.callCount(), 2, "the named id resumes the run");
+		assert.doesNotMatch(subagentReplies(session)[2]!, /not found|unknown/i);
 	});
 
 	const launchesWith = async (facts: (request: Record<string, unknown>) => CallFacts, launches: Array<Record<string, unknown>>) => {
@@ -139,8 +156,9 @@ describe("guide first", () => {
 		await session.prompt("go");
 		const [guide, sibling, workflow] = subagentReplies(session);
 		assert.match(guide!, /^subagent guide\./);
-		assert.equal(sibling, "Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.");
-		assert.equal(workflow, `${sibling} Repeat the call with its \`\`\`js workflow block in that reply.`);
+		const held = "Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.";
+		assert.equal(sibling, `${held}\nWould launch probe, task "Inspect".`);
+		assert.equal(workflow, `${held} Repeat the call with its \`\`\`js workflow block in that reply.\nWould launch a \`\`\`js workflow block.`);
 		assert.equal(mockPi.callCount(), 0);
 		const scripted = await startParent([{ async: true, options: { script: `return runs.run("one", { agent: "probe", task: "Inspect" });` } }, "held"]);
 		await scripted.prompt("go");
@@ -251,7 +269,7 @@ describe("taught state", () => {
 		for (const handler of handlers.get("session_compact") ?? []) handler({}, ctx);
 		const held = await call({ agent: "probe", task: "two" });
 		assert.equal(runs.length, 1, "the launch after compaction is held");
-		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /^Not launched yet[^\n]*\n\nGUIDE$/);
+		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /^Not launched yet[^\n]*\nWould launch probe, task "two"\.\n\nGUIDE$/);
 	});
 });
 
@@ -352,5 +370,14 @@ describe("guided tool surface", () => {
 	it("runs a script's launch async and refuses a script's wait", () => {
 		assert.deepEqual(nestedSubagentRequest({ agent: "probe", task: "t" }, undefined), { agent: "probe", task: "t", async: true });
 		assert.equal(nestedSubagentRequest({ action: "wait", id: "r-1" }, undefined), "subagent action 'wait' cannot run from a codemode script: the completion notice wakes the session; end the script.");
+	});
+
+	it("gives every accepted action guide text, and names only real actions in the guide", () => {
+		for (const action of SUBAGENT_ACTIONS) assert.ok(action === "guide" || actionTopicKey(action), `${action} has no guide text`);
+		const guide = formatGuide([{ name: "scout" }], { canLaunch: true });
+		const named = (label: string) => new RegExp(`^- ${label}: (.+)$`, "m").exec(guide)![1]!.split(", ");
+		for (const action of named("also")) assert.ok((SUBAGENT_ACTIONS as readonly string[]).includes(action), `guide names '${action}'`);
+		for (const family of named("families")) assert.ok(SUBAGENT_ACTIONS.some((action) => action.startsWith(`${family}.`) || action === family), `guide names family '${family}'`);
+		assert.match(guide, /\n\nAgents \(as of now; \{action:"list"\} refreshes\):\n- scout$/);
 	});
 });

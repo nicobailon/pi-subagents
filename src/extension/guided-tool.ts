@@ -113,7 +113,7 @@ export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch:
 	});
 	const launch = options.disabled?.features.has("workflow-scripts") ? LAUNCH_GUIDE.replace(/\nParallel:[^]*$/, NO_SCRIPTS_GUIDE) : LAUNCH_GUIDE;
 	const notice = options.disabled ? disabledFeatureSectionNotice(options.disabled) : undefined;
-	return [intro, `${launch}\n${MANAGE_GUIDE}`, ...(notice ? [notice] : []), agentLines.length ? `Agents:\n${agentLines.join("\n")}` : "Agents: none found; {action:\"list\"} shows why."].join("\n\n");
+	return [intro, `${launch}\n${MANAGE_GUIDE}`, ...(notice ? [notice] : []), agentLines.length ? `Agents (as of now; {action:"list"} refreshes):\n${agentLines.join("\n")}` : "Agents: none found; {action:\"list\"} shows why."].join("\n\n");
 }
 
 const ACTION_TOPICS: Record<string, string> = {
@@ -186,11 +186,39 @@ export function isLaunchRequest(params: Record<string, unknown>): boolean {
 	return params.action === undefined && (params.agent !== undefined || params.task !== undefined || params.workflow !== undefined || params.workflowScript !== undefined || params.tasks !== undefined || params.chain !== undefined);
 }
 
-export function holdText(params: Record<string, unknown>, sibling: boolean): string {
-	const block = params.workflow === true || params.workflow === "true" ? " Repeat the call with its ```js workflow block in that reply." : "";
-	return sibling
+function clip(text: string, max: number): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	if (flat.length <= max) return flat;
+	const cut = flat.lastIndexOf(" ", max);
+	return `${flat.slice(0, cut > 0 ? cut : max)}…`;
+}
+
+function launchPreview(request: Record<string, unknown>): string {
+	const agents = (steps: unknown[]) => steps.map((step) => {
+		const agent = (step as { agent?: unknown } | null)?.agent;
+		return typeof agent === "string" ? agent : "?";
+	});
+	const what = request.workflowScript !== undefined ? "a workflow script"
+		: request.workflow === true || request.workflow === "true" ? "a ```js workflow block"
+		: typeof request.workflow === "string" ? `workflow ${request.workflow}`
+		: Array.isArray(request.tasks) ? `${request.tasks.length} in parallel: ${agents(request.tasks).join(", ")}`
+		: Array.isArray(request.chain) ? `a chain: ${agents(request.chain).join(" → ")}`
+		: typeof request.agent === "string" ? request.agent : "a child";
+	const parts = [what];
+	if (typeof request.task === "string" && request.task.trim()) parts.push(`task "${clip(request.task, 48)}"`);
+	if (typeof request.cwd === "string") parts.push(`cwd ${request.cwd}`);
+	if (request.worktree === true || request.worktree === "true") parts.push("in a worktree");
+	if (request.context === "fork") parts.push("forked context");
+	if (typeof request.model === "string") parts.push(`model ${request.model}`);
+	return `Would launch ${parts.join(", ")}.`;
+}
+
+export function holdText(request: Record<string, unknown>, sibling: boolean): string {
+	const block = request.workflow === true || request.workflow === "true" ? " Repeat the call with its ```js workflow block in that reply." : "";
+	const held = sibling
 		? `Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.${block}`
 		: `Not launched yet: this is the session's first subagent call, so here is the guide. Call again to launch.${block}`;
+	return `${held}\n${launchPreview(request)}`;
 }
 
 export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolicy: AuthorityPolicyConfig | undefined): SubagentParamsLike | string {
@@ -309,7 +337,13 @@ export function callNotes(request: SubagentParamsLike, result: AgentToolResult<D
 	const notes: TeachingNote[] = [];
 	const params = request as Record<string, unknown>;
 	if (isLaunchRequest(params)) {
-		notes.push({ key: "event:launch", text: facts.child ? EVENT_NOTES.childLaunch : EVENT_NOTES.launch });
+		const details = result.details;
+		if (details?.mode === "single" && details.runId && details.asyncId === undefined) {
+			const id = details.runId.slice(0, 8);
+			notes.push({ text: `Run ${id} is done. To continue it: subagent({action:"resume", id:"${id}", message})` });
+		} else {
+			notes.push({ key: "event:launch", text: facts.child ? EVENT_NOTES.childLaunch : EVENT_NOTES.launch });
+		}
 		if (facts.fork) notes.push({ key: "event:fork", text: forkNote(facts.fork) });
 		if (params.worktree === true) notes.push({ key: "event:worktree", text: EVENT_NOTES.worktree });
 		if (params.workflow !== undefined || params.workflowScript !== undefined) notes.push({ key: "event:workflow", text: EVENT_NOTES.workflow });
@@ -445,9 +479,9 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			if (deps.canLaunch !== false && isLaunchRequest(request as Record<string, unknown>)) {
 				if (firstCall) {
 					taught.teach("guide");
-					return guideResult(`${holdText(params, false)}\n\n${await deps.guide(ctx)}`, ["guide"]);
+					return guideResult(`${holdText(request as Record<string, unknown>, false)}\n\n${await deps.guide(ctx)}`, ["guide"]);
 				}
-				if (taught.guideArrivedThisTurn()) return guideResult(holdText(params, true), []);
+				if (taught.guideArrivedThisTurn()) return guideResult(holdText(request as Record<string, unknown>, true), []);
 			}
 			let result: AgentToolResult<Details>;
 			const rare = request.action ? rareActionTopic(request.action) : undefined;

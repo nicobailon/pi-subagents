@@ -27,7 +27,7 @@ import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { approveWorkflowChildLaunch, type SubagentLaunchArgs } from "../../extension/subagent-launch-tool.ts";
 import { isWorkflowScriptPath, normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
 import { readReplyWorkflowScript } from "../../extension/reply-workflow-script.ts";
-import { disabledFeatureNotice, disabledFeatureSectionNotice, disabledFeatureUseError, resolveDisabledFeatureSurface, type DisabledFeatureSurface } from "../../shared/disabled-features.ts";
+import { disabledFeatureNotice, disabledFeatureSectionNotice, disabledFeatureUseError, resolveDisabledFeatureSurface, WORKFLOW_SCRIPTS_REPLACEMENT, type DisabledFeatureSurface } from "../../shared/disabled-features.ts";
 import { runSync } from "./execution.ts";
 import { commandAction } from "./command-action.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
@@ -5595,7 +5595,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const scheduledOwnerExecutors = new Map<string | null, Map<string, { state: SubagentState; executor: ReturnType<typeof createSubagentExecutor> }>>();
 	const disabledFeatures = resolveDisabledFeatureSurface(deps.config);
 	const disabledFeatureResult = (params: SubagentParamsLike): AgentToolResult<Details> | undefined => {
-		const error = disabledFeatureUseError(params, disabledFeatures);
+		const error = disabledFeatureUseError(params, disabledFeatures, "subagent", ` ${WORKFLOW_SCRIPTS_REPLACEMENT}`);
 		if (!error) return undefined;
 		return { content: [{ type: "text", text: error }], isError: true, details: { mode: params.action === undefined ? inferExecutionMode(params) : "management", results: [] } };
 	};
