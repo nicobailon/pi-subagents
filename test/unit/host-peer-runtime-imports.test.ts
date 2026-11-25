@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { build } from "esbuild";
+import { createJiti } from "jiti";
+import * as typeboxCompile from "typebox/compile";
 import { HOST_PEER_ALIASES, resolveHostPeerAliases } from "../../src/runs/background/runner-aliases.ts";
 import { resolveInstalledPiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
-import { resolveCompileFromPackageRoot, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
+import { validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 import type { JsonSchemaObject } from "../../src/shared/types.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -136,87 +138,25 @@ test("resolves pi-agent-core/node to its exact package export instead of appendi
 	}
 });
 
-function writeFakeTypeboxPackage(typeboxDir: string): void {
-	fs.mkdirSync(typeboxDir, { recursive: true });
-	fs.writeFileSync(
-		path.join(typeboxDir, "package.json"),
-		JSON.stringify({ name: "typebox", version: "0.0.0-test", exports: { "./compile": "./compile.mjs" } }),
-	);
-	fs.writeFileSync(path.join(typeboxDir, "compile.mjs"), "export function Compile() {\n\treturn { Check: () => true, Errors: () => [], fakeTypebox: true };\n}\n");
-}
-
-test("resolveCompileFromPackageRoot loads typebox/compile from a fake Pi host package root", async () => {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-host-root-"));
+test("structured output validation loads TypeBox through Pi's compiled-binary loader when the installed package has none (#3348)", async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-binary-loader-"));
 	try {
-		fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fake-pi-coding-agent", version: "0.0.0" }));
-		writeFakeTypeboxPackage(path.join(root, "node_modules", "typebox"));
-
-		const compile = await resolveCompileFromPackageRoot(root);
-		assert.equal(typeof compile, "function");
-		const compiled = compile!({});
-		assert.equal(compiled.Check({}), true);
-		assert.deepEqual([...compiled.Errors({})], []);
-		assert.equal((compiled as { fakeTypebox?: boolean }).fakeTypebox, true);
-	} finally {
-		fs.rmSync(root, { recursive: true, force: true });
-	}
-
-	const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-empty-root-"));
-	try {
-		await assert.rejects(resolveCompileFromPackageRoot(emptyRoot));
-	} finally {
-		fs.rmSync(emptyRoot, { recursive: true, force: true });
-	}
-});
-
-test("resolveCompileFromPackageRoot resolves typebox hoisted to an ancestor node_modules", async () => {
-	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-hoisted-root-"));
-	try {
-		writeFakeTypeboxPackage(path.join(tmp, "node_modules", "typebox"));
-		const packageRoot = path.join(tmp, "apps", "pi", "node_modules", "@earendil-works", "pi-coding-agent");
-		fs.mkdirSync(packageRoot, { recursive: true });
-		fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.0.0" }));
-
-		const compile = await resolveCompileFromPackageRoot(packageRoot);
-		assert.equal(typeof compile, "function");
-		const compiled = compile!({});
-		assert.equal(compiled.Check({}), true);
-		assert.equal((compiled as { fakeTypebox?: boolean }).fakeTypebox, true);
-	} finally {
-		fs.rmSync(tmp, { recursive: true, force: true });
-	}
-});
-
-test("validateStructuredOutputValue finds typebox/compile through the running Pi when the extension tree has none (#2765)", () => {
-	// Installed layout: TypeBox lives only in Pi's tree, and the extension has just its own runtime dependencies.
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-running-pi-typebox-"));
-	try {
-		const extension = path.join(root, "extension");
-		fs.cpSync(path.join(projectRoot, "src"), path.join(extension, "src"), { recursive: true });
-		fs.writeFileSync(path.join(extension, "package.json"), JSON.stringify({ name: "pi-subagents", type: "module" }));
+		const packageDir = path.join(root, "node_modules", "pi-subagents");
+		fs.mkdirSync(packageDir, { recursive: true });
+		fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ name: "pi-subagents", type: "module" }));
 		const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8")) as { dependencies: Record<string, string> };
 		for (const dependency of Object.keys(packageJson.dependencies)) {
-			const target = path.join(extension, "node_modules", dependency);
+			const target = path.join(root, "node_modules", dependency);
 			fs.mkdirSync(path.dirname(target), { recursive: true });
 			fs.symlinkSync(fs.realpathSync(path.join(projectRoot, "node_modules", dependency)), target, "junction");
 		}
-		const pi = path.join(root, "pi");
-		fs.mkdirSync(path.join(pi, "dist"), { recursive: true });
-		fs.mkdirSync(path.join(pi, "node_modules"));
-		fs.writeFileSync(path.join(pi, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", type: "module" }));
-		fs.symlinkSync(fs.realpathSync(path.join(projectRoot, "node_modules", "typebox")), path.join(pi, "node_modules", "typebox"), "junction");
-		const cli = path.join(pi, "dist", "cli.js");
-		fs.writeFileSync(cli, [
-			"const { validateStructuredOutputValue } = await import(process.argv[2]);",
-			"const schema = { type: \"object\", properties: { ok: { type: \"boolean\" } }, required: [\"ok\"] };",
-			"console.log(JSON.stringify([(await validateStructuredOutputValue(schema, { ok: true })).status, (await validateStructuredOutputValue(schema, { ok: \"no\" })).status]));",
-		].join("\n"));
-		const env = { ...process.env };
-		delete env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT;
-		const target = pathToFileURL(path.join(extension, "src", "runs", "shared", "structured-output.ts")).href;
-		const result = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", cli, target], { cwd: root, env, encoding: "utf-8" });
-		assert.equal(result.status, 0, result.stderr);
-		assert.equal(result.stdout.trim(), JSON.stringify(["valid", "invalid"]));
+		const bundled = path.join(packageDir, "structured-output.js");
+		await build({ entryPoints: [path.join(projectRoot, "src", "runs", "shared", "structured-output.ts")], outfile: bundled, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
+		const jiti = createJiti(import.meta.url, { tryNative: false, moduleCache: false, virtualModules: { "typebox/compile": typeboxCompile } });
+		const { validateStructuredOutputValue: validate } = await jiti.import<typeof import("../../src/runs/shared/structured-output.ts")>(bundled);
+		const schema = { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] };
+		assert.deepEqual(await validate(schema, { ok: true }), { status: "valid" });
+		assert.equal((await validate(schema, { ok: "no" })).status, "invalid");
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}

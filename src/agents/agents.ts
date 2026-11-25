@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAtomicJsonWriter } from "../shared/atomic-json.ts";
 import { resolveSettingsWriteTarget, withSettingsFileLease } from "../shared/settings-file-lease.ts";
-import { RUNNER_LAUNCHER_NAME_PATTERN, RUNNER_LAUNCHER_NAME_RULE, type AcceptanceInput, type AcceptanceRole, type AgentRunnerConfig, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "../shared/types.ts";
+import { assertJsonSchemaObject, RUNNER_LAUNCHER_NAME_PATTERN, RUNNER_LAUNCHER_NAME_RULE, type AcceptanceInput, type AcceptanceRole, type AgentRunnerConfig, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
 import { isClaudeCodeAdapterId } from "../runs/shared/claude-code-adapter.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
@@ -26,7 +26,6 @@ import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { parseThinkingLevel, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
 import { THINKING_LEVELS } from "../shared/model-info.ts";
-import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
 import { normalizeCapabilityCeilingAllowedAgents } from "../runs/shared/capability-ceiling.ts";
 
 export type AgentScope = "user" | "project" | "both";

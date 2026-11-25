@@ -18,6 +18,7 @@
 ### Fixed
 
 - When a builtin agent was disabled in user settings and project settings changed some other field of it, `enable` with `agentScope: "project"` failed with a message that pointed back to the project scope and project settings file, so following it never worked. The message now names the user scope and user settings file that keep the agent disabled.
+- On the single-file compiled Pi binary, every child with an `outputSchema` failed with `Cannot load typebox/compile for structured output validation`, in the foreground and in the background, because pi-subagents loaded TypeBox in a way that Pi's binary can't supply. Structured output now loads TypeBox the same way the rest of pi-subagents does, so it works on every Pi install without extra setup. Thanks to [@srobroek](https://github.com/srobroek) for the report (#3348).
 
 ## [0.90.0] - 2026-11-22
 

@@ -45,7 +45,7 @@ describe("structured output rejection evidence", () => {
 	it("categorizes unavailable validation without exposing setup details", () => {
 		const sentinel = "PRIVATE_SETUP_SENTINEL";
 		const result = formatStructuredOutputRejectionError(messages(
-			{ role: "toolResult", toolName: "structured_output", isError: true, content: [{ type: "text", text: `Cannot load typebox/compile for structured output validation (direct import failed: ${sentinel} at /private/compiler.ts)` }] },
+			{ role: "toolResult", toolName: "structured_output", isError: true, content: [{ type: "text", text: `Failed to validate structured output: ${sentinel} at /private/compiler.ts` }] },
 		));
 
 		assert.equal(result, STRUCTURED_OUTPUT_VALIDATOR_UNAVAILABLE_ERROR);

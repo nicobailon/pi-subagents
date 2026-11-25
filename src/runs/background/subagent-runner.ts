@@ -91,11 +91,11 @@ import { SUBAGENT_CHILD_ENV, SUBAGENT_RUNNER_PID_ENV } from "../shared/child-run
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { alignForkedSessionCwd } from "../../shared/fork-session-cwd.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
-import { clearStructuredOutputCaptures, createStructuredOutputFileCapture, createStructuredOutputRuntime, formatStructuredOutputRejectionError, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
+import { clearStructuredOutputCaptures, createStructuredOutputFileCapture, createStructuredOutputRuntime, formatStructuredOutputRejectionError, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport, validateStructuredOutputValue } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, remoteMutationEvidence, remoteMutationSnapshot, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
-import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
+import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, type DynamicCollectedResult } from "../shared/dynamic-fanout.ts";
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatSubagentModelVerificationError, isContextOverflow } from "../shared/model-resolution.ts";
@@ -118,7 +118,7 @@ import {
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
 import { parseSessionTokens } from "../../shared/session-tokens.ts";
-import type { TokenUsage } from "../../shared/types.ts";
+import type { JsonSchemaObject, TokenUsage } from "../../shared/types.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
@@ -297,6 +297,14 @@ interface StepResult {
 	runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
 	externalProcess?: ExternalProcessStatus;
 	externalJob?: ExternalJobStatus;
+}
+
+export async function validateDynamicCollection(schema: JsonSchemaObject | undefined, value: DynamicCollectedResult[]): Promise<void> {
+	if (!schema) return;
+	const validation = await validateStructuredOutputValue(schema, value);
+	if (validation.status === "invalid") {
+		throw new DynamicFanoutError(`Collected output validation failed: ${validation.message}`);
+	}
 }
 
 function persistStepArtifacts(input: {
@@ -1461,6 +1469,7 @@ export async function runSingleStepInner(
 			artifactsDir: ctx.artifactsDir,
 			runId: ctx.id,
 			watchdog: finalResult?.watchdog,
+			validateValue: validateStructuredOutputValue,
 		}))
 		: undefined;
 	const stoppedAfterAcceptance = finalResult?.stopped === true || ctx.stopSignal?.aborted === true;
@@ -3662,6 +3671,7 @@ export async function runSubagent(
 						signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
 						abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE,
 						reportOptional: isAgentContract(step.agentContract),
+						validateValue: validateStructuredOutputValue,
 					}))
 					: undefined;
 				const groupStopped = stopped || stopAbortController.signal.aborted;
@@ -3994,6 +4004,7 @@ export async function runSubagent(
 							signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
 							abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE,
 							reportOptional: isAgentContract(step.agentContract),
+							validateValue: validateStructuredOutputValue,
 						}))
 						: undefined;
 					const groupStopped = stopped || stopAbortController.signal.aborted;

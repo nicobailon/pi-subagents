@@ -14,6 +14,7 @@ import {
 	typedVerifyOutput,
 	validateAcceptanceInput,
 } from "../../src/runs/shared/acceptance.ts";
+import { validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
 
 function tempGitRepo(): string {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "typed-gate-"));
@@ -36,7 +37,7 @@ async function runGate(gate: unknown, cwd: string, extra: { artifactsDir?: strin
 		explicit: normalized.ok ? normalized.acceptance : undefined,
 		agentContract: { version: 1 },
 	});
-	return evaluateAcceptance({ acceptance, output: "done", cwd, reportOptional: true, ...extra });
+	return evaluateAcceptance({ acceptance, output: "done", cwd, reportOptional: true, validateValue: validateStructuredOutputValue, ...extra });
 }
 
 describe("gate object form", () => {
@@ -138,6 +139,7 @@ describe("typed gate output", () => {
 			output: "done",
 			cwd,
 			reportOptional: true,
+			validateValue: validateStructuredOutputValue,
 		});
 		const ledger = await run('{"output_exists":true,"note":"key gate-secret-value","pin":48213907,"long":12345678901234567890,"n":1.5}');
 		assert.equal(ledger.status, "verified");
