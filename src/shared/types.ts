@@ -344,6 +344,7 @@ export interface ResolvedControlConfig {
 	failedToolAttemptsBeforeAttention: number;
 	notifyOn: ControlEventType[];
 	notifyChannels: ControlNotificationChannel[];
+	checkInAfterMs?: number;
 }
 
 /**
@@ -376,7 +377,7 @@ export interface ControlEvent {
 	nestedRunId?: string;
 	nestingPath?: NestedRunAddress["path"];
 	message: string;
-	reason?: "idle" | "active_long_running" | "tool_failures" | "supervisor_request" | "time_threshold" | "turn_threshold" | "token_threshold" | "tool_open_threshold";
+	reason?: "idle" | "active_long_running" | "tool_failures" | "supervisor_request" | "time_threshold" | "turn_threshold" | "token_threshold" | "tool_open_threshold" | "check_in";
 	turns?: number;
 	tokens?: number;
 	toolCount?: number;

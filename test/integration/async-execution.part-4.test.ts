@@ -1211,6 +1211,34 @@ setTimeout(() => process.exit(90), 15000).unref();
 		for (const row of attention) assert.doesNotMatch(row.noticeText, /"action":"command\.(status|yield|cancel)"/);
 	});
 
+	it("checks in on a background run with no deadline instead of stopping it, and not on a run with a deadline", { timeout: 60_000, skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		for (const timeoutMs of [undefined, 60_000]) {
+			mockPi.onCall({ steps: [
+				{ jsonl: [{ type: "tool_execution_start", toolCallId: "bash-long", toolName: "bash", args: { command: "make" } }] },
+				{ delay: 3_500, jsonl: [{ type: "tool_execution_end", toolCallId: "bash-long", toolName: "bash" }, events.toolResult("bash", "done"), events.assistantMessage("Done")] },
+			] });
+			const id = `async-check-in-${timeoutMs ?? "none"}-${Date.now().toString(36)}`;
+			executeAsyncSingle(id, {
+				agent: "worker", task: "Long work", agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+				...(timeoutMs !== undefined ? { timeoutMs } : {}),
+				controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 999_999, failedToolAttemptsBeforeAttention: 3, notifyOn: ["active_long_running", "needs_attention"], notifyChannels: ["event", "async"], checkInAfterMs: 1_000 },
+			});
+			const result = await readAsyncPayload(id);
+			assert.equal(result.success, true);
+			const rows = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+			const checkIns = rows.filter((row) => row.type === "subagent.control" && row.event?.reason === "check_in");
+			if (timeoutMs !== undefined) {
+				assert.deepEqual(checkIns, []);
+				continue;
+			}
+			assert.ok(checkIns.length >= 2, `expected repeated check-ins, got ${checkIns.length}`);
+			for (const row of checkIns) assert.match(row.noticeText, new RegExp(`^worker ${escapeRegExp(id.slice(0, 8))} has been running \\d+ min\\. Check it: subagent\\(\\{action:"status", id:"${escapeRegExp(id.slice(0, 8))}"\\}\\); steer or stop it if it's stuck\\.$`));
+		}
+	});
+
 	it("background runs emit active-long-running control events from child turns", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [

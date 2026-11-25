@@ -41,7 +41,7 @@ export function handleSubagentControlNotice(input: {
 	visibleControlNotices: Set<string>;
 	details: SubagentControlMessageDetails;
 }): void {
-	if (!input.details?.event || input.details.event.type === "active_long_running") return;
+	if (!input.details?.event || (input.details.event.type === "active_long_running" && input.details.event.reason !== "check_in")) return;
 	if (input.details.noticeDeferred) return;
 	if (input.details.source === "foreground") {
 		// A foreground tool blocks Pi from displaying this message. The run can

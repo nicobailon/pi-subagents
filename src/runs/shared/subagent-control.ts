@@ -13,6 +13,7 @@ import { previewDisplayText } from "../../shared/display-text.ts";
 const CONTROL_EVENT_TYPES: ControlEventType[] = ["active_long_running", "needs_attention"];
 const CONTROL_NOTIFICATION_CHANNELS: ControlNotificationChannel[] = ["event", "async", "intercom"];
 const DEFAULT_NOTIFY_ON: ControlEventType[] = ["active_long_running", "needs_attention"];
+export const CHECK_IN_INTERVAL_MS = 30 * 60_000;
 
 export const DEFAULT_CONTROL_CONFIG: ResolvedControlConfig = {
 	enabled: true,
@@ -192,7 +193,7 @@ export function shouldNotifyControlEvent(config: ResolvedControlConfig, event: C
 export function controlNotificationKey(event: ControlEvent, childIntercomTarget?: string): string {
 	const childKey = childIntercomTarget ?? (event.index !== undefined ? `${event.runId}:${event.index}` : event.runId);
 	const contextHash = createHash("sha256").update(formatControlNudge(event)).digest("hex").slice(0, 8);
-	const callKey = event.reason === "tool_open_threshold" && event.toolCallId ? `:${event.toolCallId}` : "";
+	const callKey = event.reason === "tool_open_threshold" && event.toolCallId ? `:${event.toolCallId}` : event.reason === "check_in" ? `:${event.elapsedMs ?? event.ts}` : "";
 	return `${childKey}:${event.type}:${event.reason ?? "idle"}${callKey}:${contextHash}`;
 }
 
@@ -227,6 +228,10 @@ export function formatControlNudge(event: ControlEvent): string {
 }
 
 export function formatControlNoticeMessage(event: ControlEvent, childIntercomTarget?: string): string {
+	if (event.reason === "check_in") {
+		const id = event.runId.slice(0, 8);
+		return `${event.agent} ${id} has been running ${Math.round((event.elapsedMs ?? 0) / 60_000)} min. Check it: subagent({action:"status", id:"${id}"}); steer or stop it if it's stuck.`;
+	}
 	const runTarget = event.runId;
 	const nudgeMessage = formatControlNudge(event);
 	const steerCommand = `subagent({ action: "steer", id: "${runTarget}", message: ${JSON.stringify(nudgeMessage)}${event.index !== undefined ? `, options: { index: ${event.index} }` : ""} })`;

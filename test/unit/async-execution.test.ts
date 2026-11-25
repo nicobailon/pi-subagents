@@ -261,6 +261,20 @@ describe("async runner execution", () => {
 		assert.deepEqual(parallel.parallel.map((step) => step.timeoutMs), [DEFAULT_ASYNC_TIMEOUT_MS, 7_000]);
 	});
 
+	it("gives async children no default deadline in an interactive session, keeping agent-level deadlines", () => {
+		const result = buildAsyncRunnerSteps("interactive-timeout-run", {
+			chain: [{ parallel: [{ agent: "default-worker", task: "default" }, { agent: "custom-worker", task: "custom" }] }],
+			agents: [agent("default-worker"), { ...agent("custom-worker"), defaultTimeoutMs: 7_000 }],
+			ctx: { ...ctx, interactive: true },
+			asyncDir: path.join(process.cwd(), ".tmp-async-timeout-test"),
+			maxSubagentDepth: 2,
+		});
+		assert.ok("steps" in result, "expected successful step build");
+		const parallel = result.steps[0];
+		assert.ok(parallel && "parallel" in parallel && Array.isArray(parallel.parallel));
+		assert.deepEqual(parallel.parallel.map((step) => step.timeoutMs), [undefined, 7_000]);
+	});
+
 	it("uses agent tool budget before config default when no run override exists", () => {
 		const result = buildAsyncRunnerSteps("run-2", {
 			chain: [{ agent: "worker", task: "agent beats config" }],

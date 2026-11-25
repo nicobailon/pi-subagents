@@ -11,6 +11,7 @@
 - The guide's agent list now says it is a snapshot and that `{action:"list"}` shows the current agents, since agents can be created, disabled or enabled mid-session.
 - When workflow scripts are turned off by config, refusing a `workflow` option or a script now also says to use the top-level `tasks` or `chain` fields instead.
 - The guide now names the run deadline (`timeoutMs`, 30 minutes by default, so a long writer needs more) and points straight at the per-item lanes section (`workflows/parallel-sequential-lanes`) instead of the whole workflows topic, which took an extra call to reach. Guide section lists now show the same `{action:"guide", topic}` form as the guide; `options.topic` still works.
+- Background runs no longer stop at 30 minutes by default. In an interactive session, a run with no `timeoutMs` from the call, its agent or config keeps running. Every 30 minutes the parent session gets a check-in naming the run and the call that checks it, so a long, healthy writer finishes, and a stuck one still gets noticed. An explicit `timeoutMs` is still a hard deadline. Foreground runs, and background runs started from a session without a UI (`pi -p` or a child session), keep the 30-minute default.
 
 ### Added
 

@@ -1340,7 +1340,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			outputMode: behavior.outputMode,
 			sessionFile,
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
-			timeoutMs: a.defaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS,
+			timeoutMs: a.defaultTimeoutMs ?? (ctx.interactive === true ? undefined : DEFAULT_ASYNC_TIMEOUT_MS),
 			toolTimeoutMs: resolvedToolTimeout.toolTimeoutMs,
 			effectiveAcceptance: resolveEffectiveAcceptance({
 				explicit: s.acceptance,

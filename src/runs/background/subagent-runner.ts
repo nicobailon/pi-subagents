@@ -58,6 +58,7 @@ import {
 	truncateOutput,
 } from "../../shared/types.ts";
 import {
+	CHECK_IN_INTERVAL_MS,
 	DEFAULT_CONTROL_CONFIG,
 	buildControlEvent,
 	deriveActivityState,
@@ -2850,6 +2851,28 @@ export async function runSubagent(
 		return true;
 	};
 	const steeringMarkerPath = (requestId: string): string => path.join(asyncDir, "control", "steer-recovery", `${Buffer.from(requestId).toString("base64url")}.json`);
+	const checkInAfterMs = controlConfig.checkInAfterMs ?? CHECK_IN_INTERVAL_MS;
+	const checkInsSent = new Map<number, number>();
+	const maybeEmitCheckIn = (flatIndex: number, now: number): void => {
+		if (config.deadlineAt !== undefined || config.timeoutMs !== undefined || flatSteps[flatIndex]?.timeoutMs !== undefined) return;
+		const step = statusPayload.steps[flatIndex];
+		if (!step || step.status !== "running") return;
+		const elapsedMs = Math.max(0, now - (step.startedAt ?? overallStartTime));
+		const due = Math.floor(elapsedMs / checkInAfterMs);
+		if (due <= (checkInsSent.get(flatIndex) ?? 0)) return;
+		checkInsSent.set(flatIndex, due);
+		appendControlEvent(buildControlEvent({
+			type: "active_long_running",
+			to: step.activityState ?? "active_long_running",
+			runId: id,
+			agent: step.agent,
+			index: flatIndex,
+			ts: now,
+			message: `${step.agent} has been running ${Math.round(elapsedMs / 60_000)} min`,
+			reason: "check_in",
+			elapsedMs,
+		}));
+	};
 	const markSteeringAttention = (index: number): void => {
 		const step = statusPayload.steps[index];
 		if (step) step.activityState = "needs_attention";
@@ -3266,6 +3289,7 @@ export async function runSubagent(
 		for (let index = 0; index < statusPayload.steps.length; index++) {
 			const step = statusPayload.steps[index]!;
 			if (step.status !== "running") continue;
+			maybeEmitCheckIn(index, now);
 			const lastActivityAt = stepOutputActivityAt(index);
 			runLastActivityAt = Math.max(runLastActivityAt, lastActivityAt);
 			if (step.lastActivityAt !== lastActivityAt) {

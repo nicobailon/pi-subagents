@@ -411,7 +411,9 @@ Forces depth-0 internal single, parallel, and chain runs into background mode an
 { "timeoutMs": 3600000 }
 ```
 
-Global default runtime deadline, in milliseconds, for subagent runs. It replaces the built-in 30-minute backstop for foreground launches (single, parallel, chain, and workflow scripts) and plain single-agent async runs whenever no call-level `timeoutMs`/`maxRuntimeMs` applies. For single-agent launches, selected agent frontmatter `timeoutMs` still wins. This only moves the *default*. Expiring this run-level deadline is terminal.
+Global default runtime deadline, in milliseconds, for subagent runs. It replaces the built-in 30-minute deadline of foreground launches (single, parallel, chain, and workflow scripts), and it gives plain single-agent background runs a deadline, whenever no call-level `timeoutMs`/`maxRuntimeMs` applies. For single-agent launches, selected agent frontmatter `timeoutMs` still wins. Expiring this run-level deadline is terminal.
+
+With no deadline from the call, the agent or this setting, a background run in an interactive session keeps running. Every 30 minutes while it runs, the parent session gets a check-in such as `worker 1a2b3c4d has been running 30 min. Check it: subagent({action:"status", id:"1a2b3c4d"}); steer or stop it if it's stuck.` The check-in is only a reminder: it doesn't stop the run or mark it as needing attention, and blocking waits keep waiting. It comes through the run's control notices, so `control.enabled: false`, or a `control.notifyOn` without `active_long_running`, turns it off. A session without a UI (`pi -p`, or a child session launching its own subagents) has no one to answer a check-in, so its background runs keep the 30-minute deadline. Foreground runs block the parent's tool call, so they keep theirs too.
 
 A run's deadline does not count time a child spends waiting for its supervisor's reply to a `contact_supervisor` decision or interview, or to an `intercom` ask; `progress_update` does not pause it, and the overall deadline of a workflow script stays wall-clock.
 
@@ -419,7 +421,7 @@ This deadline bounds the whole run. The wait for a single model response is boun
 
 In a non-interactive session (`pi -p`), the same value is how long Pi stays open at the end of a turn waiting for background subagent work to finish. When it is unset, Pi waits 30 minutes, then fails and exits if that work is still running.
 
-Use it when foreground orchestration or plain async single-agent runs need a longer default than 30 minutes. It does not set async composite top-level deadlines, and it does not replace async fan-out child deadlines.
+Use it when foreground orchestration needs a longer default than 30 minutes, or when background runs should have a hard default deadline. It does not set async composite top-level deadlines, and it does not replace async fan-out child deadlines.
 
 Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Their runner children are bounded individually by their own agent or runner defaults, so this value does not cap them. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
 

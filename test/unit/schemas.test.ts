@@ -316,8 +316,8 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(maxRuntimeSchema, "maxRuntimeMs schema should exist");
 		assert.equal(timeoutSchema.minimum, 1);
 		assert.equal(maxRuntimeSchema.minimum, 1);
-		assert.match(String(timeoutSchema.description ?? ""), /foreground and single async runs/i);
-		assert.match(String(timeoutSchema.description ?? ""), /use config timeoutMs, else 30m/i);
+		assert.match(String(timeoutSchema.description ?? ""), /config timeoutMs, else 30m foreground/i);
+		assert.match(String(timeoutSchema.description ?? ""), /background runs get none with a UI \(30-min check-ins\) and 30m without/i);
 		assert.match(String(timeoutSchema.description ?? ""), /async composites have no default parent deadline/i);
 		assert.doesNotMatch(String(timeoutSchema.description ?? ""), /foreground-only/i);
 		assert.match(String(maxRuntimeSchema.description ?? ""), /timeoutMs/i);
