@@ -96,6 +96,12 @@ describe("subagent tool options", () => {
 		});
 	});
 
+	it("leaves multi-line workflow text to the disabled-feature check when workflow scripts are off", () => {
+		const script = "const r = 1;\nreturn r;";
+		assert.throws(() => flattenSubagentToolOptions({ workflow: script }), /workflow has line breaks, so it is script text/);
+		assert.deepEqual(flattenSubagentToolOptions({ workflow: script }, resolveDisabledFeatureSurface({ disabledFeatures: ["workflow-scripts"] })), { workflow: script });
+	});
+
 	it("rejects options.share when session sharing is disabled", () => {
 		const disabled = resolveDisabledFeatureSurface({ disabledFeatures: ["session-sharing"] });
 		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", options: { share: true } }, disabled), { message: `subagent option 'options.share' is disabled by config disabledFeatures "session-sharing".` });

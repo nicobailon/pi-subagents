@@ -626,6 +626,7 @@ describe("subagent extension RPC bridge", () => {
 			[{ workflowScriptPath: "ci/sweep.js" }, /workflowScriptPath was removed; pass the file as workflow: "\.\/path\/to\/script\.js"/],
 			[{ workflow: true }, /no reply block for workflow: true/],
 			[{ workflow: "true" }, /no reply block for workflow: true/],
+			[{ workflow: "const r = await runs.run('main', { agent: 'worker', task: 'Read /tmp/x' });\nreturn r.output;" }, /workflow has line breaks, so it is script text; pass inline script text as script/],
 			[{ script: "return 1", workflow: "./ci/sweep.js" }, /script cannot be combined with workflow/],
 		] as const) {
 			const rejected = await request(events, "spawn-rejected", "spawn", params);
