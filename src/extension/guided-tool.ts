@@ -345,7 +345,7 @@ export function withTeaching(result: AgentToolResult<Details>, notes: string[], 
 	const details = result.details ?? { mode: "management", results: [] };
 	return {
 		...result,
-		content: notes.length ? [...result.content, { type: "text", text: notes.join("\n\n") }] : result.content,
+		content: notes.length ? [...result.content, ...notes.map((text) => ({ type: "text" as const, text }))] : result.content,
 		details: { ...details, taught: [...(details.taught ?? []), ...taught] },
 	};
 }

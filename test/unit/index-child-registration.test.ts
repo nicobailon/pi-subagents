@@ -169,6 +169,57 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("shows the user each teaching note: its first line folded, all of it expanded", () => {
+		const script = String.raw`
+			import assert from "node:assert/strict";
+			import registerSubagentExtension from "./index.ts";
+			import { renderSubagentResult } from "./src/tui/render.ts";
+			const events = { on() { return () => {}; }, emit() {} };
+			let registeredTool;
+			const fakePi = new Proxy({
+				events,
+				registerTool(tool) { if (tool.name === "subagent") registeredTool = tool; },
+				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
+				sendMessage() {}, getSessionName() { return undefined; },
+			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
+			registerSubagentExtension(fakePi);
+			const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
+			const details = { mode: "management", results: [] };
+			const render = (content, expanded) => registeredTool.renderResult({ content, details }, { expanded }, theme, { isError: false, state: {} }).render(80);
+			const reply = { type: "text", text: "Async: worker [r-1f3]" };
+			const launch = { type: "text", text: "Next: {action:\"status\", id} checks it." };
+			const workflow = { type: "text", text: "Workflow scripts: a statement body with top-level await.\nEvery runs.run item needs a stable key." };
+
+			const plain = render([reply], false);
+			assert.deepEqual(plain, renderSubagentResult({ content: [reply], details }, { expanded: false }, theme).render(80));
+
+			const folded = render([reply, launch, workflow], false);
+			assert.equal(folded[0], "Async: worker [r-1f3]");
+			assert.equal(folded[1], "↳ Next: {action:\"status\", id} checks it.");
+			assert.equal(folded[2], "↳ Workflow scripts: a statement body with top-level await.");
+			assert.match(folded[3], /^Press .* to expand$/);
+			assert.equal(folded.length, 4);
+
+			const expanded = render([reply, launch, workflow], true).join("\n");
+			assert.match(expanded, /Every runs\.run item needs a stable key\./);
+			assert.doesNotMatch(expanded, /↳/);
+			process.stdout.write(JSON.stringify({ folded, expanded: render([reply, launch, workflow], true) }));
+		`;
+
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-strip-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+		);
+	});
+
 	it("rejects blank action at the public executor boundary", () => {
 		const script = String.raw`
 			import assert from "node:assert/strict";
