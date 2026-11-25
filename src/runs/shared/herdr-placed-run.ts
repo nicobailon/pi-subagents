@@ -106,7 +106,7 @@ export class HerdrPiSession<C extends PlacementSockets = PlacementSockets> imple
 	async #operation(operation: string, text?: string, supervisorId?: string, supervisorError?: string): Promise<void> { const requestId = `${++this.#sequence}_${randomBytes(5).toString("hex")}`; let completion: Promise<void> = Promise.resolve(); if (operation === "prompt") completion = new Promise<void>((resolve, reject) => this.#operations.set(requestId, { resolve, reject, accepted: false, settled: false })); try { await Promise.race([this.bridge.prepare(requestId, operation, text, supervisorId, supervisorError), this.bridge.failure]); await this.host.prompt(this.connection, this.identity, `/pi-subagents-bridge ${requestId}`, operation === "abort" ? {} : { stopped: () => this.#aborted || this.#disposed }); await completion; } catch (error) { if (operation === "prompt" && this.bridge.failed) { await this.reconnect(); await completion; return; } const pending = this.#operations.get(requestId); if (pending) pending.settled = true; throw error; } finally { if (operation === "prompt") this.#operations.delete(requestId); } }
 	subscribe(listener: (event: ChildSessionEvent) => void) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
 	prompt(text: string) { return this.#operation("prompt", text); } steer(text: string) { return this.#operation("steer", text); } followUp(text: string) { return this.#operation("follow-up", text); } async abort() { this.#aborted = true; await this.#operation("abort"); }
-	async dispose() { if (this.#disposed) return; this.#disposed = true; if (this.#replyTimer) clearInterval(this.#replyTimer); this.bridge.close(); await this.bridgeForward.close(); await this.owner.cleanup(this.#aborted); }
+	async dispose() { if (this.#disposed) return; this.#disposed = true; if (this.#replyTimer) clearInterval(this.#replyTimer); this.bridge.close(); await this.bridgeForward.close(); await this.owner.cleanup(this.#aborted || this.owner.closeWhenSettled); }
 	get messages() { return this.#messages; } get sessionFile() { return undefined; } get sessionId() { return this.identity.nativeSessionId; } get modelId() { return this.model; }
 	get machineEvidence() { return { provider: this.owner.machine.provider, machineId: this.identity.machineId, ...(this.#initialGit ? { initial: this.#initialGit } : {}), ...(this.#finalGit ? { final: this.#finalGit } : {}) }; }
 	get placementSnapshot() { return this.owner.snapshot; }
@@ -135,9 +135,13 @@ export async function reconnectHerdrPiSession<C extends PlacementSockets>(sessio
 }
 
 export async function createHerdrPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
-	if (!launch.machine) throw new Error("Pane-native Pi launch requires a machine.");
-	if (launch.machine.provider !== "herdr") throw new Error("Herdr pane-native Pi launch requires a Herdr machine.");
+	if (!launch.machine) throw new Error("Placed Pi launch requires a machine.");
 	const policy = serializeHerdrPiLaunch(launch); const runId = safeRunId(launch.runtime.runId);
+	if (launch.machine.provider === "herdr-core") {
+		const { HerdrCorePlacedRunOwner } = await import("./herdr-core-host.ts");
+		return startPlacedPiSession(launch, await HerdrCorePlacedRunOwner.create(launch.machine, runId), policy);
+	}
+	if (launch.machine.provider !== "herdr") throw new Error("Herdr pane-native Pi launch requires a Herdr machine.");
 	return startPlacedPiSession(launch, await HerdrPlacedRunOwner.create(launch.machine, runId), policy);
 }
 
@@ -164,7 +168,8 @@ async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSes
 		const missingRequired = (launch.runtime.requiredTools ?? []).filter((tool) => !(configured.tools as unknown[]).includes(tool));
 		if (missingRequired.length) throw new Error(`Remote Pi agent '${policy.resources.agent}' did not activate required tools: ${missingRequired.join(", ")}.`);
 		if (launch.model && configured.model !== launch.model.split(":")[0]) throw new Error(`Remote Pi model '${launch.model}' did not resolve to the requested provider/model.`);
-		const identity: HerdrRunIdentity = { runId, machineId: machine.id, target: editsLocalDisk(machine) ? machine.id : machine.target, session: owner.host.sessionOf(connection), workspaceId: owned.workspaceId, tabId: owned.tabId, paneId: owned.paneId, terminalId, agentName, nativeSessionId: manifest.nativeSessionId, cwd: machine.cwd, runtimeDir };
+		const target = machine.provider === "herdr-core" ? machine.parentTerminal : editsLocalDisk(machine) ? machine.id : machine.target;
+		const identity: HerdrRunIdentity = { runId, machineId: machine.id, target, session: owner.host.sessionOf(connection), workspaceId: owned.workspaceId, tabId: owned.tabId, paneId: owned.paneId, terminalId, agentName, nativeSessionId: manifest.nativeSessionId, cwd: machine.cwd, runtimeDir };
 		owner.journal(identity);
 		const session = new HerdrPiSession(owner, bridgeForward, bridge, (configured.tools as string[] | undefined), typeof ready.model === "string" ? ready.model : undefined, launch.runtime, ready.initialGit as HerdrRemoteGitStatus | undefined); reconnectSession = session; session.armReconnect(() => reconnectHerdrPiSession(session, launch)); return session;
 	} catch (error) { await owner.cleanup(); throw error; }
