@@ -110,7 +110,7 @@ export function flattenSubagentToolOptions(params: Record<string, unknown>, disa
 	if (removedTopLevel) throw new Error(removedTopLevel);
 	const { options, ...topLevel } = params;
 	checkTopLevelFields(topLevel, disabled);
-	if (typeof topLevel.workflow === "string" && isWorkflowScriptText(topLevel.workflow)) throw new Error("subagent: workflow has line breaks, so it is script text; pass it as options.script (or a ```js workflow block with workflow: true).");
+	if (!disabled?.params.has("workflow") && typeof topLevel.workflow === "string" && isWorkflowScriptText(topLevel.workflow)) throw new Error("subagent: workflow has line breaks, so it is script text; pass it as options.script (or a ```js workflow block with workflow: true).");
 	if (options === undefined) return topLevel;
 	if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error("subagent: options must be an object.");
 	const removedField = removedModelWorkflowFieldError(options);

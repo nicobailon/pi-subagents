@@ -18,7 +18,7 @@
 ### Fixed
 
 - When a builtin agent was disabled in user settings and project settings changed some other field of it, `enable` with `agentScope: "project"` failed with a message that pointed back to the project scope and project settings file, so following it never worked. The message now names the user scope and user settings file that keep the agent disabled.
-- When a model put workflow script text in the `workflow` string, any `/` in it made it count as a file path, so the call failed with a file error such as `ENAMETOOLONG` and models retried the same call. A `workflow` string with line breaks is now refused as script text before any file is read, and that error and the file-read error both say to pass script source as `options.script` (or in a `js workflow` block with `workflow: true`); RPC spawn names its `script` field instead. On a session's first `subagent` call the error comes with the guide instead of a held launch. Thanks to [@wayfarerboy](https://github.com/wayfarerboy) for the report (#3355).
+- When a model put workflow script text in the `workflow` string, any `/` in it made it count as a file path, so the call failed with a file error such as `ENAMETOOLONG` and models retried the same call. A `workflow` string with line breaks is now refused as script text before any file is read, and that error and the file-read error both say to pass script source as `options.script` (or in a `js workflow` block with `workflow: true`); RPC spawn refuses such a string and names its `script` field. On a session's first `subagent` call the error comes with the guide instead of a held launch. Thanks to [@wayfarerboy](https://github.com/wayfarerboy) for the report (#3355).
 
 ## [0.90.0] - 2026-11-22
 
