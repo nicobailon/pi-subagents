@@ -103,11 +103,17 @@ interface MinimalCtx {
 	sessionManager: {
 		getSessionId: () => string;
 		getSessionFile: () => string | null;
+		buildContextEntries: () => unknown[];
 	};
 	modelRegistry: {
 		getAvailable: () => Array<{ provider: string; id: string }>;
 	};
 	model?: { provider: string; id?: string };
+}
+
+/** Context entries of a chat that already holds the subagent guide, so the tool runs calls instead of holding them. */
+export function guideTaughtEntries(): unknown[] {
+	return [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }];
 }
 
 export function makeMinimalCtx(cwd: string): MinimalCtx {
@@ -118,6 +124,7 @@ export function makeMinimalCtx(cwd: string): MinimalCtx {
 		sessionManager: {
 			getSessionId: () => "session-123",
 			getSessionFile: () => null,
+			buildContextEntries: guideTaughtEntries,
 		},
 		modelRegistry: {
 			getAvailable: () => [],

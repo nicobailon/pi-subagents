@@ -21,10 +21,11 @@ import { requestWatchdogPermission, type WatchdogPermissionRequest, type Watchdo
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
 import { captureWatchdogDiffBaseline, createWatchdogDiffTool, WATCHDOG_DIFF_TOOL_NAME } from "../../watchdog/diff-tool.ts";
 import { inheritedNestedRouteOf } from "./nested-events.ts";
-import { registerWaitTool } from "../background/wait-tool.ts";
+import { createWaitExecute } from "../background/wait-tool.ts";
 import { drainOutstandingWork } from "../background/auto-drain.ts";
 import { MODEL_ONLY_TOOL } from "../../shared/extension-context.ts";
-import { DEFAULT_WAIT_TOOL_NAME, setWaitToolName } from "../../shared/wait-tool-name.ts";
+import { createGuidedSubagentTool, formatGuide } from "../../extension/guided-tool.ts";
+import { flattenSubagentToolOptions } from "../../extension/subagent-options.ts";
 import {
 	childSupervisorMetadata,
 	evaluateChildToolDiagnostic,
@@ -710,9 +711,19 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		resultFileCoalescer: { schedule: () => false, clear: () => {} },
 	} as unknown as SubagentState;
 	const nestedRootRunId = inheritedNestedRouteOf(config)?.rootRunId;
-	// fanout-child assigns config.hasPendingSupervisorRequest after this hook registers, so read it per wait.
-	setWaitToolName(config.waitTool.name ?? DEFAULT_WAIT_TOOL_NAME);
-	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, config.waitTool.enabled, undefined, config.waitTool.defaultTimeoutMs, { nestedRootRunId }, () => config.hasPendingSupervisorRequest?.() === true);
+	// A fanout child declares the launching subagent tool itself; every other child gets the same declaration, which only waits.
+	if (!config.fanoutChild && typeof pi.registerTool === "function") {
+		const wait = createWaitExecute(pi, waitState, undefined, { nestedRootRunId });
+		pi.registerTool(createGuidedSubagentTool(pi, {
+			guide: async () => formatGuide([], { canLaunch: false }),
+			flatten: (params) => flattenSubagentToolOptions(params),
+			run: async (id, request, _nested, signal, onUpdate, ctx) => {
+				if (request.action === "wait") return wait(id, { id: request.id, all: request.all, nonBlocking: request.nonBlocking, timeoutMs: request.timeoutMs, stopOnAttention: request.stopOnAttention }, signal, onUpdate, ctx);
+				if (request.action === "status") return { content: [{ type: "text", text: "This child launched no runs; it cannot launch any." }], details: { mode: "management", results: [] } };
+				return { content: [{ type: "text", text: `This child cannot launch or manage runs; it can only wait for its own background work with subagent({action:"wait"}).` }], isError: true, details: { mode: "management", results: [] } };
+			},
+		}).tool);
+	}
 	const supervisorMetadata = childSupervisorMetadata(config);
 	let nativeSupervisorClientRegistered = false;
 	const registerNativeSupervisorClientOnce = (): void => {

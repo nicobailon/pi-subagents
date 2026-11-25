@@ -5,7 +5,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/subagent-wait.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -13,7 +12,6 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
-	delete env[WAIT_TOOL_ENABLED_ENV];
 	if (agentDir) env.PI_CODING_AGENT_DIR = agentDir;
 	return env;
 }
@@ -40,7 +38,7 @@ describe("subagent extension child mode", () => {
 			});
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
-			if (registeredTool.exposure !== "model-only") throw new Error("codemode scripts must not call subagent, got exposure " + registeredTool.exposure);
+			if (registeredTool.exposure !== "direct") throw new Error("codemode scripts call subagent through Pi's direct exposure, got " + registeredTool.exposure);
 			const calls = [];
 			const ctx = {
 				cwd: process.cwd(),
@@ -51,7 +49,7 @@ describe("subagent extension child mode", () => {
 					requestRender() {},
 					theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } },
 				},
-				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; } },
+				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; }, buildContextEntries() { return []; } },
 				modelRegistry: { getAvailable() { return []; } },
 			};
 			await registeredTool.execute("collapse-check", { action: "list" }, new AbortController().signal, undefined, ctx);
@@ -113,7 +111,7 @@ describe("subagent extension child mode", () => {
 			const ctx = {
 				cwd: process.cwd(), isIdle() { return false; }, hasUI: true,
 				ui: { setToolsExpanded(value) { expanded.push(value); } },
-				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; }, getBranch() { return []; } },
+				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; }, getBranch() { return []; }, buildContextEntries() { return []; } },
 				modelRegistry: { getAvailable() { return []; } },
 			};
 			for (const tool of [tools.parent, tools.fanout]) {
@@ -183,7 +181,7 @@ describe("subagent extension child mode", () => {
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
 			await assert.rejects(
-				registeredTool.execute("blank-action", { action: "", agent: "reviewer" }, new AbortController().signal, undefined, { cwd: process.cwd(), hasUI: false }),
+				registeredTool.execute("blank-action", { action: "", agent: "reviewer" }, new AbortController().signal, undefined, { cwd: process.cwd(), hasUI: false, sessionManager: { buildContextEntries() { return []; } } }),
 				/action must be a non-empty/,
 			);
 		`;
@@ -464,98 +462,6 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("registers bg_wait and honors waitTool disabled config", () => {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-config-"));
-		try {
-			const configDir = path.join(agentDir, "extensions", "subagent");
-			fs.mkdirSync(configDir, { recursive: true });
-			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ waitTool: { enabled: false } }), "utf-8");
-
-			const script = String.raw`
-				import registerSubagentExtension from "./index.ts";
-				const events = { on() { return () => {}; }, emit() {} };
-				let bgWaitTool;
-				let legacyWaitRegistered = false;
-				const fakePi = new Proxy({
-					events,
-					registerTool(tool) {
-						if (tool.name === "bg_wait") bgWaitTool = tool;
-						if (tool.name === "wait") legacyWaitRegistered = true;
-					},
-					registerCommand() {},
-					registerShortcut() {},
-					registerMessageRenderer() {},
-					sendMessage() {},
-					getSessionName() { return undefined; },
-				}, {
-					get(target, prop) {
-						if (prop in target) return target[prop];
-						return () => undefined;
-					},
-				});
-				registerSubagentExtension(fakePi);
-				if (!bgWaitTool) throw new Error("bg_wait tool not registered");
-				if (legacyWaitRegistered) throw new Error("legacy wait tool must not be registered");
-				const result = await bgWaitTool.execute("bg-wait-disabled", {}, new AbortController().signal, undefined, {});
-				process.stdout.write(JSON.stringify(result.content[0].text));
-			`;
-
-			const env = parentToolEnv();
-			env.PI_CODING_AGENT_DIR = agentDir;
-			const output = execFileSync(
-				process.execPath,
-				[
-					"--experimental-strip-types",
-					"--import",
-					"./test/support/register-loader.mjs",
-					"--input-type=module",
-					"--eval",
-					script,
-				],
-				{ cwd: projectRoot, env, encoding: "utf-8" },
-			);
-			assert.match(JSON.parse(output) as string, /disabled/i);
-		} finally {
-			fs.rmSync(agentDir, { recursive: true, force: true });
-		}
-	});
-
-	it("registers the wait tool under waitTool.name and names it in the subagent description", () => {
-		const script = String.raw`
-			import registerSubagentExtension from "./index.ts";
-			const tools = new Map();
-			const fakePi = new Proxy({
-				events: { on() { return () => {}; }, emit() {} },
-				registerTool(tool) { tools.set(tool.name, tool); },
-				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() { return undefined; },
-			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
-			registerSubagentExtension(fakePi);
-			const wait = tools.get("subagent_wait") ?? tools.get("bg_wait");
-			process.stdout.write(JSON.stringify({ names: [...tools.keys()], subagent: tools.get("subagent").description, wait: wait.description }));
-		`;
-		const register = (config: object) => {
-			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-name-"));
-			try {
-				const configDir = path.join(agentDir, "extensions", "subagent");
-				fs.mkdirSync(configDir, { recursive: true });
-				fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
-				const output = execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" });
-				return JSON.parse(output) as { names: string[]; subagent: string; wait: string };
-			} finally {
-				fs.rmSync(agentDir, { recursive: true, force: true });
-			}
-		};
-		const defaults = register({});
-		const renamed = register({ waitTool: { name: "subagent_wait" } });
-		assert.ok(defaults.names.includes("bg_wait"));
-		assert.ok(renamed.names.includes("subagent_wait"));
-		assert.equal(renamed.names.includes("bg_wait"), false, "a renamed wait tool leaves bg_wait free for another extension");
-		assert.match(defaults.subagent, /bg_wait/);
-		assert.equal(renamed.subagent, defaults.subagent.replaceAll("bg_wait", "subagent_wait"));
-		assert.equal(renamed.wait, defaults.wait.replaceAll("bg_wait", "subagent_wait"));
-		assert.doesNotMatch(renamed.wait, /bg_wait/);
-	});
-
 	it("registers no slash commands or shortcut when enableSlashCommands is false, and keeps the subagent tool", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
@@ -592,7 +498,7 @@ describe("subagent extension child mode", () => {
 		assert.ok(disabled.tools.includes("subagent"));
 	});
 
-	it("yields registered root bg_wait for an owned nested supervisor request", () => {
+	it("yields the wait action for an owned nested supervisor request", () => {
 		const script = String.raw`
 			import assert from "node:assert/strict";
 			import * as fs from "node:fs";
@@ -611,11 +517,11 @@ describe("subagent extension child mode", () => {
 				},
 				emit(channel, payload) { for (const handler of eventHandlers.get(channel) ?? []) handler(payload); },
 			};
-			let bgWaitTool;
+			let subagentTool;
 			const fakePi = new Proxy({
 				events,
 				on(channel, handler) { handlers.set(channel, [...(handlers.get(channel) ?? []), handler]); },
-				registerTool(tool) { if (tool.name === "bg_wait") bgWaitTool = tool; },
+				registerTool(tool) { if (tool.name === "subagent") subagentTool = tool; },
 				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
 
@@ -632,6 +538,7 @@ describe("subagent extension child mode", () => {
 					getSessionId() { return ownerSessionId; },
 					getSessionFile() { return runtimeSessionId; },
 					getEntries() { return []; },
+					buildContextEntries() { return []; },
 				},
 				modelRegistry: { getAvailable() { return []; } },
 			};
@@ -646,10 +553,10 @@ describe("subagent extension child mode", () => {
 				updateActiveRunIndex(asyncDir, "running");
 				registerSubagentExtension(fakePi);
 				for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
-				if (!bgWaitTool) throw new Error("bg_wait tool not registered");
+				if (!subagentTool) throw new Error("subagent tool not registered");
 
 				const startedAt = Date.now();
-				const waiting = bgWaitTool.execute("nested-supervisor", { id: runId, timeoutMs: 1500 }, new AbortController().signal, undefined, ctx);
+				const waiting = subagentTool.execute("nested-supervisor", { action: "wait", id: runId, timeoutMs: 1500 }, new AbortController().signal, undefined, ctx);
 				await new Promise((resolve) => setTimeout(resolve, 25));
 				ensureSupervisorChannelDir(channelDir);
 				fs.writeFileSync(requestFile, JSON.stringify({
@@ -665,7 +572,7 @@ describe("subagent extension child mode", () => {
 					reason: "supervisor_request", timedOut: false, activeRunIds: [runId], activeProviderItems: [],
 				});
 				assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "running");
-				assert.ok(Date.now() - startedAt < 1200, "bg_wait did not yield promptly");
+				assert.ok(Date.now() - startedAt < 1200, "the wait did not yield promptly");
 			} finally {
 				for (const handler of handlers.get("session_shutdown") ?? []) await handler();
 				fs.rmSync(asyncDir, { recursive: true, force: true });
@@ -1362,7 +1269,7 @@ describe("subagent extension child mode", () => {
 			const foreignSession = path.join(sessions, "foreign.jsonl");
 			fs.writeFileSync(oldSession, "");
 			fs.writeFileSync(newSession, "");
-			const ctxFor = (file) => ({ cwd: process.cwd(), isIdle() { return false; }, hasUI: false, ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager: { getSessionId() { return path.basename(file); }, getSessionFile() { return file; }, getEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } });
+			const ctxFor = (file) => ({ cwd: process.cwd(), isIdle() { return false; }, hasUI: false, ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager: { getSessionId() { return path.basename(file); }, getSessionFile() { return file; }, getEntries() { return []; }, buildContextEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } });
 			const owner = currentCompletionOwnerId();
 			const stamp = Date.now();
 			const writeResult = (name, sessionId) => {
@@ -1451,7 +1358,7 @@ describe("subagent extension child mode", () => {
 			fs.mkdirSync(sessions, { recursive: true });
 			const sessionFile = (name) => { const file = path.join(sessions, name + ".jsonl"); fs.writeFileSync(file, ""); return file; };
 			const [a, b, foreign, fresh, childSession, x, y, z] = ["a", "b", "foreign", "fresh", "child", "x", "y", "z"].map(sessionFile);
-			const ctxFor = (file) => ({ cwd: process.cwd(), isIdle() { return false; }, hasUI: false, ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager: { getSessionId() { return path.basename(file); }, getSessionFile() { return file; }, getEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } });
+			const ctxFor = (file) => ({ cwd: process.cwd(), isIdle() { return false; }, hasUI: false, ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } }, sessionManager: { getSessionId() { return path.basename(file); }, getSessionFile() { return file; }, getEntries() { return []; }, buildContextEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } });
 			const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
 			const keeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
 			// pi-web's liveness registry: a session counts as busy while its provider says so.
@@ -1491,7 +1398,7 @@ describe("subagent extension child mode", () => {
 				const ctxB = ctxFor(b);
 				await emit(second, "session_start", { reason: "new", previousSessionFile: a }, ctxB);
 				const subagent = (params) => call(second.tools.get("subagent"), params, ctxB);
-				if (/No active run matched/.test(await call(second.tools.get("bg_wait"), { id: live, timeoutMs: 200 }, ctxB))) fail("bg_wait did not find the replaced session's run");
+				if (/No active run matched/.test(await call(second.tools.get("subagent"), { action: "wait", id: live, timeoutMs: 200 }, ctxB))) fail("the wait did not find the replaced session's run");
 				expect(await subagent({ action: "steer", id: live, message: "check", index: 5 }), /Index 5 is out of range/, "steer");
 				const inherited = await subagent({ action: "status", id: done });
 				expect(inherited, /Owner: inherited from session '.*a\.jsonl' \(replaced in this process\)\./, "owner line");
@@ -1873,12 +1780,12 @@ describe("subagent extension child mode", () => {
 				registerTool(tool) { registeredTool = tool; },
 				getSessionName() { return undefined; },
 			};
-			registerFanoutChildSubagentExtension(fakePi, { fanoutChild: true, depth: 1, waitTool: { enabled: true }, fast: false });
+			registerFanoutChildSubagentExtension(fakePi, { fanoutChild: true, depth: 1, fast: false });
 			if (!registeredTool) throw new Error("tool not registered");
 			const ctx = {
 				cwd: process.cwd(),
 				isIdle() { return false; }, hasUI: false,
-				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; } },
+				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; }, buildContextEntries() { return []; } },
 				modelRegistry: { getAvailable() { return []; } },
 			};
 			const list = await registeredTool.execute("list-check", { action: "list" }, new AbortController().signal, undefined, ctx);

@@ -114,7 +114,7 @@ describe("subagent messages in the main chat", () => {
 		}
 	});
 
-	it("shows reminders, bg_wait wakes, and workflow notices as one [subagent] line", () => {
+	it("shows reminders, wait wakes, and workflow notices as one [subagent] line", () => {
 		const rows: Array<[string, unknown, string, string, string]> = [
 			["subagent-supervisor-unanswered", { requestIds: ["request-1"] }, "", "1 supervisor request unanswered", "<customMessageText>1 supervisor request </customMessageText><warning>unanswered</warning>"],
 			["subagent-supervisor-unanswered", { requestIds: ["request-1", "request-2"] }, "", "2 supervisor requests unanswered", "<customMessageText>2 supervisor requests </customMessageText><warning>unanswered</warning>"],
@@ -122,11 +122,11 @@ describe("subagent messages in the main chat", () => {
 			["subagent-supervisor-blocked", { blocked: true, requestIds: ["request-1"] }, "", "1 supervisor request blocked", "<customMessageText>1 supervisor request </customMessageText><error>blocked</error>"],
 			["subagent-completion-unanswered", undefined, "", "completion results unanswered", "<customMessageText>completion results </customMessageText><warning>unanswered</warning>"],
 			["subagent-completion-unhandled", undefined, "", "completion results unhandled", "<customMessageText>completion results </customMessageText><error>unhandled</error>"],
-			["subagent-wait-subscription", { token: "wait-1", runId: "run-1", outcome: "completed" }, "", "bg_wait: run run-1 completed", "<customMessageText>bg_wait: run run-1 </customMessageText><success>completed</success>"],
-			["subagent-wait-subscription", { token: "wait-1", runId: "run-1", outcome: "timed out" }, "", "bg_wait: run run-1 timed out", "<customMessageText>bg_wait: run run-1 </customMessageText><warning>timed out</warning>"],
-			["subagent-wait-subscription", { token: "wait-1", runId: "run-1", outcome: "reconciliation failed" }, "", "bg_wait: run run-1 reconciliation failed", "<customMessageText>bg_wait: run run-1 </customMessageText><error>reconciliation failed</error>"],
-			["subagent-wait-subscription", { token: "wait-1", runId: "run-1", outcome: "detached" }, "", "bg_wait: run run-1 detached", "<customMessageText>bg_wait: run run-1 detached</customMessageText>"],
-			["subagent-wait-subscription", undefined, "", "bg_wait fired", "<customMessageText>bg_wait fired</customMessageText>"],
+			["subagent-wait-subscription", { token: "wait-1", runId: "run-1", outcome: "completed" }, "", "wait: run run-1 completed", "<customMessageText>wait: run run-1 </customMessageText><success>completed</success>"],
+			["subagent-wait-subscription", { token: "wait-1", runId: "run-1", outcome: "timed out" }, "", "wait: run run-1 timed out", "<customMessageText>wait: run run-1 </customMessageText><warning>timed out</warning>"],
+			["subagent-wait-subscription", { token: "wait-1", runId: "run-1", outcome: "reconciliation failed" }, "", "wait: run run-1 reconciliation failed", "<customMessageText>wait: run run-1 </customMessageText><error>reconciliation failed</error>"],
+			["subagent-wait-subscription", { token: "wait-1", runId: "run-1", outcome: "detached" }, "", "wait: run run-1 detached", "<customMessageText>wait: run run-1 detached</customMessageText>"],
+			["subagent-wait-subscription", undefined, "", "wait fired", "<customMessageText>wait fired</customMessageText>"],
 			["subagent-incremental-child-notify", { childKey: "review", outcome: "failed" }, "", "workflow child review failed", "<customMessageText>workflow child review </customMessageText><error>failed</error>"],
 			["subagent-incremental-child-notify", undefined, "Workflow child paused (needs attention): **review**\nWorkflow run: wf-1", "workflow child review paused", "<customMessageText>workflow child review </customMessageText><warning>paused</warning>"],
 			["subagent-incremental-child-notify", undefined, "Something else", "workflow child update", "<customMessageText>workflow child update</customMessageText>"],

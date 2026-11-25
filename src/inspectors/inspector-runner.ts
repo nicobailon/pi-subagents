@@ -43,7 +43,7 @@ export function formatInspectorDashboard(input: { status: AsyncStatus; asyncDir:
 	lines.push(formatAsyncRunTranscript(status, asyncDir, { index: input.index, lines: 60, sessionRoots: input.sessionRoots }));
 	const acceptsPlainGuidance = input.index !== undefined || status.mode === "single";
 	const controls = [input.allowSteer === false || !acceptsPlainGuidance ? undefined : "type guidance", input.allowSteer === false ? undefined : "steer <message>", input.allowStop === false ? undefined : "stop", "status"].filter(Boolean);
-	lines.push("", `Controls: ${controls.join(" | ")}`, "Supervisor replies remain in the parent Pi session (subagent_supervisor/intercom); this inspector is read-only.");
+	lines.push("", `Controls: ${controls.join(" | ")}`, "Supervisor replies remain in the parent Pi session (subagent action \"reply\" or intercom); this inspector is read-only.");
 	return lines.join("\n");
 }
 
@@ -112,7 +112,7 @@ export function submitInspectorControl(options: RunnerOptions, line: string): st
 		if (!message) throw new Error("steer requires a message.");
 		return queueInspectorSteer(options, status, message);
 	}
-	if (command.startsWith("reply ")) throw new Error("Supervisor replies are owned by the parent Pi session; use subagent_supervisor/intercom there.");
+	if (command.startsWith("reply ")) throw new Error("Supervisor replies are owned by the parent Pi session; use subagent action \"reply\" or intercom there.");
 	if (options.index === undefined && status.mode !== "single") throw new Error("Plain guidance requires a child-specific inspector. Use steer <message> to target all running children from the aggregate inspector.");
 	return queueInspectorSteer(options, status, command);
 }

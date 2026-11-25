@@ -23,6 +23,7 @@ import {
 	makeAgent,
 	makeMinimalCtx,
 	events,
+	guideTaughtEntries,
 	resolveMockPiCallArgs,
 } from "../support/helpers.ts";
 import registerSubagentExtension from "../../src/extension/index.ts";
@@ -854,6 +855,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 					getSessionId: () => "replaced-runtime-session",
 					getSessionFile: () => path.join(tempDir, "replaced-runtime-session.jsonl"),
 					getEntries: () => [],
+					buildContextEntries: guideTaughtEntries,
 				},
 			};
 			const startRuntime = async (reason: string) => {
@@ -4713,16 +4715,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			if (prevMaxDepth === undefined) delete process.env.PI_SUBAGENT_MAX_DEPTH;
 			else process.env.PI_SUBAGENT_MAX_DEPTH = prevMaxDepth;
 		}
-	});
-
-	it("passes the effective wait-tool setting through to child execution", async () => {
-		mockPi.onCall({ output: "ok" });
-		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
-			runId: "wait-tool-env",
-			waitToolEnabled: false,
-		});
-		assert.equal(result.exitCode, 0);
-		assert.deepEqual(readCall().runtime?.waitTool, { enabled: false });
 	});
 
 	it("passes prompt inheritance flags through to child execution", async () => {

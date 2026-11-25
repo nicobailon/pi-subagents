@@ -6,7 +6,7 @@ import { disabledFeatureUseError, resolveDisabledFeatureSurface } from "../../sr
 import { normalizePublicSubagentExecution } from "../../src/extension/public-execution.ts";
 import { createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
-import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "../../src/extension/tool-description.ts";
+import { formatGuide } from "../../src/extension/guided-tool.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../../src/runs/foreground/subagent-executor.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
 import { registerSlashCommands } from "../../src/slash/slash-commands.ts";
@@ -40,23 +40,7 @@ function resultText(result: { content: Array<{ type: string; text?: string }> })
 	return result.content.map((part) => part.text ?? "").join("\n");
 }
 
-function declarationLength(config: ExtensionConfig, toolDescriptionMode?: "full"): number {
-	const disabledFeatures = resolveDisabledFeatureSurface(config);
-	return JSON.stringify({
-		name: "subagent",
-		description: buildSubagentToolDescription({ toolDescriptionMode }, { disabledFeatures }),
-		parameters: createSubagentParamsSchema(disabledFeatures),
-	}).length;
-}
-
 describe("workflow-scripts tool surface", () => {
-	// The default description is short enough that the chain/tasks schema outweighs the script guidance it replaces.
-	it("is smaller than the full-mode declaration", () => {
-		const enabled = declarationLength({}, "full");
-		const disabled = declarationLength(DISABLED, "full");
-		assert.ok(disabled < enabled, `full mode: disabled ${disabled} is not smaller than enabled ${enabled}`);
-	});
-
 	it("accepts chain and tasks shapes with a small schema", () => {
 		const schema = createSubagentParamsSchema(surface);
 		const validator = Compile(schema);
@@ -70,17 +54,15 @@ describe("workflow-scripts tool surface", () => {
 		assert.ok(serialized.length <= 925, `chain/tasks schema is ${serialized.length} chars`);
 	});
 
-	it("replaces script guidance with chain/tasks guidance", () => {
-		for (const toolDescriptionMode of [undefined, "compact", "full"] as const) {
-			const description = buildSubagentToolDescription({ toolDescriptionMode }, { disabledFeatures: surface });
-			for (const script of ["```js workflow", "workflow:true", "runs.run", "runs.all", "runs.lanes", "runs.host", "Named resources", "validate", "args", "state.get", "Schedules take script inputs"]) {
-				assert.ok(!description.includes(script), `${toolDescriptionMode ?? "default"} description still mentions ${script}`);
-			}
-			for (const text of ["tasks:[{agent,task,cwd?,model?},...]", "chain:[{agent,task?,as?,cwd?,model?}", "{task}", "{previous}", "{outputs.name}", "SAFETY-CRITICAL SUBAGENT GUIDANCE", "exactly one top-level subagent chain or tasks call"]) {
-				assert.ok(description.includes(text), `${toolDescriptionMode ?? "default"} description lacks ${text}`);
-			}
+	it("replaces script guidance in the guide with chain/tasks guidance", () => {
+		const enabled = formatGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface({}) });
+		assert.match(enabled, /Parallel: subagent\(\{workflow:"parallel"/);
+		const guide = formatGuide([], { canLaunch: true, disabled: surface });
+		assert.doesNotMatch(guide, /workflow:|topic:"workflows"/);
+		for (const text of ["Parallel: subagent({tasks:[{agent, task, cwd?, model?}]})", "Dependent steps: subagent({task, chain:[{agent, task?, as?}]})", "{previous}", "{outputs.<as>}", "use the top-level tasks or chain fields"]) {
+			assert.ok(guide.includes(text), `guide lacks ${text}`);
 		}
-		assert.equal(buildSubagentToolPromptMetadata({}, surface).promptSnippet, "Delegate focused work to child agents; compose multi-child work in one chain or tasks call.");
+		assert.match(guide, /\n\nManage \(id from the launch reply/);
 	});
 });
 

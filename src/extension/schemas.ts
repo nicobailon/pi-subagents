@@ -341,7 +341,7 @@ const SubagentWaitParamsSchema = Type.Object({
 	id: Type.Optional(Type.String({ description: "Run id or prefix." })),
 	nonBlocking: Type.Optional(Type.Boolean({ description: "Subscribe to id's wake and return immediately; requires id, not with all." })),
 	all: Type.Optional(Type.Boolean({ description: "Wait for all work active at call time." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Max wait; default waitTool.defaultTimeoutMs, then 30 min." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Max wait; default 30 min." })),
 	stopOnAttention: Type.Optional(Type.Boolean({ description: "false: keep waiting through all attention except supervisor requests." })),
 });
 

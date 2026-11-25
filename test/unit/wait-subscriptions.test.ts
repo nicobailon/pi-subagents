@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
-import { registerWaitTool } from "../../src/runs/background/wait-tool.ts";
+import { createWaitExecute } from "../../src/runs/background/wait-tool.ts";
 import { createWaitSubscriptionManager } from "../../src/runs/background/wait-subscriptions.ts";
 import { recordWaitCompletion } from "../../src/runs/background/wait-completions.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
@@ -165,7 +165,7 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
-	it("registers bg_wait and rejects non-blocking subscriptions from headless tool calls", async () => {
+	it("rejects non-blocking subscriptions from headless wait calls", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-subscribe-headless-"));
 		try {
 			const state = makeState();
@@ -177,17 +177,14 @@ describe("non-blocking wait subscriptions", () => {
 				updatedAt: Date.now(),
 				children: [{ agent: "worker", index: 0, status: "detached" }],
 			}]]);
-			const registered: Array<{ name: string; description: string; execute: (...args: unknown[]) => Promise<{ content: Array<{ text?: string }>; isError?: boolean }> }> = [];
-			registerWaitTool({
+			const wait = createWaitExecute({
 				events: new TestBus(),
 				on() {},
-				registerTool(value: unknown) { registered.push(value as typeof registered[number]); },
-			} as never, state, true, {
+			} as never, state, {
 				arm() { throw new Error("headless calls must not arm subscriptions"); },
 			});
-			assert.deepEqual(registered.map((entry) => entry.name), ["bg_wait"]);
 			await assert.rejects(
-				registered[0]!.execute("wait", { id: "run-headless", nonBlocking: true }, undefined, undefined, { hasUI: false }),
+				wait("wait", { id: "run-headless", nonBlocking: true }, undefined, undefined, { hasUI: false } as never),
 				/long-lived interactive subagent runtime/,
 			);
 		} finally {
@@ -195,16 +192,7 @@ describe("non-blocking wait subscriptions", () => {
 		}
 	});
 
-	it("tells the root session that async runs wake it natively and a child to collect its descendants", () => {
-		const descriptions: string[] = [];
-		const pi = { events: new TestBus(), on() {}, registerTool(value: { description: string }) { descriptions.push(value.description); } } as never;
-		registerWaitTool(pi, makeState(), true);
-		registerWaitTool(pi, makeState(), true, undefined, undefined, { nestedRootRunId: "root" });
-		assert.match(descriptions[0]!, /async subagent runs already wake this session natively/);
-		assert.match(descriptions[1]!, /no native completion notifier: use blocking bg_wait to collect your owned descendants/);
-	});
-
-	it("ends a blocking bg_wait when the user sends a message while the agent is busy", async () => {
+	it("ends a blocking wait when the user sends a message while the agent is busy", async () => {
 		const state = makeState();
 		state.foregroundRuns = new Map([["run-live", {
 			runId: "run-live",
@@ -214,19 +202,16 @@ describe("non-blocking wait subscriptions", () => {
 			updatedAt: Date.now(),
 			children: [{ agent: "worker", index: 0, status: "detached" }],
 		}]]);
-		type WaitResult = { isError?: boolean; details: { wait?: { reason: string; activeRunIds: string[] } } };
-		const registered: Array<{ execute: (...args: unknown[]) => Promise<WaitResult> }> = [];
 		const inputHandlers: Array<(event: { source: string; streamingBehavior?: string }) => void> = [];
 		const sendInput = (event: { source: string; streamingBehavior?: string }) => {
 			for (const handler of inputHandlers) handler(event);
 		};
-		registerWaitTool({
+		const wait = createWaitExecute({
 			events: new TestBus(),
 			on(event: string, handler: typeof inputHandlers[number]) { if (event === "input") inputHandlers.push(handler); },
-			registerTool(value: unknown) { registered.push(value as typeof registered[number]); },
-		} as never, state, true);
+		} as never, state);
 
-		const pending = registered[0]!.execute("wait", { id: "run-live", timeoutMs: 60_000 }, undefined, undefined, { hasUI: true });
+		const pending = wait("wait", { id: "run-live", timeoutMs: 60_000 }, undefined, undefined, { hasUI: true } as never);
 		sendInput({ source: "extension", streamingBehavior: "steer" });
 		sendInput({ source: "interactive" });
 		const early = await Promise.race([pending.then(() => "settled"), new Promise((resolve) => setTimeout(() => resolve("pending"), 300))]);
@@ -588,7 +573,7 @@ describe("non-blocking wait subscriptions", () => {
 
 			const message = sent[0] ?? "";
 			assert.match(message, /Reply to the supervisor request first/);
-			assert.match(message, /wait with bg_wait/);
+			assert.match(message, /wait with subagent\(\{ action: "wait", id: /);
 			assert.match(message, /do not resume or launch a replacement/);
 			assert.doesNotMatch(message, /Resume-first/);
 		} finally {

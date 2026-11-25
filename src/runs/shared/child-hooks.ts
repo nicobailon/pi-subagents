@@ -55,12 +55,10 @@ function readonlyConfig(config: ChildRuntimeConfig, capture?: OwnedCapture): str
 	const keys = dataKeys(config);
 	if (!keys) return undefined;
 	if (capture && (config.toolDiagnostic !== capture.toolDiagnostic || config.runtimeAcknowledgements !== capture.runtimeAcknowledgements)) return undefined;
-	const waitKeys = dataKeys(config.waitTool);
-	if (!waitKeys || waitKeys.some((key) => key !== "enabled")) return undefined;
-	if (config.fast !== false || config.fanoutChild !== false || config.waitTool.enabled !== false) return undefined;
+	if (config.fast !== false || config.fanoutChild !== false) return undefined;
 	for (const key of keys) {
 		const value = Object.getOwnPropertyDescriptor(config, key)!.value;
-		if (["fast", "fanoutChild", "waitTool"].includes(key)) continue;
+		if (["fast", "fanoutChild"].includes(key)) continue;
 		if (capture && (key === "toolDiagnostic" || key === "runtimeAcknowledgements")) continue;
 		if (capture && key === "requiredTools" && Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype) {
 			const descriptors = Object.getOwnPropertyDescriptors(value);

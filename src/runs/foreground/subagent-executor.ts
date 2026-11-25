@@ -235,7 +235,7 @@ import {
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { editDistance, hasSingleAdjacentTransposition } from "../../shared/edit-distance.ts";
-import { waitToolName } from "../../shared/wait-tool-name.ts";
+import { waitCall } from "../../shared/wait-call.ts";
 
 const MUTATING_MANAGEMENT_ACTIONS = new Set(["command.yield", "command.cancel", "create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "mission.create", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.rollback", "dismiss", "schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]);
 const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["command.cancel", "delete", "eject", "disable", "reset", "mission.close", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt", "schedule.delete"]);
@@ -468,8 +468,6 @@ interface ExecutorDeps {
 	state: SubagentState;
 	config: ExtensionConfig;
 	asyncByDefault: boolean;
-	waitToolEnabled?: boolean;
-	waitToolDefaultTimeoutMs?: number;
 	/** Runs `action: "wait"`, the same wait as the wait tool. */
 	wait?: WaitExecute;
 	/** Runs `action: "reply"` and lists the child questions `status` shows. */
@@ -1069,7 +1067,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 	if (matches.length === 0) return undefined;
 	if (matches.length > 1) throw new Error(`Ambiguous foreground run id prefix '${requested}' matched: ${matches.map((run) => run.runId).join(", ")}. Provide a longer id.`);
 	const run = matches[0]!;
-	if (run.children.some((child) => child.status === "detached")) throw new Error(`Foreground run '${run.runId}' is detached for intercom coordination and cannot be revived safely while any child may still be live. Reply to the supervisor request first, then wait with ${waitToolName()}({ id: "${run.runId}" }); use status to recover the result and do not launch a replacement while it remains detached.`);
+	if (run.children.some((child) => child.status === "detached")) throw new Error(`Foreground run '${run.runId}' is detached for intercom coordination and cannot be revived safely while any child may still be live. Reply to the supervisor request first, then wait with ${waitCall(`id: "${run.runId}"`)}; use status to recover the result and do not launch a replacement while it remains detached.`);
 	if (run.children.length > 1 && params.index === undefined) throw new Error(`Foreground run '${run.runId}' has ${run.children.length} children. Provide index to choose one.`);
 	const index = params.index ?? 0;
 	if (!Number.isInteger(index)) throw new Error(`Foreground run '${run.runId}' index must be an integer.`);
@@ -1522,8 +1520,6 @@ function appendStepToAsyncChain(input: {
 		chainSkills,
 		dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
-		waitToolEnabled: input.deps.waitToolEnabled,
-		waitToolDefaultTimeoutMs: input.deps.waitToolDefaultTimeoutMs,
 		contextForAgent: contextPolicy.contextForAgent,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
 		worktreeProvider: input.deps.config.worktreeProvider,
@@ -1976,8 +1972,6 @@ async function resumeExternalJobFollowUp(input: {
 		shareEnabled: false,
 		...(input.parentSessionFile ? { sessionRoot: input.deps.getSubagentSessionRoot(input.parentSessionFile) } : {}),
 		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
-		waitToolEnabled: input.deps.waitToolEnabled,
-		waitToolDefaultTimeoutMs: input.deps.waitToolDefaultTimeoutMs,
 		worktreeSetupHook: input.deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
@@ -2289,8 +2283,6 @@ async function resumeAsyncRun(input: {
 			fast: input.params.fast,
 			dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
-			waitToolEnabled: input.deps.waitToolEnabled,
-			waitToolDefaultTimeoutMs: input.deps.waitToolDefaultTimeoutMs,
 			worktreeSetupHook: input.deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: input.deps.config.worktreeBaseDir,
@@ -2452,8 +2444,6 @@ async function resumeAsyncRun(input: {
 		requiredExtensions: recoveryDescriptor?.requiredExtensions ?? (target as { requiredExtensions?: SteeringRecoveryDescriptor["requiredExtensions"] }).requiredExtensions,
 		outputBaseDir: revivalOutputBaseDir,
 		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
-		waitToolEnabled: input.deps.waitToolEnabled,
-		waitToolDefaultTimeoutMs: input.deps.waitToolDefaultTimeoutMs,
 		worktreeSetupHook: input.deps.config.worktreeSetupHook,
 		worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
@@ -3787,8 +3777,6 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			thinkingOverride: externalRunnerWithoutExplicitModel ? undefined : thinkingOverrideForTask(),
 			thinkingCeiling: a.maxThinking,
 			maxSubagentDepth,
-			waitToolEnabled: deps.waitToolEnabled,
-			waitToolDefaultTimeoutMs: deps.waitToolDefaultTimeoutMs,
 			...(params.worktree === true ? { worktree: true } : {}),
 			worktreeSetupHook: deps.config.worktreeSetupHook,
 			worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
@@ -4548,8 +4536,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			outputClaimPath: params.workflowOutputClaimPath,
 			outputMode: effectiveOutputMode,
 			maxSubagentDepth,
-			waitToolEnabled: deps.waitToolEnabled,
-			waitToolDefaultTimeoutMs: deps.waitToolDefaultTimeoutMs,
 			onUpdate: forwardSingleUpdate,
 			suppressUnchangedDelegationUpdates,
 			controlConfig,
@@ -4736,11 +4722,11 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const worktreeSuffix = worktreeHandoff?.suffix ? `\n\n${worktreeHandoff.suffix}` : "";
 	if (r.detached) {
 		const statusRecovery = `subagent({ action: "status", id: "${runId}" }) to recover the result; do not resume or launch a replacement while it remains detached.`;
-		const blockingRecovery = `${waitToolName()}({ id: "${runId}" }). Use ${statusRecovery}`;
+		const blockingRecovery = `${waitCall(`id: "${runId}"`)}. Use ${statusRecovery}`;
 		const message = r.detachedReason === "intercom coordination"
 			? `Detached for intercom coordination: ${params.agent}. Reply to the supervisor request first, then wait with ${blockingRecovery}`
 			: r.detachedReason === "user request"
-				? `Detached at user request: ${params.agent}. The child continues independently. Register a completion wake-up with ${waitToolName()}({ id: "${runId}", nonBlocking: true }), or use ${statusRecovery}`
+				? `Detached at user request: ${params.agent}. The child continues independently. Register a completion wake-up with ${waitCall(`id: "${runId}", nonBlocking: true`)}, or use ${statusRecovery}`
 				: `Detached before task completion: ${params.agent}. Wait with ${blockingRecovery}`;
 		return {
 			content: [{ type: "text", text: `${message}${worktreeSuffix}` }],
@@ -7493,8 +7479,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					if (!deps.runSupervisorAction) return result;
 					const pending = await deps.runSupervisorAction({ action: "pending" });
 					if (!(pending.details.pending as Array<{ expectsReply?: boolean }> | undefined)?.some((request) => request.expectsReply)) return result;
-					const questions = pending.content.flatMap((item) => item.type === "text" ? [item.text] : []).join("\n");
-					return { ...result, content: [...result.content, { type: "text", text: `Child questions waiting for an answer (subagent({action:"reply", replyTo, message})):\n${questions}` }] };
+					const questions = { type: "text" as const, text: `Child questions waiting for an answer (subagent({action:"reply", replyTo, message})):\n${pending.content.flatMap((item) => item.type === "text" ? [item.text] : []).join("\n")}` };
+					// A child-safe status without an id lists no runs, but its questions still answer the call.
+					if (result.isError) return { content: [questions], details: result.details };
+					return { ...result, content: [...result.content, questions] };
 				};
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRoots(ctx.sessionManager.getSessionFile() ?? null, deps);

@@ -17,7 +17,7 @@ const done = { content: [{ type: "text" as const, text: "done" }], details: { mo
 
 it("only the installed runtime drain can complete evidence, not acknowledgements, UI, wrong file or replacement installation", async () => {
 	for (const kind of ["normal", "ack-only", "UI", "wrong-file", "second", "reinstalled", "missing-installation"] as const) {
-		const config = { fanoutChild: false, fast: false, waitTool: { enabled: false } };
+		const config = { fanoutChild: false, fast: false };
 		const { hooks } = createCapturedChildHooks(config);
 		type Handler = (event: unknown, ctx: unknown) => unknown;
 		const handlers = new Map<string, Handler[]>();

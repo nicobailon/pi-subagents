@@ -9,7 +9,6 @@ import { SUBAGENT_OPTION_KEYS, createSubagentParamsSchema } from "../../src/exte
 import { normalizePublicSubagentExecution } from "../../src/extension/public-execution.ts";
 import { flattenSubagentToolOptions, prepareSubagentToolArguments } from "../../src/extension/subagent-options.ts";
 import { resolveDisabledFeatureSurface } from "../../src/shared/disabled-features.ts";
-import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/subagent-wait.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -145,10 +144,10 @@ describe("registered subagent tools with options", () => {
 				registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
 			registerSubagentExtension(makePi("parent"));
-			registerFanoutChildSubagentExtension(makePi("fanout"), { fanoutChild: true, depth: 1, waitTool: { enabled: true }, fast: false });
+			registerFanoutChildSubagentExtension(makePi("fanout"), { fanoutChild: true, depth: 1, fast: false });
 			const ctx = {
 				cwd: ${JSON.stringify(cwd)}, isIdle() { return true; }, hasUI: false,
-				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; }, getBranch() { return []; }, getEntries() { return []; } },
+				sessionManager: { getSessionId() { return "session-test"; }, getSessionFile() { return null; }, getBranch() { return []; }, getEntries() { return []; }, buildContextEntries() { return []; } },
 				modelRegistry: { getAvailable() { return []; } },
 			};
 			const text = (result) => result.content.map((part) => part.text ?? "").join("\n");
@@ -171,7 +170,6 @@ describe("registered subagent tools with options", () => {
 		`;
 		const env = { ...process.env };
 		delete env[SUBAGENT_CHILD_ENV];
-		delete env[WAIT_TOOL_ENABLED_ENV];
 		try {
 			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
 		} finally {

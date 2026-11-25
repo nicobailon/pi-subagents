@@ -85,8 +85,6 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		childWatchdog: attempt.childWatchdog,
 		// registerChildWatchdog returns before reading the sink when unconfigured.
 		...(attempt.childWatchdog ? { watchdogStatus: attempt.watchdogStatus } : {}),
-		waitToolEnabled: step.waitToolEnabled,
-		waitToolDefaultTimeoutMs: step.waitToolDefaultTimeoutMs,
 		thinkingCeiling: step.thinkingCeiling,
 		maxSubagentDepth: step.maxSubagentDepth,
 		inherited: ctx.inheritedChildRuntime,
