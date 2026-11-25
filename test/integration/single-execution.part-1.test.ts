@@ -1772,6 +1772,14 @@ Answer only from the supplied synthetic text.
 		assert.equal(multiLineText.isError, true);
 		assert.match(multiLineText.content[0]?.text ?? "", /line breaks, so it is script text, not a file path.*pass it as options\.script/);
 		assert.doesNotMatch(multiLineText.content[0]?.text ?? "", /Failed to read workflow script|ENOENT|ENAMETOOLONG/);
+
+		const resourceCtx = makeMinimalCtx(tempDir);
+		const registration = registerWorkflowResource({ sessionId: resourceCtx.sessionManager.getSessionId(), definition: { name: "test.nl", version: 1, resolve: () => ({ script: "return 'resource ok'" }) } });
+		try {
+			const trailing = await makeExecutor([makeAgent("echo")]).executePublic("trailing-newline-resource", { workflow: "test.nl\n", async: false }, new AbortController().signal, undefined, resourceCtx);
+			assert.equal(trailing.isError, undefined, trailing.content[0]?.text);
+			assert.match(trailing.content[0]?.text ?? "", /resource ok/);
+		} finally { registration.dispose(); }
 		assert.doesNotMatch(empty.content[0]?.text ?? "", /validation failed|valid JavaScript/);
 		assert.equal(mockPi.callCount(), 0);
 	});

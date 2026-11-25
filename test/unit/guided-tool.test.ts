@@ -220,6 +220,17 @@ describe("guide first", () => {
 		assert.match(await launch({ agent: "probe", interrupted: true }), /\nRun abcdef12 is paused\. To continue it: subagent\(\{action:"resume", id:"abcdef12", message\}\)$/);
 	});
 
+	it("refuses multi-line workflow text on the first call with the guide instead of holding it", async () => {
+		const pi = { on: () => {} };
+		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
+		const { tool } = createGuidedSubagentTool(pi as never, { guide: async () => "GUIDE", flatten: (params) => flattenSubagentToolOptions(params), run: async () => assert.fail("refused") });
+		const result = await tool.execute("script-text", { workflow: "const r = await runs.run(\"scan\", { agent: \"scout\", task: \"Read /Users/someone/repo/src/index.ts\" });\nreturn r.output;" } as never, undefined, undefined, ctx as never);
+		const text = result.content[0]!.type === "text" ? result.content[0]!.text : "";
+		assert.match(text, /^subagent: workflow has line breaks, so it is script text; pass it as options\.script/);
+		assert.match(text, /\n\nGUIDE$/);
+		assert.doesNotMatch(text, /Call again to launch|Would launch/);
+	});
+
 	it("previews a chain's parallel step in plain words", async () => {
 		const pi = { on: () => {} };
 		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };

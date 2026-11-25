@@ -25,7 +25,7 @@ import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { approveWorkflowChildLaunch, type SubagentLaunchArgs } from "../../extension/subagent-launch-tool.ts";
-import { isWorkflowScriptPath, normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
+import { isWorkflowScriptPath, isWorkflowScriptText, normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
 import { readReplyWorkflowScript } from "../../extension/reply-workflow-script.ts";
 import { disabledFeatureNotice, disabledFeatureSectionNotice, disabledFeatureUseError, resolveDisabledFeatureSurface, WORKFLOW_SCRIPTS_REPLACEMENT, type DisabledFeatureSurface } from "../../shared/disabled-features.ts";
 import { runSync } from "./execution.ts";
@@ -8485,7 +8485,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			publicParams = { ...withoutStructuredInput, workflowScript: resolved.resource.script };
 			workflowResourcePermits.set(publicParams, resolved.resource.permit);
 			workflowLaunch = { source: "structured" };
-		} else if (typeof workflow === "string" && /[\r\n]/.test(workflow)) {
+		} else if (typeof workflow === "string" && isWorkflowScriptText(workflow)) {
 			return errorResult(`The workflow string has line breaks, so it is script text, not a file path, and was not run.${scriptTextHint}`);
 		} else if (typeof workflow === "string" && !isWorkflowScriptPath(workflow)) {
 			const resolved = resolveWorkflowResource(workflow, publicParams.args, ctx.sessionManager.getSessionId() ?? undefined);
