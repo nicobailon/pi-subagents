@@ -882,6 +882,9 @@ Project prompt.
 		assert.equal(rejected.ok, false);
 		assert.equal(rejected.code, "unsupported_mode");
 		assert.equal((await resolveSubagentLaunchContract({ agent: "external", cwd, outputSchema: false })).ok, true);
+		const fastRejected = await resolveSubagentLaunchContract({ agent: "external", cwd, outputSchema: false, fast: true });
+		assert.equal(fastRejected.ok, false);
+		if (!fastRejected.ok) assert.equal(fastRejected.message, "Agent 'external' uses runner.type='external-cli' and does not support fast mode.");
 	});
 
 	it("projects per-agent tool exclusions and binds them into launch identity", async () => {

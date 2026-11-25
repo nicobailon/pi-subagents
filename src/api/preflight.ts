@@ -398,6 +398,9 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	if (externalRunner && behavior.outputSchema) {
 		return { ok: false, code: "unsupported_mode", message: `Agent '${agent.name}' uses runner.type='${agent.runner?.type}' and does not support: structured output.`, diagnostics };
 	}
+	if (externalRunner && (input.fast ?? agent.fast) === true) {
+		return { ok: false, code: "unsupported_mode", message: `Agent '${agent.name}' uses runner.type='${agent.runner?.type}' and does not support fast mode.`, diagnostics };
+	}
 	const availableModels = normalizeAvailableModels(input.availableModels);
 	const preferredProvider = agent.modelProvider ?? input.preferredProvider ?? input.parentModel?.provider;
 	const modelScopes = resolveModelScopesForAgent(discovered.modelScope, agent.name, input.parentModel, input.scopedModelIds);
