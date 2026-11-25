@@ -173,7 +173,7 @@ return { first: first.key, rest: rest.map((child) => child.key), receipt };
 
 Use `outputMode: "file-only"` when a saved output may be large and the parent only needs a pointer. The returned text is a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Failed runs and save errors still return normal inline output for debugging.
 
-In a workflow script, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction. With `outputSchema`, the runtime persists the structured result as indented JSON instead of the final prose, unless the child wrote the file itself.
+In a workflow script, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools, or with `acceptanceRole: "read-only"` whatever its tools, does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Other children with mutation-capable tools retain the direct-write instruction. With `outputSchema`, the runtime persists the structured result as indented JSON instead of the final prose, unless the child wrote the file itself.
 
 The `output` field is the API binding; a filename mentioned in task text (for example, `Write your findings to exactly this path: report.md`) is only instruction and does not override runtime routing. When a later workflow step or parent needs a durable file, set `output` on `runs.run`/`runs.all` and return the child’s `outputReference`, `outputPathMapping`, or `artifactPaths`; arbitrary literal strings returned by workflow JavaScript are not rewritten. Omitted child output may use a managed aggregate-derived sibling path.
 
@@ -471,7 +471,7 @@ Acceptance evidence levels are `auto`, `none`, `attested`, `checked`, and `verif
 
 Automatic inference uses only the declared structured role: `acceptanceRole: "writer"` infers checked evidence, with `review: { agent: "reviewer", required: true }` for async and dynamic writers; `"read-only"` infers none; and an omitted role infers lightweight attestation. Task wording, risk vocabulary, and agent names do not affect inference. Explicit acceptance can raise or add policy, while `{ level: "none", reason: "..." }` disables inferred gates according to the existing policy rules.
 
-Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole`. The role affects acceptance inference only and does not change tool access. Review is a separate gate configured with `acceptance.review`.
+Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole`. The role affects acceptance inference and, with `output`, tells a `read-only` child to return the artifact instead of writing the file; it does not change tool access. Review is a separate gate configured with `acceptance.review`.
 
 Edge cases:
 
