@@ -259,6 +259,11 @@ describe("guided tool surface", () => {
 		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
 		await tool.execute("list", { action: "list", agent: true } as never, undefined, undefined, ctx as never);
 		assert.deepEqual(declarations, [0]);
+		// One {} after the guide may be the model asking again; only a second {} in a row counts as the provider.
+		await tool.execute("again", {} as never, undefined, undefined, ctx as never);
+		assert.deepEqual(declarations, [0]);
+		await tool.execute("again-2", {} as never, undefined, undefined, ctx as never);
+		assert.deepEqual(declarations, [0, 14]);
 	});
 
 	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,100", () => {

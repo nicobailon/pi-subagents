@@ -433,6 +433,7 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 	pi.on("turn_start", () => taught.nextTurn());
 	// Pi passes parentToolCallId only to tool_call handlers, so record which calls another tool (a codemode script) made.
 	const nestedCallIds = new Set<string>();
+	let emptyCallsInARow = 0;
 	pi.on("tool_call", (event) => {
 		if (event.toolName === "subagent" && event.parentToolCallId) nestedCallIds.add(event.toolCallId);
 	});
@@ -458,8 +459,12 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			taught.ensure(ctx);
 			// After the guide, a blank call means the provider dropped or blanked the fields: declare them once, so
 			// this model's next call carries them (one cache miss, only on such a provider).
-			if (!nested && taught.has("guide") && isBlankCall(rawParams as Record<string, unknown>)) {
-				if (tool.parameters !== SUBAGENT_TOOL_FIELD_PARAMETERS) {
+			const blank = !nested && taught.has("guide") && isBlankCall(rawParams as Record<string, unknown>);
+			const noFields = Object.keys(rawParams as Record<string, unknown>).length === 0;
+			// A lone {} may be a model asking again; blanked values (true, null) or a second {} in a row is the provider.
+			emptyCallsInARow = blank && noFields ? emptyCallsInARow + 1 : 0;
+			if (blank) {
+				if (tool.parameters !== SUBAGENT_TOOL_FIELD_PARAMETERS && (!noFields || emptyCallsInARow >= 2)) {
 					if (ctx?.model?.provider) modelsNeedingFields.add(`${ctx.model.provider}/${ctx.model.id ?? ""}`);
 					declare(true);
 					return guideResult(FIELDS_DECLARED_TEXT, []);
