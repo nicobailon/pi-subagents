@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as net from "node:net";
 import { describe, it } from "node:test";
-import { herdrCoreHost, reconcileHerdrCoreRun, type HerdrCoreConnection } from "../../src/runs/shared/herdr-core-host.ts";
+import { HerdrCorePlacedRunOwner, herdrCoreHost, reconcileHerdrCoreRun, type HerdrCoreConnection } from "../../src/runs/shared/herdr-core-host.ts";
 import { SocketRpcClient } from "../../src/runs/shared/herdr-connection.ts";
 import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
 import type { HerdrRunIdentity } from "../../src/runs/shared/herdr-placed-run.ts";
@@ -63,6 +63,17 @@ describe("Herdr Core local placement", { skip: process.platform === "win32" }, (
 		assert.deepEqual(calls[0], { method: "terminal.run", params: { argv: ["pi", "--no-skills"], cwd: "/repo", env: { PI_SUBAGENTS_HERDR_MODE: "1" }, name: "pi-run", parent: "t1", caller: "t1", no_notify: true, labels: { "pi-subagents.run": "run", "pi-subagents.agent": "pi-run" } } });
 		await herdrCoreHost.prompt(core, identity, "/pi-subagents-bridge request");
 		assert.deepEqual(calls[1], { method: "terminal.send", params: { terminal: "t2", text: "/pi-subagents-bridge request", force: true } });
+	});
+
+	it("keeps enough ownership to kill a headless Pi when event subscription fails", async () => {
+		const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+		const core = connection(calls); core.client.subscribeParams = async () => { throw new Error("subscribe failed"); };
+		const Owner = HerdrCorePlacedRunOwner as unknown as new (machine: HerdrCoreLocalMachineReference, runId: string, runtimeDir: string, connection: HerdrCoreConnection, access: unknown) => HerdrCorePlacedRunOwner;
+		const owner = new Owner(machine, "run", "/tmp/pi-subagents-herdr-test-owned", core, { shellCommand() { return "remove"; }, run() { return { status: 0, stdout: "", stderr: "" }; } });
+		await assert.rejects(owner.launch({ kind: "pi", name: "pi-run", args: [] }, () => owner.subscribe(() => {}, () => {})), /subscribe failed/u);
+		assert.deepEqual({ terminalId: owner.terminalId, agentName: owner.agentName }, { terminalId: "t2", agentName: "pi-run" });
+		await owner.cleanup();
+		assert.deepEqual(calls.map((call) => call.method), ["terminal.run", "terminal.get", "terminal.kill"]);
 	});
 
 	it("reconnects only to the same parented, labeled terminal and kills the owned Pi on settled disposal", async () => {
