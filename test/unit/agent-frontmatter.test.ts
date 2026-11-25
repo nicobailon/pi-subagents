@@ -527,31 +527,6 @@ body`);
 	}));
 });
 
-describe("agent advertise frontmatter", () => {
-	it("parses and serializes explicit prompt advertisement", () => withTempHome(() => {
-		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-advertised-agent-"));
-		tempDirs.push(project);
-		writeAgent(path.join(project, ".pi", "agents", "worker.md"), `---
-name: worker
-description: Worker
-advertise: true
----
-body`);
-
-		const worker = discoverAgents(project, "both").agents.find((agent) => agent.name === "worker")!;
-		assert.equal(worker.advertise, true);
-		assert.match(serializeAgent(worker), /^advertise: true$/m);
-	}));
-
-	it("rejects non-boolean advertise values", () => withTempHome(() => {
-		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-advertise-"));
-		tempDirs.push(project);
-		writeAgent(path.join(project, ".pi", "agents", "worker.md"), "---\nname: worker\ndescription: Worker\nadvertise: yes\n---\nbody");
-
-		assert.match(discoverAgents(project, "project").agentDiagnostics?.[0]?.error ?? "", /invalid advertise frontmatter; expected true or false/);
-	}));
-});
-
 describe("agent aliases", () => {
 	it("parses and serializes agent aliases", () => withTempHome(() => {
 		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-alias-agent-"));

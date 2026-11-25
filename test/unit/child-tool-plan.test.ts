@@ -240,16 +240,6 @@ describe("child tool plan declared tools", () => {
 		assert.equal(leaf.effectiveToolAllowlist.includes("subagent_supervisor"), false);
 	});
 
-	it("rejects an explicitly requested reply tool when fanout authorization is absent or removed", () => {
-		for (const input of [
-			{ tools: ["read", "subagent_supervisor"] },
-			{ tools: ["read", "subagent", "subagent_supervisor"], excludeTools: ["subagent"] },
-			{ tools: ["read", "subagent", "subagent_supervisor"], capabilityCeiling: { version: 1 as const, allowedTools: ["read", "subagent_supervisor"], sources: ["test"] } },
-		]) {
-			assert.throws(() => resolvePiLaunchToolPlan(input), /subagent_supervisor.*requires fanout authorization/);
-		}
-	});
-
 	it("respects a capability ceiling", () => {
 		const plan = resolvePiLaunchToolPlan({
 			tools: ["read", "grep", "bash", "write"],

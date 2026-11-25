@@ -37,6 +37,7 @@ const script = String.raw`
 			getSessionId() { return "shutdown-scope-session"; },
 			getSessionFile() { return parentSessionFile; },
 			getEntries() { return []; },
+			buildContextEntries() { return []; },
 		},
 		modelRegistry: { getAvailable() { return []; } },
 	};

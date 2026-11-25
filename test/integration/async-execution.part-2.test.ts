@@ -1182,7 +1182,7 @@ syncBuiltinESMExports();
 		});
 		assert.match(singleResult.content[0]?.text ?? "", /Async: worker \[/);
 		assert.match(singleResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
-		assert.match(singleResult.content[0]?.text ?? "", /Use bg_wait only/i);
+		assert.match(singleResult.content[0]?.text ?? "", /Use subagent\(\{ action: "wait" \}\) only/i);
 		assert.match(singleResult.content[0]?.text ?? "", /non-interactive run: Pi auto-drains current-session subagent work at agent_end/);
 		assert.equal(startedEvent(singleId).task, "[prompt redacted]");
 		assert.equal(startedEvent(singleId).goal, "[prompt redacted]");
@@ -1198,8 +1198,8 @@ syncBuiltinESMExports();
 			...commonParams,
 			ctx: { ...commonParams.ctx, interactive: true },
 		});
-		assert.match(interactiveResult.content[0]?.text ?? "", /Return control now: native completion wakes you/);
-		assert.doesNotMatch(interactiveResult.content[0]?.text ?? "", /bg_wait\(\{ id:/);
+		assert.match(interactiveResult.content[0]?.text ?? "", /Completion wakes you; keep working or end your turn/);
+		assert.doesNotMatch(interactiveResult.content[0]?.text ?? "", /subagent\(\{ action: "wait", id:/);
 		assert.doesNotMatch(interactiveResult.content[0]?.text ?? "", /auto-drain/);
 		await waitForAsyncResultFile(interactiveId, 30_000);
 
@@ -1214,7 +1214,7 @@ syncBuiltinESMExports();
 		});
 		assert.match(parallelResult.content[0]?.text ?? "", /Async parallel:/);
 		assert.match(parallelResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
-		assert.match(parallelResult.content[0]?.text ?? "", /Use bg_wait only/i);
+		assert.match(parallelResult.content[0]?.text ?? "", /Use subagent\(\{ action: "wait" \}\) only/i);
 		assert.equal(startedEvent(parallelId).goal, "[prompt redacted]");
 		assert.equal(startedEvent(parallelId).description, "Test agent: worker");
 		const parallelResultPath = await waitForAsyncResultFile(parallelId, 10_000);

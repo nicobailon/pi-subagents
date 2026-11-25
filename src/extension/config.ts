@@ -14,7 +14,14 @@ import { validateDisabledFeatures } from "../shared/disabled-features.ts";
 
 // Explicit route identity, worktree, checkpoint, and tool-surface policies must not be silently
 // discarded and replaced by the built-in defaults after validation fails.
-const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "toolExposure", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers", "globalConcurrencyLimit"];
+const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "authorityPolicy", "permissions", "toolBudget", "runnerLaunchers", "globalConcurrencyLimit"];
+
+const REMOVED_CONFIG_KEYS: Record<string, string> = {
+	toolActivation: "the subagent tool is now always declared, small and unchanging; remove the key",
+	toolExposure: 'codemode scripts can always call subagent, and codemode.mode "only" in Pi settings hides it from the model; remove the key',
+	toolDescriptionMode: "the subagent tool description is now fixed and its first reply is the guide; remove the key",
+	waitTool: 'waiting is subagent({action:"wait"}); remove the key',
+};
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -147,6 +154,9 @@ function validateMainWindowRendererConfig(value: unknown): void {
 }
 
 function validateConfig(config: Record<string, unknown>): void {
+	for (const [key, replacement] of Object.entries(REMOVED_CONFIG_KEYS)) {
+		if (Object.hasOwn(config, key)) throw new Error(`config.${key} was removed: ${replacement}.`);
+	}
 	if (config.worktree !== undefined && typeof config.worktree !== "boolean") {
 		throw new Error("config.worktree must be a boolean");
 	}
@@ -214,12 +224,6 @@ function validateConfig(config: Record<string, unknown>): void {
 	if (config.autoResume !== undefined && typeof config.autoResume !== "boolean") {
 		throw new Error("config.autoResume must be a boolean");
 	}
-	if (config.toolActivation !== undefined && config.toolActivation !== "auto" && config.toolActivation !== "dynamic" && config.toolActivation !== "eager") {
-		throw new Error('config.toolActivation must be "auto", "dynamic", or "eager"');
-	}
-	if (config.toolExposure !== undefined && config.toolExposure !== "direct" && config.toolExposure !== "deferred") {
-		throw new Error('config.toolExposure must be "direct" or "deferred"');
-	}
 	validateMissionStoreConfig(config.missions);
 	validateAuthorityPolicy(config.authorityPolicy);
 	validatePermissionConfig(config.permissions);
@@ -280,7 +284,7 @@ export function loadConfig(): ExtensionConfig {
 		if (error instanceof PrunedForkConfigError) throw error;
 		try {
 			const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
-			if (raw && typeof raw === "object" && !Array.isArray(raw) && FAIL_CLOSED_CONFIG_KEYS.some((key) => Object.hasOwn(raw, key))) throw error;
+			if (raw && typeof raw === "object" && !Array.isArray(raw) && [...FAIL_CLOSED_CONFIG_KEYS, ...Object.keys(REMOVED_CONFIG_KEYS)].some((key) => Object.hasOwn(raw, key))) throw error;
 		} catch (readError) {
 			if (readError === error) throw error;
 		}

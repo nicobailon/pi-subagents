@@ -365,16 +365,6 @@ export interface CompletionBatchConfig {
 	stragglerWindowMs?: number;
 }
 
-export interface WaitToolConfigObject {
-	enabled?: boolean;
-	/** Default blocking window for bg_wait calls that omit timeoutMs. */
-	defaultTimeoutMs?: number;
-	/** Registers the wait tool under this name instead of bg_wait, e.g. when another extension uses bg_wait. */
-	name?: string;
-}
-
-export type WaitToolConfig = boolean | WaitToolConfigObject;
-
 export interface ControlEvent {
 	type: ControlEventType;
 	from?: ActivityState;
@@ -1418,10 +1408,6 @@ export interface WaitCompletionChild {
 	timeoutRecovery?: TimeoutRecoveryProjection;
 }
 
-/**
- * Terminal completion observed for a run a bg_wait call covered. Carries run
- * identity and the artifact trail; output text stays in the tool result content.
- */
 export interface WaitCompletion {
 	runId: string;
 	workflowReceiptPath?: string;
@@ -1460,6 +1446,7 @@ export interface AgentCapabilityRow {
 export interface Details {
 	commands?: import("../runs/shared/child-commands.ts").ChildCommandSnapshot[];
 	mode: SubagentResultMode | "management";
+	taught?: string[];
 	workflowReceiptPath?: string;
 	runId?: string;
 	/** Host tool-call id retained when it differs from the internal run id. */
@@ -1469,12 +1456,6 @@ export interface Details {
 	results: SingleResult[];
 	workflowChildren?: WorkflowChildSummary;
 	workflowTerminalProof?: WorkflowTerminalProof;
-	/**
-	 * Terminal completion payloads for runs this bg_wait call observed
-	 * finishing. Async completions travel as result files that are consumed and
-	 * deleted after text delivery, so without this field their run and artifact
-	 * identity never reaches tool_result details.
-	 */
 	completions?: WaitCompletion[];
 	wait?: {
 		reason: "window_elapsed";
@@ -2634,10 +2615,6 @@ export interface RunSyncOptions {
 	outputClaimPath?: string;
 	outputMode?: OutputMode;
 	maxSubagentDepth?: number;
-	/** Effective parent wait-tool setting propagated to the child runtime. */
-	waitToolEnabled?: boolean;
-	/** Effective parent default wait window propagated to the child runtime. */
-	waitToolDefaultTimeoutMs?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;
 	nestedRoute?: NestedRouteInfo;
@@ -2715,9 +2692,6 @@ export interface ProactiveSkillSubagentsConfig {
 	preferredAgent?: string;
 }
 
-export type ToolDescriptionMode = "full" | "compact" | "custom";
-export type ToolActivationMode = "auto" | "dynamic" | "eager";
-export type SubagentToolExposure = "direct" | "deferred";
 export type InlineToolDisplay = "rich" | "summary";
 
 export interface ScheduledRunsConfig {
@@ -2807,12 +2781,6 @@ export interface ExtensionConfig {
 	modelResponseAliases?: Record<string, string[]>;
 	/** Named argv prefixes for background runners; agents select one with `launcher: <name>`. User config only. */
 	runnerLaunchers?: Record<string, string[]>;
-	/** Tool description variant registered for the parent-facing subagent tool. Defaults to split metadata. */
-	toolDescriptionMode?: ToolDescriptionMode;
-	/** How a new parent session offers the subagent tool. Defaults to auto. */
-	toolActivation?: ToolActivationMode;
-	/** "deferred" keeps `subagent` out of the model's tool list; codemode scripts launch async runs with tools.subagent(...). Defaults to "direct". */
-	toolExposure?: SubagentToolExposure;
 	/** Keep a resumed session on the pi-subagents tool definitions and prompt text it already declared. Defaults to true. */
 	pinToolDeclarations?: boolean;
 	/** Register the pi-subagents slash commands and the foreground-detach shortcut. Defaults to true. */
@@ -2826,7 +2794,6 @@ export interface ExtensionConfig {
 	/** Experimental observer: mirror each native subagent's progress into a new Orca tab. */
 	orcaProgressTabs?: OrcaProgressTabsConfig;
 	forceTopLevelAsync?: boolean;
-	waitTool?: WaitToolConfig;
 	defaultSessionDir?: string;
 	singleRunOutputBaseDir?: string;
 	maxSubagentDepth?: number;
@@ -3003,7 +2970,7 @@ export const POLL_INTERVAL_MS = 250;
 export const WIDGET_ANIMATION_INTERVAL_MS = 1000;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "command.status", "command.yield", "command.cancel", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
+export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "wait", "reply", "command.status", "command.yield", "command.cancel", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

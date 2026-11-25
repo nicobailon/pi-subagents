@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 /** Only the model is scripted: delegation, wait, read, sessions, and runners are native. */
 export default function (pi: ExtensionAPI) {
 	pi.on("tool_execution_update", (event, ctx) => {
-		if (event.toolName === "bg_wait" && ctx.model?.id.startsWith("arm-")) {
+		if (event.toolName === "subagent" && event.args?.action === "wait" && ctx.model?.id.startsWith("arm-")) {
 			fs.writeFileSync(`${process.env.PI_SUBAGENTS_NATIVE_WAIT_AUDIT}.${ctx.model.id}.release`, "ready");
 		}
 	});
@@ -26,8 +26,13 @@ export default function (pi: ExtensionAPI) {
 					const textOf = (message: { content: Array<{ type: string; text?: string }> }) => message.content.map((part) => part.text ?? "").join("\n");
 					const failed = results.find((message) => message.isError);
 					if (failed) throw new Error(`Native fixture tool failed: ${textOf(failed)}`);
-					const spawned = results.filter((message) => message.toolName === "subagent");
-					const waits = results.filter((message) => message.toolName === "bg_wait");
+					const callArgs = new Map(context.messages.flatMap((message) => message.role === "assistant"
+						? message.content.flatMap((part) => part.type === "toolCall" ? [[part.id, part.arguments as Record<string, unknown>] as const] : [])
+						: []));
+					const subagentResults = (kind: (args: Record<string, unknown>) => boolean) => results.filter((message) => message.toolName === "subagent" && kind(callArgs.get(message.toolCallId) ?? {}));
+					const guides = subagentResults((args) => Object.keys(args).length === 0);
+					const spawned = subagentResults((args) => args.action === undefined && Object.keys(args).length > 0);
+					const waits = subagentResults((args) => args.action === "wait");
 					const reads = results.filter((message) => message.toolName === "read");
 					const call = (name: string, args: ToolCall["arguments"], index = 0) => ({ type: "toolCall" as const, id: `${name}_${results.length}_${index}`, name, arguments: args });
 					if (model.id === "persona") {
@@ -41,6 +46,8 @@ export default function (pi: ExtensionAPI) {
 							await new Promise((resolve) => setTimeout(resolve, 20));
 						}
 						output.content = [{ type: "text", text: "PERSONA_EVIDENCE" }];
+					} else if (!guides.length) {
+						output.content = [call("subagent", {})];
 					} else if (!spawned.length) {
 						output.content = model.id === "reviewer"
 							? [{ type: "text" as const, text: '```js workflow\nreturn await runs.all([{key:"a",agent:"arm-a",task:"Review A"},{key:"b",agent:"arm-b",task:"Review B"}]);\n```' }, call("subagent", { workflow: true, async: true })]
@@ -48,7 +55,7 @@ export default function (pi: ExtensionAPI) {
 					} else if (!waits.length || (model.id === "arm-b" && waits.length === 1)) {
 						const id = textOf(spawned[0]!).match(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/)?.[0];
 						if (!id) throw new Error("Launch result did not expose its run id");
-						output.content = [call("bg_wait", model.id === "arm-b" ? { id: waits.length ? id.slice(0, 8) : id, timeoutMs: 20000 } : { all: true, timeoutMs: 20000 })];
+						output.content = [call("subagent", model.id === "arm-b" ? { action: "wait", id: waits.length ? id.slice(0, 8) : id, timeoutMs: 20000 } : { action: "wait", all: true, timeoutMs: 20000 })];
 					} else if (!reads.length) {
 						const references = [...new Set(waits.flatMap((wait) => [...textOf(wait).matchAll(/^Result \[[^\]]+\]: (.+)$/gm)].map((match) => match[1]!)))];
 						if (references.length !== (model.id === "arm-a" ? 2 : 1)) throw new Error(`Missing result references for ${model.id}: ${waits.map(textOf).join("\n")}`);

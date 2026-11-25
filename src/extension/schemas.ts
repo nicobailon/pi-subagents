@@ -187,6 +187,11 @@ const SubagentParamProperties = {
 	lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 500, description: "Transcript tail lines; default 80." })),
 	topic: Type.Optional(Type.String()),
 	message: Type.Optional(Type.String({ description: "resume/steer guidance or project.open prompt." })),
+	all: Type.Optional(Type.Boolean({ description: "wait: all work active at call time." })),
+	nonBlocking: Type.Optional(Type.Boolean({ description: "wait: subscribe to id's wake and return now; requires id, not with all." })),
+	stopOnAttention: Type.Optional(Type.Boolean({ description: "wait: false keeps waiting through all attention except child questions." })),
+	replyTo: Type.Optional(Type.String({ description: "reply: id of the pending child question." })),
+	to: Type.Optional(Type.String({ description: "reply: run id or agent of the child that asked." })),
 	mode: Type.Optional(Type.String({ enum: ["steer", "follow_up", "auto", "plan", "apply"], description: "steer delivery; worktree.cleanup plan/apply (reviewed planId)." })),
 	steeringRecovery: Type.Optional(Type.Boolean({ description: "steer: pause/revive after missed acknowledgment; default true in direct steer mode, forced false by extension RPC for exact ownership." })),
 	additional: Type.Optional(Type.Integer({ minimum: 1, description: "grant-spawn-budget: root interactive parent + native user confirmation only; total grants capped at original configured cap." })),
@@ -336,7 +341,7 @@ const SubagentWaitParamsSchema = Type.Object({
 	id: Type.Optional(Type.String({ description: "Run id or prefix." })),
 	nonBlocking: Type.Optional(Type.Boolean({ description: "Subscribe to id's wake and return immediately; requires id, not with all." })),
 	all: Type.Optional(Type.Boolean({ description: "Wait for all work active at call time." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Max wait; default waitTool.defaultTimeoutMs, then 30 min." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Max wait; default 30 min." })),
 	stopOnAttention: Type.Optional(Type.Boolean({ description: "false: keep waiting through all attention except supervisor requests." })),
 });
 

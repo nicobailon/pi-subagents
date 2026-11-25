@@ -19,7 +19,7 @@ import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { contextModeLabel, summarizeContextModes } from "../shared/context-mode.ts";
 import { formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { isTrustedRecordedSessionFile } from "../../shared/session-file-trust.ts";
-import { waitForRunText } from "../../shared/wait-tool-name.ts";
+import { waitForRunText } from "../../shared/wait-call.ts";
 
 const DEFAULT_TRANSCRIPT_LINES = 80;
 const MAX_TRANSCRIPT_LINES = 500;

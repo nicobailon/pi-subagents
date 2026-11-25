@@ -443,8 +443,6 @@ async function runSingleAttempt(
 		childWatchdog,
 		// registerChildWatchdog returns before reading the sink when no watchdog exists.
 		watchdogStatus: childWatchdog ? (event) => onWatchdogStatus?.(event) : undefined,
-		waitToolEnabled: options.waitToolEnabled,
-		waitToolDefaultTimeoutMs: options.waitToolDefaultTimeoutMs,
 		capabilityCeiling: options.capabilityCeiling,
 		thinkingCeiling: options.thinkingCeiling,
 		maxSubagentDepth: options.maxSubagentDepth,

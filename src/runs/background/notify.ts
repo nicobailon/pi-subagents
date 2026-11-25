@@ -158,6 +158,7 @@ export interface RegisterSubagentNotifyOptions {
 	now?: () => number;
 	ownership?: Pick<ResultDeliveryOwnership, "owns">;
 	sendRegistry?: CompletionSendRegistry;
+	noticeNotes?: (runs: SubagentNotifyDetails[]) => { text: string; taught: string[] } | undefined;
 }
 
 export interface CompletionNotifier {
@@ -637,7 +638,7 @@ const processCompletionSendRegistry = processGlobal[completionSendRegistrySymbol
 // Reload replaces extension instances, not Pi's session manager or queued wakes.
 // A manager can change sessions; retain wakes only while its UUID is unchanged.
 type QueuedWakes = { sessionId: string; wakes: string[]; unansweredCompletions: Map<string, { reminded: boolean }>; notices?: Map<string, SubagentNotifyMessage> };
-type SubagentNotifyMessage = { customType: "subagent-notify"; content: string; display: boolean; details: { runs: NotifyRunDetails[] } };
+type SubagentNotifyMessage = { customType: "subagent-notify"; content: string; display: boolean; details: { runs: NotifyRunDetails[]; taught?: string[] } };
 const queuedWakesSymbol = Symbol.for("pi-subagents.queued-completion-wakes.v2");
 const wakeGlobal = globalThis as typeof globalThis & { [queuedWakesSymbol]?: WeakMap<object, QueuedWakes> };
 const queuedWakes = wakeGlobal[queuedWakesSymbol] ?? (wakeGlobal[queuedWakesSymbol] = new WeakMap<object, QueuedWakes>());
@@ -673,11 +674,12 @@ export function unreplayedPendingNotices(entries: readonly NotifyEntry[]): Subag
 }
 
 const HELD_COMPLETION_ACTION = "The user stopped the parent turn. Report these results at the user's next prompt and do not resume the stopped task unless asked.";
-function sendCompletion(pi: Pick<ParentWake, "sendMessage" | "isHeld">, items: PendingCompletion[], unstartedWakes: string[], unansweredCompletions: Map<string, { reminded: boolean }>, updateSettleSubscription: () => void, queuedNotices: Map<string, SubagentNotifyMessage>): boolean {
+function sendCompletion(pi: Pick<ParentWake, "sendMessage" | "isHeld">, items: PendingCompletion[], unstartedWakes: string[], unansweredCompletions: Map<string, { reminded: boolean }>, updateSettleSubscription: () => void, queuedNotices: Map<string, SubagentNotifyMessage>, noticeNotes?: RegisterSubagentNotifyOptions["noticeNotes"]): boolean {
 	if (items.length === 0) return true;
 	const details = items.map((item) => item.details);
 	const triggerTurn = items.some((item) => item.triggerTurn);
-	const formatted = details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details);
+	const notes = noticeNotes?.(details);
+	const formatted = `${details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details)}${notes ? `\n\n${notes.text}` : ""}`;
 	const held = pi.isHeld();
 	const content = triggerTurn ? `${formatted}\n\nParent action: ${held ? HELD_COMPLETION_ACTION : COMPLETION_ACTION}` : formatted;
 	const display = details.some((detail) => detail.source === "foreground" || detail.status !== "completed" || detail.scheduleOrigin !== undefined);
@@ -688,7 +690,7 @@ function sendCompletion(pi: Pick<ParentWake, "sendMessage" | "isHeld">, items: P
 		content,
 		display,
 		// Pi does not send details to the model. Hosts match runs by id; the text previews stay in content only.
-		details: { runs: details.map(notifyRunDetails) },
+		details: { runs: details.map(notifyRunDetails), ...(notes ? { taught: notes.taught } : {}) },
 	};
 	// Pi can queue an accepted wake behind the current turn or past agent_settled.
 	// Recorded before sending in case Pi starts the message synchronously.
@@ -933,7 +935,7 @@ export default function registerSubagentNotify(
 			void claim.outcome.then((outcome) => settle([item], outcome, outcome ? undefined : "send_failed"));
 		}
 		const claimedItems = claimed.map(({ item }) => item);
-		const sent = sendCompletion(pi, claimedItems, unstartedWakes, unansweredCompletions, updateSettleSubscription, queuedNotices);
+		const sent = sendCompletion(pi, claimedItems, unstartedWakes, unansweredCompletions, updateSettleSubscription, queuedNotices, options.noticeNotes);
 		for (const { claim } of claimed) claim.settle?.(sent);
 		settle(claimedItems, sent, sent ? "send_accepted" : "send_failed");
 	};

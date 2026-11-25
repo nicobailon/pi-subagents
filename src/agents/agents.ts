@@ -87,7 +87,6 @@ export interface BuiltinAgentOverrideBase {
 
 interface BuiltinAgentOverrideConfig {
 	description?: string;
-	advertise?: boolean;
 	machine?: string | false;
 	output?: string | false;
 	outputMode?: OutputMode;
@@ -117,7 +116,7 @@ interface BuiltinAgentOverrideConfig {
 
 /** Every field an `agentOverrides` entry may set; the Record type keeps it equal to BuiltinAgentOverrideConfig. */
 const BUILTIN_OVERRIDE_FIELDS: Record<keyof BuiltinAgentOverrideConfig, true> = {
-	description: true, advertise: true, machine: true, output: true, outputMode: true, defaultReads: true, model: true,
+	description: true, machine: true, output: true, outputMode: true, defaultReads: true, model: true,
 	defaultProvider: true, fast: true, thinking: true, systemPromptMode: true, inheritProjectContext: true,
 	inheritGlobalContext: true, inheritSkills: true, defaultContext: true, acceptanceRole: true, disabled: true,
 	systemPrompt: true, skills: true, tools: true, excludeTools: true, allowNestedSubagents: true, allowedAgents: true,
@@ -150,7 +149,6 @@ export interface AgentConfig {
 	packageSourceVersion?: string;
 	packageSourceRoot?: string;
 	description: string;
-	advertise?: boolean;
 	aliases?: string[];
 	tools?: string[];
 	excludeTools?: string[];
@@ -1072,6 +1070,9 @@ function parseBuiltinOverrideEntry(
 	if (Object.hasOwn(input, "fallbackModels")) {
 		throw new Error(`Builtin override '${name}' in '${filePath}' uses removed field 'fallbackModels'; configure one model instead.`);
 	}
+	if (Object.hasOwn(input, "advertise")) {
+		throw new Error(`Builtin override '${name}' in '${filePath}' uses removed field 'advertise'; the subagent tool's guide now lists every enabled agent, so remove it.`);
+	}
 	if (Object.hasOwn(input, "launcher")) {
 		throw new Error(`Builtin override '${name}' in '${filePath}' sets 'launcher', which settings overrides do not support; set 'launcher' in a user agent file instead.`);
 	}
@@ -1088,11 +1089,6 @@ function parseBuiltinOverrideEntry(
 		} else {
 			throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'description'; expected a non-empty string.`);
 		}
-	}
-
-	if ("advertise" in input) {
-		if (typeof input.advertise === "boolean") override.advertise = input.advertise;
-		else throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'advertise'; expected a boolean.`);
 	}
 
 	if ("output" in input) {
@@ -1570,7 +1566,6 @@ function applyBuiltinOverride(
 	};
 
 	if (override.description !== undefined) next.description = override.description;
-	if (override.advertise !== undefined) next.advertise = override.advertise;
 	if (override.machine !== undefined) { if (override.machine === false) delete next.machine; else next.machine = override.machine; }
 	if (override.output !== undefined) { if (override.output === false) delete next.output; else next.output = override.output; }
 	if (override.outputMode !== undefined) next.outputMode = override.outputMode;
@@ -2232,12 +2227,6 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 
 		const runner = parseAgentRunnerFrontmatter(frontmatter.runner, localName);
 		validateExternalRunnerProfile(frontmatter, localName, runner);
-		let advertise: boolean | undefined;
-		if (frontmatter.advertise !== undefined) {
-			if (frontmatter.advertise === "true") advertise = true;
-			else if (frontmatter.advertise === "false") advertise = false;
-			else throw new Error(`Agent '${localName}' has invalid advertise frontmatter; expected true or false.`);
-		}
 		const rawTools = parseUnquotedList(frontmatter.tools);
 		const parsedTools = splitToolList(rawTools);
 		const tools = parsedTools.tools ?? [];
@@ -2373,7 +2362,6 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			...(packageSource?.packageVersion ? { packageSourceVersion: packageSource.packageVersion } : {}),
 			...(packageSource?.packageRoot ? { packageSourceRoot: packageSource.packageRoot } : {}),
 			description: frontmatter.description,
-			...(advertise !== undefined ? { advertise } : {}),
 			...(aliases !== undefined ? { aliases } : {}),
 			...(rawTools !== undefined ? { tools } : {}),
 			...(excludeTools !== undefined ? { excludeTools } : {}),

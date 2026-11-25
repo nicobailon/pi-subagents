@@ -25,7 +25,6 @@ import {
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
 const REPLIES_DIR = "replies";
-export const NATIVE_SUPERVISOR_TOOL_NAME = "subagent_supervisor";
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 const CHANNEL_POLL_MS = Math.min(POLL_INTERVAL_MS, 500);
@@ -91,8 +90,8 @@ interface ContactSupervisorParams {
 	interview?: unknown;
 }
 
-interface IntercomParams {
-	action: "list" | "pending" | "status" | "reply";
+interface ParentActionInput {
+	action: "pending" | "reply";
 	to?: string;
 	message?: string;
 	replyTo?: string;
@@ -115,13 +114,6 @@ const ContactSupervisorParamsSchema = Type.Object({
 	reason: Type.String({ enum: ["need_decision", "interview_request", "progress_update"] }),
 	message: Type.Optional(Type.String()),
 	interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
-}, { additionalProperties: false });
-
-const IntercomParamsSchema = Type.Object({
-	action: Type.String({ enum: ["list", "pending", "status", "reply"] }),
-	to: Type.Optional(Type.String()),
-	message: Type.Optional(Type.String()),
-	replyTo: Type.Optional(Type.String()),
 }, { additionalProperties: false });
 
 function safeSegment(value: string): string {
@@ -635,7 +627,7 @@ function endedRequestText(ended: EndedSupervisorRequest, runState: SubagentState
 	}
 }
 
-function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, params: IntercomParams, ended: Map<string, EndedSupervisorRequest>, runState: (request: SupervisorRequest) => SubagentState): PendingSupervisorRequest {
+function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, params: ParentActionInput, ended: Map<string, EndedSupervisorRequest>, runState: (request: SupervisorRequest) => SubagentState): PendingSupervisorRequest {
 	const requests = [...pending.values()].filter((request) => request.expectsReply);
 	if (params.replyTo) {
 		const request = pending.get(params.replyTo);
@@ -676,41 +668,25 @@ function publicPendingRequests(pending: Map<string, PendingSupervisorRequest>): 
 	}));
 }
 
-function buildParentSupervisorTool(pi: ExtensionAPI, pending: Map<string, PendingSupervisorRequest>, state: SubagentState, onLifecycle: SupervisorRequestLifecycleObserver, discover: () => void, runState: (request: SupervisorRequest) => SubagentState, ended: Map<string, EndedSupervisorRequest>): ToolDefinition<typeof IntercomParamsSchema, Record<string, unknown>> {
-	return {
-		name: NATIVE_SUPERVISOR_TOOL_NAME,
-		...MODEL_ONLY_TOOL,
-		label: "Subagent Supervisor",
-		description: "Native pi-subagents supervisor channel. Use reply/pending/status to answer child subagent requests without overriding pi-intercom.",
-		parameters: IntercomParamsSchema,
-		async execute(_id, params) {
-			// Discover new request files even when demand-gated polling is idle.
-			discover();
-			refreshPendingRequests(pending, state, onLifecycle, runState);
-			const input = params as IntercomParams;
-			if (input.action === "status") {
-				return { content: [{ type: "text", text: `Native supervisor channel active. Pending replies: ${pending.size}.` }], details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT } };
-			}
-			if (input.action === "pending" || input.action === "list") {
-				const lines = [...pending.values()].filter((request) => request.expectsReply).map(formatPendingLine);
-				return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "No pending supervisor requests." }], details: { pending: publicPendingRequests(pending) } };
-			}
-			if (input.action === "reply") {
-				const request = resolvePendingRequest(pending, input, ended, runState);
-				const reply = writeReply(request, input.message ?? "");
-				appendSupervisorReplyEntry(pi, request, reply);
-				pending.delete(request.id);
-				onLifecycle(request, "resolved", reply.createdAt);
-				clearForegroundSupervisorAttention(request, pending, state);
-				return { content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }], details: { replyTo: request.id, runId: request.runId, agent: request.agent } };
-			}
-			throw new Error(`Unsupported supervisor action: ${input.action}`);
-		},
+function createParentActions(pi: ExtensionAPI, pending: Map<string, PendingSupervisorRequest>, state: SubagentState, onLifecycle: SupervisorRequestLifecycleObserver, discover: () => void, runState: (request: SupervisorRequest) => SubagentState, ended: Map<string, EndedSupervisorRequest>): (input: ParentActionInput) => Promise<AgentToolResult<Record<string, unknown>>> {
+	return async (input) => {
+		discover();
+		refreshPendingRequests(pending, state, onLifecycle, runState);
+		if (input.action === "pending") {
+			const lines = [...pending.values()].filter((request) => request.expectsReply).map(formatPendingLine);
+			return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "No pending supervisor requests." }], details: { pending: publicPendingRequests(pending) } };
+		}
+		const request = resolvePendingRequest(pending, input, ended, runState);
+		const reply = writeReply(request, input.message ?? "");
+		appendSupervisorReplyEntry(pi, request, reply);
+		pending.delete(request.id);
+		onLifecycle(request, "resolved", reply.createdAt);
+		clearForegroundSupervisorAttention(request, pending, state);
+		return { content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }], details: { replyTo: request.id, runId: request.runId, agent: request.agent } };
 	};
 }
 
 export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentState, deps: NativeSupervisorChannelDeps = {}): {
-	registerTools: () => void;
 	start: () => void;
 	activateTransport: () => void;
 	findPendingAsks: (target: { runId: string; agent: string; childIndex: number }) => string[];
@@ -718,6 +694,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	dispose: () => void;
 	pending: Map<string, PendingSupervisorRequest>;
 	getSupervisorRequestState: (event: ControlEvent) => SupervisorRequestState;
+	runParentAction: (input: ParentActionInput) => Promise<AgentToolResult<Record<string, unknown>>>;
 } {
 	const watch = deps.watch ?? fs.watch;
 	const timers = deps.timers ?? globalThis;
@@ -832,17 +809,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		return false;
 	};
 
-	const registerParentTools = (): void => {
-		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pi, pending, state, observeRequestLifecycle, () => pollOnce(), runState, endedRequests));
-	};
-	// A session that never delegated through `subagent` does not declare the reply tool (scheduled runs, runs
-	// adopted after a resume), so declare it before the model is asked to use it.
-	const declareParentTool = (): void => {
-		if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
-		const active = pi.getActiveTools();
-		if (!Array.isArray(active) || active.includes(NATIVE_SUPERVISOR_TOOL_NAME) || !hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) return;
-		pi.setActiveTools([...active, NATIVE_SUPERVISOR_TOOL_NAME]);
-	};
 
 	const cleanupStaleChannelsIfDue = (): void => {
 		if (deps.getChannelDirs) return; // The root owns global retention cleanup.
@@ -900,7 +866,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			}
 			rememberPendingRequest(request);
 			pending.set(request.id, request);
-			declareParentTool();
 			updateSettleSubscription();
 			markForegroundSupervisorAttention(request, state);
 			// The ask is already queued above. A sendMessage failure (no UI, stale context) must not
@@ -977,7 +942,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		});
 		updateSettleSubscription();
 		if (!requests.length) return;
-		declareParentTool();
 		const unanswered = requests.filter(request => !settleNotices.has(request.id));
 		if (unanswered.length) {
 			for (const request of unanswered)
@@ -986,7 +950,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 				entries: [...event.entries, {
 					type: "custom_message",
 					customType: "subagent-supervisor-unanswered",
-					content: "Silent supervisor wake. Pending request IDs: " + requests.map(request => request.id).join(", ") + ". Check subagent_supervisor({ action: \"pending\" }) and reply within existing authority, or explicitly ask the user for approval. Do not auto-approve.",
+					content: "Silent supervisor wake. Pending request IDs: " + requests.map(request => request.id).join(", ") + ". Check subagent({ action: \"status\" }) and reply within existing authority, or explicitly ask the user for approval. Do not auto-approve.",
 					display: true,
 					details: { requestIds: requests.map(request => request.id) },
 				}],
@@ -1003,7 +967,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 			entries: [...event.entries, {
 				type: "custom_message",
 				customType: "subagent-supervisor-blocked",
-				content: "BLOCKED: unanswered supervisor request IDs: " + unflagged.map(request => request.id).join(", ") + ". Reminder budget exhausted; no reply or approval sent. Inspect subagent_supervisor({ action: \"pending\" }).",
+				content: "BLOCKED: unanswered supervisor request IDs: " + unflagged.map(request => request.id).join(", ") + ". Reminder budget exhausted; no reply or approval sent. Inspect subagent({ action: \"status\" }).",
 				display: true,
 				details: { blocked: true, requestIds: unflagged.map(request => request.id) },
 			}],
@@ -1117,7 +1081,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	};
 
 	return {
-		registerTools: registerParentTools,
+		runParentAction: createParentActions(pi, pending, state, observeRequestLifecycle, () => pollOnce(), runState, endedRequests),
 		activateTransport: () => {
 			if (!started) return;
 			poll();
@@ -1148,7 +1112,6 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		start: () => {
 			if (started) return;
 			started = true;
-			registerParentTools();
 			poll();
 			if (deps.getChannelDirs) return; // Child polling starts only after a descendant launch.
 			try {

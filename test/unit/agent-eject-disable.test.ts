@@ -266,6 +266,16 @@ describe("agent eject/disable/enable/reset management actions", () => {
 			assert.match(readText(enabled), /agentScope: 'project'/);
 		});
 
+		it("names the user scope and file when a project override sets other fields over a user disable", () => {
+			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+			writeJson(userSettingsPath(), { subagents: { agentOverrides: { reviewer: { disabled: true } } } });
+			writeJson(projectSettingsPath(), { subagents: { agentOverrides: { reviewer: { thinking: "high" } } } });
+
+			const enabled = handleManagementAction("enable", { agent: "reviewer", agentScope: "project" }, ctx);
+			assert.equal(enabled.isError, true);
+			assert.equal(readText(enabled), `Agent 'reviewer' is still disabled via a user scope override at ${userSettingsPath()}. Specify agentScope: 'user' to enable it.`);
+		});
+
 		it("refuses to enable an unknown agent", () => {
 			const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
 			const enabled = handleManagementAction("enable", { agent: "no-such-agent" }, ctx);

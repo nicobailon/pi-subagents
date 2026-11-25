@@ -357,7 +357,7 @@ describe("subagent control attention state", () => {
 		const message = formatControlNoticeMessage(event, "subagent-worker-78f659a3");
 
 		assert.match(message, /Supervisor request: reply to the pending request/);
-		assert.match(message, /subagent_supervisor pending/);
+		assert.match(message, /subagent status lists no child question/);
 		assert.match(message, /intercom pending/);
 	});
 

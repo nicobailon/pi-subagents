@@ -265,7 +265,7 @@ export function formatControlNoticeMessage(event: ControlEvent, childIntercomTar
 	}
 
 	const supervisorHint = event.reason === "supervisor_request"
-		? "Supervisor request: reply to the pending request. If subagent_supervisor pending is empty, check intercom pending because an external intercom tool may own the request."
+		? "Supervisor request: reply to the pending request. If subagent status lists no child question, check intercom pending because an external intercom tool may own the request."
 		: undefined;
 	return lines([
 		...head("Subagent needs attention"),

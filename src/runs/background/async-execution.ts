@@ -93,7 +93,7 @@ import { omitGitRoutingEnv } from "../shared/git-environment.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 import { recoveryDescriptorPath } from "../shared/run-launch-folder.ts";
 import { assertRequiredChildExtensionsAdmitted, resolveRequiredChildExtensions, writeRetainedRequiredChildExtensions, type RequiredChildExtensionSnapshot } from "../../shared/required-child-extensions.ts";
-import { DEFAULT_WAIT_TOOL_NAME, parentToolsDeclared, waitToolName } from "../../shared/wait-tool-name.ts";
+import { waitCall } from "../../shared/wait-call.ts";
 
 const require = nodeModule.createRequire(import.meta.url);
 // Cache failures as well as roots: management must remain loadable, and launches must not retry another SDK.
@@ -237,8 +237,6 @@ interface AsyncChainParams {
 	progressDir?: string;
 	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
-	waitToolEnabled?: boolean;
-	waitToolDefaultTimeoutMs?: number;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
@@ -318,8 +316,6 @@ interface AsyncSingleParams {
 	thinkingOverride?: AgentConfig["thinking"];
 	availableModels?: AvailableModelInfo[];
 	maxSubagentDepth: number;
-	waitToolEnabled?: boolean;
-	waitToolDefaultTimeoutMs?: number;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
@@ -394,8 +390,6 @@ export interface AsyncRunnerStepBuildParams {
 	agentContract?: AgentContract;
 	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
-	waitToolEnabled?: boolean;
-	waitToolDefaultTimeoutMs?: number;
 	worktreeBaseDir?: string;
 	worktreeProvider?: import("../../shared/types.ts").WorktreeProvider;
 	worktreeBranchPrefix?: string;
@@ -430,19 +424,13 @@ export type AsyncRunnerStepBuildResult =
 	| { error: string };
 
 export function formatAsyncStartedMessage(headline: string, interactive: boolean): string {
-	// Without declared tools (toolExposure "deferred"), the completion notice is the only way to wait.
-	const guidance = !parentToolsDeclared()
+	const guidance = interactive
 		? [
-			"Detached. Its completion wakes this session, so do not sleep or poll for it.",
-			"One-shot check: tools.subagent({ action: \"status\", id: \"...\" }).",
-		]
-		: interactive
-		? [
-			`Detached. Return control now: native completion wakes you, so do not sleep, poll, or call ${waitToolName()} for it.`,
+			"Detached. Completion wakes you; keep working or end your turn. Do not sleep or poll for it.",
 			"One-shot check: subagent({ action: \"status\", id: \"...\" }).",
 		]
 		: [
-			`Detached non-interactive run: Pi auto-drains current-session subagent work at agent_end. Do not run sleep timers or polling loops. Use ${waitToolName()} only for results this turn needs from work without native notification, and subagent({ action: \"status\", id: \"...\" }) for a one-shot check.`,
+			`Detached non-interactive run: Pi auto-drains current-session subagent work at agent_end. Do not run sleep timers or polling loops. Use ${waitCall()} only when this turn needs the result, and subagent({ action: \"status\", id: \"...\" }) for a one-shot check.`,
 		];
 	return [headline, "", ...guidance].join("\n");
 }
@@ -754,7 +742,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	// its own identity before it is allowed to proceed.
 	const launcher = (cfg as { launcher?: RunnerLauncher }).launcher;
 	const bootId = launcher ? undefined : currentBootId();
-	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}), ...(bootId ? { bootId } : {}), ...(waitToolName() !== DEFAULT_WAIT_TOOL_NAME ? { waitToolName: waitToolName() } : {}) };
+	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}), ...(bootId ? { bootId } : {}) };
 	writePrivateAtomicJson(cfgPath, launchConfig);
 	const command = binaryHost ?? nodeExecutable;
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; completionOwnerId?: unknown; revivalLease?: unknown };
@@ -1354,8 +1342,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
 			timeoutMs: a.defaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS,
 			toolTimeoutMs: resolvedToolTimeout.toolTimeoutMs,
-			waitToolEnabled: params.waitToolEnabled,
-			waitToolDefaultTimeoutMs: params.waitToolDefaultTimeoutMs,
 			effectiveAcceptance: resolveEffectiveAcceptance({
 				explicit: s.acceptance,
 				agentName: s.agent,
@@ -1593,8 +1579,6 @@ export function executeAsyncChain(
 		outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
 		dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
 		maxSubagentDepth,
-		waitToolEnabled: params.waitToolEnabled,
-		waitToolDefaultTimeoutMs: params.waitToolDefaultTimeoutMs,
 		worktreeBaseDir,
 		worktreeProvider,
 		worktreeBranchPrefix,
@@ -2311,8 +2295,6 @@ export function executeAsyncSingle(
 						outputMode,
 						...(!externalRunner && sessionFile ? { sessionFile } : {}),
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
-						waitToolEnabled: params.waitToolEnabled,
-						waitToolDefaultTimeoutMs: params.waitToolDefaultTimeoutMs,
 						...(params.agentContract ? { agentContract: params.agentContract } : {}),
 						definitionDigest,
 						launchBindingTask: task,
