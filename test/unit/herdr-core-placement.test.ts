@@ -65,6 +65,14 @@ describe("Herdr Core local placement", { skip: process.platform === "win32" }, (
 		assert.deepEqual(calls[1], { method: "terminal.send", params: { terminal: "t2", text: "/pi-subagents-bridge request", force: true } });
 	});
 
+	it("hashes long run IDs so the Core bridge socket stays within the macOS path limit", async () => {
+		const owner = await HerdrCorePlacedRunOwner.create(machine, `run_${"x".repeat(61)}`);
+		try {
+			assert.match(path.basename(owner.runtimeDir), /^pi-subagents-herdr-[0-9a-f]{12}-/u);
+			assert.ok(Buffer.byteLength(path.join(owner.runtimeDir, "bridge.sock")) <= 103);
+		} finally { await owner.cleanup(false); }
+	});
+
 	it("keeps enough ownership to kill a headless Pi when event subscription fails", async () => {
 		const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
 		const core = connection(calls); core.client.subscribeParams = async () => { throw new Error("subscribe failed"); };

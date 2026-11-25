@@ -2,7 +2,7 @@ import type { HerdrCoreLocalMachineReference, PlacementMachineReference } from "
 import { SocketRpcClient, type HerdrRpcClient } from "./herdr-connection.ts";
 import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { localMachineAccess } from "./local-machine-access.ts";
-import { createPlacedRuntimeDir, PlacedRunOwner, removePlacedRuntimeDir } from "./placed-run-owner.ts";
+import { createPlacedRuntimeDir, hashedRuntimeDirName, PlacedRunOwner, removePlacedRuntimeDir } from "./placed-run-owner.ts";
 import type { PlacementBridgeIdentity, PlacementEvidenceProof, PlacementMachineAccess, PlacementOwnedPane, PlacementOwnedRun, PlacementPaneHost, PlacementPromptOptions, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
 
 interface HcTerminal {
@@ -114,7 +114,7 @@ export class HerdrCorePlacedRunOwner extends PlacedRunOwner<HerdrCoreConnection,
 	}
 	static async create(machine: HerdrCoreLocalMachineReference, runId: string): Promise<HerdrCorePlacedRunOwner> {
 		const access = localMachineAccess({ env: { ...process.env, TMPDIR: "/tmp" } });
-		const runtimeDir = await createPlacedRuntimeDir(access, runId);
+		const runtimeDir = await createPlacedRuntimeDir(access, hashedRuntimeDirName(runId));
 		try { return new HerdrCorePlacedRunOwner(machine, runId, runtimeDir, connectHerdrCore(machine), access); }
 		catch (error) { removePlacedRuntimeDir(access, runtimeDir); throw error; }
 	}
