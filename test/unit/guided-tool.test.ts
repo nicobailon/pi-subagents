@@ -10,6 +10,8 @@ import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { actionTopicKey, callNotes, createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
+import { createChildSafeState } from "../../src/extension/fanout-child.ts";
+import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
@@ -134,37 +136,51 @@ describe("guide first", () => {
 		assert.equal(subagentReplies(session)[1], "No stoppable async run found for 'x1'.\nNo stoppable async run found for 'x2'.");
 	});
 
-	const listTool = (policy: Record<string, string>, answer: boolean) => {
+	const listTool = (answer: boolean) => {
 		const prompts: string[] = [];
-		const ran: string[] = [];
 		const pi = { on: () => {} };
+		const authorityPolicy = { stopRun: "confirm" } as const;
+		const executor = createSubagentExecutor({
+			pi: { events: { emit() {}, on() { return () => {}; } }, getSessionName() { return "parent"; } } as never,
+			state: createChildSafeState(),
+			config: { maxSubagentDepth: 2, control: {}, intercomBridge: {}, authorityPolicy } as never,
+			asyncByDefault: false,
+			tempArtifactsDir: os.tmpdir(),
+			getSubagentSessionRoot: () => os.tmpdir(),
+			expandTilde: (value) => value,
+			discoverAgents: () => ({ agents: [] }),
+		});
 		const ui = { confirm: async (title: string) => { prompts.push(title); return answer; } };
-		const ctx = { cwd: root, hasUI: true, ui, sessionManager: { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] } };
+		const sessionManager = { getSessionId: () => "session", getSessionFile: () => null, buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] };
+		const ctx = { cwd: root, hasUI: true, ui, sessionManager, modelRegistry: { getAvailable: () => [] } };
 		const { tool } = createGuidedSubagentTool(pi as never, {
 			guide: async () => "GUIDE",
 			flatten: (params) => flattenSubagentToolOptions(params),
-			authorityPolicy: policy as never,
-			run: async (_id, request, _nested, _signal, _onUpdate, runCtx) => {
-				if (!await runCtx.ui.confirm("Authorize subagent stop?", "Authority policy requires confirmation before 'stop'.")) return { content: [{ type: "text", text: "Action 'stop' canceled; authority was not granted." }], details: { mode: "management", results: [] } };
-				ran.push(request.id!);
-				return { content: [{ type: "text", text: `Stop requested for async run ${request.id}.` }], details: { mode: "management", results: [] } };
-			},
+			authorityPolicy,
+			run: (id, request, _nested, signal, onUpdate, runCtx) => executor.execute(id, request, signal ?? new AbortController().signal, onUpdate, runCtx),
 		});
-		const call = async () => {
-			const result = await tool.execute("stop", { action: "stop", id: ["a1", "b2"] } as never, undefined, undefined, ctx as never);
+		const call = async (params: Record<string, unknown> = { action: "stop", id: ["a1", "b2"] }) => {
+			const result = await tool.execute("stop", params as never, undefined, undefined, ctx as never);
 			return { text: result.content.map((part) => part.type === "text" ? part.text : "").join("\n"), isError: result.isError === true };
 		};
-		return { prompts, ran, call };
+		return { prompts, call };
 	};
 
 	it("asks once, naming the ids, before stopping a list under a confirm policy", async () => {
-		const approved = listTool({ stopRun: "confirm" }, true);
-		assert.deepEqual(await approved.call(), { text: "Stop requested for async run a1.\nStop requested for async run b2.", isError: false });
+		const approved = listTool(true);
+		await assert.rejects(approved.call(), { message: "No stoppable async run found for 'a1'.\nNo stoppable async run found for 'b2'." });
 		assert.deepEqual(approved.prompts, ["Authorize subagent stop of a1, b2?"]);
-		assert.deepEqual(approved.ran, ["a1", "b2"]);
-		const declined = listTool({ stopRun: "confirm" }, false);
+		const declined = listTool(false);
 		assert.deepEqual(await declined.call(), { text: "Action 'stop' canceled; authority was not granted.", isError: false });
-		assert.deepEqual(declined.ran, []);
+		assert.deepEqual(declined.prompts, ["Authorize subagent stop of a1, b2?"]);
+	});
+
+	it("refuses a list in id next to runId or dir, or with an entry containing spaces", async () => {
+		const { prompts, call } = listTool(true);
+		await assert.rejects(call({ action: "stop", id: ["a1", "b2"], runId: "zz-other" }), { message: "subagent: a list in id can't be combined with runId; put every target in id." });
+		await assert.rejects(call({ action: "stop", id: ["a1", "b2"], dir: "/tmp/run" }), { message: "subagent: a list in id can't be combined with dir; put every target in id." });
+		await assert.rejects(call({ action: "stop", id: ["a1", "b2?\nAuthorize something else"] }), { message: "subagent: 'stop' takes id as one run id or a list of run ids." });
+		assert.deepEqual(prompts, []);
 	});
 
 	it("gives a detached foreground run the launch note and a paused one the resume call", async () => {

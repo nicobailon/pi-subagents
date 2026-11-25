@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { managementActionAuthority, type AuthorityPolicyConfig } from "../policy/authority.ts";
+import { authorityConfirmTitle, managementActionAuthority, type AuthorityPolicyConfig } from "../policy/authority.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { disabledFeatureSectionNotice, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { isStaleExtensionContextError } from "../shared/extension-context.ts";
@@ -200,7 +200,7 @@ function listedIds(params: Record<string, unknown>): string[] | undefined {
 		}
 	}
 	if (!Array.isArray(id)) return undefined;
-	if (id.length === 0 || !id.every((entry) => typeof entry === "string" && entry.trim())) throw invalid;
+	if (id.length === 0 || !id.every((entry) => typeof entry === "string" && /^\S+$/.test(entry))) throw invalid;
 	return id;
 }
 
@@ -504,6 +504,8 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			try {
 				ids = listedIds(params);
 				request = deps.flatten(ids ? { ...params, id: ids[0] } : params);
+				const conflicts = ids ? (["runId", "dir"] as const).filter((key) => request[key] !== undefined) : [];
+				if (conflicts.length) throw new Error(`subagent: a list in id can't be combined with ${conflicts.join(" or ")}; put every target in id.`);
 			} catch (error) {
 				if (!firstCall) throw error;
 				taught.teach("guide");
@@ -538,10 +540,10 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			if (ids) {
 				const action = request.action!;
 				const confirm = !nested && ctx?.hasUI === true && managementActionAuthority(action, record.mode, deps.authorityPolicy)?.decision === "confirm";
-				if (confirm && !await ctx.ui.confirm(`Authorize subagent ${action} of ${ids.join(", ")}?`, `Authority policy requires confirmation before '${action}'.`)) {
+				if (confirm && !await ctx.ui.confirm(authorityConfirmTitle(action, ids), `Authority policy requires confirmation before '${action}'.`)) {
 					result = { content: [{ type: "text", text: `Action '${action}' canceled; authority was not granted.` }], details: { mode: "management", results: [] } };
 				} else {
-					const prompt = `Authorize subagent ${action}?`;
+					const prompt = authorityConfirmTitle(action);
 					const runCtx = confirm
 						? Object.create(ctx, { ui: { value: Object.assign(Object.create(ctx.ui) as ExtensionContext["ui"], {
 							confirm: (...args: Parameters<ExtensionContext["ui"]["confirm"]>) => args[0] === prompt ? Promise.resolve(true) : ctx.ui.confirm(...args),
