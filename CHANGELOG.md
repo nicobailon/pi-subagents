@@ -10,6 +10,10 @@
 
 - The `subagent` tool description now says to use a messaging tool, not `subagent`, to message a Pi session that is already running. With a peer-messaging extension also installed, asking to message another open session is less likely to launch a new subagent instead. Two redundant hints were cut so the tool text stays within its per-request budget. Thanks to [@Pl8tinium](https://github.com/Pl8tinium) for the report (#3337).
 
+### Fixed
+
+- A background completion notification that fires after Pi replaced or reloaded the session no longer crashes the host. The delayed settle-hook subscription called `pi.on("agent_before_settle")` on a stale extension ctx and threw `This extension ctx is stale after session replacement or reload.` as an uncaught exception, taking down the whole process (for example a Feishu bridge daemon). The subscription error is now swallowed; `sessionShutdown`/`dispose` still tears the subscription down.
+
 ## [0.90.0] - 2026-11-22
 
 ### Highlights

@@ -1087,8 +1087,17 @@ export default function registerSubagentNotify(
 		};
 	};
 	const updateSettleSubscription = (): void => {
-		if (!disposed && unansweredCompletions.size && !unsubscribeSettle)
-			unsubscribeSettle = pi.on?.("agent_before_settle", handleBeforeSettle);
+		if (!disposed && unansweredCompletions.size && !unsubscribeSettle) {
+			try {
+				unsubscribeSettle = pi.on?.("agent_before_settle", handleBeforeSettle);
+			} catch {
+				// A delayed completion timer can fire after Pi replaced or reloaded the
+				// session, leaving this extension ctx stale; pi.on then throws. Swallow it:
+				// sessionShutdown/dispose still tears the subscription down, and letting the
+				// error escape would crash the whole host process as an uncaught exception.
+				unsubscribeSettle = undefined;
+			}
+		}
 		if (disposed || !unansweredCompletions.size) {
 			unsubscribeSettle?.();
 			unsubscribeSettle = undefined;
