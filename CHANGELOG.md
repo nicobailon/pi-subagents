@@ -4,7 +4,7 @@
 
 ### Added
 
-- `PI_SUBAGENT_STRICT_THINKING=1` makes a native child fail when its model does not support the thinking level it asked for. Before, Pi ran the child at the nearest supported level without saying so, so `provider/model:high` could run at `medium`. Unset by default, which keeps that adjustment. See [configuration](docs/configuration.md#pi_subagent_strict_thinking).
+- `PI_SUBAGENT_STRICT_THINKING=1` makes a native child fail when its model does not support the thinking level it asked for. Before, Pi ran the child at the nearest supported level without saying so, so `provider/model:high` could run at `medium`. Machine-placed children are checked against the level their remote Pi reports. Unset by default, which keeps that adjustment. See [configuration](docs/configuration.md#pi_subagent_strict_thinking). Thanks to [@moofone](https://github.com/moofone) for #3351.
 
 ### Changed
 

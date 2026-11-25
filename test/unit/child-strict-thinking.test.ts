@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { createDefaultChildSessionFactory, type ChildSessionLaunch, type PiCodingAgentModule } from "../../src/runs/shared/child-session.ts";
-import { assertChildThinkingApplied, childStrictThinking } from "../../src/shared/child-strict-thinking.ts";
+import { assertChildThinkingApplied, assertPlacedChildThinkingApplied, childStrictThinking } from "../../src/shared/child-strict-thinking.ts";
 
 const STRICT = { PI_SUBAGENT_STRICT_THINKING: "1" };
 
@@ -33,6 +33,23 @@ describe("assertChildThinkingApplied", () => {
 	it("passes a supported level and a launch that requested none", () => {
 		assert.doesNotThrow(() => assertChildThinkingApplied({ requested: "low", session: session("low"), env: STRICT }));
 		assert.doesNotThrow(() => assertChildThinkingApplied({ requested: undefined, session: session("medium"), env: STRICT }));
+	});
+});
+
+describe("assertPlacedChildThinkingApplied", () => {
+	it("keeps the remote Pi's adjustment when strict thinking is off", () => {
+		assert.doesNotThrow(() => assertPlacedChildThinkingApplied({ model: "acme/m:high", applied: "medium", env: {} }));
+	});
+
+	it("refuses a remote child that ran at another level or did not report one", () => {
+		assert.throws(() => assertPlacedChildThinkingApplied({ model: "acme/m:high", applied: "medium", env: STRICT }), /Remote Pi model 'acme\/m:high' ran at thinking level 'medium'/);
+		assert.throws(() => assertPlacedChildThinkingApplied({ model: "acme/m:high", applied: undefined, env: STRICT }), /did not report its thinking level/);
+	});
+
+	it("passes the requested level and a launch without a level suffix", () => {
+		assert.doesNotThrow(() => assertPlacedChildThinkingApplied({ model: "acme/m:low", applied: "low", env: STRICT }));
+		assert.doesNotThrow(() => assertPlacedChildThinkingApplied({ model: "acme/m", applied: "medium", env: STRICT }));
+		assert.doesNotThrow(() => assertPlacedChildThinkingApplied({ model: undefined, applied: undefined, env: STRICT }));
 	});
 });
 
