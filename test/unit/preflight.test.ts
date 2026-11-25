@@ -349,6 +349,29 @@ Worker.
 		}
 	});
 
+	it("refuses Fast before launch when the model's adapter is known to be incompatible", async () => {
+		const cwd = path.join(tempDir, "fast-adapter-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "fast-worker.md"), `---
+name: fast-worker
+description: Fast worker
+model: anthropic/claude-sonnet-4
+fast: true
+---
+Worker.
+`);
+		const availableModels = [
+			{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4", api: "anthropic-messages" },
+			{ provider: "openai", id: "gpt-6", fullId: "openai/gpt-6", api: "openai-responses" },
+		];
+		const refused = await resolveSubagentLaunchContract({ agent: "fast-worker", cwd, task: "Run", availableModels });
+		const compatible = await resolveSubagentLaunchContract({ agent: "fast-worker", cwd, task: "Run", availableModels, model: "openai/gpt-6" });
+
+		assert.equal(refused.ok, false);
+		if (!refused.ok) assert.match(refused.message, /Cannot forward fast mode: 'anthropic\/claude-sonnet-4' uses 'anthropic-messages'/);
+		assert.equal(compatible.ok, true);
+	});
+
 	it("enforces maxThinking before a child launch and accepts levels at the ceiling", async () => {
 		const cwd = path.join(tempDir, "thinking-repo");
 		fs.mkdirSync(cwd, { recursive: true });

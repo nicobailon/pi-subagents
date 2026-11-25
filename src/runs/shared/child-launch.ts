@@ -213,7 +213,6 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		requireReadTool: input.requireReadTool,
 		structuredOutput: Boolean(input.structuredOutput),
 		fast: input.fast,
-		model: input.model,
 		capabilityCeiling: capabilityCeilingForPlanning,
 		inheritedCapabilityCeiling: inheritedCeiling,
 		agentName: input.childAgentName,

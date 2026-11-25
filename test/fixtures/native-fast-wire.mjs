@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
 import { zstdDecompressSync } from "node:zlib";
 
-// Both real Pi adapters serialize their request before calling fetch. Refuse
-// every unexpected destination rather than falling through to network I/O.
 const fetchFixture = async (input, init) => {
 	const request = new Request(input, init);
 	const routes = {
@@ -44,5 +42,4 @@ const fetchFixture = async (input, init) => {
 	];
 	return new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 };
-// The detached runner installs Undici globals during boot.
 Object.defineProperty(globalThis, "fetch", { configurable: true, get: () => fetchFixture, set: () => {} });

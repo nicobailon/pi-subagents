@@ -29,7 +29,6 @@ async function awaitRunnerExit(dir: string) {
 	throw new Error(`Missing detached runner exit for ${dir}: ${JSON.stringify(readJson(path.join(dir, "status.json")))}`);
 }
 
-// The normal suite uses the pinned Pi SDK; native-peer-loader.mjs can select another Pi release.
 it("forwards Fast tiers via the native adapters on foreground and detached launches", { timeout: 90_000 }, async (t) => {
 	const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fast-wire-"));
 	const agentDir = path.join(cwd, "agent");
@@ -101,14 +100,13 @@ it("forwards Fast tiers via the native adapters on foreground and detached launc
 		];
 		for (const entry of cases) {
 			if (entry.name === "OPENAI_KEY") {
-				await factory.dispose(); // The next SDK session must read the new auth fixture.
+				await factory.dispose();
 				writeJson(agentDir, "auth.json", { ...oauthAuth, openai: { type: "api_key", key: "fixture-key" } });
 			}
 			writeJson(configDir, "config.json", { fastServiceTier: entry.configured, ...(entry.invalidConfig ? { asyncWidgetLayout: "compact" } : {}) });
 			const [provider, id] = entry.model.split("/");
 			const agent = makeAgent("worker", { model: entry.model, tools: ["read"], inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false });
 			const fast = entry.fast === undefined ? {} : { fast: entry.fast };
-			// Repeat only the settings and rejection cases that exercise the runner handoff.
 			for (const detached of entry.alsoDetached ? [false, true] : [false]) await t.test(`${entry.name} ${detached ? "detached" : "foreground"}`, async () => {
 				const tag = `WIRE_${entry.name}_${detached ? "BG" : "FG"}`;
 				const task = `${tag}: return the fixture response.`;

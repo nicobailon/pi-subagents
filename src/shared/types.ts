@@ -2620,7 +2620,7 @@ export interface RunSyncOptions {
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
-	/** Opt into priority service tier for supported native OpenAI-Codex launches. */
+	/** Request the configured OpenAI service tier on compatible native adapters. */
 	fast?: boolean;
 	/** The override came from the running parent session, not configuration. */
 	modelOverrideFromParent?: boolean;

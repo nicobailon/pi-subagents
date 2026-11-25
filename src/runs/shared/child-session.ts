@@ -652,7 +652,6 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				const requiredStartupErrors: string[] = [];
 				let binding = true;
 				try {
-					// session_start handlers can send a user message while extensions bind.
 					if (launch.runtime.fast) installChildFastMode(session, modelRuntime);
 					await session.bindExtensions({
 						mode: "print",

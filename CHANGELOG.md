@@ -18,6 +18,7 @@
 ### Fixed
 
 - When a builtin agent was disabled in user settings and project settings changed some other field of it, `enable` with `agentScope: "project"` failed with a message that pointed back to the project scope and project settings file, so following it never worked. The message now names the user scope and user settings file that keep the agent disabled.
+- `fast: true` only worked for `openai-codex/*` models, so it refused `openai/*` with Sign in with ChatGPT even though that adapter can send a service tier. Fast now works for any child whose model uses Pi's OpenAI Responses or Codex Responses adapter, and an explicit `service_tier` already on the request is kept. A model the parent's registry shows on another API is still refused before launch; other unsupported cases (a provider-registered custom stream, a model the registry doesn't know) now fail when the child session opens. A machine-placed child or an invalid subagent config file now fails a Fast launch instead of running without Fast or falling back to Priority. Thanks to [@jtabke](https://github.com/jtabke) for #3344.
 
 ## [0.90.0] - 2026-11-22
 
