@@ -10,6 +10,7 @@ import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts
 import { discoverAgents, discoverAgentsAll, inspectAgentDefinitionDirectory, type AgentConfig } from "../../src/agents/agents.ts";
 import { parseFrontmatter, parseFrontmatterList, parseUnquotedList } from "../../src/agents/frontmatter.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
 import { applyThinkingSuffix } from "../../src/runs/shared/child-tool-plan.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
 
@@ -1869,6 +1870,22 @@ Do work
 		const planned = buildInProcessChildLaunch({ ...launch, model: "fixture/synthetic-model:low" });
 
 		assert.equal(planned.session.runtime.fast, true);
+	});
+
+	it("refuses a foreground Fast launch before the child session is created when the registry shows another adapter", async () => {
+		const worker: AgentConfig = { name: "worker", description: "worker", systemPrompt: "", systemPromptMode: "replace", inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, source: "project", filePath: "worker.md", model: "anthropic/claude-sonnet-4", tools: ["read"] };
+		let created = 0;
+		const factory = { async create(): Promise<never> { created++; throw new Error("session opened"); }, async dispose() {}, async disposeForParent() {} };
+		const outcome = await runSync(process.cwd(), [worker], "worker", "task", {
+			runId: "fast-foreground",
+			childSessionFactory: factory,
+			fast: true,
+			acceptance: false,
+			availableModels: [{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4", api: "anthropic-messages" }],
+		}).then((result) => result.error ?? "", (error: unknown) => error instanceof Error ? error.message : String(error));
+
+		assert.equal(created, 0);
+		assert.match(outcome, /Cannot forward fast mode: 'anthropic\/claude-sonnet-4' uses 'anthropic-messages'/);
 	});
 });
 
