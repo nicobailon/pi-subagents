@@ -550,7 +550,11 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 						}) } }) as ExtensionContext
 						: ctx;
 					const results: AgentToolResult<Details>[] = [];
-					for (const entry of ids) results.push(await runOne({ ...request, id: entry }, runCtx));
+					for (const entry of ids) {
+						results.push(signal?.aborted
+							? { content: [{ type: "text", text: `${entry}: skipped, the call was cancelled.` }], isError: true, details: { mode: "management", results: [] } }
+							: await runOne({ ...request, id: entry }, runCtx));
+					}
 					result = listedIdsResult(ids, results);
 				}
 			} else {

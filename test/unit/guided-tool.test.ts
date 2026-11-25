@@ -175,6 +175,24 @@ describe("guide first", () => {
 		assert.deepEqual(declined.prompts, ["Authorize subagent stop of a1, b2?"]);
 	});
 
+	it("skips the rest of a list once the call is cancelled", async () => {
+		const controller = new AbortController();
+		const ran: string[] = [];
+		const sessionManager = { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] };
+		const { tool } = createGuidedSubagentTool({ on: () => {} } as never, {
+			guide: async () => "GUIDE",
+			flatten: (params) => flattenSubagentToolOptions(params),
+			run: async (_id, request) => {
+				ran.push(String(request.id));
+				controller.abort();
+				return { content: [{ type: "text", text: `Stop requested for async run ${request.id}.` }], details: { mode: "management", results: [] } };
+			},
+		});
+		const result = await tool.execute("stop", { action: "stop", id: ["a1", "b2", "c3"] } as never, controller.signal, undefined, { cwd: os.tmpdir(), hasUI: false, sessionManager } as never);
+		assert.deepEqual(ran, ["a1"]);
+		assert.equal(result.content.map((part) => part.type === "text" ? part.text : "").join("\n"), "Stop requested for async run a1.\nb2: skipped, the call was cancelled.\nc3: skipped, the call was cancelled.");
+	});
+
 	it("refuses a list in id next to runId or dir, or with an entry containing spaces", async () => {
 		const { prompts, call } = listTool(true);
 		await assert.rejects(call({ action: "stop", id: ["a1", "b2"], runId: "zz-other" }), { message: "subagent: a list in id can't be combined with runId; put every target in id." });
