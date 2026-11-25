@@ -92,6 +92,6 @@ it("offers each workflow child start to tool_call handlers and does not start a 
 			session.dispose();
 		}
 		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
-		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 });

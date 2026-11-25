@@ -144,6 +144,6 @@ rl.on("close", () => { record("closed"); process.exit(0); });
 	} finally {
 		if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
-		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 });
