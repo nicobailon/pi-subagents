@@ -109,6 +109,24 @@ describe("guide first", () => {
 		assert.doesNotMatch(subagentReplies(session)[2]!, /not found|unknown/i);
 	});
 
+	it("stops or interrupts a list of ids in one call, one line per outcome", { timeout: 90_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "slow", delay: 20_000 });
+		const steps: Step[] = [{}, { agent: "probe", task: "Live", async: true }, { agent: "probe", task: "Ended", async: true }];
+		let live = "";
+		let ended = "";
+		const session = await startParent(steps, (context) => {
+			if (live || steps.length > 0) return;
+			const texts = (context.messages as Array<{ role: string; content?: Array<{ text?: string }> }>).filter((message) => message.role === "toolResult").map((message) => (message.content ?? []).map((part) => part.text ?? "").join("\n"));
+			[live, ended] = texts.flatMap((text) => /Async: probe \[([^\]]+)\]/.exec(text)?.[1] ?? []);
+			steps.push({ action: "stop", id: ended }, { action: "wait", id: ended }, { action: "stop", id: [live, ended, "x9-missing"] }, { action: "interrupt", args: { id: JSON.stringify([ended, "x9-missing"]) } }, "stopped");
+		});
+		await session.prompt("go");
+		const [stopped, interrupted] = subagentReplies(session).slice(-2);
+		assert.equal(stopped, `stop requested for ${live} · ${ended} not running · x9-missing not found`);
+		assert.equal(interrupted, `${ended} not running · x9-missing not found`);
+	});
+
 	const launchesWith = async (facts: (request: Record<string, unknown>) => CallFacts, launches: Array<Record<string, unknown>>) => {
 		const pi = { on: () => {} };
 		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };

@@ -11,6 +11,10 @@
 - The guide's agent list now says it is a snapshot and that `{action:"list"}` shows the current agents, since agents can be created, disabled or enabled mid-session.
 - When workflow scripts are turned off by config, refusing a `workflow` option or a script now also says to use the top-level `tasks` or `chain` fields instead.
 
+### Added
+
+- `stop`, `interrupt` and `dismiss` take a list in `id`, so one call can stop several runs: `subagent({action:"stop", id:["a1","b2","c3"]})`. Each entry works like a single id (prefixes allowed, same confirmation rules), one failing entry doesn't stop the others, and the reply is one line grouped by outcome, for example `stop requested for a1 · b2 not running · c3 not found`. The call counts as failed only if no entry succeeded. Providers that only send declared fields can pass the list as JSON text or inside `args`. A single id works and replies as before.
+
 ### Fixed
 
 - When a builtin agent was disabled in user settings and project settings changed some other field of it, `enable` with `agentScope: "project"` failed with a message that pointed back to the project scope and project settings file, so following it never worked. The message now names the user scope and user settings file that keep the agent disabled.

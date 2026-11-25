@@ -90,7 +90,7 @@ const MANAGE_GUIDE = `Manage (id from the launch reply, or a prefix):
 - {action:"status"} lists all runs and child questions; with id, one run
 - {action:"steer", id, message} redirects a live run
 - {action:"resume", id, message} continues a finished run; returns a new id
-- {action:"stop", id} ends it; interrupt pauses it
+- {action:"stop", id or [ids]} ends it; interrupt pauses it
 - {action:"reply", replyTo, message} answers a child's question
 - {action:"wait", id} (or all:true) blocks, only when this same turn needs the result
 - also: list, get, models, doctor, validate, create, update, delete, dismiss
@@ -120,8 +120,8 @@ const ACTION_TOPICS: Record<string, string> = {
 	status: 'status: no id lists all runs and child questions; id (a prefix works) shows one run; view:"fleet"|"transcript" with index, lines. Example: subagent({action:"status", id:"r-1f3"})',
 	steer: 'steer: id, message; a live run only (a finished run needs resume). Example: subagent({action:"steer", id:"r-1f3", message:"focus on ..."})',
 	resume: 'resume: id, message; continues a finished or paused run and returns a new id: use the latest. Example: subagent({action:"resume", id:"r-1f3", message:"..."})',
-	stop: 'stop: id; ends the run, not resumable. interrupt: id; pauses its current turn. Example: subagent({action:"stop", id:"r-1f3"})',
-	interrupt: 'interrupt: id; pauses the current turn, resumable. Example: subagent({action:"interrupt", id:"r-1f3"})',
+	stop: 'stop: id, or a list of ids; ends the run, not resumable. interrupt: id or a list; pauses its current turn. Example: subagent({action:"stop", id:"r-1f3"}); several: id:["r-1f3","r-9a2"]',
+	interrupt: 'interrupt: id, or a list of ids; pauses the current turn, resumable. Example: subagent({action:"interrupt", id:"r-1f3"}); several: id:["r-1f3","r-9a2"]',
 	wait: 'wait: id, or all:true; nonBlocking:true (with id) returns now and wakes you later; timeoutMs; stopOnAttention:false keeps waiting through attention. Completion wakes you anyway: wait only when this same turn needs the result. Example: subagent({action:"wait", id:"r-1f3"})',
 	reply: 'reply: replyTo (the question id from status or the notice), message. Example: subagent({action:"reply", replyTo:"<question id>", message:"Yes, rerun only that job."})',
 	list: 'list: search, capabilities:true for compact rows. get: agent. models: lists model ids. Example: subagent({action:"list", search:"review"})',
@@ -136,7 +136,7 @@ const ACTION_TOPICS: Record<string, string> = {
 	watchdog: 'watchdog.status, watchdog.check, watchdog.recommend-model; watchdog.configure: model ("recommended" or provider/id), thinking, scope "session"|"user"|"project", target. Example: subagent({action:"watchdog.configure", model:"recommended", scope:"session"}). How it works: topic "watchdog/when-it-runs".',
 	command: 'command.status / yield / cancel: id, index, toolCallId?. Example: subagent({action:"command.status", id:"r-1f3", index:0})',
 	refine: 'refine: agent; refine.show and refine.rollback: agent. Example: subagent({action:"refine", agent:"reviewer"})',
-	other: 'children.list: id. dismiss: id. debug.run: id. doctor: no fields. grant-spawn-budget: additional (asks the user). Example: subagent({action:"doctor"})',
+	other: 'children.list: id. dismiss: id, or a list of ids. debug.run: id. doctor: no fields. grant-spawn-budget: additional (asks the user). Example: subagent({action:"doctor"})',
 };
 
 const TOPIC_ALIASES: Record<string, string> = {
@@ -180,6 +180,42 @@ export function misplacedGuideCall(action: string): string | undefined {
 	if (!match) return undefined;
 	const topic = match[1] ?? match[2]!;
 	return `subagent: '${action}' is not an action. For ${topic}'s fields call subagent({action:"guide", topic:"${topic}"}).`;
+}
+
+const LIST_ID_ACTIONS = new Set(["stop", "interrupt", "dismiss"]);
+
+function listedIds(params: Record<string, unknown>): string[] | undefined {
+	if (typeof params.action !== "string" || !LIST_ID_ACTIONS.has(params.action)) return undefined;
+	let id = params.id;
+	if (typeof id === "string" && /^\s*\[/.test(id)) {
+		try {
+			id = JSON.parse(id);
+		} catch {
+			return undefined;
+		}
+	}
+	if (!Array.isArray(id)) return undefined;
+	if (id.length === 0 || !id.every((entry) => typeof entry === "string" && entry.trim())) throw new Error(`subagent: '${params.action}' takes id as one run id or a list of run ids.`);
+	return id;
+}
+
+const LISTED_ID_DONE: Record<string, string> = { stop: "stop requested for", interrupt: "interrupt requested for", dismiss: "dismissed" };
+const LISTED_ID_OUTCOMES: Array<[RegExp, string]> = [
+	[/^No running or queued async run was found for |^No running async run with an interrupt-capable pid was found for |, not running\.$|has no active child step to interrupt\.$/, "not running"],
+	[/^No stoppable async run found for |^No interrupt-capable run found for |was not found in the active session\.$/, "not found"],
+];
+
+function listedIdsResult(action: string, ids: readonly string[], results: readonly AgentToolResult<Details>[]): AgentToolResult<Details> {
+	const groups = new Map<string, string[]>();
+	results.forEach((result, index) => {
+		const text = result.content.map((part) => part.type === "text" ? part.text : "").join(" ").replace(/\s+/g, " ").trim();
+		const key = !result.isError ? "" : LISTED_ID_OUTCOMES.find(([pattern]) => pattern.test(text))?.[1] ?? `: ${text}`;
+		groups.set(key, [...(groups.get(key) ?? []), ids[index]!]);
+	});
+	const line = [...groups].map(([key, group]) => key === "" ? `${LISTED_ID_DONE[action]} ${group.join(", ")}`
+		: key.startsWith(": ") ? group.map((entry) => `${entry}${key}`).join(" · ")
+		: `${group.join(", ")} ${key}`).join(" · ");
+	return { content: [{ type: "text", text: line }], ...(groups.has("") ? {} : { isError: true }), details: { mode: "management", results: [] } };
 }
 
 export function isLaunchRequest(params: Record<string, unknown>): boolean {
@@ -469,8 +505,10 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			if (misplaced) throw new Error(misplaced);
 			const firstCall = !taught.has("guide");
 			let request: SubagentParamsLike;
+			let ids: string[] | undefined;
 			try {
-				request = deps.flatten(params);
+				ids = listedIds(params);
+				request = deps.flatten(ids ? { ...params, id: ids[0] } : params);
 			} catch (error) {
 				if (!firstCall) throw error;
 				taught.teach("guide");
@@ -489,19 +527,25 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			const replyHint = request.action === "reply" && (record.replyTo === undefined || record.message === undefined)
 				? 'If your fields arrive missing, pass them inside args: subagent({action:"reply", args:{replyTo, message}}).'
 				: undefined;
-			try {
-				if (nested) {
-					const scriptRequest = nestedSubagentRequest(request, deps.authorityPolicy);
-					result = typeof scriptRequest === "string"
+			const runOne = async (one: SubagentParamsLike): Promise<AgentToolResult<Details>> => {
+				try {
+					if (!nested) return await deps.run(id, one, false, signal, onUpdate, ctx);
+					const scriptRequest = nestedSubagentRequest(one, deps.authorityPolicy);
+					return typeof scriptRequest === "string"
 						? { content: [{ type: "text", text: scriptRequest }], isError: true, details: { mode: "management", results: [] } }
 						: signal?.aborted
 							? { content: [{ type: "text", text: "subagent call was cancelled before it started; nothing was launched." }], isError: true, details: { mode: "management", results: [] } }
 							: await deps.run(id, scriptRequest, true, signal, onUpdate, ctx);
-				} else {
-					result = await deps.run(id, request, false, signal, onUpdate, ctx);
+				} catch (error) {
+					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
 				}
-			} catch (error) {
-				result = { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
+			};
+			if (ids) {
+				const results: AgentToolResult<Details>[] = [];
+				for (const entry of ids) results.push(await runOne({ ...request, id: entry }));
+				result = listedIdsResult(request.action!, ids, results);
+			} else {
+				result = await runOne(request);
 			}
 			const notes: string[] = [];
 			const keys: string[] = [];
