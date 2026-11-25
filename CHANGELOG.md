@@ -18,6 +18,7 @@
 ### Fixed
 
 - When a builtin agent was disabled in user settings and project settings changed some other field of it, `enable` with `agentScope: "project"` failed with a message that pointed back to the project scope and project settings file, so following it never worked. The message now names the user scope and user settings file that keep the agent disabled.
+- An agent with `extensions: []` no longer prints a warning on every launch saying it may lose a model-provider extension. For a provider built into Pi or defined in `models.json`, nothing was lost, so the warning was a false alarm that hid the real case. Now only a background child whose model's provider is registered by an extension in the parent, and that doesn't load that extension itself, gets a warning, naming the provider and saying its requests go through the provider Pi has without that extension. Foreground children inherit the parent's providers, so they get no warning. Thanks to [@mystery4f](https://github.com/mystery4f) for the report (#3353).
 
 ## [0.90.0] - 2026-11-22
 
