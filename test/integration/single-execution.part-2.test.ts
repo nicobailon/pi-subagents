@@ -1073,6 +1073,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 				getSessionId: () => "registered-delegation-session",
 				getSessionFile: () => path.join(tempDir, "registered-delegation-session.jsonl"),
 				getEntries: () => [],
+				buildContextEntries: () => [],
 			},
 		};
 		const started: SubagentDelegationStarted[] = [];
