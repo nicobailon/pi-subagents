@@ -76,9 +76,10 @@ const LAUNCH_GUIDE = `Launch: subagent({agent, task, ...})
 - output: file for the child's report, or false
 - label: 2-4 words for run lists
 - worktree: true isolates it in a git worktree (needs a clean checkout)
+- timeoutMs: run deadline in ms (default 30 min, or config timeoutMs); long writers need more
 
 Parallel: subagent({workflow:"parallel", args:{tasks:[{agent, task, cwd?, model?, label?}]}, worktree?})
-Dependent steps: {action:"guide", topic:"workflows"}
+Steps per item, items in parallel: {action:"guide", topic:"workflows/parallel-sequential-lanes"}
 `;
 
 const NO_SCRIPTS_GUIDE = `

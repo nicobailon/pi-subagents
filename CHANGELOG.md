@@ -10,6 +10,7 @@
 - When a foreground single-agent launch finishes or is paused, its reply now names the run id and the exact call that resumes it. Before, the id appeared only in run lists, and the reply gave advice meant for background runs ("completion wakes you"). A detached run keeps that advice, since it can't be resumed while detached.
 - The guide's agent list now says it is a snapshot and that `{action:"list"}` shows the current agents, since agents can be created, disabled or enabled mid-session.
 - When workflow scripts are turned off by config, refusing a `workflow` option or a script now also says to use the top-level `tasks` or `chain` fields instead.
+- The guide now names the run deadline (`timeoutMs`, 30 minutes by default, so a long writer needs more) and points straight at the per-item lanes section (`workflows/parallel-sequential-lanes`) instead of the whole workflows topic, which took two more calls to reach. Guide section lists now show the same `{action:"guide", topic}` form as the guide; `options.topic` still works.
 
 ### Added
 

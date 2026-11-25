@@ -10,6 +10,7 @@ import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { actionTopicKey, callNotes, createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
+import { readSubagentGuide } from "../../src/extension/subagent-guide.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
@@ -453,14 +454,14 @@ describe("guided tool surface", () => {
 		assert.deepEqual(declarations, [0, 14]);
 	});
 
-	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,200", () => {
+	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,350", () => {
 		const empty = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-size-"));
 		process.env.PI_CODING_AGENT_DIR = empty;
 		try {
 			const agents = discoverAgents(empty, "both").agents;
 			assert.ok(agents.some((agent) => agent.name === "scout"), "bundled agents are listed");
 			const size = SUBAGENT_TOOL_DESCRIPTION.length + formatGuide(agents, { canLaunch: true }).length;
-			assert.ok(size <= 2_200, `description + guide is ${size} chars`);
+			assert.ok(size <= 2_350, `description + guide is ${size} chars`);
 			assert.match(formatGuide(agents, { canLaunch: true }), /Not for messaging a Pi session that is already open; use a messaging tool for that\./);
 			assert.doesNotMatch(formatGuide(agents, { canLaunch: true, child: true }), /messaging tool/);
 			assert.deepEqual(SUBAGENT_TOOL_PARAMETERS, { type: "object", properties: {}, additionalProperties: true });
@@ -498,5 +499,13 @@ describe("guided tool surface", () => {
 		for (const action of named("also")) assert.ok((SUBAGENT_ACTIONS as readonly string[]).includes(action), `guide names '${action}'`);
 		for (const family of named("families")) assert.ok(SUBAGENT_ACTIONS.some((action) => action.startsWith(`${family}.`) || action === family), `guide names family '${family}'`);
 		assert.match(guide, /\n\nAgents \(as of now; \{action:"list"\} refreshes\):\n- scout$/);
+	});
+
+	it("points the guide only at guide topics that exist, including the lanes section, and names the run deadline", () => {
+		const guide = formatGuide([{ name: "scout" }], { canLaunch: true });
+		const topics = [...guide.matchAll(/topic:"([^"<]+)"/g)].map((match) => match[1]!);
+		assert.ok(topics.includes("workflows/parallel-sequential-lanes"), `guide topics: ${topics.join(", ")}`);
+		for (const topic of topics) assert.doesNotMatch(readSubagentGuide(topic), /^Unknown/, topic);
+		assert.match(guide, /^- timeoutMs: run deadline in ms \(default 30 min, or config timeoutMs\)/m);
 	});
 });
