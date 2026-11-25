@@ -53,6 +53,7 @@ import { normalizeSkillInput } from "../../agents/skills.ts";
 import { buildAsyncRunnerSteps, DEFAULT_ASYNC_TIMEOUT_MS, executeAsyncChain, executeAsyncSingle, formatAsyncStartedMessage, isAsyncAvailable, workflowAwaitedAsyncResultPath } from "../background/async-execution.ts";
 import { updateActiveRunIndex } from "../background/active-run-index.ts";
 import { steeringReceipt } from "../background/steering.ts";
+import type { WaitExecute } from "../background/wait-tool.ts";
 import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError, getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession, transferActiveAsyncCapacity, type ActiveAsyncCapacityHandle } from "../background/active-async-capacity.ts";
 import { isScheduledRunAction } from "../background/scheduled-runs.ts";
 import { encodeIndexSegment } from "../background/index-segment.ts";
@@ -337,6 +338,13 @@ export interface SubagentParamsLike {
 	/** Retained async child run id. Valid only on workflow runs.run items. */
 	resume?: string;
 	message?: string;
+	/** wait: all work active at call time. */
+	all?: boolean;
+	nonBlocking?: boolean;
+	stopOnAttention?: boolean;
+	/** reply: the pending child question, or the run or agent that asked. */
+	replyTo?: string;
+	to?: string;
 	steeringRecovery?: boolean;
 	mode?: SteerDeliveryMode | "plan" | "apply";
 	repo?: string;
@@ -462,6 +470,10 @@ interface ExecutorDeps {
 	asyncByDefault: boolean;
 	waitToolEnabled?: boolean;
 	waitToolDefaultTimeoutMs?: number;
+	/** Runs `action: "wait"`, the same wait as the wait tool. */
+	wait?: WaitExecute;
+	/** Runs `action: "reply"` and lists the child questions `status` shows. */
+	runSupervisorAction?: (input: { action: "pending" | "reply"; to?: string; replyTo?: string; message?: string }) => Promise<AgentToolResult<Record<string, unknown>>>;
 	handleScheduledRunAction?: (params: SubagentParamsLike, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>;
 	watchdog?: MainWatchdogRuntime;
 	tempArtifactsDir: string;
@@ -7110,6 +7122,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			requestParentModel = normalizeParentModel(ctx.model);
 		}
 		if (action) {
+			if (action === "wait") {
+				if (!deps.wait) return { content: [{ type: "text", text: "action='wait' is not available in this session." }], isError: true, details: { mode: "management", results: [] } };
+				const { id, runId, all, nonBlocking, timeoutMs, stopOnAttention } = paramsWithResolvedCwd;
+				return deps.wait(_id, omitUndefinedProperties({ id: id ?? runId, all, nonBlocking, timeoutMs, stopOnAttention }), signal, onUpdate, ctx);
+			}
+			if (action === "reply") {
+				if (!deps.runSupervisorAction) return { content: [{ type: "text", text: "action='reply' is not available in this session: it has no child questions to answer." }], isError: true, details: { mode: "management", results: [] } };
+				const { to, replyTo, message } = paramsWithResolvedCwd;
+				const reply = await deps.runSupervisorAction(omitUndefinedProperties({ action: "reply" as const, to, replyTo, message }));
+				return { ...reply, details: { mode: "management", results: [] } };
+			}
 			if (action === "worktree.cleanup") {
 				if (deps.allowMutatingManagementActions === false) {
 					return { content: [{ type: "text", text: "Action 'worktree.cleanup' is not available from child-safe subagent fanout mode." }], isError: true, details: { mode: "management", results: [] } };
@@ -7465,6 +7488,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							: item),
 					};
 				};
+				// The run list also shows child questions waiting for an answer, so one status call finds them.
+				const withChildQuestions = async (result: AgentToolResult<Details>): Promise<AgentToolResult<Details>> => {
+					if (!deps.runSupervisorAction) return result;
+					const pending = await deps.runSupervisorAction({ action: "pending" });
+					if (!(pending.details.pending as Array<{ expectsReply?: boolean }> | undefined)?.some((request) => request.expectsReply)) return result;
+					const questions = pending.content.flatMap((item) => item.type === "text" ? [item.text] : []).join("\n");
+					return { ...result, content: [...result.content, { type: "text", text: `Child questions waiting for an answer (subagent({action:"reply", replyTo, message})):\n${questions}` }] };
+				};
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRoots(ctx.sessionManager.getSessionFile() ?? null, deps);
 				if (action === "debug.run") {
@@ -7494,9 +7525,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					}
 				} else if (!hasDirectoryTarget) {
 					const foreground = getForegroundControl(deps.state, undefined);
-					if (foreground) return withBudget(foregroundStatusResult(foreground));
+					if (foreground) return withChildQuestions(withBudget(foregroundStatusResult(foreground)));
 				}
-				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
+				const listing = withBudget(inspectSubagentStatus(paramsWithResolvedCwd, omitUndefinedProperties({ state: deps.state, nested: nestedScope, sessionRoots, abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) })));
+				return targetRunId || hasDirectoryTarget ? listing : withChildQuestions(listing);
 			}
 			if (action === "resume") {
 				const workflowResumeSourceId = workflowResumeTargetId(DIRS.async, paramsWithResolvedCwd);

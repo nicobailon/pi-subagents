@@ -718,6 +718,8 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	dispose: () => void;
 	pending: Map<string, PendingSupervisorRequest>;
 	getSupervisorRequestState: (event: ControlEvent) => SupervisorRequestState;
+	/** subagent's `reply` action and the pending list `status` shows, run by the reply tool's own code. */
+	runParentAction: (input: { action: "pending" | "reply"; to?: string; replyTo?: string; message?: string }) => Promise<AgentToolResult<Record<string, unknown>>>;
 } {
 	const watch = deps.watch ?? fs.watch;
 	const timers = deps.timers ?? globalThis;
@@ -832,8 +834,10 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 		return false;
 	};
 
+	let parentTool: ReturnType<typeof buildParentSupervisorTool> | undefined;
+	const getParentTool = () => parentTool ??= buildParentSupervisorTool(pi, pending, state, observeRequestLifecycle, () => pollOnce(), runState, endedRequests);
 	const registerParentTools = (): void => {
-		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pi, pending, state, observeRequestLifecycle, () => pollOnce(), runState, endedRequests));
+		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(getParentTool());
 	};
 	// A session that never delegated through `subagent` does not declare the reply tool (scheduled runs, runs
 	// adopted after a resume), so declare it before the model is asked to use it.
@@ -1118,6 +1122,8 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 
 	return {
 		registerTools: registerParentTools,
+		// The reply tool's execute reads only its params; the other arguments are never used.
+		runParentAction: (input) => getParentTool().execute("subagent-parent-action", input, undefined, undefined, undefined as never),
 		activateTransport: () => {
 			if (!started) return;
 			poll();

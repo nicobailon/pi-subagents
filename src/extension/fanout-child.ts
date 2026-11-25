@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Static } from "typebox";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { discoverAgents } from "../agents/agents.ts";
 import { getArtifactsDir } from "../shared/artifacts.ts";
@@ -16,7 +17,7 @@ import { createSubagentParamsSchema } from "./schemas.ts";
 import { registerPinnedTool } from "./declaration-pinning.ts";
 import { resolveDisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { finalizeToolResult } from "./tool-result.ts";
-import { flattenSubagentToolOptions } from "./subagent-options.ts";
+import { flattenSubagentToolOptions, prepareSubagentToolArguments } from "./subagent-options.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, type AsyncStartedEvent, type Details, type SubagentState } from "../shared/types.ts";
 import { createChildExternalJobBridgeSweeper } from "../runs/shared/external-job-bridge.ts";
@@ -228,6 +229,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 			...(blockedActions ? [`Mutating management actions (${blockedActions}) are blocked in this mode.`] : []),
 		].join("\n"),
 		parameters: params,
+		prepareArguments: (args) => prepareSubagentToolArguments(args) as Static<typeof params>,
 		async execute(id, params, signal, onUpdate, ctx) {
 			return finalizeToolResult(await executor.executePublic(id, flattenSubagentToolOptions(params, disabledFeatures), signal ?? new AbortController().signal, onUpdate, ctx));
 		},

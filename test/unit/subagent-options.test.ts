@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { SUBAGENT_OPTION_KEYS, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { normalizePublicSubagentExecution } from "../../src/extension/public-execution.ts";
-import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
+import { flattenSubagentToolOptions, prepareSubagentToolArguments } from "../../src/extension/subagent-options.ts";
 import { resolveDisabledFeatureSurface } from "../../src/shared/disabled-features.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/subagent-wait.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
@@ -18,7 +18,8 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const OPTION_SAMPLES: Record<string, unknown> = {
 	extensionBindings: { "pkg/1": {} }, capabilities: true, search: "review", name: "nightly", dir: "/tmp/run", handoffPath: "handoff.json",
 	repo: "/repo", planId: "plan-1", laneId: "lane-1", merge: {}, supersession: {}, index: 0, childId: "child-1", drain: true,
-	toolCallId: "call-1", view: "transcript", lines: 5, topic: "workflows", mode: "follow_up", steeringRecovery: false,
+	toolCallId: "call-1", view: "transcript", lines: 5, topic: "workflows", all: true, nonBlocking: false, stopOnAttention: false,
+	replyTo: "request-1", to: "run-1", mode: "follow_up", steeringRecovery: false,
 	additional: 1, scope: "session", target: "children", focus: true, thinking: "low", at: "10m", every: "1h",
 	sessionOnly: true, quiet: true, on: ["mon"], timezone: "UTC", overlap: "skip", catchUp: "none", missionId: "mission-1",
 	mission: false, missionUpdate: {}, missionStatus: "open", missionScope: "project", runMode: "single", runStatus: "running",
@@ -103,6 +104,29 @@ describe("subagent tool options", () => {
 			assert.doesNotMatch(error.message, /\bshare\b/);
 			return true;
 		});
+	});
+
+	it("converts fields a provider sent as text to the type each field takes, and leaves real text alone", () => {
+		assert.deepEqual(prepareSubagentToolArguments({
+			agent: "worker", task: "true", message: "{\"a\":1}", worktree: "true", timeoutMs: "600000", context: "fork",
+			args: "{\"tasks\":[{\"agent\":\"scout\",\"task\":\"map\"}]}", on: "[\"mon\",\"fri\"]", id: "null",
+			workflow: "true", output: "false", gate: "{\"command\":\"npm test\"}", thinking: "false",
+			options: { all: "true", toolBudget: "{\"hard\":3}" },
+		}), {
+			agent: "worker", task: "true", message: "{\"a\":1}", worktree: true, timeoutMs: 600000, context: "fork",
+			args: { tasks: [{ agent: "scout", task: "map" }] }, on: ["mon", "fri"], id: "null",
+			workflow: true, output: false, gate: { command: "npm test" }, thinking: false,
+			options: { all: true, toolBudget: { hard: 3 } },
+		});
+		// Text that is valid for the field stays text: a script path, a report path, a gate command, a thinking level.
+		assert.deepEqual(prepareSubagentToolArguments({ workflow: "./flow.js", output: "reviews/a.md", gate: "npm test", thinking: "high" }), { workflow: "./flow.js", output: "reviews/a.md", gate: "npm test", thinking: "high" });
+		assert.throws(() => prepareSubagentToolArguments({ workflow: "parallel", args: "{\"tasks\": [" }), { message: "subagent: 'args' must be an object, and its text is not valid JSON. Pass the value itself, e.g. args: {...}, not a string." });
+	});
+
+	it("rejects an unknown or wrongly typed top-level field with the fix", () => {
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", contxt: "fork" }), { message: /^subagent: unknown field 'contxt'\. Did you mean 'context'\? Launch fields: agent, task, cwd, context, model, output, label, worktree\./ });
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", worktree: "yes" }), { message: /^subagent: 'worktree' must be boolean \(got "yes"\)\.$/ });
+		assert.throws(() => flattenSubagentToolOptions({ agent: "worker", task: "scan", context: "forked" }), { message: /^subagent: 'context' must be equal to one of the allowed values/ });
 	});
 });
 

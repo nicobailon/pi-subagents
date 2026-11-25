@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { AgentSession, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, type Component } from "@earendil-works/pi-tui";
+import type { Static } from "typebox";
 import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents, discoverAgentsAll, type AgentConfig, type AgentScope } from "../agents/agents.ts";
 import { resolveGlobalNpmRoot } from "../agents/global-npm-root.ts";
 import { buildAdvertisedAgentCatalog, buildAdvertisedAgentPrompt } from "../agents/advertised-agent-prompt.ts";
@@ -51,7 +52,7 @@ import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { DEFAULT_WAIT_TOOL_NAME, setParentToolsDeclared, setWaitToolName } from "../shared/wait-tool-name.ts";
-import { registerWaitTool } from "../runs/background/wait-tool.ts";
+import { createWaitExecute, registerWaitTool } from "../runs/background/wait-tool.ts";
 import { registerDeferredSubagentSelection, registerSubagentToolActivation } from "./tool-activation.ts";
 import { DEFERRED_SUBAGENT_PROMPT, DEFERRED_SUBAGENT_PROMPT_SECTION, DEFERRED_WITHOUT_CODEMODE_ERROR, nestedSubagentRequest } from "./deferred-exposure.ts";
 import { recordedPromptSection, registerPinnedTool, setDeclarationPinning } from "./declaration-pinning.ts";
@@ -72,7 +73,7 @@ import { autoResumeFailureText, cancelPendingWorkflowAutoResumes, finishWorkflow
 import { recordWorkflowResumeRefusal, releaseWorkflowResumeClaim, resumedRunStarted } from "../workflows/workflow-resume-claim.ts";
 import { workflowResumeRefusal } from "../workflows/workflow-resume.ts";
 import { finalizeToolResult } from "./tool-result.ts";
-import { flattenSubagentToolOptions } from "./subagent-options.ts";
+import { flattenSubagentToolOptions, prepareSubagentToolArguments } from "./subagent-options.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
 import { restoreForegroundRunHistory } from "../runs/foreground/foreground-history.ts";
 import { createInterruptedElsewhereCollector } from "../runs/background/interrupted-elsewhere.ts";
@@ -561,6 +562,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		asyncByDefault,
 		waitToolEnabled: waitToolConfig.enabled,
 		waitToolDefaultTimeoutMs: waitToolConfig.defaultTimeoutMs,
+		wait: createWaitExecute(pi, state, waitToolConfig.enabled, waitSubscriptionManager, waitToolConfig.defaultTimeoutMs, undefined, supervisorChannel.hasPendingRequests),
+		runSupervisorAction: (input) => supervisorChannel.runParentAction(input),
 		handleScheduledRunAction: (params, ctx) => scheduledRunManager.handleToolCall(params, ctx),
 		watchdog: mainWatchdog,
 		tempArtifactsDir,
@@ -765,6 +768,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		description: buildSubagentToolDescription(config, { disabledFeatures }),
 		...(deferred ? {} : buildSubagentToolPromptMetadata(config, disabledFeatures)),
 		parameters,
+		prepareArguments: (args) => prepareSubagentToolArguments(args) as Static<typeof parameters>,
 
 		async execute(id, params, signal, onUpdate, ctx) {
 			const flattened = flattenSubagentToolOptions(params, disabledFeatures);
