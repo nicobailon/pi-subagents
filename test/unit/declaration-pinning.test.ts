@@ -53,7 +53,7 @@ function pinningHarness() {
 	const dispose = () => {
 		if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
 		if (priorChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else process.env.PI_SUBAGENT_CHILD = priorChild;
-		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	};
 	return { cwd, agentDir, run, dispose };
 }

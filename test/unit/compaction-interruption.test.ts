@@ -128,7 +128,7 @@ async function runParent(scenario: Scenario) {
 		session?.dispose();
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	}
 }
 
