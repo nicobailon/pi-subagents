@@ -279,7 +279,7 @@ With `"fork"`, the setting uses the existing implicit-fork behavior. A launch st
 { "fastServiceTier": "ultrafast" }
 ```
 
-Sets the OpenAI `service_tier` that `fast: true` requests for native OpenAI-Codex children: `"priority"` (default) or `"ultrafast"`. Whether a tier is available depends on the model and account.
+Sets the OpenAI `service_tier` that `fast: true` requests for native children using Pi’s OpenAI Responses or Codex Responses adapter: `"priority"` (default) or `"ultrafast"`. An explicit tier already on the request takes precedence. If this config file is invalid, a Fast launch fails instead of falling back to Priority. Whether the requested tier is available depends on the model and account.
 
 ## `forkContext`
 

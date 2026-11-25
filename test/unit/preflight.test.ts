@@ -325,7 +325,7 @@ Project prompt.
 		}
 	});
 
-	it("binds fast mode runtime extension into public preflight provenance", async () => {
+	it("binds Fast into the launch digest without changing the extension plan", async () => {
 		const cwd = path.join(tempDir, "fast-repo");
 		fs.mkdirSync(cwd, { recursive: true });
 		writeAgent(path.join(cwd, ".pi", "agents", "fast-worker.md"), `---
@@ -343,10 +343,33 @@ Worker.
 		assert.equal(enabled.ok, true);
 		assert.equal(disabled.ok, true);
 		if (enabled.ok && disabled.ok) {
-			assert.ok(enabled.contract.tools.runtimeExtensions.some((entry) => entry.endsWith("fast-mode-extension.ts")));
-			assert.equal(disabled.contract.tools.runtimeExtensions.some((entry) => entry.endsWith("fast-mode-extension.ts")), false);
+			assert.deepEqual(enabled.contract.tools.runtimeExtensions, disabled.contract.tools.runtimeExtensions);
+			assert.deepEqual(enabled.contract.tools.extensionArgs, disabled.contract.tools.extensionArgs);
 			assert.notEqual(enabled.contract.launchContractDigest, disabled.contract.launchContractDigest);
 		}
+	});
+
+	it("refuses Fast before launch when the model's adapter is known to be incompatible", async () => {
+		const cwd = path.join(tempDir, "fast-adapter-repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "fast-worker.md"), `---
+name: fast-worker
+description: Fast worker
+model: anthropic/claude-sonnet-4
+fast: true
+---
+Worker.
+`);
+		const availableModels = [
+			{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4", api: "anthropic-messages" },
+			{ provider: "openai", id: "gpt-6", fullId: "openai/gpt-6", api: "openai-responses" },
+		];
+		const refused = await resolveSubagentLaunchContract({ agent: "fast-worker", cwd, task: "Run", availableModels });
+		const compatible = await resolveSubagentLaunchContract({ agent: "fast-worker", cwd, task: "Run", availableModels, model: "openai/gpt-6" });
+
+		assert.equal(refused.ok, false);
+		if (!refused.ok) assert.match(refused.message, /Cannot forward fast mode: 'anthropic\/claude-sonnet-4' uses 'anthropic-messages'/);
+		assert.equal(compatible.ok, true);
 	});
 
 	it("enforces maxThinking before a child launch and accepts levels at the ceiling", async () => {
@@ -859,6 +882,9 @@ Project prompt.
 		assert.equal(rejected.ok, false);
 		assert.equal(rejected.code, "unsupported_mode");
 		assert.equal((await resolveSubagentLaunchContract({ agent: "external", cwd, outputSchema: false })).ok, true);
+		const fastRejected = await resolveSubagentLaunchContract({ agent: "external", cwd, outputSchema: false, fast: true });
+		assert.equal(fastRejected.ok, false);
+		if (!fastRejected.ok) assert.equal(fastRejected.message, "Agent 'external' uses runner.type='external-cli' and does not support fast mode.");
 	});
 
 	it("projects per-agent tool exclusions and binds them into launch identity", async () => {

@@ -15,6 +15,7 @@ import { cleanupSessionResources, registerSessionResourceCleanup } from "@earend
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { CHILD_COMMAND_TOOL, createChildCommandRuntime } from "./child-commands.ts";
 import { supervisorChannelDir } from "./child-tool-plan.ts";
+import { installChildFastMode } from "./child-fast-mode.ts";
 import { pinChildCacheRetention } from "../../shared/child-cache-retention.ts";
 import { assertChildThinkingApplied } from "../../shared/child-strict-thinking.ts";
 import { parseAcceptanceReport } from "./acceptance.ts";
@@ -658,6 +659,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				const requiredStartupErrors: string[] = [];
 				let binding = true;
 				try {
+					if (launch.runtime.fast) installChildFastMode(session, modelRuntime);
 					await session.bindExtensions({
 						mode: "print",
 						onError: (error) => {

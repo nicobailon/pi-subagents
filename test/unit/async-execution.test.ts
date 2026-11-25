@@ -4,9 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildAsyncRunnerSteps, assertClaudeCodeOverrideIsLocal, DEFAULT_ASYNC_TIMEOUT_MS, emitProcessTerminalEvent, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
+import { buildAsyncRunnerSteps, assertClaudeCodeOverrideIsLocal, DEFAULT_ASYNC_TIMEOUT_MS, emitProcessTerminalEvent, executeAsyncSingle, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
-import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
+import { DEFAULT_ARTIFACT_CONFIG, SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
 
 const agent = (name: string, toolBudget?: AgentConfig["toolBudget"]): AgentConfig => ({
@@ -343,6 +343,30 @@ describe("async runner execution", () => {
 
 		assert.ok("steps" in result, "expected successful step build");
 		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 5, block: ["ls"] });
+	});
+
+	it("refuses Fast before spawning when the registry shows the model on another adapter", () => {
+		const availableModels = [{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4", api: "anthropic-messages" }];
+		const worker = { ...agent("worker"), model: "anthropic/claude-sonnet-4" };
+		const refusal = /Cannot forward fast mode: 'anthropic\/claude-sonnet-4' uses 'anthropic-messages'/;
+		assert.throws(() => executeAsyncSingle("fast-single", {
+			agent: worker.name,
+			agentConfig: worker,
+			task: "task",
+			fast: true,
+			ctx: { ...ctx, pi: { events: { emit() {} } } as unknown as ExtensionAPI },
+			artifactConfig: { ...DEFAULT_ARTIFACT_CONFIG, enabled: false },
+			shareEnabled: false,
+			availableModels,
+		}), refusal);
+		assert.throws(() => buildAsyncRunnerSteps("fast-chain", {
+			chain: [{ agent: "worker", task: "task", fast: true }],
+			agents: [worker],
+			ctx,
+			asyncDir: path.join(process.cwd(), ".tmp-async-fast"),
+			maxSubagentDepth: 1,
+			availableModels,
+		}), refusal);
 	});
 });
 

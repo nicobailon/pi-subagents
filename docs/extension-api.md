@@ -708,7 +708,7 @@ The main runtime files in this repository:
 | `src/runs/shared/child-launch.ts` | Builds the tool plan, typed child runtime config, and session launch for a child in either host process. |
 | `src/runs/shared/child-tool-plan.ts` | Tool, MCP, and extension resolution for a child launch. |
 | `src/runs/shared/child-runtime-config.ts` | `ChildRuntimeConfig`: everything the child-side hooks need. |
-| `src/runs/shared/child-hooks.ts` | The inline hook extensions every child gets (prompt runtime, fast mode, fanout). |
+| `src/runs/shared/child-hooks.ts` | The inline hook extensions that provide the prompt runtime and optional fanout. |
 | `src/runs/background/subagent-runner.ts` | Detached async runner; hosts background child sessions in its own process. |
 | `src/runs/background/run-child-session.ts` | Drives one background child session and mirrors its events into the run artifacts. |
 | `src/runs/background/runner-aliases.ts` | Aliases the host peer packages to the installed pi package for the runner (`JITI_ALIAS`). |

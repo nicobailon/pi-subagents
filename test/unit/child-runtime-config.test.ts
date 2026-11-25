@@ -32,9 +32,8 @@ function fakePi(available: string[]): FakePi {
 }
 
 describe("child runtime config", () => {
-	it("creates the prompt runtime hook always and the fast and fanout hooks on demand", () => {
+	it("creates the prompt runtime hook always and the fanout hook on demand", () => {
 		assert.deepEqual(createChildHooks(baseConfig()).map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:prompt-boundary"]);
-		assert.deepEqual(createChildHooks(baseConfig({ fast: true })).map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode", "pi-subagents:prompt-boundary"]);
 		assert.deepEqual(createChildHooks(baseConfig({ fanoutChild: true })).map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fanout-child", "pi-subagents:prompt-boundary"]);
 	});
 

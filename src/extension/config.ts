@@ -276,11 +276,12 @@ export function resolveAsyncByDefault(config: Pick<ExtensionConfig, "asyncByDefa
 	return config.asyncByDefault !== false;
 }
 
-export function loadConfig(): ExtensionConfig {
+export function loadConfig({ strict = false }: { strict?: boolean } = {}): ExtensionConfig {
 	const configPath = getConfigPath();
 	try {
 		return readConfigForUpdate(configPath);
 	} catch (error) {
+		if (strict) throw new Error(`Failed to load subagent config from '${configPath}': ${error instanceof Error ? error.message : String(error)}`, { cause: error });
 		if (error instanceof PrunedForkConfigError) throw error;
 		try {
 			const raw = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
