@@ -287,7 +287,7 @@ export function resolveMachinePlacement(input: ResolveHerdrMachinePlacementInput
 	const requested = validateMachineName(input.machine);
 	const settings = input.settings ?? readMachineSettings(input.cwd, [requested]);
 	if (requested === REX_LOCAL_MACHINE) {
-		if (settings?.rex) throw new Error("Machine 'local' is reserved for a new tab on this machine; give the Rex SSH host in subagents.machines.local.rex another name.");
+		if (settings?.rex) throw new Error("Machine 'local' is reserved for this machine; give the Rex SSH host in subagents.machines.local.rex another name.");
 		const env = input.env ?? process.env;
 		// Herdr panes and Herdr Core terminals can inherit REX_SESSION; the runtime that directly owns this Pi wins over Rex.
 		if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID?.trim()) return { machine: resolveHerdrLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, herdrBin: input.herdrBin }) };
