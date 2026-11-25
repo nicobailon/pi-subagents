@@ -96,23 +96,24 @@ export function resolveDisabledFeatureSurface(config: FeatureConfig): DisabledFe
 }
 
 /** Returns why a request uses a disabled feature, or undefined when every requested field is enabled. */
-export function disabledFeatureUseError(request: object, surface: DisabledFeatureSurface, label = "subagent"): string | undefined {
+export function disabledFeatureUseError(request: object, surface: DisabledFeatureSurface, label = "subagent", scriptsReplacement = ""): string | undefined {
 	const params = request as Record<string, unknown>;
 	const action = typeof params.action === "string" ? params.action.trim() : undefined;
 	const disabledAction = action === undefined ? undefined : surface.actions.get(action);
 	if (disabledAction) return `${label} action '${action}' is disabled by config ${disabledAction}.`;
+	const scriptsDisabledBy = featureSurface("workflow-scripts").disabledBy;
 	for (const [param, disabledBy] of surface.params) {
-		if (params[param] !== undefined) return `${label} option '${param}' is disabled by config ${disabledBy}.`;
+		if (params[param] !== undefined) return `${label} option '${param}' is disabled by config ${disabledBy}.${disabledBy === scriptsDisabledBy ? scriptsReplacement : ""}`;
 	}
 	// workflowScript is the internal carrier for slash, prompt-workflow, RPC, and scheduled scripts.
 	// Callers check the original request, before the package lowers chain/tasks into its own script.
 	if (params.workflowScript !== undefined && surface.features.has("workflow-scripts")) {
-		return `${label} workflow scripts are disabled by config ${featureSurface("workflow-scripts").disabledBy}.`;
+		return `${label} workflow scripts are disabled by config ${scriptsDisabledBy}.${scriptsReplacement}`;
 	}
 	return undefined;
 }
 
-const WORKFLOW_SCRIPTS_REPLACEMENT = "Instead of workflow scripts, use the top-level tasks or chain fields.";
+export const WORKFLOW_SCRIPTS_REPLACEMENT = "Instead of workflow scripts, use the top-level tasks or chain fields.";
 
 /** Lists what config disabled, for prepending to static guide docs that describe the full tool. */
 export function disabledFeatureNotice(surface: DisabledFeatureSurface): string | undefined {
