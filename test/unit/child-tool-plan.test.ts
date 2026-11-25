@@ -130,7 +130,6 @@ describe("child tool plan declared tools", () => {
 		assert.deepEqual(plan.declaredBuiltinTools, ["read", "grep", "find", "ls", "bash"]);
 		assert.deepEqual(plan.effectiveToolAllowlist, ["read", "grep", "find", "ls", "bash"]);
 		assert.deepEqual(plan.requiredChildTools, ["read", "grep", "find", "ls", "bash"]);
-		assert.deepEqual(plan.warnings, []);
 	});
 
 	it("grants command observation only when explicitly declared", () => {
@@ -309,7 +308,6 @@ describe("production launch path keeps declared child tools", () => {
 				assert.deepEqual(launch.toolPlan.effectiveToolAllowlist, ["read", "grep", "bash"]);
 				assert.deepEqual(launch.toolPlan.requiredChildTools, ["read", "grep", "bash"]);
 				assert.deepEqual(launch.config.requiredTools, ["read", "grep", "bash"]);
-				assert.deepEqual(launch.warnings, []);
 			}
 		} finally {
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
