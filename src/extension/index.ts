@@ -741,8 +741,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (result.isError || request.action !== undefined) return facts;
 		const launchCwd = path.resolve(ctx.cwd, typeof params.cwd === "string" ? params.cwd : ".");
 		if (params.worktree !== true) {
-			const count = [...state.asyncJobs.values()].filter((job) => job.asyncId !== result.details?.asyncId && (job.status === "queued" || job.status === "running") && job.cwd === launchCwd).length;
-			if (count > 0) facts.liveRunsInCwd = { cwd: launchCwd, count };
+			const runs = [...state.asyncJobs.values()]
+				.filter((job) => job.asyncId !== result.details?.asyncId && (job.status === "queued" || job.status === "running") && job.cwd === launchCwd)
+				.map((job) => ({ label: job.agents?.[0] ?? job.mode ?? "run", id: job.asyncId.slice(0, 8) }));
+			if (runs.length > 0) facts.liveRunsInCwd = { cwd: launchCwd, runs };
 		}
 		if (params.toolBudget !== undefined && typeof params.agent === "string") {
 			const projectTrusted = typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;

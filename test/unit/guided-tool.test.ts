@@ -8,7 +8,7 @@ import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, c
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS } from "../../src/extension/guided-tool.ts";
+import { callNotes, createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
@@ -87,8 +87,50 @@ describe("guide first", () => {
 		assert.ok(first!.includes(EVENT_NOTES.launch), first);
 		assert.doesNotMatch(first!, /subagent guide\./, "the guide is not repeated");
 		assert.ok(!second!.includes(EVENT_NOTES.launch), "the launch note appears once while it is in the chat");
-		assert.match(second!, new RegExp(`⚠ Another run is live in ${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\. One writer per folder: if they could both edit, use worktree:true\\.`));
+		assert.match(second!, new RegExp(`⚠ Also running from ${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: probe [0-9a-f]{8}\\.`));
+		assert.ok(second!.includes("One writer per folder; readers, reviewers and worktree runs can share it."), second);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	const launchesWith = async (facts: (request: Record<string, unknown>) => CallFacts, launches: Array<Record<string, unknown>>) => {
+		const pi = { on: () => {} };
+		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
+		const { tool } = createGuidedSubagentTool(pi as never, {
+			guide: async () => "GUIDE",
+			flatten: (params) => flattenSubagentToolOptions(params),
+			run: async () => ({ content: [{ type: "text", text: "Async: worker [r-1]" }], details: { mode: "single", results: [] } }),
+			notes: (request, result) => callNotes(request, result, facts(request as Record<string, unknown>)),
+		});
+		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
+		const replies: string[] = [];
+		for (const params of launches) {
+			const result = await tool.execute("launch", params as never, undefined, undefined, ctx as never);
+			replies.push(result.content.map((part) => part.type === "text" ? part.text : "").join("\n"));
+		}
+		return replies;
+	};
+
+	it("lists the runs in the same folder on every launch and teaches the one-writer lesson once", async () => {
+		const replies = await launchesWith(() => ({ liveRunsInCwd: { cwd: "/repo", runs: [{ label: "worker", id: "abcd1234" }, { label: "reviewer", id: "ef567890" }] } }), [
+			{ agent: "worker", task: "one" },
+			{ agent: "worker", task: "two" },
+		]);
+		const lesson = "One writer per folder; readers, reviewers and worktree runs can share it.";
+		for (const reply of replies) assert.ok(reply.includes("⚠ Also running from /repo: worker abcd1234, reviewer ef567890."), reply);
+		assert.ok(replies[0]!.includes(lesson), replies[0]);
+		assert.ok(!replies[1]!.includes(lesson), "the lesson comes once per session");
+	});
+
+	it("warns once per writer agent given a toolBudget", async () => {
+		const replies = await launchesWith((request) => ({ cappedWriter: request.agent as string }), [
+			{ agent: "worker", task: "one" },
+			{ agent: "worker", task: "two" },
+			{ agent: "fixer", task: "three" },
+		]);
+		const warning = (name: string) => `⚠ ${name} is a writer (acceptanceRole: writer) with a toolBudget; a capped writer may stop mid-edit. Launch writers without toolBudget.`;
+		assert.ok(replies[0]!.includes(warning("worker")), replies[0]);
+		assert.ok(!replies[1]!.includes(warning("worker")), "the same writer is warned once");
+		assert.ok(replies[2]!.includes(warning("fixer")), replies[2]);
 	});
 
 	it("holds every launch in the batch that brought the guide, with the workflow:true wording", { timeout: 60_000 }, async () => {

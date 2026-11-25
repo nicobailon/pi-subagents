@@ -298,7 +298,7 @@ export function forkNote(fork: { sessionBytes: number; folder: string; freeBytes
 }
 
 export interface CallFacts {
-	liveRunsInCwd?: { cwd: string; count: number };
+	liveRunsInCwd?: { cwd: string; runs: Array<{ label: string; id: string }> };
 	cappedWriter?: string;
 	child?: boolean;
 	fork?: { sessionBytes: number; folder: string; freeBytes?: number };
@@ -313,10 +313,14 @@ export function callNotes(request: SubagentParamsLike, result: AgentToolResult<D
 		if (facts.fork) notes.push({ key: "event:fork", text: forkNote(facts.fork) });
 		if (params.worktree === true) notes.push({ key: "event:worktree", text: EVENT_NOTES.worktree });
 		if (params.workflow !== undefined || params.workflowScript !== undefined) notes.push({ key: "event:workflow", text: EVENT_NOTES.workflow });
-		if (facts.liveRunsInCwd && facts.liveRunsInCwd.count > 0) {
-			notes.push({ text: `⚠ ${facts.liveRunsInCwd.count === 1 ? "Another run is" : `${facts.liveRunsInCwd.count} other runs are`} live in ${facts.liveRunsInCwd.cwd}. One writer per folder: if they could both edit, use worktree:true.` });
+		if (facts.liveRunsInCwd && facts.liveRunsInCwd.runs.length > 0) {
+			const { cwd, runs } = facts.liveRunsInCwd;
+			const listed = runs.slice(0, 5).map((run) => `${run.label} ${run.id}`);
+			const more = runs.length > 5 ? `, +${runs.length - 5} more` : "";
+			notes.push({ text: `⚠ Also running from ${cwd}: ${listed.join(", ")}${more}.` });
+			notes.push({ key: "warn:same-folder", text: "One writer per folder; readers, reviewers and worktree runs can share it." });
 		}
-		if (facts.cappedWriter) notes.push({ text: `⚠ ${facts.cappedWriter} is a writer (acceptanceRole: writer) with a toolBudget; a capped writer may stop mid-edit. Launch writers without toolBudget.` });
+		if (facts.cappedWriter) notes.push({ key: `warn:capped:${facts.cappedWriter}`, text: `⚠ ${facts.cappedWriter} is a writer (acceptanceRole: writer) with a toolBudget; a capped writer may stop mid-edit. Launch writers without toolBudget.` });
 	}
 	if (request.action === "resume" || request.action === "steer") notes.push({ key: "event:resume", text: EVENT_NOTES.resume });
 	return notes;
