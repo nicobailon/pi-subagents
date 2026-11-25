@@ -19,6 +19,7 @@
 ### Fixed
 
 - When a builtin agent was disabled in user settings and project settings changed some other field of it, `enable` with `agentScope: "project"` failed with a message that pointed back to the project scope and project settings file, so following it never worked. The message now names the user scope and user settings file that keep the agent disabled.
+- A child with `acceptanceRole: "read-only"` and an `output` path was told to write the file itself whenever it had `bash`, an MCP server or an extension tool the runtime doesn't list as read-only (for example a code-search tool). Without a write tool it either failed or replied with an apology, which was then saved into the file. A read-only child is now always told to return the artifact in its final reply, which the runtime saves to the path. Thanks to [@srobroek](https://github.com/srobroek) for the report (#3349).
 
 ## [0.90.0] - 2026-11-22
 
