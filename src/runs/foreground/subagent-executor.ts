@@ -27,7 +27,7 @@ import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { approveWorkflowChildLaunch, type SubagentLaunchArgs } from "../../extension/subagent-launch-tool.ts";
 import { isWorkflowScriptPath, normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
 import { readReplyWorkflowScript } from "../../extension/reply-workflow-script.ts";
-import { disabledFeatureNotice, disabledFeatureSectionNotice, disabledFeatureUseError, resolveDisabledFeatureSurface, type DisabledFeatureSurface } from "../../shared/disabled-features.ts";
+import { disabledFeatureNotice, disabledFeatureSectionNotice, disabledFeatureUseError, resolveDisabledFeatureSurface, WORKFLOW_SCRIPTS_REPLACEMENT, type DisabledFeatureSurface } from "../../shared/disabled-features.ts";
 import { runSync } from "./execution.ts";
 import { commandAction } from "./command-action.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
@@ -126,7 +126,7 @@ import { attachMissionToLaunchResult, missionAcceptanceStatus, prepareMissionLau
 import { MissionNotFoundError, updateMission } from "../../missions/store.ts";
 import type { MissionWorkflowChildUpdate } from "../../missions/types.ts";
 import { createMissionWorkflowState } from "../../missions/workflow-state.ts";
-import { managementActionAuthority } from "../../policy/authority.ts";
+import { authorityConfirmTitle, managementActionAuthority } from "../../policy/authority.ts";
 import { handleInspectorAction, INSPECTOR_ACTIONS } from "../../inspectors/actions.ts";
 import { getInspectorPlugins } from "../../inspectors/plugins.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
@@ -5595,7 +5595,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const scheduledOwnerExecutors = new Map<string | null, Map<string, { state: SubagentState; executor: ReturnType<typeof createSubagentExecutor> }>>();
 	const disabledFeatures = resolveDisabledFeatureSurface(deps.config);
 	const disabledFeatureResult = (params: SubagentParamsLike): AgentToolResult<Details> | undefined => {
-		const error = disabledFeatureUseError(params, disabledFeatures);
+		const error = disabledFeatureUseError(params, disabledFeatures, "subagent", ` ${WORKFLOW_SCRIPTS_REPLACEMENT}`);
 		if (!error) return undefined;
 		return { content: [{ type: "text", text: error }], isError: true, details: { mode: params.action === undefined ? inferExecutionMode(params) : "management", results: [] } };
 	};
@@ -7229,7 +7229,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				if (policyDecision === "confirm") {
 					if (!ctx.hasUI) return { content: [{ type: "text", text: `Authority policy requires user confirmation for action '${action}', but this session has no interactive UI.` }], isError: true, details: { mode: "management", results: [] } };
-					const confirmed = await ctx.ui.confirm(`Authorize subagent ${action}?`, `Authority policy requires confirmation before '${action}'.`);
+					const confirmed = await ctx.ui.confirm(authorityConfirmTitle(action), `Authority policy requires confirmation before '${action}'.`);
 					if (!confirmed) return { content: [{ type: "text", text: `Action '${action}' canceled; authority was not granted.` }], details: { mode: "management", results: [] } };
 				}
 			}

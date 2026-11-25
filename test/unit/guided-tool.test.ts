@@ -8,8 +8,11 @@ import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, c
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { callNotes, createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
+import { actionTopicKey, callNotes, createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
+import { createChildSafeState } from "../../src/extension/fanout-child.ts";
+import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
@@ -23,8 +26,8 @@ let agentDir: string;
 
 type RequestContext = { messages: Parameters<typeof getCurrentTools>[0] };
 
-async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void): Promise<Session> {
-	const faux = fauxProvider({ provider: "guided-tool", models: [{ id: "local" }], tokensPerSecond: 100_000 });
+async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void, provider = "guided-tool"): Promise<Session> {
+	const faux = fauxProvider({ provider, models: [{ id: "local" }], tokensPerSecond: 100_000 });
 	faux.setResponses(Array.from({ length: 40 }, () => (context: RequestContext) => {
 		onRequest?.(context);
 		const next = steps.shift() ?? "ok";
@@ -82,7 +85,7 @@ describe("guide first", () => {
 		await session.prompt("go");
 		const [held, first, second] = subagentReplies(session);
 		assert.match(held!, /- probe: Probe/);
-		assert.match(held!, /^Not launched yet: this is the session's first subagent call, so here is the guide\. Call again to launch\.\n\nsubagent guide\./);
+		assert.match(held!, /^Not launched yet: this is the session's first subagent call, so here is the guide\. Call again to launch\.\nWould launch probe, task "Inspect"\.\n\nsubagent guide\./);
 		assert.match(first!, /Async: probe \[/);
 		assert.ok(first!.includes(EVENT_NOTES.launch), first);
 		assert.doesNotMatch(first!, /subagent guide\./, "the guide is not repeated");
@@ -90,6 +93,139 @@ describe("guide first", () => {
 		assert.match(second!, new RegExp(`⚠ Also running from ${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: probe [0-9a-f]{8}\\.`));
 		assert.ok(second!.includes("One writer per folder; readers, reviewers and worktree runs can share it."), second);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("names a foreground run's id with the call that resumes it", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const steps: Step[] = [{}, { agent: "probe", task: "Inspect", async: false }, "ran"];
+		const session = await startParent(steps);
+		await session.prompt("go");
+		const ran = subagentReplies(session)[1]!;
+		const id = /\nRun ([0-9a-f]{8}) is done\. To continue it: subagent\(\{action:"resume", id:"\1", message\}\)/.exec(ran)?.[1];
+		assert.ok(id, ran);
+		assert.ok(!ran.includes(EVENT_NOTES.launch), "a finished foreground run gets no detached-run advice");
+		steps.push({ action: "resume", id, message: "More", async: false }, "resumed");
+		await session.prompt("go");
+		assert.equal(mockPi.callCount(), 2, "the named id resumes the run");
+		assert.doesNotMatch(subagentReplies(session)[2]!, /not found|unknown/i);
+	});
+
+	it("stops or interrupts a list of ids in one call, one line per entry", { timeout: 90_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "slow", delay: 20_000 });
+		const steps: Step[] = [{}, { agent: "probe", task: "Live", async: true }, { agent: "probe", task: "Ended", async: true }];
+		let live = "";
+		let ended = "";
+		const session = await startParent(steps, (context) => {
+			if (live || steps.length > 0) return;
+			const texts = (context.messages as Array<{ role: string; content?: Array<{ text?: string }> }>).filter((message) => message.role === "toolResult").map((message) => (message.content ?? []).map((part) => part.text ?? "").join("\n"));
+			[live, ended] = texts.flatMap((text) => /Async: probe \[([^\]]+)\]/.exec(text)?.[1] ?? []);
+			steps.push({ action: "stop", id: ended }, { action: "wait", id: ended }, { action: "stop", id: [live, ended, "x9-missing"] }, { action: "interrupt", args: { id: JSON.stringify([ended, "x9-missing"]) } }, { action: "stop", id: "[x1,x2]" }, "stopped");
+		});
+		await session.prompt("go");
+		const [stopped, interrupted, malformed] = subagentReplies(session).slice(-3);
+		assert.equal(stopped, `Stop requested for async run ${live}.\nNo running or queued async run was found for '${ended}'.\nNo stoppable async run found for 'x9-missing'.`);
+		assert.equal(interrupted, `No running async run with an interrupt-capable pid was found for '${ended}'.\nNo interrupt-capable run found for 'x9-missing'.`);
+		assert.match(malformed!, /subagent: 'stop' takes id as one run id or a list of run ids\./);
+	});
+
+	it("accepts a list id from a provider that gets declared fields", { timeout: 60_000 }, async () => {
+		const session = await startParent([{}, { action: "stop", id: ["x1", "x2"] }, "stopped"], undefined, "xai");
+		await session.prompt("go");
+		assert.equal(subagentReplies(session)[1], "No stoppable async run found for 'x1'.\nNo stoppable async run found for 'x2'.");
+	});
+
+	const listTool = (answer: boolean) => {
+		const prompts: string[] = [];
+		const pi = { on: () => {} };
+		const authorityPolicy = { stopRun: "confirm" } as const;
+		const executor = createSubagentExecutor({
+			pi: { events: { emit() {}, on() { return () => {}; } }, getSessionName() { return "parent"; } } as never,
+			state: createChildSafeState(),
+			config: { maxSubagentDepth: 2, control: {}, intercomBridge: {}, authorityPolicy } as never,
+			asyncByDefault: false,
+			tempArtifactsDir: os.tmpdir(),
+			getSubagentSessionRoot: () => os.tmpdir(),
+			expandTilde: (value) => value,
+			discoverAgents: () => ({ agents: [] }),
+		});
+		const ui = { confirm: async (title: string) => { prompts.push(title); return answer; } };
+		const sessionManager = { getSessionId: () => "session", getSessionFile: () => null, buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] };
+		const ctx = { cwd: root, hasUI: true, ui, sessionManager, modelRegistry: { getAvailable: () => [] } };
+		const { tool } = createGuidedSubagentTool(pi as never, {
+			guide: async () => "GUIDE",
+			flatten: (params) => flattenSubagentToolOptions(params),
+			authorityPolicy,
+			run: (id, request, _nested, signal, onUpdate, runCtx) => executor.execute(id, request, signal ?? new AbortController().signal, onUpdate, runCtx),
+		});
+		const call = async (params: Record<string, unknown> = { action: "stop", id: ["a1", "b2"] }) => {
+			const result = await tool.execute("stop", params as never, undefined, undefined, ctx as never);
+			return { text: result.content.map((part) => part.type === "text" ? part.text : "").join("\n"), isError: result.isError === true };
+		};
+		return { prompts, call };
+	};
+
+	it("asks once, naming the ids, before stopping a list under a confirm policy", async () => {
+		const approved = listTool(true);
+		await assert.rejects(approved.call(), { message: "No stoppable async run found for 'a1'.\nNo stoppable async run found for 'b2'." });
+		assert.deepEqual(approved.prompts, ["Authorize subagent stop of a1, b2?"]);
+		const declined = listTool(false);
+		assert.deepEqual(await declined.call(), { text: "Action 'stop' canceled; authority was not granted.", isError: false });
+		assert.deepEqual(declined.prompts, ["Authorize subagent stop of a1, b2?"]);
+	});
+
+	it("skips the rest of a list once the call is cancelled", async () => {
+		const controller = new AbortController();
+		const ran: string[] = [];
+		const sessionManager = { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] };
+		const { tool } = createGuidedSubagentTool({ on: () => {} } as never, {
+			guide: async () => "GUIDE",
+			flatten: (params) => flattenSubagentToolOptions(params),
+			run: async (_id, request) => {
+				ran.push(String(request.id));
+				controller.abort();
+				return { content: [{ type: "text", text: `Stop requested for async run ${request.id}.` }], details: { mode: "management", results: [] } };
+			},
+		});
+		const result = await tool.execute("stop", { action: "stop", id: ["a1", "b2", "c3"] } as never, controller.signal, undefined, { cwd: os.tmpdir(), hasUI: false, sessionManager } as never);
+		assert.deepEqual(ran, ["a1"]);
+		assert.equal(result.content.map((part) => part.type === "text" ? part.text : "").join("\n"), "Stop requested for async run a1.\nb2: skipped, the call was cancelled.\nc3: skipped, the call was cancelled.");
+	});
+
+	it("refuses a list in id next to runId or dir, or with an entry containing spaces", async () => {
+		const { prompts, call } = listTool(true);
+		await assert.rejects(call({ action: "stop", id: ["a1", "b2"], runId: "zz-other" }), { message: "subagent: a list in id can't be combined with runId; put every target in id." });
+		await assert.rejects(call({ action: "stop", id: ["a1", "b2"], dir: "/tmp/run" }), { message: "subagent: a list in id can't be combined with dir; put every target in id." });
+		await assert.rejects(call({ action: "stop", id: ["a1", "b2?\nAuthorize something else"] }), { message: "subagent: 'stop' takes id as one run id or a list of run ids." });
+		assert.deepEqual(prompts, []);
+	});
+
+	it("gives a detached foreground run the launch note and a paused one the resume call", async () => {
+		const pi = { on: () => {} };
+		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] } };
+		const launch = async (run: Record<string, unknown>) => {
+			const { tool } = createGuidedSubagentTool(pi as never, {
+				guide: async () => "GUIDE",
+				flatten: (params) => flattenSubagentToolOptions(params),
+				run: async () => ({ content: [{ type: "text", text: "child reply" }], details: { mode: "single", runId: "abcdef12-3456", results: [run as never] } }),
+				notes: (request, result) => callNotes(request, result, {}),
+			});
+			const result = await tool.execute("launch", { agent: "probe", task: "t", async: false } as never, undefined, undefined, ctx as never);
+			return result.content.map((part) => part.type === "text" ? part.text : "").join("\n");
+		};
+		const detached = await launch({ agent: "probe", detached: true });
+		assert.ok(detached.includes(EVENT_NOTES.launch), detached);
+		assert.doesNotMatch(detached, /resume/);
+		assert.match(await launch({ agent: "probe", interrupted: true }), /\nRun abcdef12 is paused\. To continue it: subagent\(\{action:"resume", id:"abcdef12", message\}\)$/);
+	});
+
+	it("previews a chain's parallel step in plain words", async () => {
+		const pi = { on: () => {} };
+		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
+		const { tool } = createGuidedSubagentTool(pi as never, { guide: async () => "GUIDE", flatten: (params) => params, run: async () => assert.fail("held") });
+		const held = await tool.execute("chain", { chain: [{ agent: "scout" }, { parallel: [{ agent: "reviewer" }] }], task: "Check" } as never, undefined, undefined, ctx as never);
+		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /\nWould launch a chain: scout → parallel step, task "Check"\.\n/);
 	});
 
 	const launchesWith = async (facts: (request: Record<string, unknown>) => CallFacts, launches: Array<Record<string, unknown>>) => {
@@ -139,8 +275,9 @@ describe("guide first", () => {
 		await session.prompt("go");
 		const [guide, sibling, workflow] = subagentReplies(session);
 		assert.match(guide!, /^subagent guide\./);
-		assert.equal(sibling, "Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.");
-		assert.equal(workflow, `${sibling} Repeat the call with its \`\`\`js workflow block in that reply.`);
+		const held = "Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.";
+		assert.equal(sibling, `${held}\nWould launch probe, task "Inspect".`);
+		assert.equal(workflow, `${held} Repeat the call with its \`\`\`js workflow block in that reply.\nWould launch a \`\`\`js workflow block.`);
 		assert.equal(mockPi.callCount(), 0);
 		const scripted = await startParent([{ async: true, options: { script: `return runs.run("one", { agent: "probe", task: "Inspect" });` } }, "held"]);
 		await scripted.prompt("go");
@@ -251,7 +388,7 @@ describe("taught state", () => {
 		for (const handler of handlers.get("session_compact") ?? []) handler({}, ctx);
 		const held = await call({ agent: "probe", task: "two" });
 		assert.equal(runs.length, 1, "the launch after compaction is held");
-		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /^Not launched yet[^\n]*\n\nGUIDE$/);
+		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /^Not launched yet[^\n]*\nWould launch probe, task "two"\.\n\nGUIDE$/);
 	});
 });
 
@@ -352,5 +489,14 @@ describe("guided tool surface", () => {
 	it("runs a script's launch async and refuses a script's wait", () => {
 		assert.deepEqual(nestedSubagentRequest({ agent: "probe", task: "t" }, undefined), { agent: "probe", task: "t", async: true });
 		assert.equal(nestedSubagentRequest({ action: "wait", id: "r-1" }, undefined), "subagent action 'wait' cannot run from a codemode script: the completion notice wakes the session; end the script.");
+	});
+
+	it("gives every accepted action guide text, and names only real actions in the guide", () => {
+		for (const action of SUBAGENT_ACTIONS) assert.ok(action === "guide" || actionTopicKey(action), `${action} has no guide text`);
+		const guide = formatGuide([{ name: "scout" }], { canLaunch: true });
+		const named = (label: string) => new RegExp(`^- ${label}: (.+)$`, "m").exec(guide)![1]!.split(", ");
+		for (const action of named("also")) assert.ok((SUBAGENT_ACTIONS as readonly string[]).includes(action), `guide names '${action}'`);
+		for (const family of named("families")) assert.ok(SUBAGENT_ACTIONS.some((action) => action.startsWith(`${family}.`) || action === family), `guide names family '${family}'`);
+		assert.match(guide, /\n\nAgents \(as of now; \{action:"list"\} refreshes\):\n- scout$/);
 	});
 });
