@@ -243,13 +243,32 @@ describe("guided tool surface", () => {
 
 	it("declares no fields by default and the 14 main fields for a provider known to blank undeclared ones", () => {
 		const anthropic = declaredTool();
-		anthropic.emit("session_start", {}, { model: { provider: "anthropic", id: "claude-opus-5-5" } });
+		const session = { sessionManager: { buildContextEntries: () => [] } };
+		anthropic.emit("session_start", {}, { ...session, model: { provider: "anthropic", id: "claude-opus-5-5" } });
 		assert.deepEqual(anthropic.declarations, [0]);
 		const xai = declaredTool();
-		xai.emit("session_start", {}, { model: { provider: "xai", id: "grok-4.6" } });
+		xai.emit("session_start", {}, { ...session, model: { provider: "xai", id: "grok-4.6" } });
 		assert.deepEqual(xai.declarations, [0, 14]);
 		xai.emit("model_select", { model: { provider: "anthropic", id: "claude-opus-5-5" } }, {});
 		assert.deepEqual(xai.declarations, [0, 14, 0], "switching to a provider that keeps fields drops them again");
+	});
+
+	it("declares the fields at once when a resumed session recorded a blank call on its model", () => {
+		const resumed = declaredTool();
+		const entries = [{ type: "message", message: { role: "toolResult", details: { taught: ["guide", "fields:restarted/m"] } } }];
+		resumed.emit("session_start", {}, { model: { provider: "restarted", id: "m" }, sessionManager: { buildContextEntries: () => entries } });
+		assert.deepEqual(resumed.declarations, [0, 14]);
+	});
+
+	it("runs a workflow with empty input after the guide instead of treating it as blank", async () => {
+		const { tool, declarations, emit } = declaredTool();
+		const ctx = { cwd: root, model: { provider: "keeps-fields-2", id: "m" }, sessionManager: { buildContextEntries: () => [] } };
+		emit("session_start", {}, ctx);
+		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
+		const result = await tool.execute("flow", { workflow: true, args: {} } as never, undefined, undefined, ctx as never);
+		assert.notEqual(result.content[0]?.type === "text" ? result.content[0].text : "", EMPTY_CALL_TEXT);
+		assert.notEqual(result.content[0]?.type === "text" ? result.content[0].text : "", FIELDS_DECLARED_TEXT);
+		assert.deepEqual(declarations, [0]);
 	});
 
 	it("keeps the 0-field declaration when a later call is not blank", async () => {

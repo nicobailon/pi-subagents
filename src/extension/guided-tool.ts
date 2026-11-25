@@ -49,13 +49,21 @@ const blankValue = (value: unknown) => value === true || value === "true" || val
 
 /**
  * A call whose fields a provider dropped or blanked: no fields, or every top-level value true, null, "null" or {}
- * (Pi's argument conversion can turn true into "true"), unless it is only true-valued flags a real call sets.
+ * (Pi's argument conversion can turn true into "true"), unless it is only what a real call sets that way: true-valued
+ * flags and empty `args` or `options` ({workflow:true, args:{}}).
  */
 export function isBlankCall(params: Record<string, unknown>): boolean {
 	const entries = Object.entries(params);
 	if (entries.length === 0) return true;
 	if (!entries.every(([, value]) => blankValue(value))) return false;
-	return entries.some(([key, value]) => !TRUE_VALUED_FIELDS.has(key) || !(value === true || value === "true"));
+	const realAsBlank = ([key, value]: [string, unknown]) => (TRUE_VALUED_FIELDS.has(key) && (value === true || value === "true"))
+		|| ((key === "args" || key === "options") && typeof value === "object" && value !== null);
+	return !entries.every(realAsBlank);
+}
+
+/** The taught key a session records when a model's calls arrived blank, so a resumed session declares fields at once. */
+export function fieldsTaughtKey(model: { provider?: string; id?: string }): string {
+	return `fields:${model.provider}/${model.id ?? ""}`;
 }
 
 export const FIELDS_DECLARED_TEXT = "This call's fields arrived blank: this provider drops fields the tool doesn't declare. The tool now declares its main fields; call again.";
@@ -445,8 +453,16 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 		tool.parameters = parameters;
 		pi.registerTool(tool);
 	};
-	pi.on("session_start", (_event, ctx) => declare(needsDeclaredFields(ctx?.model)));
-	pi.on("model_select", (event) => declare(needsDeclaredFields(event.model)));
+	// A session whose replies recorded a blank call on this model (fieldsTaughtKey) declares the fields after a restart.
+	const fieldsFor = (model: { provider?: string; id?: string } | undefined) => needsDeclaredFields(model) || (model?.provider !== undefined && taught.has(fieldsTaughtKey(model)));
+	pi.on("session_start", (_event, ctx) => {
+		taught.ensure(ctx);
+		declare(fieldsFor(ctx?.model));
+	});
+	pi.on("model_select", (event) => {
+		taught.ensure();
+		declare(fieldsFor(event.model));
+	});
 	const tool: ToolDefinition<typeof SUBAGENT_TOOL_PARAMETERS, Details> = {
 		name: "subagent",
 		exposure: "direct",
@@ -465,9 +481,10 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			emptyCallsInARow = blank && noFields ? emptyCallsInARow + 1 : 0;
 			if (blank) {
 				if (tool.parameters !== SUBAGENT_TOOL_FIELD_PARAMETERS && (!noFields || emptyCallsInARow >= 2)) {
+					const keys = ctx?.model?.provider ? taught.teach(fieldsTaughtKey(ctx.model)) : [];
 					if (ctx?.model?.provider) modelsNeedingFields.add(`${ctx.model.provider}/${ctx.model.id ?? ""}`);
 					declare(true);
-					return guideResult(FIELDS_DECLARED_TEXT, []);
+					return guideResult(FIELDS_DECLARED_TEXT, keys);
 				}
 				return guideResult(EMPTY_CALL_TEXT, []);
 			}
