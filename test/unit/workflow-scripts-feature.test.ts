@@ -59,7 +59,7 @@ describe("workflow-scripts tool surface", () => {
 		const enabled = formatGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface({}) });
 		assert.match(enabled, /Parallel: subagent\(\{workflow:"parallel"/);
 		const guide = formatGuide([], { canLaunch: true, disabled: surface });
-		assert.doesNotMatch(guide, /workflow:|topic:"workflows"/);
+		assert.doesNotMatch(guide, /workflow:|topic:"workflows/);
 		for (const text of ["Parallel: subagent({tasks:[{agent, task, cwd?, model?}]})", "Dependent steps: subagent({task, chain:[{agent, task?, as?}]})", "{previous}", "{outputs.<as>}", "use the top-level tasks or chain fields"]) {
 			assert.ok(guide.includes(text), `guide lacks ${text}`);
 		}

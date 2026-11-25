@@ -76,9 +76,10 @@ const LAUNCH_GUIDE = `Launch: subagent({agent, task, ...})
 - output: file for the child's report, or false
 - label: 2-4 words for run lists
 - worktree: true isolates it in a git worktree (needs a clean checkout)
+- timeoutMs: hard deadline in ms; with none (call/agent/config) a check-in wakes you every 30 min (no UI: 30-min stop)
 
 Parallel: subagent({workflow:"parallel", args:{tasks:[{agent, task, cwd?, model?, label?}]}, worktree?})
-Dependent steps: {action:"guide", topic:"workflows"}
+Steps per item, items in parallel: {action:"guide", topic:"workflows/parallel-sequential-lanes"}
 `;
 
 const NO_SCRIPTS_GUIDE = `
@@ -95,7 +96,7 @@ const MANAGE_GUIDE = `Manage (id from the launch reply, or a prefix):
 - {action:"wait", id} (or all:true) blocks, only when this same turn needs the result
 - also: list, get, models, doctor, validate, create, update, delete, dismiss
 - families: schedule, mission, worktree, lane, inspector, project, watchdog, command, refine
-- an action's fields: {action:"guide", topic:"<action or family>"}`;
+- unsure? {action:"guide", topic:"<action, family or subject, e.g. workflows>"}; a wrong guess lists topics`;
 
 export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch: boolean; child?: boolean; disabled?: DisabledFeatureSurface }): string {
 	if (!options.canLaunch) {

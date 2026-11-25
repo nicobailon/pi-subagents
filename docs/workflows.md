@@ -228,7 +228,7 @@ return patch.output;
 
 ### Parallel sequential lanes
 
-For a bounded set of independent chains, `runs.lanes(...)` removes the mechanical loop that would otherwise connect each lane's stages. It is a helper inside a workflow script, not a new top-level `subagent` execution mode:
+For a bounded set of independent chains, `runs.lanes(...)` removes the mechanical loop that would otherwise connect each lane's stages. It is a helper inside a workflow script, not a new top-level `subagent` execution mode. Run the block below with `subagent({ workflow: true })` in the same reply, or pass its source as `options.script`; script rules are in `workflows/scripted-workflows`. Each stage is its own run. A stage with no `timeoutMs` from the stage, its agent or config has no deadline in an interactive session, where the parent gets a check-in every 30 minutes while it runs, and stops at 30 minutes in a session without a UI. Set `timeoutMs` on a stage to bound it, or on the workflow call to bound the whole workflow.
 
 ```js workflow
 const board = await runs.lanes([

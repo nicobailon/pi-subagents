@@ -1211,6 +1211,85 @@ setTimeout(() => process.exit(90), 15000).unref();
 		for (const row of attention) assert.doesNotMatch(row.noticeText, /"action":"command\.(status|yield|cancel)"/);
 	});
 
+	it("checks in on a background run with no deadline instead of stopping it, and not on a run with a deadline", { timeout: 60_000, skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		for (const timeoutMs of [undefined, 60_000]) {
+			mockPi.onCall({ steps: [
+				{ jsonl: [{ type: "tool_execution_start", toolCallId: "bash-long", toolName: "bash", args: { command: "make" } }] },
+				{ delay: 3_500, jsonl: [{ type: "tool_execution_end", toolCallId: "bash-long", toolName: "bash" }, events.toolResult("bash", "done"), events.assistantMessage("Done")] },
+			] });
+			const id = `async-check-in-${timeoutMs ?? "none"}-${Date.now().toString(36)}`;
+			executeAsyncSingle(id, {
+				agent: "worker", task: "Long work", agentConfig: makeAgent("worker"),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+				...(timeoutMs !== undefined ? { timeoutMs } : {}),
+				controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 999_999, failedToolAttemptsBeforeAttention: 3, notifyOn: ["active_long_running", "needs_attention"], notifyChannels: ["event", "async"], checkInAfterMs: 500 },
+			});
+			const result = await readAsyncPayload(id);
+			assert.equal(result.success, true);
+			const rows = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+			const checkIns = rows.filter((row) => row.type === "subagent.control" && row.event?.reason === "check_in");
+			if (timeoutMs !== undefined) {
+				assert.deepEqual(checkIns, []);
+				continue;
+			}
+			assert.ok(checkIns.length >= 2, `expected repeated check-ins, got ${checkIns.length}`);
+			for (const row of checkIns) assert.match(row.noticeText, new RegExp(`^worker ${escapeRegExp(id.slice(0, 8))} has been running \\d+ min\\. Check it: subagent\\(\\{action:"status", id:"${escapeRegExp(id.slice(0, 8))}"\\}\\); steer or stop it if it's stuck\\.$`));
+		}
+	});
+
+	it("keeps an appended step's config deadline, so it gets no check-ins", { timeout: 60_000, skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ delay: 2_000, output: "first done" });
+		mockPi.onCall({ delay: 2_500, output: "appended done" });
+		const id = `async-check-in-append-${Date.now().toString(36)}`;
+		const agents = [makeAgent("first"), makeAgent("appended")];
+		executeAsyncChain(id, {
+			chain: [{ agent: "first", task: "Start" }],
+			agents,
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-123", interactive: true },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, maxSubagentDepth: 2,
+			controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 999_999, failedToolAttemptsBeforeAttention: 3, notifyOn: ["active_long_running", "needs_attention"], notifyChannels: ["event", "async"], checkInAfterMs: 500 },
+		});
+		await waitForAsyncState(id, (status) => status.state === "running" && status.steps?.[0]?.status === "running");
+		const appended = await makeAsyncExecutor(agents, { timeoutMs: 5_400_000 }).execute("append-config-deadline", { action: "append-step", id, step: { agent: "appended", task: "Review" } }, new AbortController().signal, undefined, { ...makeMinimalCtx(tempDir), hasUI: true } as never);
+		assert.equal(appended.isError, undefined, appended.content[0]?.type === "text" ? appended.content[0].text : "");
+		const result = await readAsyncPayload(id);
+		assert.equal(result.success, true, result.error);
+		const rows = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+		assert.equal(rows.filter((row) => row.type === "subagent.chain.append.accepted").length, 1);
+		assert.deepEqual(rows.filter((row) => row.type === "subagent.control" && row.event?.reason === "check_in" && row.event.index === 1), []);
+	});
+
+	it("reads each step's own deadline for check-ins after a dynamic fan-out group", { timeout: 60_000, skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
+		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
+		mockPi.onCall({ output: "review-b", structuredOutput: { ok: "b" } });
+		mockPi.onCall({ delay: 2_500, output: "used reviews" });
+		const id = `async-check-in-dynamic-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
+					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
+					collect: { as: "reviews" },
+				},
+				{ agent: "consumer", task: "Use {outputs.reviews}" },
+			],
+			agents: [makeAgent("producer"), makeAgent("reviewer"), makeAgent("consumer", { defaultTimeoutMs: 60_000 })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1", interactive: true },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, maxSubagentDepth: 2,
+			controlConfig: { enabled: true, needsAttentionAfterMs: 999_999, activeNoticeAfterMs: 999_999, failedToolAttemptsBeforeAttention: 3, notifyOn: ["active_long_running", "needs_attention"], notifyChannels: ["event", "async"], checkInAfterMs: 500 },
+		});
+		const result = await readAsyncPayload(id);
+		assert.equal(result.success, true, result.error);
+		const rows = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+		assert.deepEqual(rows.filter((row) => row.type === "subagent.control" && row.event?.reason === "check_in" && row.event.agent === "consumer"), []);
+	});
+
 	it("background runs emit active-long-running control events from child turns", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			steps: [

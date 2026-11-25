@@ -20,6 +20,13 @@ describe("single-agent launch timeout wiring", () => {
 		});
 	});
 
+	it("gives an interactive session's async runs no default deadline, while config, explicit and foreground deadlines still apply", () => {
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({}, true, undefined, true), {});
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({}, true, 5_400_000, true), { timeoutMs: 5_400_000 });
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({ timeoutMs: 5_000 }, true, undefined, true), { timeoutMs: 5_000 });
+		assert.deepEqual(resolveSingleAgentLaunchTimeout({}, false, undefined, true), { timeoutMs: DEFAULT_FOREGROUND_TIMEOUT_MS });
+	});
+
 	it("explicit timeoutMs wins over the async default", () => {
 		assert.deepEqual(resolveSingleAgentLaunchTimeout({ timeoutMs: 5_000 }, true), {
 			timeoutMs: 5_000,

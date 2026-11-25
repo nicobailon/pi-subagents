@@ -69,6 +69,8 @@ describe("subagent guide", () => {
 		const toc = readSubagentGuide("tool-reference");
 
 		assert.ok(toc.length <= SECTION_LIMIT, `TOC is ${toc.length} chars`);
+		assert.match(toc, /^Sections of guide topic 'tool-reference'\. Read one with \{action:"guide", topic:"<section address>"\}:$/m);
+		assert.match(readSubagentGuide("workflows/scripted-workflows"), /^Subsections \(read one with \{action:"guide", topic:"<address>"\}\):$/m);
 		assert.match(toc, /^tool-reference\/acceptance-gates — Acceptance gates$/m);
 		assert.match(toc, /^ {2}tool-reference\/typed-gates — Typed gates$/m);
 		assert.doesNotMatch(toc, /\| `agent` \| string \|/);

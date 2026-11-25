@@ -540,6 +540,9 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		});
 		const expectedRunId = externalJobFollowUpRunId(requestDigest);
 		const continuationAsyncDir = path.join(ASYNC_DIR, expectedRunId);
+		const timedMessage = "Take two hours on the next pass.";
+		const timedRequestDigest = externalJobFollowUpRequestDigest({ provider: "surf-oracle", parentProviderJobId: "job-parent", promptDigest: externalJobPromptDigest(timedMessage), options: { tier: "pro" } });
+		const timedRunId = externalJobFollowUpRunId(timedRequestDigest);
 		const sourceRepo = path.join(tempDir, "retained-follow-up-repo");
 		const baseDir = path.join(tempDir, "retained-follow-up-trees");
 		const retainedTree = path.join(baseDir, path.basename(sourceRepo), "retained");
@@ -559,7 +562,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				assert.equal(input.parentProviderJobId, "job-parent");
 				assert.equal(input.sourceRunId, sourceRunId);
 				assert.equal(input.sourceStepIndex, 0);
-				assert.equal(input.requestDigest, requestDigest);
+				assert.ok([requestDigest, timedRequestDigest].includes(input.requestDigest));
 				return { providerJobId: "job-child", state: "completed", conversationUrl: "https://surf.example/c/job-child" };
 			},
 			status: (providerJobId) => ({ providerJobId, state: "completed" }),
@@ -618,17 +621,33 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				serviceExternalJobBridgeRequests(continuationAsyncDir);
 				await new Promise((resolve) => setTimeout(resolve, 25));
 			}
-			const status = JSON.parse(fs.readFileSync(path.join(continuationAsyncDir, "status.json"), "utf-8")) as { steps?: Array<{ externalJob?: Record<string, unknown> }> };
+			const status = JSON.parse(fs.readFileSync(path.join(continuationAsyncDir, "status.json"), "utf-8")) as { timeoutMs?: number; steps?: Array<{ externalJob?: Record<string, unknown> }> };
 			assert.equal(followUps, 1);
+			assert.equal(status.timeoutMs, 1_800_000, "a follow-up from a session without a UI keeps the 30-minute default");
 			assert.equal(status.steps?.[0]?.externalJob?.operation, "follow-up");
 			assert.equal(status.steps?.[0]?.externalJob?.parentProviderJobId, "job-parent");
 			assert.equal(status.steps?.[0]?.externalJob?.requestDigest, requestDigest);
 			assert.equal(status.steps?.[0]?.externalJob?.providerJobId, "job-child");
+
+			const timed = await executor.execute("resume-external-job-timed", { action: "resume", id: sourceRunId, message: timedMessage, timeoutMs: 7_200_000 }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(timed.isError, undefined, timed.content[0]?.text ?? "timed follow-up failed");
+			assert.equal(timed.details?.asyncId, timedRunId);
+			const timedResultPath = path.join(RESULTS_DIR, `${timedRunId}.json`);
+			const timedDeadline = Date.now() + 10_000;
+			while (!fs.existsSync(timedResultPath)) {
+				if (Date.now() >= timedDeadline) assert.fail("Timed out waiting for the timed external-job follow-up result");
+				serviceExternalJobBridgeRequests(path.join(ASYNC_DIR, timedRunId));
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
+			const timedStatus = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, timedRunId, "status.json"), "utf-8")) as { timeoutMs?: number };
+			assert.equal(timedStatus.timeoutMs, 7_200_000, "the call's timeoutMs wins over the no-UI default");
 		} finally {
 			try { execFileSync("git", ["-C", sourceRepo, "worktree", "remove", "--force", retainedTree], { stdio: "ignore" }); } catch {}
 			fs.rmSync(sourceAsyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 			fs.rmSync(continuationAsyncDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 			fs.rmSync(path.join(RESULTS_DIR, `${expectedRunId}.json`), { force: true });
+			fs.rmSync(path.join(ASYNC_DIR, timedRunId), { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+			fs.rmSync(path.join(RESULTS_DIR, `${timedRunId}.json`), { force: true });
 		}
 	});
 

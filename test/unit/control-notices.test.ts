@@ -113,4 +113,17 @@ describe("subagent control notice delivery", () => {
 
 		assert.deepEqual(visible, []);
 	});
+
+	it("wakes the parent with each 30-minute check-in, but not with other long-running signals", () => {
+		const recorder = makeRecorder();
+		const visibleControlNotices = new Set<string>();
+		const checkIn = (elapsedMs: number) => needsAttentionEvent({ type: "active_long_running", to: "active_long_running", runId: "1a2b3c4d-run", reason: "check_in", elapsedMs, message: "worker has been running" });
+		for (const event of [checkIn(1_800_000), checkIn(3_600_000), checkIn(3_600_000), needsAttentionEvent({ type: "active_long_running", to: "active_long_running", reason: "time_threshold" })]) {
+			handleSubagentControlNotice({ pi: recorder.pi, state: makeState(), visibleControlNotices, details: { source: "async", event } });
+		}
+		assert.deepEqual(recorder.sent.map((entry) => [(entry.message as { content: string }).content, entry.options]), [
+			['worker 1a2b3c4d has been running 30 min. Check it: subagent({action:"status", id:"1a2b3c4d"}); steer or stop it if it\'s stuck.', { triggerTurn: true }],
+			['worker 1a2b3c4d has been running 60 min. Check it: subagent({action:"status", id:"1a2b3c4d"}); steer or stop it if it\'s stuck.', { triggerTurn: true }],
+		]);
+	});
 });

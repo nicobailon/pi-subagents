@@ -1516,6 +1516,7 @@ function appendStepToAsyncChain(input: {
 		chainSkills,
 		dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 		maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
+		configTimeoutMs: resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs),
 		contextForAgent: contextPolicy.contextForAgent,
 		worktreeBaseDir: input.deps.config.worktreeBaseDir,
 		worktreeProvider: input.deps.config.worktreeProvider,
@@ -1873,6 +1874,7 @@ function externalRunnerControlError(asyncDir: string, action: "steer" | "resume"
 async function resumeExternalJobFollowUp(input: {
 	target: AsyncResumeSourceTarget;
 	followUp: string;
+	requestedTimeout: Pick<SubagentParamsLike, "timeoutMs" | "maxRuntimeMs">;
 	baseAgentConfig: AgentConfig;
 	effectiveCwd: string;
 	requestCwd: string;
@@ -1917,6 +1919,10 @@ async function resumeExternalJobFollowUp(input: {
 		return { content: [{ type: "text", text: `Nested subagent resume blocked (depth=${depthState.depth}, max=${depthState.maxDepth}). Complete the follow-up directly instead.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const topLevelResume = depthState.depth === 0 && !inheritedNestedRoute(input.deps) && !input.deps.state.workflowControllers?.has(input.target.runId);
+	const requested = input.requestedTimeout.timeoutMs === undefined && input.requestedTimeout.maxRuntimeMs === undefined ? { timeoutMs: input.baseAgentConfig.defaultTimeoutMs } : input.requestedTimeout;
+	const followUpTimeout = input.absoluteDeadlineAt !== undefined ? {} : resolveSingleAgentLaunchTimeout(requested, true, resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs), input.ctx.hasUI === true);
+	if (followUpTimeout.error) return { content: [{ type: "text", text: followUpTimeout.error }], isError: true, details: { mode: "management", results: [] } };
+	const followUpTimeoutMs = followUpTimeout.timeoutMs;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
 	try {
 		activeAsyncCapacity = topLevelResume ? acquireActiveAsyncCapacity({
@@ -1979,6 +1985,7 @@ async function resumeExternalJobFollowUp(input: {
 		availableModels: input.ctx.modelRegistry.getAvailable().map(toModelInfo),
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
+		...(followUpTimeoutMs !== undefined ? { timeoutMs: followUpTimeoutMs } : {}),
 		capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(input.ctx.sessionManager.getSessionId() ?? undefined),
 		runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 		activeAsyncCapacity,
@@ -2176,6 +2183,7 @@ async function resumeAsyncRun(input: {
 		const resumed = await resumeExternalJobFollowUp({
 			target,
 			followUp,
+			requestedTimeout: { timeoutMs: input.params.timeoutMs, maxRuntimeMs: input.params.maxRuntimeMs },
 			baseAgentConfig,
 			effectiveCwd,
 			requestCwd: input.requestCwd,
@@ -2280,6 +2288,7 @@ async function resumeAsyncRun(input: {
 			dynamicFanoutMaxItems: input.deps.config.chain?.dynamicFanout?.maxItems,
 			maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth, input.deps.childRuntime),
 			worktreeSetupHook: input.deps.config.worktreeSetupHook,
+			configTimeoutMs: resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs),
 			worktreeSetupHookTimeoutMs: input.deps.config.worktreeSetupHookTimeoutMs,
 			worktreeBaseDir: input.deps.config.worktreeBaseDir,
 			baseRef: input.params.baseRef ?? target.recoveryDescriptor?.baseRef,
@@ -2352,6 +2361,9 @@ async function resumeAsyncRun(input: {
 	if (recoveryDescriptor?.share === true && restoredShareDisabledBy !== undefined) {
 		return { content: [{ type: "text", text: `Cannot resume: run '${target.runId}' was launched with share enabled, which config ${restoredShareDisabledBy} now disables. Re-enable session sharing to resume it.` }], isError: true, details: { mode: "management", results: [] } };
 	}
+	const agentTimeoutMs = input.params.timeoutMs === undefined && input.params.maxRuntimeMs === undefined ? recoveryAgentConfig.defaultTimeoutMs : undefined;
+	const resumeTimeout = input.absoluteDeadlineAt !== undefined ? {} : resolveSingleAgentLaunchTimeout(agentTimeoutMs === undefined ? input.params : { ...input.params, timeoutMs: agentTimeoutMs }, true, resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs), input.ctx.hasUI === true);
+	if (resumeTimeout.error) return { content: [{ type: "text", text: resumeTimeout.error }], isError: true, details: { mode: "management", results: [] } };
 	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
@@ -2462,7 +2474,7 @@ async function resumeAsyncRun(input: {
 		...(outputSchema ? { structuredOutputSchema: outputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
 		...(acceptance !== undefined ? { acceptance } : {}),
-		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
+		...(resumeTimeout.timeoutMs !== undefined ? { timeoutMs: resumeTimeout.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
 		// Recovery descriptors, remembered foreground runs, and current workflow roots
@@ -3123,14 +3135,6 @@ function validateLaunchOutputSchemaOverrides(params: SubagentParamsLike): string
 
 export const DEFAULT_FOREGROUND_TIMEOUT_MS = 30 * 60 * 1000;
 
-// Async single-agent runs also need a wall-clock backstop: a child whose bash
-// tool blocks forever (e.g. a background process inheriting the terminal with
-// no bash `timeout` arg) would otherwise hang the parent indefinitely with
-// zero signal. Same generous default as foreground; explicit timeoutMs/
-// maxRuntimeMs and agent-level defaultTimeoutMs remain authoritative.
-//
-// Deliberately NOT applied at the workflow level: async scripted workflows
-// stay unbounded as a whole, while each runner child has its own deadline.
 export { DEFAULT_ASYNC_TIMEOUT_MS };
 
 /**
@@ -3175,15 +3179,14 @@ export function resolveForegroundTimeout(params: SubagentParamsLike, defaultTime
  *
  * A global config default (`config.timeoutMs`, passed as `configDefaultTimeoutMs`)
  * replaces the built-in 30-minute backstop wherever a concrete default is applied.
- * The async default is deliberately applied only to plain single-agent launches.
  * Composite launches keep their top-level execution unbounded when no timeout is
  * set — even with a config default — while their runner children resolve separate
  * deadlines. Exported so the executor wiring is directly testable.
  */
-export function resolveSingleAgentLaunchTimeout(params: SubagentParamsLike, async: boolean, configDefaultTimeoutMs?: number): { timeoutMs?: number; error?: string } {
+export function resolveSingleAgentLaunchTimeout(params: SubagentParamsLike, async: boolean, configDefaultTimeoutMs?: number, interactive = false): { timeoutMs?: number; error?: string } {
 	const isComposite = (params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || params.workflowScript !== undefined;
 	const foregroundDefault = configDefaultTimeoutMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
-	const asyncSingleDefault = configDefaultTimeoutMs ?? DEFAULT_ASYNC_TIMEOUT_MS;
+	const asyncSingleDefault = configDefaultTimeoutMs ?? (interactive ? undefined : DEFAULT_ASYNC_TIMEOUT_MS);
 	const defaultTimeoutMs = !async ? foregroundDefault : isComposite ? undefined : asyncSingleDefault;
 	return resolveForegroundTimeout(params, defaultTimeoutMs);
 }
@@ -8002,6 +8005,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			effectiveParams,
 			effectiveAsync,
 			resolveConfigDefaultTimeoutMs(deps.config.timeoutMs),
+			ctx.hasUI === true,
 		);
 		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
 		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);

@@ -10,6 +10,7 @@ import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { actionTopicKey, callNotes, createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
+import { readSubagentGuide } from "../../src/extension/subagent-guide.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
@@ -26,7 +27,12 @@ let agentDir: string;
 
 type RequestContext = { messages: Parameters<typeof getCurrentTools>[0] };
 
-async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void, provider = "guided-tool"): Promise<Session> {
+const UI_CONTEXT = {
+	...Object.fromEntries(["select", "confirm", "input", "onTerminalInput", "setStatus", "setWorkingMessage", "setWorkingVisible", "setWorkingIndicator", "setHiddenThinkingLabel", "setWidget", "setFooter", "setHeader", "setTitle", "custom", "pasteToEditor", "setEditorText", "getEditorText", "editor", "addAutocompleteProvider", "setEditorComponent", "getEditorComponent", "getAllThemes", "getTheme", "setTheme", "getToolsExpanded", "setToolsExpanded", "notify"].map((name) => [name, () => undefined])),
+	theme: new Proxy({}, { get: () => (...args: unknown[]) => String(args.at(-1) ?? "") }),
+};
+
+async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void, provider = "guided-tool", ui = false): Promise<Session> {
 	const faux = fauxProvider({ provider, models: [{ id: "local" }], tokensPerSecond: 100_000 });
 	faux.setResponses(Array.from({ length: 40 }, () => (context: RequestContext) => {
 		onRequest?.(context);
@@ -44,7 +50,7 @@ async function startParent(steps: Step[], onRequest?: (context: RequestContext) 
 	await resourceLoader.reload();
 	const modelRuntime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: path.join(agentDir, "models.json"), allowModelNetwork: false });
 	const { session } = await createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader, modelRuntime, model: faux.getModel("local"), sessionManager: SessionManager.inMemory(root), noTools: "builtin" });
-	await session.bindExtensions({});
+	await session.bindExtensions(ui ? { uiContext: UI_CONTEXT as never } : {});
 	sessions.push(session);
 	return session;
 }
@@ -53,6 +59,12 @@ function subagentReplies(session: Session): string[] {
 	return (session.messages as Array<{ role: string; toolName?: string; content?: Array<{ text?: string }> }>)
 		.filter((message) => message.role === "toolResult" && message.toolName === "subagent")
 		.map((message) => (message.content ?? []).map((part) => part.text ?? "").join("\n"));
+}
+
+function subagentDetails(session: Session): Array<{ timeoutMs?: number }> {
+	return (session.messages as Array<{ role: string; toolName?: string; details?: { timeoutMs?: number } }>)
+		.filter((message) => message.role === "toolResult" && message.toolName === "subagent")
+		.map((message) => message.details ?? {});
 }
 
 before(() => {
@@ -95,6 +107,41 @@ describe("guide first", () => {
 		assert.equal(mockPi.callCount(), 2);
 	});
 
+	it("gives default background launches and resumes no deadline with a UI, and 30 minutes without one", { timeout: 90_000 }, async () => {
+		for (const ui of [true, false]) {
+			mockPi.reset();
+			mockPi.onCall({ output: "done" });
+			mockPi.onCall({ output: "slow", delay: 20_000 });
+			mockPi.onCall({ output: "slow", delay: 20_000 });
+			const steps: Step[] = [{}, { agent: "probe", task: "Inspect", async: false }, { agent: "probe", task: "Background", async: true }, "launched"];
+			const session = await startParent(steps, undefined, "guided-tool", ui);
+			await session.prompt("go");
+			const id = /\nRun ([0-9a-f]{8}) is done\./.exec(subagentReplies(session)[1]!)?.[1];
+			assert.ok(id, subagentReplies(session)[1]);
+			steps.push({ action: "resume", id, message: "More" }, "resumed");
+			await session.prompt("go");
+			const [, , launched, resumed] = subagentDetails(session);
+			assert.deepEqual([launched?.timeoutMs, resumed?.timeoutMs], ui ? [undefined, undefined] : [1_800_000, 1_800_000], subagentReplies(session).join("\n---\n"));
+		}
+	});
+
+	it("keeps the agent's own timeoutMs when a run is resumed, with or without a UI", { timeout: 90_000 }, async () => {
+		fs.writeFileSync(path.join(agentDir, "agents", "timed.md"), "---\nname: timed\ndescription: Timed\ntools: read\ntimeoutMs: 7200000\ndefaultContext: fresh\n---\nDo the task.\n");
+		for (const ui of [true, false]) {
+			mockPi.reset();
+			mockPi.onCall({ output: "done" });
+			mockPi.onCall({ output: "slow", delay: 20_000 });
+			const steps: Step[] = [{}, { agent: "timed", task: "Inspect", async: false }, "ran"];
+			const session = await startParent(steps, undefined, "guided-tool", ui);
+			await session.prompt("go");
+			const id = /\nRun ([0-9a-f]{8}) is done\./.exec(subagentReplies(session)[1]!)?.[1];
+			assert.ok(id, subagentReplies(session)[1]);
+			steps.push({ action: "resume", id, message: "More" }, "resumed");
+			await session.prompt("go");
+			assert.equal(subagentDetails(session)[2]?.timeoutMs, 7_200_000, subagentReplies(session)[2]);
+		}
+	});
+
 	it("names a foreground run's id with the call that resumes it", { timeout: 60_000 }, async () => {
 		mockPi.reset();
 		mockPi.onCall({ output: "done" });
@@ -130,10 +177,30 @@ describe("guide first", () => {
 		assert.match(malformed!, /subagent: 'stop' takes id as one run id or a list of run ids\./);
 	});
 
+	it("teaches one lookup call that answers an action, a subject or a wrong guess", { timeout: 60_000 }, async () => {
+		const session = await startParent([{}, { action: "guide", topic: "schedule" }, { action: "guide", topic: "workflows" }, { action: "guide", topic: "nope" }, "done"]);
+		await session.prompt("go");
+		const [guide, action, subject, wrong] = subagentReplies(session);
+		assert.match(guide!, /^- unsure\? \{action:"guide", topic:"<action, family or subject, e\.g\. workflows>"\}; a wrong guess lists topics$/m);
+		assert.match(action!, /^schedule\.create: name or id/);
+		assert.match(subject!, /^Sections of guide topic 'workflows'\./m);
+		assert.match(wrong!, /^Unknown subagents guide topic 'nope'\. Valid topics: overview, workflows, /);
+	});
+
 	it("accepts a list id from a provider that gets declared fields", { timeout: 60_000 }, async () => {
 		const session = await startParent([{}, { action: "stop", id: ["x1", "x2"] }, "stopped"], undefined, "xai");
 		await session.prompt("go");
 		assert.equal(subagentReplies(session)[1], "No stoppable async run found for 'x1'.\nNo stoppable async run found for 'x2'.");
+	});
+
+	it("refuses a blanked number field from a provider that gets declared fields, instead of launching with it", { timeout: 60_000 }, async () => {
+		const session = await startParent([{}, { agent: "probe", task: "Inspect", timeoutMs: true }, { workflow: "parallel", args: { tasks: [{ agent: "probe", task: "Inspect" }] }, timeoutMs: true }, "done"], undefined, "xai");
+		await session.prompt("go");
+		const [, reply, workflowReply] = subagentReplies(session);
+		assert.match(reply, /'timeoutMs' must be a number, not true\. If your fields arrive missing or changed, pass them inside args/);
+		assert.doesNotMatch(reply, /Async:|Run [0-9a-f]{8}/);
+		assert.match(workflowReply!, /'timeoutMs' must be a number, not true\. For a workflow call, set timeoutMs on each child in a workflow: true script\./);
+		assert.doesNotMatch(workflowReply!, /inside args|Async/);
 	});
 
 	const listTool = (answer: boolean) => {
@@ -464,14 +531,14 @@ describe("guided tool surface", () => {
 		assert.deepEqual(declarations, [0, 14]);
 	});
 
-	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,200", () => {
+	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,400", () => {
 		const empty = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-size-"));
 		process.env.PI_CODING_AGENT_DIR = empty;
 		try {
 			const agents = discoverAgents(empty, "both").agents;
 			assert.ok(agents.some((agent) => agent.name === "scout"), "bundled agents are listed");
 			const size = SUBAGENT_TOOL_DESCRIPTION.length + formatGuide(agents, { canLaunch: true }).length;
-			assert.ok(size <= 2_200, `description + guide is ${size} chars`);
+			assert.ok(size <= 2_400, `description + guide is ${size} chars`);
 			assert.match(formatGuide(agents, { canLaunch: true }), /Not for messaging a Pi session that is already open; use a messaging tool for that\./);
 			assert.doesNotMatch(formatGuide(agents, { canLaunch: true, child: true }), /messaging tool/);
 			assert.deepEqual(SUBAGENT_TOOL_PARAMETERS, { type: "object", properties: {}, additionalProperties: true });
@@ -509,5 +576,13 @@ describe("guided tool surface", () => {
 		for (const action of named("also")) assert.ok((SUBAGENT_ACTIONS as readonly string[]).includes(action), `guide names '${action}'`);
 		for (const family of named("families")) assert.ok(SUBAGENT_ACTIONS.some((action) => action.startsWith(`${family}.`) || action === family), `guide names family '${family}'`);
 		assert.match(guide, /\n\nAgents \(as of now; \{action:"list"\} refreshes\):\n- scout$/);
+	});
+
+	it("points the guide only at guide topics that exist, including the lanes section, and names the run deadline", () => {
+		const guide = formatGuide([{ name: "scout" }], { canLaunch: true });
+		const topics = [...guide.matchAll(/topic:"([^"<]+)"/g)].map((match) => match[1]!);
+		assert.ok(topics.includes("workflows/parallel-sequential-lanes"), `guide topics: ${topics.join(", ")}`);
+		for (const topic of topics) assert.doesNotMatch(readSubagentGuide(topic), /^Unknown/, topic);
+		assert.match(guide, /^- timeoutMs: hard deadline in ms; with none \(call\/agent\/config\) a check-in wakes you every 30 min \(no UI: 30-min stop\)$/m);
 	});
 });
