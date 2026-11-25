@@ -3,12 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_PARAMETERS } from "../../src/extension/guided-tool.ts";
+import { createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
@@ -22,9 +22,12 @@ let root: string;
 let agentDir: string;
 
 /** A parent session on a scripted model: each step is one assistant message (subagent calls, or text). */
-async function startParent(steps: Step[]): Promise<Session> {
+type RequestContext = { messages: Parameters<typeof getCurrentTools>[0] };
+
+async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void): Promise<Session> {
 	const faux = fauxProvider({ provider: "guided-tool", models: [{ id: "local" }], tokensPerSecond: 100_000 });
-	faux.setResponses(Array.from({ length: 40 }, () => () => {
+	faux.setResponses(Array.from({ length: 40 }, () => (context: RequestContext) => {
+		onRequest?.(context);
 		const next = steps.shift() ?? "ok";
 		if (typeof next === "string") return fauxAssistantMessage(next);
 		const calls = Array.isArray(next) ? next : [next];
@@ -123,13 +126,30 @@ describe("taught state", () => {
 		assert.deepEqual(runs, [{ action: "reply", replyTo: "q-1", message: "Use option A" }]);
 	});
 
-	it("answers an empty call with one line once the guide is in the chat", { timeout: 60_000 }, async () => {
-		const session = await startParent([{}, "read", {}, "again"]);
+	it("declares the main fields after a blank call on a provider that blanks them, then launches", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const declared: number[] = [];
+		const fieldCount = (context: RequestContext) => {
+			const subagent = getCurrentTools(context.messages).find((tool) => tool.name === "subagent") as { parameters?: { properties?: object } } | undefined;
+			declared.push(Object.keys(subagent?.parameters?.properties ?? {}).length);
+		};
+		// After the guide, a call whose every value arrived as true is blank: the provider dropped the fields.
+		const session = await startParent([{}, "read", { agent: true, task: true }, { agent: "probe", task: "Inspect", async: false }, "launched"], fieldCount);
 		await session.prompt("go");
 		await session.prompt("go");
-		const [guide, empty] = subagentReplies(session);
+		const [guide, blank, launched] = subagentReplies(session);
 		assert.match(guide!, /^subagent guide\./);
-		assert.equal(empty, EMPTY_CALL_TEXT);
+		assert.equal(blank, FIELDS_DECLARED_TEXT);
+		assert.match(launched!, /done/);
+		assert.equal(mockPi.callCount(), 1, "the next real launch runs");
+		assert.equal(declared[0], 0, "a provider not on the known list starts with no declared fields");
+		assert.equal(declared.at(-1), 14, "after the blank call the tool declares its 14 main fields");
+		// Once the fields are declared, a later empty call gets the one-line reminder.
+		const again = await startParent([{}, "read", {}, "again"]);
+		await again.prompt("go");
+		await again.prompt("go");
+		assert.equal(subagentReplies(again)[1], EMPTY_CALL_TEXT, "the same model already needs fields in this process");
 	});
 
 	it("creates a schedule whose fields arrive only inside args", { timeout: 60_000 }, async () => {
@@ -203,7 +223,45 @@ describe("taught state", () => {
 });
 
 describe("guided tool surface", () => {
-	it("keeps the declaration within 650 chars, and the description and the guide with the bundled agents within 2,100", () => {
+	/** The tool on a fake host that records each declaration Pi would send. */
+	const declaredTool = () => {
+		const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => void>>();
+		const declarations: number[] = [];
+		const pi = {
+			on: (name: string, handler: (event: unknown, ctx: unknown) => void) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
+			registerTool: (tool: { parameters: { properties: object } }) => declarations.push(Object.keys(tool.parameters.properties).length),
+		};
+		const { tool } = createGuidedSubagentTool(pi as never, {
+			guide: async () => "GUIDE",
+			flatten: (params) => flattenSubagentToolOptions(params),
+			run: async () => ({ content: [{ type: "text", text: "ok" }], details: { mode: "management", results: [] } }),
+		});
+		pi.registerTool(tool as never);
+		const emit = (name: string, event: unknown, ctx: unknown) => { for (const handler of handlers.get(name) ?? []) handler(event, ctx); };
+		return { tool, declarations, emit };
+	};
+
+	it("declares no fields by default and the 14 main fields for a provider known to blank undeclared ones", () => {
+		const anthropic = declaredTool();
+		anthropic.emit("session_start", {}, { model: { provider: "anthropic", id: "claude-opus-5-5" } });
+		assert.deepEqual(anthropic.declarations, [0]);
+		const xai = declaredTool();
+		xai.emit("session_start", {}, { model: { provider: "xai", id: "grok-4.6" } });
+		assert.deepEqual(xai.declarations, [0, 14]);
+		xai.emit("model_select", { model: { provider: "anthropic", id: "claude-opus-5-5" } }, {});
+		assert.deepEqual(xai.declarations, [0, 14, 0], "switching to a provider that keeps fields drops them again");
+	});
+
+	it("keeps the 0-field declaration when a later call is not blank", async () => {
+		const { tool, declarations, emit } = declaredTool();
+		const ctx = { cwd: root, model: { provider: "keeps-fields", id: "m" }, sessionManager: { buildContextEntries: () => [] } };
+		emit("session_start", {}, ctx);
+		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
+		await tool.execute("list", { action: "list", agent: true } as never, undefined, undefined, ctx as never);
+		assert.deepEqual(declarations, [0]);
+	});
+
+	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,100", () => {
 		const empty = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-size-"));
 		process.env.PI_CODING_AGENT_DIR = empty;
 		try {
@@ -211,10 +269,12 @@ describe("guided tool surface", () => {
 			assert.ok(agents.some((agent) => agent.name === "scout"), "bundled agents are listed");
 			const size = SUBAGENT_TOOL_DESCRIPTION.length + formatGuide(agents, { canLaunch: true }).length;
 			assert.ok(size <= 2_100, `description + guide is ${size} chars`);
-			assert.deepEqual(Object.keys(SUBAGENT_TOOL_PARAMETERS.properties), ["action", "agent", "task", "id", "message", "cwd", "context", "model", "output", "label", "worktree", "workflow", "args", "topic"]);
-			assert.equal(SUBAGENT_TOOL_PARAMETERS.additionalProperties, true);
-			const declaration = JSON.stringify({ name: "subagent", description: SUBAGENT_TOOL_DESCRIPTION, parameters: SUBAGENT_TOOL_PARAMETERS }).length;
-			assert.ok(declaration <= 650, `declaration is ${declaration} chars`);
+			assert.deepEqual(SUBAGENT_TOOL_PARAMETERS, { type: "object", properties: {}, additionalProperties: true });
+			assert.deepEqual(Object.keys(SUBAGENT_TOOL_FIELD_PARAMETERS.properties), ["action", "agent", "task", "id", "message", "cwd", "context", "model", "output", "label", "worktree", "workflow", "args", "topic"]);
+			assert.equal(SUBAGENT_TOOL_FIELD_PARAMETERS.additionalProperties, true);
+			const declared = (parameters: unknown) => JSON.stringify({ name: "subagent", description: SUBAGENT_TOOL_DESCRIPTION, parameters }).length;
+			assert.ok(declared(SUBAGENT_TOOL_PARAMETERS) <= 240, `0-field declaration is ${declared(SUBAGENT_TOOL_PARAMETERS)} chars`);
+			assert.ok(declared(SUBAGENT_TOOL_FIELD_PARAMETERS) <= 650, `14-field declaration is ${declared(SUBAGENT_TOOL_FIELD_PARAMETERS)} chars`);
 		} finally {
 			process.env.PI_CODING_AGENT_DIR = agentDir;
 			fs.rmSync(empty, { recursive: true, force: true });

@@ -9,14 +9,15 @@ import type { Details } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { prepareSubagentToolArguments } from "./subagent-options.ts";
 
-// The model sees this name, description and the 14 main fields, without descriptions; the guide (the reply to the
-// session's first call) and later replies teach everything else, so the declaration never changes and the prompt
-// cache holds on every model. The fields are declared because some providers drop or blank undeclared ones; other
-// fields are still accepted, and rare-action fields can ride inside `args`.
+// The model sees this name, description and no declared fields; the guide (the reply to the session's first call)
+// and later replies teach everything else, so the declaration stays the same for a model and the prompt cache holds.
+// Providers that drop or blank undeclared fields get the 14 main fields instead (see needsDeclaredFields); every
+// other field is still accepted, and rare-action fields can ride inside `args`.
 export const SUBAGENT_TOOL_DESCRIPTION = "Delegate work to child agents and manage their runs. Call subagent({}) first for the guide: agents, fields, all actions.";
+export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({ type: "object", properties: {}, additionalProperties: true });
 const declaredString = { type: "string" } as const;
 // `output:false` and `workflow:true` still work: Pi's validation turns them into "false"/"true", which execute converts back.
-export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({
+export const SUBAGENT_TOOL_FIELD_PARAMETERS = Type.Unsafe<Record<string, unknown>>({
 	type: "object",
 	properties: {
 		action: declaredString, agent: declaredString, task: declaredString, id: declaredString, message: declaredString,
@@ -26,6 +27,38 @@ export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({
 	},
 	additionalProperties: true,
 });
+
+// Models (provider/id) whose calls arrived blank this process: they get the declared fields from then on.
+const modelsNeedingFields = new Set<string>();
+
+/**
+ * Providers known to drop or blank undeclared fields get the 14 main fields from the start: xAI (every value arrives
+ * as `true`) and GitHub Copilot's Kimi (undeclared fields are dropped). Any other model joins after a blank call.
+ */
+export function needsDeclaredFields(model: { provider?: string; id?: string } | undefined): boolean {
+	if (!model?.provider) return false;
+	if (model.provider === "xai") return true;
+	if (model.provider === "github-copilot" && model.id?.toLowerCase().includes("kimi")) return true;
+	return modelsNeedingFields.has(`${model.provider}/${model.id ?? ""}`);
+}
+
+// Fields a real call can set to a bare true, so {workflow:true, async:true} stays a real call.
+const TRUE_VALUED_FIELDS = new Set(["workflow", "async", "worktree", "all", "nonBlocking", "stopOnAttention", "clarify", "share", "fast", "foregroundOnly"]);
+const blankValue = (value: unknown) => value === true || value === "true" || value === null || value === "null"
+	|| (typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === 0);
+
+/**
+ * A call whose fields a provider dropped or blanked: no fields, or every top-level value true, null, "null" or {}
+ * (Pi's argument conversion can turn true into "true"), unless it is only true-valued flags a real call sets.
+ */
+export function isBlankCall(params: Record<string, unknown>): boolean {
+	const entries = Object.entries(params);
+	if (entries.length === 0) return true;
+	if (!entries.every(([, value]) => blankValue(value))) return false;
+	return entries.some(([key, value]) => !TRUE_VALUED_FIELDS.has(key) || !(value === true || value === "true"));
+}
+
+export const FIELDS_DECLARED_TEXT = "This call's fields arrived blank: this provider drops fields the tool doesn't declare. The tool now declares its main fields; call again.";
 
 export interface GuideAgent {
 	name: string;
@@ -403,6 +436,16 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 	pi.on("tool_call", (event) => {
 		if (event.toolName === "subagent" && event.parentToolCallId) nestedCallIds.add(event.toolCallId);
 	});
+	// The declaration follows the model: no fields, or the 14 main fields for a provider that drops undeclared ones.
+	// It is re-registered only when that choice changes; a model switch already starts a new prompt cache.
+	const declare = (fields: boolean) => {
+		const parameters = fields ? SUBAGENT_TOOL_FIELD_PARAMETERS : SUBAGENT_TOOL_PARAMETERS;
+		if (tool.parameters === parameters) return;
+		tool.parameters = parameters;
+		pi.registerTool(tool);
+	};
+	pi.on("session_start", (_event, ctx) => declare(needsDeclaredFields(ctx?.model)));
+	pi.on("model_select", (event) => declare(needsDeclaredFields(event.model)));
 	const tool: ToolDefinition<typeof SUBAGENT_TOOL_PARAMETERS, Details> = {
 		name: "subagent",
 		exposure: "direct",
@@ -413,6 +456,16 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 		async execute(id, rawParams, signal, onUpdate, ctx) {
 			const nested = nestedCallIds.delete(id);
 			taught.ensure(ctx);
+			// After the guide, a blank call means the provider dropped or blanked the fields: declare them once, so
+			// this model's next call carries them (one cache miss, only on such a provider).
+			if (!nested && taught.has("guide") && isBlankCall(rawParams as Record<string, unknown>)) {
+				if (tool.parameters !== SUBAGENT_TOOL_FIELD_PARAMETERS) {
+					if (ctx?.model?.provider) modelsNeedingFields.add(`${ctx.model.provider}/${ctx.model.id ?? ""}`);
+					declare(true);
+					return guideResult(FIELDS_DECLARED_TEXT, []);
+				}
+				return guideResult(EMPTY_CALL_TEXT, []);
+			}
 			// Again after Pi's validation, which turns output:false and workflow:true into text for the declared strings.
 			const prepared = prepareSubagentToolArguments(rawParams) as Record<string, unknown>;
 			const lifted = liftArgsFields(prepared);
