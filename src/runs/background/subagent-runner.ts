@@ -1085,7 +1085,6 @@ export async function runSingleStepInner(
 	let finalMutationEvidence = await collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 
 	let contextOverflow = false;
-	let launchWarningsEmitted = false;
 	const aggregateUsage = emptyUsage();
 	let launched = false;
 	let recoveryTask = task;
@@ -1138,11 +1137,7 @@ export async function runSingleStepInner(
 			// The runner reads the value back from the runtime's files after the run.
 			launch.config.structuredOutput.capture = createStructuredOutputFileCapture(effectiveStructuredOutput);
 		}
-		const { warnings, capabilityAudit: attemptCapabilityAudit } = launch;
-		if (!launchWarningsEmitted && warnings.length > 0) {
-			for (const warning of warnings) console.warn(`[pi-subagents] ${warning}`);
-			launchWarningsEmitted = true;
-		}
+		const { capabilityAudit: attemptCapabilityAudit } = launch;
 		if (step.definitionDigest) {
 			const toolPlan = resolvedTaskToolPlan ?? resolvePiLaunchToolPlan(omitUndefinedProperties({
 				tools: step.tools,

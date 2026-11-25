@@ -152,8 +152,6 @@ export interface PiLaunchToolPlan {
 	extensionArgs: string[];
 	disableAmbientExtensions: boolean;
 	capabilityAudit?: SubagentCapabilityAudit;
-	/** Non-fatal launch warnings; they do not change behavior. */
-	warnings: string[];
 }
 
 function extensionIdentifier(value: string): string {
@@ -408,16 +406,6 @@ export function resolvePiLaunchToolPlan(
 	const disableAmbientExtensions =
 		capabilityCeiling?.denyExtensions === true ||
 		input.extensions !== undefined;
-	const warnings: string[] = [];
-	// An explicit empty list disables ambient extensions, including model providers.
-	if (capabilityCeiling?.denyExtensions !== true && Array.isArray(input.extensions) && input.extensions.length === 0) {
-		const agentLabel = input.agentName ? ` for agent '${input.agentName}'` : "";
-		warnings.push(
-			`extensions: [] override${agentLabel} disables ALL ambient extensions for this child (not just "adds nothing"), `
-				+ "including any model-provider extension needed to resolve a provider-qualified model. "
-				+ "List the extensions this child actually needs instead of an empty array.",
-		);
-	}
 	const configuredExtensions = capabilityCeiling?.denyExtensions
 		? []
 		: [
@@ -499,7 +487,6 @@ export function resolvePiLaunchToolPlan(
 		requiredExtensions,
 		extensionArgs,
 		disableAmbientExtensions,
-		warnings,
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};
 }

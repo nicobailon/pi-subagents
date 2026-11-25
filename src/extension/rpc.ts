@@ -26,7 +26,7 @@ import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text
 import { readStatus } from "../shared/utils.ts";
 import { SubagentFlatParams } from "./schemas.ts";
 import { disabledFeatureUseError, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
-import { normalizePublicSubagentExecution } from "./public-execution.ts";
+import { isWorkflowScriptText, normalizePublicSubagentExecution } from "./public-execution.ts";
 import { collectSubagentCost, SUBAGENT_COST_REPORT_VERSION } from "../slash/subagent-cost.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, stopStoppableAsyncStatusChildren, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
@@ -540,6 +540,7 @@ function spawnParams(params: unknown, options: RegisterSubagentRpcBridgeOptions)
 	// With workflow scripts disabled, name the setting before normalization can report a script-shape error instead.
 	const disabledFeatureError = options.disabledFeatures?.features.has("workflow-scripts") ? disabledFeatureUseError(input, options.disabledFeatures, "RPC spawn") : undefined;
 	if (disabledFeatureError) throw new SubagentRpcError("invalid_params", disabledFeatureError);
+	if (typeof input.workflow === "string" && isWorkflowScriptText(input.workflow)) throw new SubagentRpcError("invalid_params", "RPC spawn workflow has line breaks, so it is script text; pass inline script text as script.");
 	const normalized = normalizePublicSubagentExecution(input);
 	if (!normalized.ok) throw new SubagentRpcError("invalid_params", normalized.error);
 	if (normalized.params.action !== undefined) {

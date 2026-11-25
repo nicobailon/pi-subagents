@@ -697,6 +697,11 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					return;
 				}
 				session = created;
+				const lostProvider = input.parentExtensionProvider;
+				if (lostProvider && created.modelId?.startsWith(`${lostProvider}/`) && created.claimedProvider !== lostProvider) {
+					const subject = input.launch.config.agent ? `Agent '${input.launch.config.agent}'` : "This subagent";
+					console.warn(`[pi-subagents] ${subject} runs '${created.modelId}' without the extension that registers provider '${lostProvider}' in the parent, so its requests go through the '${lostProvider}' provider Pi has without that extension (built in or from models.json).`);
+				}
 				if (created.contextWindow !== undefined) input.onContextWindow?.(created.contextWindow);
 				const steer = created.steer.bind(created);
 				const followUp = created.followUp.bind(created);
