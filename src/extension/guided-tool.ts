@@ -103,7 +103,7 @@ export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch:
 	}
 	const intro = options.child
 		? `subagent guide (child run). Your launches are your own children and run in the background; their results do not wake you. Collect them with {action:"wait"} (or all:true) before you finish. Agent changes (create, update, delete …) are blocked here.`
-		: `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll.`;
+		: `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll. Not for messaging a Pi session that is already open; use a messaging tool for that.`;
 	const names = new Set(agents.map((agent) => agent.name));
 	const writerVariant = (name: string) => name.endsWith("-writer") && names.has(name.slice(0, -"-writer".length));
 	const agentLines = agents.filter((agent) => !writerVariant(agent.name)).map((agent) => {

@@ -316,14 +316,16 @@ describe("guided tool surface", () => {
 		assert.deepEqual(declarations, [0, 14]);
 	});
 
-	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,100", () => {
+	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,200", () => {
 		const empty = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-size-"));
 		process.env.PI_CODING_AGENT_DIR = empty;
 		try {
 			const agents = discoverAgents(empty, "both").agents;
 			assert.ok(agents.some((agent) => agent.name === "scout"), "bundled agents are listed");
 			const size = SUBAGENT_TOOL_DESCRIPTION.length + formatGuide(agents, { canLaunch: true }).length;
-			assert.ok(size <= 2_100, `description + guide is ${size} chars`);
+			assert.ok(size <= 2_200, `description + guide is ${size} chars`);
+			assert.match(formatGuide(agents, { canLaunch: true }), /Not for messaging a Pi session that is already open; use a messaging tool for that\./);
+			assert.doesNotMatch(formatGuide(agents, { canLaunch: true, child: true }), /messaging tool/);
 			assert.deepEqual(SUBAGENT_TOOL_PARAMETERS, { type: "object", properties: {}, additionalProperties: true });
 			assert.deepEqual(Object.keys(SUBAGENT_TOOL_FIELD_PARAMETERS.properties), ["action", "agent", "task", "id", "message", "cwd", "context", "model", "output", "label", "worktree", "workflow", "args", "topic"]);
 			assert.equal(SUBAGENT_TOOL_FIELD_PARAMETERS.additionalProperties, true);
