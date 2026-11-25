@@ -75,7 +75,7 @@ const terminalBeforePublicationScript = String.raw`
 	const ctx = {
 		cwd: process.cwd(), hasUI: false, model: undefined, isIdle() { return false; },
 		ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
-		sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; } },
+		sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; }, buildContextEntries() { return []; } },
 		modelRegistry: { getAvailable() { return []; } },
 	};
 	const nextSend = () => new Promise((resolve, reject) => {

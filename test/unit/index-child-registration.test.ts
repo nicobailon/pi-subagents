@@ -806,7 +806,7 @@ describe("subagent extension child mode", () => {
 			const ctx = {
 				cwd: process.cwd(), isIdle() { return false; }, hasUI: false,
 				ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
-				sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return sessionFile; }, getEntries() { return []; } },
+				sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return sessionFile; }, getEntries() { return []; }, buildContextEntries() { return []; } },
 				modelRegistry: { getAvailable() { return []; } },
 			};
 			registerSubagentExtension(pi);
@@ -1103,6 +1103,7 @@ describe("subagent extension child mode", () => {
 				getSessionId() { return "notify-reload-session"; },
 				getSessionFile() { return null; },
 				getEntries() { return []; },
+				buildContextEntries() { return []; },
 			};
 			function createRuntime() {
 				const handlers = new Map();

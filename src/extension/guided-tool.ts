@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-w
 import { managementActionAuthority, type AuthorityPolicyConfig } from "../policy/authority.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { disabledFeatureSectionNotice, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
+import { isStaleExtensionContextError } from "../shared/extension-context.ts";
 import type { Details } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { prepareSubagentToolArguments } from "./subagent-options.ts";
@@ -250,7 +251,11 @@ export class TaughtState {
 		if (ctx) this.sessionCtx = ctx;
 		let keys = new Set<string>();
 		// A replaced session's ctx throws; then nothing counts as taught and a note is shown again.
-		try { if (ctx) keys = taughtInContext(ctx); } catch {}
+		try {
+			if (ctx) keys = taughtInContext(ctx);
+		} catch (error) {
+			if (!isStaleExtensionContextError(error)) throw error;
+		}
 		for (const key of keys) this.keys.add(key);
 	}
 
