@@ -66,7 +66,7 @@ it("does not skip drain for in-process child sessions when hasUI is true", async
 			children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
 		}]]),
 	} as SubagentState;
-	const ctx = { hasUI: true, sessionManager: { getSessionFile: () => sessionId, getSessionId: () => "reviewer-ui-session" } };
+	const ctx = { hasUI: true, sessionManager: { getSessionFile: () => sessionId, getSessionId: () => "reviewer-ui-session", buildContextEntries: () => [] } };
 	const { emit, wake } = registerChild(ctx, childConfig({ runtimeState, holdFinalDrain: (value) => { held.push(value); } }));
 	await emit("session_start");
 	let settled = false;
@@ -91,7 +91,7 @@ it("reads a late-installed owner barrier for each final drain and balances the h
 		}]]),
 	} as SubagentState;
 	const config = childConfig({ runtimeState, holdFinalDrain: (value) => { held.push(value); } });
-	const ctx = { hasUI: true, sessionManager: { getSessionFile: () => sessionId, getSessionId: () => "fanout-owner-session" } };
+	const ctx = { hasUI: true, sessionManager: { getSessionFile: () => sessionId, getSessionId: () => "fanout-owner-session", buildContextEntries: () => [] } };
 	const { emit, wake } = registerChild(ctx, config);
 	await emit("session_start");
 	let pending = true;
@@ -119,7 +119,7 @@ it("keeps a file-backed child's final drain waiting for provider work keyed by i
 		listActiveWork: () => active ? [{ id: "job", sessionId: "child-session-id" }] : [],
 	});
 	try {
-		const ctx = { hasUI: false, sessionManager: { getSessionFile: () => "/sessions/child.jsonl", getSessionId: () => "child-session-id" } };
+		const ctx = { hasUI: false, sessionManager: { getSessionFile: () => "/sessions/child.jsonl", getSessionId: () => "child-session-id", buildContextEntries: () => [] } };
 		const { emit, wake } = registerChild(ctx, childConfig());
 		await emit("session_start");
 		let settled = false;

@@ -25,7 +25,7 @@ const script = String.raw`
 	const ctx = {
 		cwd: process.cwd(), isIdle() { return false; }, hasUI: false, model: { provider: "test", id: "test" },
 		modelRegistry: { getAvailable() { return []; }, getAll() { return []; } },
-		sessionManager: { getSessionId() { return "active-runs"; }, getSessionFile() { return undefined; }, getBranch() { return []; }, getEntries() { return []; } },
+		sessionManager: { getSessionId() { return "active-runs"; }, getSessionFile() { return undefined; }, getBranch() { return []; }, getEntries() { return []; }, buildContextEntries() { return []; } },
 	};
 	for (const handler of handlers.get("session_start")) await handler({ reason: "startup" }, ctx);
 	const prompt = async (selectedTools = ["subagent"]) => {

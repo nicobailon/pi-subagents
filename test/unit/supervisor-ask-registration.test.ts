@@ -735,7 +735,7 @@ describe("supervisor ask registration", () => {
 					ui: { setWidget() {}, requestRender() {}, onTerminalInput() { return () => {}; }, notify() {}, theme: { fg(_name, text) { return text; }, bold(text) { return text; } } },
 					sessionManager: {
 						getSessionId() { if (stale) throw new Error("stale session manager"); return owner; },
-						getSessionFile() { return sessionFile; }, getEntries() { return []; },
+						getSessionFile() { return sessionFile; }, getEntries() { return []; }, buildContextEntries() { return [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }]; },
 					},
 					modelRegistry: { getAvailable() { return []; } },
 				};
