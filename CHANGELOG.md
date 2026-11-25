@@ -13,7 +13,7 @@
 
 ### Added
 
-- `stop`, `interrupt` and `dismiss` take a list in `id`, so one call can stop several runs: `subagent({action:"stop", id:["a1","b2","c3"]})`. Each entry works like a single id (prefixes allowed) and one failing entry doesn't stop the others. The reply has one line per entry, each the same text a single id would get, with the id in front when that text doesn't name the run. The call counts as failed only when every entry failed. When `authorityPolicy` asks for confirmation, the user is asked once for the whole list, with the ids named; a policy that forbids the action, or a codemode script, still refuses each entry. The list also works as JSON text, and on providers that get declared fields. A single id works and replies as before.
+- `stop`, `interrupt` and `dismiss` take a list in `id`, so one call can stop several runs: `subagent({action:"stop", id:["a1","b2","c3"]})`. Each entry works like a single id (prefixes allowed) and one failing entry doesn't stop the others. The reply has one line per entry, each the same text a single id would get, with the id in front when that text doesn't name the run. The call counts as failed only when every entry failed. When `authorityPolicy` asks for confirmation, the user is asked once for the whole list, with the ids named; a policy that forbids the action, or a codemode script, still refuses each entry. The list also works as JSON text, and on providers that get declared fields. A list can't be combined with `runId` or `dir`, and cancelling the call skips the ids not yet reached. A single id works and replies as before.
 
 ### Fixed
 
