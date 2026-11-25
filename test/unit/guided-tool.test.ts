@@ -125,6 +125,23 @@ describe("guide first", () => {
 		}
 	});
 
+	it("keeps the agent's own timeoutMs when a run is resumed, with or without a UI", { timeout: 90_000 }, async () => {
+		fs.writeFileSync(path.join(agentDir, "agents", "timed.md"), "---\nname: timed\ndescription: Timed\ntools: read\ntimeoutMs: 7200000\ndefaultContext: fresh\n---\nDo the task.\n");
+		for (const ui of [true, false]) {
+			mockPi.reset();
+			mockPi.onCall({ output: "done" });
+			mockPi.onCall({ output: "slow", delay: 20_000 });
+			const steps: Step[] = [{}, { agent: "timed", task: "Inspect", async: false }, "ran"];
+			const session = await startParent(steps, undefined, "guided-tool", ui);
+			await session.prompt("go");
+			const id = /\nRun ([0-9a-f]{8}) is done\./.exec(subagentReplies(session)[1]!)?.[1];
+			assert.ok(id, subagentReplies(session)[1]);
+			steps.push({ action: "resume", id, message: "More" }, "resumed");
+			await session.prompt("go");
+			assert.equal(subagentDetails(session)[2]?.timeoutMs, 7_200_000, subagentReplies(session)[2]);
+		}
+	});
+
 	it("names a foreground run's id with the call that resumes it", { timeout: 60_000 }, async () => {
 		mockPi.reset();
 		mockPi.onCall({ output: "done" });

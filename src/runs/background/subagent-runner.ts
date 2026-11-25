@@ -1928,7 +1928,8 @@ export async function runSubagent(
 
 	const flatSteps = flattenSteps(steps);
 	const initialFlatStepCount = flatSteps.length;
-	const stepTimeouts: Array<number | undefined> = steps.flatMap((step) => isParallelGroup(step) ? step.parallel.map((task) => task.timeoutMs) : isDynamicRunnerGroup(step) ? [step.parallel.timeoutMs] : [step.timeoutMs]);
+	const timeoutsOf = (list: typeof steps): Array<number | undefined> => list.flatMap((step) => isParallelGroup(step) ? step.parallel.map((task) => task.timeoutMs) : isDynamicRunnerGroup(step) ? [step.parallel.timeoutMs] : [step.timeoutMs]);
+	const stepTimeouts = timeoutsOf(steps);
 	const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
 	const initialStatusSteps: RunnerStatusStep[] = [];
 	let flatStepCount = 0;
@@ -2555,6 +2556,7 @@ export async function runSubagent(
 		const appendedSteps = requests.flatMap((request) => request.steps);
 		steps.push(...appendedSteps);
 		flatSteps.push(...flattenSteps(appendedSteps));
+		stepTimeouts.push(...timeoutsOf(appendedSteps));
 		const now = Date.now();
 		const pendingAppends = countPendingChainAppendRequests(asyncDir);
 		const added = appendRunnerStepsToStatus({

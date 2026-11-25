@@ -1918,6 +1918,7 @@ async function resumeExternalJobFollowUp(input: {
 		return { content: [{ type: "text", text: `Nested subagent resume blocked (depth=${depthState.depth}, max=${depthState.maxDepth}). Complete the follow-up directly instead.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const topLevelResume = depthState.depth === 0 && !inheritedNestedRoute(input.deps) && !input.deps.state.workflowControllers?.has(input.target.runId);
+	const followUpTimeoutMs = input.absoluteDeadlineAt !== undefined ? undefined : resolveSingleAgentLaunchTimeout({ timeoutMs: input.baseAgentConfig.defaultTimeoutMs }, true, resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs), input.ctx.hasUI === true).timeoutMs;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
 	try {
 		activeAsyncCapacity = topLevelResume ? acquireActiveAsyncCapacity({
@@ -1980,6 +1981,7 @@ async function resumeExternalJobFollowUp(input: {
 		availableModels: input.ctx.modelRegistry.getAvailable().map(toModelInfo),
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
+		...(followUpTimeoutMs !== undefined ? { timeoutMs: followUpTimeoutMs } : {}),
 		capabilityCeiling: resolveCurrentSubagentCapabilityCeiling(input.ctx.sessionManager.getSessionId() ?? undefined),
 		runFanoutBudget: createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(input.deps.config.maxSubagentSpawnsPerRun)),
 		activeAsyncCapacity,
@@ -2354,6 +2356,9 @@ async function resumeAsyncRun(input: {
 	if (recoveryDescriptor?.share === true && restoredShareDisabledBy !== undefined) {
 		return { content: [{ type: "text", text: `Cannot resume: run '${target.runId}' was launched with share enabled, which config ${restoredShareDisabledBy} now disables. Re-enable session sharing to resume it.` }], isError: true, details: { mode: "management", results: [] } };
 	}
+	const agentTimeoutMs = input.params.timeoutMs === undefined && input.params.maxRuntimeMs === undefined ? recoveryAgentConfig.defaultTimeoutMs : undefined;
+	const resumeTimeout = input.absoluteDeadlineAt !== undefined ? {} : resolveSingleAgentLaunchTimeout(agentTimeoutMs === undefined ? input.params : { ...input.params, timeoutMs: agentTimeoutMs }, true, resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs), input.ctx.hasUI === true);
+	if (resumeTimeout.error) return { content: [{ type: "text", text: resumeTimeout.error }], isError: true, details: { mode: "management", results: [] } };
 	const runId = randomUUID();
 	const topLevelResume = depth === 0 && !inheritedNestedRoute(input.deps) && !input.params.workflowParentRunId;
 	let activeAsyncCapacity: ActiveAsyncCapacityHandle | undefined;
@@ -2390,8 +2395,6 @@ async function resumeAsyncRun(input: {
 	const inheritedOutputPath = input.params.output === undefined && input.params.workflowParentRunId === undefined
 		? (target.source === "foreground" ? target.savedOutputPath : undefined) ?? resolveSingleOutputPath(inheritedOutput, input.requestCwd, effectiveCwd, revivalOutputBaseDir)
 		: undefined;
-	const resumeTimeout = input.absoluteDeadlineAt !== undefined ? {} : resolveSingleAgentLaunchTimeout(input.params, true, resolveConfigDefaultTimeoutMs(input.deps.config.timeoutMs), input.ctx.hasUI === true);
-	if (resumeTimeout.error) return { content: [{ type: "text", text: resumeTimeout.error }], isError: true, details: { mode: "management", results: [] } };
 	const result = await executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target as Parameters<typeof buildRevivedAsyncTask>[0], effectiveFollowUp),

@@ -618,8 +618,9 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				serviceExternalJobBridgeRequests(continuationAsyncDir);
 				await new Promise((resolve) => setTimeout(resolve, 25));
 			}
-			const status = JSON.parse(fs.readFileSync(path.join(continuationAsyncDir, "status.json"), "utf-8")) as { steps?: Array<{ externalJob?: Record<string, unknown> }> };
+			const status = JSON.parse(fs.readFileSync(path.join(continuationAsyncDir, "status.json"), "utf-8")) as { timeoutMs?: number; steps?: Array<{ externalJob?: Record<string, unknown> }> };
 			assert.equal(followUps, 1);
+			assert.equal(status.timeoutMs, 1_800_000, "a follow-up from a session without a UI keeps the 30-minute default");
 			assert.equal(status.steps?.[0]?.externalJob?.operation, "follow-up");
 			assert.equal(status.steps?.[0]?.externalJob?.parentProviderJobId, "job-parent");
 			assert.equal(status.steps?.[0]?.externalJob?.requestDigest, requestDigest);
