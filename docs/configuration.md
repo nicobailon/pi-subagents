@@ -759,7 +759,7 @@ Pi runs a level the model does not support at the nearest one it does, so `provi
 
 This is for setups where the requested level has to be honoured exactly or not at all, for example when a provider forwards it to another agent or service whose levels differ from Pi's.
 
-Unset by default, so behaviour is unchanged unless you opt in. Background runners inherit it from the parent's environment. A child placed on a machine (`machine`) is checked against the level its remote Pi reports.
+Unset by default, so behaviour is unchanged unless you opt in. Background runners inherit it from the parent's environment. A child placed on a machine (`machine`) is checked against the level its remote Pi reports, and its error names the level that remote Pi applied instead of listing the supported ones.
 
 ## `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS`
 
