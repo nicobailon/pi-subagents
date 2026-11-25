@@ -325,7 +325,7 @@ Project prompt.
 		}
 	});
 
-	it("binds fast mode runtime extension into public preflight provenance", async () => {
+	it("binds Fast into the launch digest without changing the extension plan", async () => {
 		const cwd = path.join(tempDir, "fast-repo");
 		fs.mkdirSync(cwd, { recursive: true });
 		writeAgent(path.join(cwd, ".pi", "agents", "fast-worker.md"), `---
@@ -343,8 +343,8 @@ Worker.
 		assert.equal(enabled.ok, true);
 		assert.equal(disabled.ok, true);
 		if (enabled.ok && disabled.ok) {
-			assert.ok(enabled.contract.tools.runtimeExtensions.some((entry) => entry.endsWith("fast-mode-extension.ts")));
-			assert.equal(disabled.contract.tools.runtimeExtensions.some((entry) => entry.endsWith("fast-mode-extension.ts")), false);
+			assert.deepEqual(enabled.contract.tools.runtimeExtensions, disabled.contract.tools.runtimeExtensions);
+			assert.deepEqual(enabled.contract.tools.extensionArgs, disabled.contract.tools.extensionArgs);
 			assert.notEqual(enabled.contract.launchContractDigest, disabled.contract.launchContractDigest);
 		}
 	});

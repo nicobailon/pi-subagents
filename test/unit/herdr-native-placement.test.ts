@@ -76,6 +76,11 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 
 	it("rejects MCP tool contracts at the public factory boundary before provisioning, and leaves required tools to the remote acknowledgement", async () => { let provisioned = 0; const factory = createPlacementAwareChildSessionFactory({ async create() { return child; }, async dispose() {} }, async () => { provisioned++; return child; }); await assert.rejects(factory.create({ ...launch(true), runtime: { ...runtime, mcpDirectTools: ["mcp_tool"] } }), /MCP direct tools/u); assert.equal(provisioned, 0); await factory.create({ ...launch(true), runtime: { ...runtime, requiredTools: ["read"] } }); assert.equal(provisioned, 1); });
 
+	it("rejects Fast before provisioning a remote runner that cannot forward it", () => {
+		const placed = launch(true);
+		assert.throws(() => serializeHerdrPiLaunch({ ...placed, runtime: { ...placed.runtime, fast: true } }), /cannot forward fast mode.*fast: false/);
+	});
+
 	it("propagates resolved placement into the detached native child launch", () => {
 		const built = buildRunnerChildLaunch({ agent: "worker", task: "inspect", machine, cwd: machine.cwd, tools: ["read"], inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false }, { cwd: "/local/repo", id: "run-route", flatIndex: 0 }, { sessionEnabled: true, watchdogStatus() {} });
 		assert.deepEqual(built.session.machine, machine); assert.equal(built.session.cwd, machine.cwd);

@@ -42,6 +42,7 @@ export function serializeHerdrPiLaunch(launch: ChildSessionLaunch): { args: stri
 	if (launch.storage.kind === "file" && fs.existsSync(launch.storage.sessionFile)) throw new Error(PLACED_RESTORE_UNSUPPORTED);
 	if (launch.extensionPaths.length || launch.requiredExtensions?.length) throw new Error("Pane-native remote Pi cannot transfer local extension paths; install/configure pi-subagents on the remote machine.");
 	if (launch.processEnv && Object.values(launch.processEnv).some((value) => value !== undefined && value !== "__none__")) throw new Error("Pane-native remote Pi cannot transfer local bindings, MCP selections, or process environment.");
+	if (launch.runtime.fast) throw new Error("Pane-native remote Pi cannot forward fast mode; remove machine placement or set fast: false.");
 	if (launch.runtime.nestedRoute || launch.runtime.fanoutChild || launch.runtime.depth > 1) throw new Error("Nested delegation from a pane-native remote Pi is not supported.");
 	if (launch.excludeTools?.length || launch.runtime.permissions || launch.runtime.toolBudget || launch.runtime.requiredExtensions || launch.runtime.mcpDirectTools?.length || launch.runtime.structuredOutput) throw new Error("Pane-native remote Pi cannot yet represent exclusions, permission rules, tool budgets, MCP direct tools, required-extension contracts, or outputSchema; remove machine placement.");
 	const resources = launch.remoteResources;

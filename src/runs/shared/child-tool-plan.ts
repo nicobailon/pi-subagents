@@ -39,7 +39,6 @@ const FANOUT_CHILD_EXTENSION_DIR = path.join(RUNTIME_EXTENSION_DIR, "..", "..", 
 
 const SUBAGENT_RUNTIME_EXTENSION_PATHS = new Set([
 	path.join(RUNTIME_EXTENSION_DIR, "subagent-prompt-runtime"),
-	path.join(RUNTIME_EXTENSION_DIR, "fast-mode-extension"),
 	path.join(FANOUT_CHILD_EXTENSION_DIR, "fanout-child"),
 ].flatMap((base) => RUNTIME_MODULE_EXTENSIONS.map((extension) => path.normalize(`${base}${extension}`))));
 
@@ -47,8 +46,6 @@ const SUBAGENT_RUNTIME_EXTENSION_PATHS = new Set([
 export function isSubagentRuntimeExtensionPath(extensionPath: string): boolean {
 	return SUBAGENT_RUNTIME_EXTENSION_PATHS.has(path.normalize(extensionPath));
 }
-// Priority tier is an OpenAI-Codex request field; other providers reject or ignore it.
-const FAST_MODE_PROVIDER_PREFIX = "openai-codex/";
 const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64;
 export function deriveForkPromptCacheKey(parentSessionId: string | undefined): string | undefined {
 	const parent = parentSessionId?.trim();
@@ -92,28 +89,6 @@ export function applyThinkingSuffix(
 		return replaceExisting ? `${model.slice(0, colonIdx)}:${thinking}` : model;
 	}
 	return `${model}:${thinking}`;
-}
-
-function stripThinkingSuffix(model: string): string {
-	const colonIdx = model.lastIndexOf(":");
-	if (colonIdx === -1) return model;
-	return THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))
-		? model.slice(0, colonIdx)
-		: model;
-}
-
-function resolveFastModeExtension(input: Pick<ResolvePiLaunchToolPlanInput, "fast" | "model" | "agentName">): string[] {
-	if (!input.fast) return [];
-	const candidates = (input.model ? [input.model] : [])
-		.map(stripThinkingSuffix);
-	if (candidates.length === 0) {
-		throw new Error(`fast mode requires an explicit supported native OpenAI-Codex model${input.agentName ? ` for agent '${input.agentName}'` : ""}.`);
-	}
-	const unsupported = candidates.filter((model) => !model.startsWith(FAST_MODE_PROVIDER_PREFIX));
-	if (unsupported.length > 0) {
-		throw new Error(`fast mode supports only native ${FAST_MODE_PROVIDER_PREFIX}* models; unsupported model${unsupported.length === 1 ? "" : "s"}: ${unsupported.join(", ")}.`);
-	}
-	return [resolveRuntimeModulePath(RUNTIME_EXTENSION_DIR, "fast-mode-extension")];
 }
 
 export interface ResolvePiLaunchToolPlanInput {
@@ -412,12 +387,10 @@ export function resolvePiLaunchToolPlan(
 		: hasPermissionRules(input.permissionRules)
 			? resolvePermissionSystemExtension()
 			: undefined;
-	if (input.fast && capabilityCeiling?.denyExtensions) throw new Error("fast mode requires a child runtime extension, but this launch denies extensions.");
-	const fastModeExtensions = resolveFastModeExtension({ fast: input.fast, model: input.model, agentName: input.agentName });
+	if (input.fast && capabilityCeiling?.denyExtensions) throw new Error("fast mode is not allowed when the launch denies extensions; set fast: false.");
 	// Resolved per launch: an in-place package update can swap a sibling's .ts for .js.
 	const runtimeExtensions = [
 		resolveRuntimeModulePath(RUNTIME_EXTENSION_DIR, "subagent-prompt-runtime"),
-		...fastModeExtensions,
 		...(fanoutAuthorized ? [resolveRuntimeModulePath(FANOUT_CHILD_EXTENSION_DIR, "fanout-child")] : []),
 		...(permSystemExt ? [permSystemExt] : []),
 	];

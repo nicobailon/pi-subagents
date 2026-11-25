@@ -2799,7 +2799,7 @@ export interface ExtensionConfig {
 	asyncWidgetLayout?: AsyncWidgetLayout;
 	/** Report subagent run state to the terminal with OSC 7501. Defaults to true. */
 	programStatus?: boolean;
-	/** OpenAI-Codex `service_tier` that `fast: true` requests for native children. Defaults to "priority". */
+	/** OpenAI `service_tier` that `fast: true` requests on compatible native adapters. Defaults to "priority". */
 	fastServiceTier?: FastServiceTier;
 	/** Add a short `active_subagents` system prompt section listing this session's active background runs. Defaults to false. */
 	activeRunsPrompt?: boolean;
