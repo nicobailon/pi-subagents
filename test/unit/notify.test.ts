@@ -1566,3 +1566,20 @@ describe("completion notice output size", () => {
 		assert.match(workflow, /- key=fix run=child-fix status=failed\n(?: {2}.*\n)*? {2}Error: Tool budget exhausted\n/);
 	});
 });
+
+it("does not crash when a completion arrives after the extension ctx went stale", async () => {
+	const events = createEventBus();
+	const stale = () => { throw new Error("This extension ctx is stale after session replacement or reload."); };
+	const pi = { events, isHeld: () => false, sendMessage: stale, on: stale };
+	const notifier = registerSubagentNotify(pi as never, { currentSessionId: "session-a", completionOwnerId: COMPLETION_OWNER_ID }, {
+		batchConfig: { enabled: false },
+		sendRegistry: createCompletionSendRegistry(),
+	});
+	try {
+		const delivered = await notifier.deliver(completionResult({ id: "stale-ctx-wake" }));
+		assert.equal(delivered, false);
+		assert.equal(notifier.hasPendingDelivery(), false);
+	} finally {
+		notifier.dispose();
+	}
+});

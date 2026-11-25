@@ -1820,8 +1820,16 @@ export interface HerdrLocalMachineReference {
 	cwd: string;
 }
 
+export interface HerdrCoreLocalMachineReference {
+	provider: "herdr-core";
+	id: "local";
+	socket: string;
+	parentTerminal: string;
+	cwd: string;
+}
+
 /** Where a placed native Pi child runs. A reference without `target` is on this machine. */
-export type PlacementMachineReference = HerdrMachineReference | HerdrLocalMachineReference | RexMachineReference;
+export type PlacementMachineReference = HerdrMachineReference | HerdrLocalMachineReference | HerdrCoreLocalMachineReference | RexMachineReference;
 
 export interface ExternalCliMachineStatus extends HerdrMachineReference {
 	remoteGit?: HerdrRemoteGitStatus;

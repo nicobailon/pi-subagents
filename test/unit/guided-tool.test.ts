@@ -71,7 +71,7 @@ after(async () => {
 	}
 	mockPi.uninstall();
 	if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
-	fs.rmSync(root, { recursive: true, force: true });
+	fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe("guide first", () => {
@@ -482,7 +482,7 @@ describe("guided tool surface", () => {
 			assert.ok(declared(SUBAGENT_TOOL_FIELD_PARAMETERS) <= 650, `14-field declaration is ${declared(SUBAGENT_TOOL_FIELD_PARAMETERS)} chars`);
 		} finally {
 			process.env.PI_CODING_AGENT_DIR = agentDir;
-			fs.rmSync(empty, { recursive: true, force: true });
+			fs.rmSync(empty, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 		}
 	});
 
