@@ -131,6 +131,16 @@ describe("guide first", () => {
 		assert.match(malformed!, /subagent: 'stop' takes id as one run id or a list of run ids\./);
 	});
 
+	it("teaches one lookup call that answers an action, a subject or a wrong guess", { timeout: 60_000 }, async () => {
+		const session = await startParent([{}, { action: "guide", topic: "schedule" }, { action: "guide", topic: "workflows" }, { action: "guide", topic: "nope" }, "done"]);
+		await session.prompt("go");
+		const [guide, action, subject, wrong] = subagentReplies(session);
+		assert.match(guide!, /^- unsure\? \{action:"guide", topic:"<action, family or subject, e\.g\. workflows>"\}; a wrong guess lists the topics$/m);
+		assert.match(action!, /^schedule\.create: name or id/);
+		assert.match(subject!, /^Sections of guide topic 'workflows'\./m);
+		assert.match(wrong!, /^Unknown subagents guide topic 'nope'\. Valid topics: overview, workflows, /);
+	});
+
 	it("accepts a list id from a provider that gets declared fields", { timeout: 60_000 }, async () => {
 		const session = await startParent([{}, { action: "stop", id: ["x1", "x2"] }, "stopped"], undefined, "xai");
 		await session.prompt("go");
@@ -462,14 +472,14 @@ describe("guided tool surface", () => {
 		assert.deepEqual(declarations, [0, 14]);
 	});
 
-	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,350", () => {
+	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,400", () => {
 		const empty = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-size-"));
 		process.env.PI_CODING_AGENT_DIR = empty;
 		try {
 			const agents = discoverAgents(empty, "both").agents;
 			assert.ok(agents.some((agent) => agent.name === "scout"), "bundled agents are listed");
 			const size = SUBAGENT_TOOL_DESCRIPTION.length + formatGuide(agents, { canLaunch: true }).length;
-			assert.ok(size <= 2_350, `description + guide is ${size} chars`);
+			assert.ok(size <= 2_400, `description + guide is ${size} chars`);
 			assert.match(formatGuide(agents, { canLaunch: true }), /Not for messaging a Pi session that is already open; use a messaging tool for that\./);
 			assert.doesNotMatch(formatGuide(agents, { canLaunch: true, child: true }), /messaging tool/);
 			assert.deepEqual(SUBAGENT_TOOL_PARAMETERS, { type: "object", properties: {}, additionalProperties: true });
@@ -514,6 +524,6 @@ describe("guided tool surface", () => {
 		const topics = [...guide.matchAll(/topic:"([^"<]+)"/g)].map((match) => match[1]!);
 		assert.ok(topics.includes("workflows/parallel-sequential-lanes"), `guide topics: ${topics.join(", ")}`);
 		for (const topic of topics) assert.doesNotMatch(readSubagentGuide(topic), /^Unknown/, topic);
-		assert.match(guide, /^- timeoutMs: run deadline in ms \(default 30 min, or config timeoutMs\)/m);
+		assert.match(guide, /^- timeoutMs: hard deadline in ms; without one a check-in wakes you every 30 min \(no UI: 30-min deadline\)$/m);
 	});
 });
