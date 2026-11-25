@@ -184,38 +184,32 @@ export function misplacedGuideCall(action: string): string | undefined {
 
 const LIST_ID_ACTIONS = new Set(["stop", "interrupt", "dismiss"]);
 
+function listIdAsText(args: Record<string, unknown>): Record<string, unknown> {
+	return typeof args.action === "string" && LIST_ID_ACTIONS.has(args.action) && Array.isArray(args.id) ? { ...args, id: JSON.stringify(args.id) } : args;
+}
+
 function listedIds(params: Record<string, unknown>): string[] | undefined {
 	if (typeof params.action !== "string" || !LIST_ID_ACTIONS.has(params.action)) return undefined;
+	const invalid = new Error(`subagent: '${params.action}' takes id as one run id or a list of run ids.`);
 	let id = params.id;
 	if (typeof id === "string" && /^\s*\[/.test(id)) {
 		try {
 			id = JSON.parse(id);
 		} catch {
-			return undefined;
+			throw invalid;
 		}
 	}
 	if (!Array.isArray(id)) return undefined;
-	if (id.length === 0 || !id.every((entry) => typeof entry === "string" && entry.trim())) throw new Error(`subagent: '${params.action}' takes id as one run id or a list of run ids.`);
+	if (id.length === 0 || !id.every((entry) => typeof entry === "string" && entry.trim())) throw invalid;
 	return id;
 }
 
-const LISTED_ID_DONE: Record<string, string> = { stop: "stop requested for", interrupt: "interrupt requested for", dismiss: "dismissed" };
-const LISTED_ID_OUTCOMES: Array<[RegExp, string]> = [
-	[/^No running or queued async run was found for |^No running async run with an interrupt-capable pid was found for |, not running\.$|has no active child step to interrupt\.$/, "not running"],
-	[/^No stoppable async run found for |^No interrupt-capable run found for |was not found in the active session\.$/, "not found"],
-];
-
-function listedIdsResult(action: string, ids: readonly string[], results: readonly AgentToolResult<Details>[]): AgentToolResult<Details> {
-	const groups = new Map<string, string[]>();
-	results.forEach((result, index) => {
-		const text = result.content.map((part) => part.type === "text" ? part.text : "").join(" ").replace(/\s+/g, " ").trim();
-		const key = !result.isError ? "" : LISTED_ID_OUTCOMES.find(([pattern]) => pattern.test(text))?.[1] ?? `: ${text}`;
-		groups.set(key, [...(groups.get(key) ?? []), ids[index]!]);
+function listedIdsResult(ids: readonly string[], results: readonly AgentToolResult<Details>[]): AgentToolResult<Details> {
+	const lines = results.map((result, index) => {
+		const text = result.content.map((part) => part.type === "text" ? part.text : "").join(" ").replace(/\s*\n\s*/g, " ").trim();
+		return text.includes(ids[index]!) ? text : `${ids[index]}: ${text}`;
 	});
-	const line = [...groups].map(([key, group]) => key === "" ? `${LISTED_ID_DONE[action]} ${group.join(", ")}`
-		: key.startsWith(": ") ? group.map((entry) => `${entry}${key}`).join(" · ")
-		: `${group.join(", ")} ${key}`).join(" · ");
-	return { content: [{ type: "text", text: line }], ...(groups.has("") ? {} : { isError: true }), details: { mode: "management", results: [] } };
+	return { content: [{ type: "text", text: lines.join("\n") }], ...(results.every((result) => result.isError) ? { isError: true } : {}), details: { mode: "management", results: [] } };
 }
 
 export function isLaunchRequest(params: Record<string, unknown>): boolean {
@@ -231,8 +225,8 @@ function clip(text: string, max: number): string {
 
 function launchPreview(request: Record<string, unknown>): string {
 	const agents = (steps: unknown[]) => steps.map((step) => {
-		const agent = (step as { agent?: unknown } | null)?.agent;
-		return typeof agent === "string" ? agent : "?";
+		const { agent, parallel } = (step ?? {}) as { agent?: unknown; parallel?: unknown };
+		return typeof agent === "string" ? agent : Array.isArray(parallel) ? "parallel step" : "?";
 	});
 	const what = request.workflowScript !== undefined ? "a workflow script"
 		: request.workflow === true || request.workflow === "true" ? "a ```js workflow block"
@@ -374,9 +368,10 @@ export function callNotes(request: SubagentParamsLike, result: AgentToolResult<D
 	const params = request as Record<string, unknown>;
 	if (isLaunchRequest(params)) {
 		const details = result.details;
-		if (details?.mode === "single" && details.runId && details.asyncId === undefined) {
+		if (details?.mode === "single" && details.runId && details.asyncId === undefined && !details.results.some((run) => run.detached)) {
 			const id = details.runId.slice(0, 8);
-			notes.push({ text: `Run ${id} is done. To continue it: subagent({action:"resume", id:"${id}", message})` });
+			const state = details.results.some((run) => run.interrupted) ? "paused" : "done";
+			notes.push({ text: `Run ${id} is ${state}. To continue it: subagent({action:"resume", id:"${id}", message})` });
 		} else {
 			notes.push({ key: "event:launch", text: facts.child ? EVENT_NOTES.childLaunch : EVENT_NOTES.launch });
 		}
@@ -468,7 +463,7 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 		label: "Subagent",
 		description: SUBAGENT_TOOL_DESCRIPTION,
 		parameters: SUBAGENT_TOOL_PARAMETERS,
-		prepareArguments: (args) => prepareSubagentToolArguments(args) as Record<string, unknown>,
+		prepareArguments: (args) => listIdAsText(prepareSubagentToolArguments(args) as Record<string, unknown>),
 		async execute(id, rawParams, signal, onUpdate, ctx) {
 			const nested = nestedCallIds.delete(id);
 			taught.ensure(ctx);
@@ -527,9 +522,9 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			const replyHint = request.action === "reply" && (record.replyTo === undefined || record.message === undefined)
 				? 'If your fields arrive missing, pass them inside args: subagent({action:"reply", args:{replyTo, message}}).'
 				: undefined;
-			const runOne = async (one: SubagentParamsLike): Promise<AgentToolResult<Details>> => {
+			const runOne = async (one: SubagentParamsLike, runCtx: ExtensionContext = ctx): Promise<AgentToolResult<Details>> => {
 				try {
-					if (!nested) return await deps.run(id, one, false, signal, onUpdate, ctx);
+					if (!nested) return await deps.run(id, one, false, signal, onUpdate, runCtx);
 					const scriptRequest = nestedSubagentRequest(one, deps.authorityPolicy);
 					return typeof scriptRequest === "string"
 						? { content: [{ type: "text", text: scriptRequest }], isError: true, details: { mode: "management", results: [] } }
@@ -541,9 +536,21 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				}
 			};
 			if (ids) {
-				const results: AgentToolResult<Details>[] = [];
-				for (const entry of ids) results.push(await runOne({ ...request, id: entry }));
-				result = listedIdsResult(request.action!, ids, results);
+				const action = request.action!;
+				const confirm = !nested && ctx?.hasUI === true && managementActionAuthority(action, record.mode, deps.authorityPolicy)?.decision === "confirm";
+				if (confirm && !await ctx.ui.confirm(`Authorize subagent ${action} of ${ids.join(", ")}?`, `Authority policy requires confirmation before '${action}'.`)) {
+					result = { content: [{ type: "text", text: `Action '${action}' canceled; authority was not granted.` }], details: { mode: "management", results: [] } };
+				} else {
+					const prompt = `Authorize subagent ${action}?`;
+					const runCtx = confirm
+						? Object.create(ctx, { ui: { value: Object.assign(Object.create(ctx.ui) as ExtensionContext["ui"], {
+							confirm: (...args: Parameters<ExtensionContext["ui"]["confirm"]>) => args[0] === prompt ? Promise.resolve(true) : ctx.ui.confirm(...args),
+						}) } }) as ExtensionContext
+						: ctx;
+					const results: AgentToolResult<Details>[] = [];
+					for (const entry of ids) results.push(await runOne({ ...request, id: entry }, runCtx));
+					result = listedIdsResult(ids, results);
+				}
 			} else {
 				result = await runOne(request);
 			}

@@ -24,8 +24,8 @@ let agentDir: string;
 
 type RequestContext = { messages: Parameters<typeof getCurrentTools>[0] };
 
-async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void): Promise<Session> {
-	const faux = fauxProvider({ provider: "guided-tool", models: [{ id: "local" }], tokensPerSecond: 100_000 });
+async function startParent(steps: Step[], onRequest?: (context: RequestContext) => void, provider = "guided-tool"): Promise<Session> {
+	const faux = fauxProvider({ provider, models: [{ id: "local" }], tokensPerSecond: 100_000 });
 	faux.setResponses(Array.from({ length: 40 }, () => (context: RequestContext) => {
 		onRequest?.(context);
 		const next = steps.shift() ?? "ok";
@@ -109,7 +109,7 @@ describe("guide first", () => {
 		assert.doesNotMatch(subagentReplies(session)[2]!, /not found|unknown/i);
 	});
 
-	it("stops or interrupts a list of ids in one call, one line per outcome", { timeout: 90_000 }, async () => {
+	it("stops or interrupts a list of ids in one call, one line per entry", { timeout: 90_000 }, async () => {
 		mockPi.reset();
 		mockPi.onCall({ output: "slow", delay: 20_000 });
 		const steps: Step[] = [{}, { agent: "probe", task: "Live", async: true }, { agent: "probe", task: "Ended", async: true }];
@@ -119,12 +119,79 @@ describe("guide first", () => {
 			if (live || steps.length > 0) return;
 			const texts = (context.messages as Array<{ role: string; content?: Array<{ text?: string }> }>).filter((message) => message.role === "toolResult").map((message) => (message.content ?? []).map((part) => part.text ?? "").join("\n"));
 			[live, ended] = texts.flatMap((text) => /Async: probe \[([^\]]+)\]/.exec(text)?.[1] ?? []);
-			steps.push({ action: "stop", id: ended }, { action: "wait", id: ended }, { action: "stop", id: [live, ended, "x9-missing"] }, { action: "interrupt", args: { id: JSON.stringify([ended, "x9-missing"]) } }, "stopped");
+			steps.push({ action: "stop", id: ended }, { action: "wait", id: ended }, { action: "stop", id: [live, ended, "x9-missing"] }, { action: "interrupt", args: { id: JSON.stringify([ended, "x9-missing"]) } }, { action: "stop", id: "[x1,x2]" }, "stopped");
 		});
 		await session.prompt("go");
-		const [stopped, interrupted] = subagentReplies(session).slice(-2);
-		assert.equal(stopped, `stop requested for ${live} · ${ended} not running · x9-missing not found`);
-		assert.equal(interrupted, `${ended} not running · x9-missing not found`);
+		const [stopped, interrupted, malformed] = subagentReplies(session).slice(-3);
+		assert.equal(stopped, `Stop requested for async run ${live}.\nNo running or queued async run was found for '${ended}'.\nNo stoppable async run found for 'x9-missing'.`);
+		assert.equal(interrupted, `No running async run with an interrupt-capable pid was found for '${ended}'.\nNo interrupt-capable run found for 'x9-missing'.`);
+		assert.match(malformed!, /subagent: 'stop' takes id as one run id or a list of run ids\./);
+	});
+
+	it("accepts a list id from a provider that gets declared fields", { timeout: 60_000 }, async () => {
+		const session = await startParent([{}, { action: "stop", id: ["x1", "x2"] }, "stopped"], undefined, "xai");
+		await session.prompt("go");
+		assert.equal(subagentReplies(session)[1], "No stoppable async run found for 'x1'.\nNo stoppable async run found for 'x2'.");
+	});
+
+	const listTool = (policy: Record<string, string>, answer: boolean) => {
+		const prompts: string[] = [];
+		const ran: string[] = [];
+		const pi = { on: () => {} };
+		const ui = { confirm: async (title: string) => { prompts.push(title); return answer; } };
+		const ctx = { cwd: root, hasUI: true, ui, sessionManager: { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] } };
+		const { tool } = createGuidedSubagentTool(pi as never, {
+			guide: async () => "GUIDE",
+			flatten: (params) => flattenSubagentToolOptions(params),
+			authorityPolicy: policy as never,
+			run: async (_id, request, _nested, _signal, _onUpdate, runCtx) => {
+				if (!await runCtx.ui.confirm("Authorize subagent stop?", "Authority policy requires confirmation before 'stop'.")) return { content: [{ type: "text", text: "Action 'stop' canceled; authority was not granted." }], details: { mode: "management", results: [] } };
+				ran.push(request.id!);
+				return { content: [{ type: "text", text: `Stop requested for async run ${request.id}.` }], details: { mode: "management", results: [] } };
+			},
+		});
+		const call = async () => {
+			const result = await tool.execute("stop", { action: "stop", id: ["a1", "b2"] } as never, undefined, undefined, ctx as never);
+			return { text: result.content.map((part) => part.type === "text" ? part.text : "").join("\n"), isError: result.isError === true };
+		};
+		return { prompts, ran, call };
+	};
+
+	it("asks once, naming the ids, before stopping a list under a confirm policy", async () => {
+		const approved = listTool({ stopRun: "confirm" }, true);
+		assert.deepEqual(await approved.call(), { text: "Stop requested for async run a1.\nStop requested for async run b2.", isError: false });
+		assert.deepEqual(approved.prompts, ["Authorize subagent stop of a1, b2?"]);
+		assert.deepEqual(approved.ran, ["a1", "b2"]);
+		const declined = listTool({ stopRun: "confirm" }, false);
+		assert.deepEqual(await declined.call(), { text: "Action 'stop' canceled; authority was not granted.", isError: false });
+		assert.deepEqual(declined.ran, []);
+	});
+
+	it("gives a detached foreground run the launch note and a paused one the resume call", async () => {
+		const pi = { on: () => {} };
+		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] } };
+		const launch = async (run: Record<string, unknown>) => {
+			const { tool } = createGuidedSubagentTool(pi as never, {
+				guide: async () => "GUIDE",
+				flatten: (params) => flattenSubagentToolOptions(params),
+				run: async () => ({ content: [{ type: "text", text: "child reply" }], details: { mode: "single", runId: "abcdef12-3456", results: [run as never] } }),
+				notes: (request, result) => callNotes(request, result, {}),
+			});
+			const result = await tool.execute("launch", { agent: "probe", task: "t", async: false } as never, undefined, undefined, ctx as never);
+			return result.content.map((part) => part.type === "text" ? part.text : "").join("\n");
+		};
+		const detached = await launch({ agent: "probe", detached: true });
+		assert.ok(detached.includes(EVENT_NOTES.launch), detached);
+		assert.doesNotMatch(detached, /resume/);
+		assert.match(await launch({ agent: "probe", interrupted: true }), /\nRun abcdef12 is paused\. To continue it: subagent\(\{action:"resume", id:"abcdef12", message\}\)$/);
+	});
+
+	it("previews a chain's parallel step in plain words", async () => {
+		const pi = { on: () => {} };
+		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
+		const { tool } = createGuidedSubagentTool(pi as never, { guide: async () => "GUIDE", flatten: (params) => params, run: async () => assert.fail("held") });
+		const held = await tool.execute("chain", { chain: [{ agent: "scout" }, { parallel: [{ agent: "reviewer" }] }], task: "Check" } as never, undefined, undefined, ctx as never);
+		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /\nWould launch a chain: scout → parallel step, task "Check"\.\n/);
 	});
 
 	const launchesWith = async (facts: (request: Record<string, unknown>) => CallFacts, launches: Array<Record<string, unknown>>) => {
