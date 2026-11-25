@@ -49,7 +49,7 @@ import { listHerdrProjectPaneRoots, restoreHerdrProjectPaneSnapshots } from "../
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { createWaitExecute } from "../runs/background/wait-tool.ts";
-import { createGuidedSubagentTool, formatGuide } from "./guided-tool.ts";
+import { callNotes, createGuidedSubagentTool, formatGuide, noticeNotes, type CallFacts, type TaughtState } from "./guided-tool.ts";
 import { registerPinnedTool, setDeclarationPinning } from "./declaration-pinning.ts";
 import { buildActiveRunsSection } from "./active-runs-prompt.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
@@ -352,7 +352,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const waitSubscriptionManager = createWaitSubscriptionManager(wakingPi, state);
 	const mainWatchdog = registerMainWatchdog(pi, { slashCommand: slashCommandsEnabled });
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
-	const completionNotifier = registerSubagentNotify(wakingPi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
+	// Bound once the subagent tool exists; a notice teaches through the same taught state as the tool's replies.
+	let taughtState: TaughtState | undefined;
+	const completionNotifier = registerSubagentNotify(wakingPi, state, {
+		batchConfig: config.completionBatch,
+		ownership: resultDeliveryOwnership,
+		noticeNotes: (runs) => taughtState ? noticeNotes(runs, taughtState) : undefined,
+	});
 	// Ended async runs whose result has not reached the notifier yet.
 	const owedResultRunIds = new Set<string>();
 	// Tracked runs whose result was already delivered, so a later terminal
@@ -732,10 +738,41 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		const projectTrusted = typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;
 		return formatGuide(discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider, { projectTrusted }).agents, { canLaunch: true, disabled: disabledFeatures });
 	};
-	const { tool } = createGuidedSubagentTool(pi, {
+	// Run state a launch's warnings and fork note read; never the task's wording.
+	const callFacts = (request: SubagentParamsLike, result: AgentToolResult<Details>, ctx: ExtensionContext): CallFacts => {
+		const params = request as Record<string, unknown>;
+		const facts: CallFacts = {};
+		if (result.isError || request.action !== undefined) return facts;
+		const launchCwd = path.resolve(ctx.cwd, typeof params.cwd === "string" ? params.cwd : ".");
+		if (params.worktree !== true) {
+			const count = [...state.asyncJobs.values()].filter((job) => job.asyncId !== result.details?.asyncId && (job.status === "queued" || job.status === "running") && job.cwd === launchCwd).length;
+			if (count > 0) facts.liveRunsInCwd = { cwd: launchCwd, count };
+		}
+		if (params.toolBudget !== undefined && typeof params.agent === "string") {
+			const projectTrusted = typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;
+			const agent = discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider, { projectTrusted }).agents.find((candidate) => candidate.name === params.agent);
+			if (agent?.acceptanceRole === "writer") facts.cappedWriter = agent.name;
+		}
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		if (sessionFile && (params.context === "fork" || result.details?.context === "fork" || result.details?.context === "mixed")) {
+			try {
+				// Each fork copies the parent's session file to <session file without .jsonl>/forks/<run id>/.
+				const folder = path.join(path.dirname(sessionFile), path.basename(sessionFile, ".jsonl"), "forks");
+				let freeBytes: number | undefined;
+				try {
+					const disk = fs.statfsSync(fs.existsSync(folder) ? folder : path.dirname(sessionFile));
+					freeBytes = disk.bavail * disk.bsize;
+				} catch {}
+				facts.fork = { sessionBytes: fs.statSync(sessionFile).size, folder, ...(freeBytes !== undefined ? { freeBytes } : {}) };
+			} catch {}
+		}
+		return facts;
+	};
+	const { tool, taught } = createGuidedSubagentTool(pi, {
 		guide: guideFor,
 		flatten: (params) => flattenSubagentToolOptions(params, disabledFeatures),
 		authorityPolicy: config.authorityPolicy,
+		notes: (request, result, ctx) => callNotes(request, result, callFacts(request, result, ctx)),
 		run: (id, request, nested, signal, onUpdate, ctx) => nested
 			// Once started, a script's launch runs to completion without the script's signal: Pi cancels a script's
 			// unawaited calls when it ends, and a cancelled half-launch could leave a child that no status view tracks.
@@ -777,6 +814,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 	// Registered without pinning: a resumed session's old declaration is replaced in the same cache miss as the removed tools.
 	pi.registerTool(tool);
+	taughtState = taught;
 	// Declared with the same definition children use, so a fork's tool list equals this session's.
 	registerPinnedTool(pi, topLevelSupervisorTool());
 	registerSubagentLaunchTool(pi);

@@ -18,23 +18,26 @@ export interface GuideAgent {
 	description?: string;
 }
 
-const AGENT_SUMMARY_MAX_CHARS = 44;
+const AGENT_SUMMARY_MAX_CHARS = 32;
+// A summary cut mid-phrase must not end on a word that needs the rest of the phrase.
+const DANGLING_WORD = /\s+(?:a|an|the|for|of|to|and|or|with|through|that|in|on|by)$/i;
 
 function agentSummary(description: string | undefined): string {
-	const first = (description ?? "").split(/[.;—(]|\s-\s/)[0]!.trim();
+	const first = (description ?? "").split(/[.;,—(]|\s-\s/)[0]!.trim();
 	if (first.length <= AGENT_SUMMARY_MAX_CHARS) return first;
-	const cut = first.slice(0, AGENT_SUMMARY_MAX_CHARS);
-	return cut.slice(0, cut.lastIndexOf(" ")).trim();
+	let cut = first.slice(0, AGENT_SUMMARY_MAX_CHARS);
+	cut = cut.slice(0, cut.lastIndexOf(" ")).trim();
+	while (DANGLING_WORD.test(cut)) cut = cut.replace(DANGLING_WORD, "");
+	return cut;
 }
 
 const LAUNCH_GUIDE = `Launch: subagent({agent, task, ...})
-- agent: one of Agents below
 - task: the child starts cold: goal, cwd, what it may change, evidence, done-when, what to return, when to stop
 - cwd: working directory (default: yours)
 - context: "fresh" (default) or "fork" (the child gets this conversation)
-- model: "provider/id", optional thinking suffix :low|medium|high|xhigh, e.g. "pi-claude/claude-opus-5-5:high"
-- output: file path for the child's report, or false
-- label: 2-4 words shown in run lists
+- model: "provider/id", optional thinking suffix :low|medium|high|xhigh, e.g. "anthropic/claude-opus-5-5:high"
+- output: file for the child's report, or false
+- label: 2-4 words for run lists
 - worktree: true isolates it in a git worktree (needs a clean checkout)
 
 Parallel: subagent({workflow:"parallel", args:{tasks:[{agent, task, cwd?, model?, label?}]}, worktree?})
@@ -47,7 +50,7 @@ Parallel: subagent({tasks:[{agent, task, cwd?, model?}]})
 Dependent steps: subagent({task, chain:[{agent, task?, as?}]}); a step's task can use {task}, {previous}, {outputs.<as>}
 `;
 
-const MANAGE_GUIDE = `Manage (id from the launch reply; a prefix works):
+const MANAGE_GUIDE = `Manage (id from the launch reply, or a prefix):
 - {action:"status"} lists all runs and child questions; with id, one run
 - {action:"steer", id, message} redirects a live run
 - {action:"resume", id, message} continues a finished run; returns a new id
@@ -63,10 +66,14 @@ export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch:
 	if (!options.canLaunch) {
 		return `subagent guide (child run). This child cannot launch runs. {action:"wait"} (or all:true) blocks until this child's own background work finishes; {action:"status"} lists it. Ask your parent with contact_supervisor.`;
 	}
-	const intro = `subagent guide. Children run in the background; a finished child's result wakes you, so keep working or end your turn. Don't poll.${options.child ? " You are a child run: your launches are your own children; agent changes (create, update, delete …) are blocked here." : ""}`;
-	const agentLines = agents.map((agent) => {
+	const intro = `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll.${options.child ? " You are a child run: your launches are your own children; agent changes (create, update, delete …) are blocked here." : ""}`;
+	// An "<agent>-writer" variant shares its base agent's line, so the guide grows by agent, not by mode.
+	const names = new Set(agents.map((agent) => agent.name));
+	const writerVariant = (name: string) => name.endsWith("-writer") && names.has(name.slice(0, -"-writer".length));
+	const agentLines = agents.filter((agent) => !writerVariant(agent.name)).map((agent) => {
 		const summary = agentSummary(agent.description);
-		return `- ${agent.name}${summary ? `: ${summary}` : ""}`;
+		const writer = names.has(`${agent.name}-writer`) ? `; ${agent.name}-writer edits` : "";
+		return `- ${agent.name}${summary ? `: ${summary}` : ""}${writer}`;
 	});
 	const launch = options.disabled?.features.has("workflow-scripts") ? LAUNCH_GUIDE.replace(/\nParallel:[^]*$/, NO_SCRIPTS_GUIDE) : LAUNCH_GUIDE;
 	const notice = options.disabled ? disabledFeatureSectionNotice(options.disabled) : undefined;
@@ -192,17 +199,24 @@ export class TaughtState {
 	private turn = 0;
 	private guideTurn: number | undefined;
 	private stale = true;
+	private sessionCtx: Pick<ExtensionContext, "sessionManager"> | undefined;
 
-	invalidate(): void {
+	/** Rebuild on next use, from `ctx` when given (notices have no call ctx of their own). */
+	invalidate(ctx?: Pick<ExtensionContext, "sessionManager">): void {
 		this.stale = true;
+		if (ctx) this.sessionCtx = ctx;
 	}
 
-	ensure(ctx: Pick<ExtensionContext, "sessionManager">): void {
+	ensure(ctx: Pick<ExtensionContext, "sessionManager"> | undefined = this.sessionCtx): void {
 		if (!this.stale) return;
 		this.stale = false;
 		this.keys.clear();
 		this.guideTurn = undefined;
-		for (const key of taughtInContext(ctx)) this.keys.add(key);
+		if (ctx) this.sessionCtx = ctx;
+		let keys = new Set<string>();
+		// A replaced session's ctx throws; then nothing counts as taught and a note is shown again.
+		try { if (ctx) keys = taughtInContext(ctx); } catch {}
+		for (const key of keys) this.keys.add(key);
 	}
 
 	nextTurn(): void {
@@ -228,6 +242,69 @@ export class TaughtState {
 	guideArrivedThisTurn(): boolean {
 		return this.turn > 0 && this.guideTurn === this.turn;
 	}
+}
+
+// Event guidance: each note is added once while it is still in the chat, to the reply about its event.
+export const EVENT_NOTES = {
+	launch: 'Next: {action:"status", id} checks it; {action:"steer", id, message} redirects it; {action:"wait", id} only if this same turn needs the result. Completion wakes you: keep working or end your turn.',
+	worktree: "Worktree: the child edits its own git worktree, made from a clean checkout (untracked files count). One writer per folder: give each writer its own worktree; parallelize reading and review.",
+	workflow: 'Workflow scripts: a statement body with top-level await and an explicit return; no nested async functions or arrows. Every runs.run / runs.all item needs a stable key and a short verb + behavior label. Bind a report to a file with output:"plans/x.md" (a filename in the task text does not route output). runs.all resolves to an ordered array.',
+	resume: "resume returns a new id: always use the latest. A finished run takes resume; a live one takes steer.",
+	complete: "Results are evidence, not approval: you accept or reject them.",
+	review: "Reviewer findings: fix each one (fixes go to a worker) or disprove it with evidence.",
+	failed: "A failed run blocks its lane: stop, report the exact failure and the run's state, then retry once the same way. Switching to another tool or CLI needs the user's approval.",
+} as const;
+
+function formatBytes(bytes: number): string {
+	const units = ["B", "KB", "MB", "GB", "TB"];
+	let value = bytes;
+	let unit = 0;
+	while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+	return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+export function forkNote(fork: { sessionBytes: number; folder: string; freeBytes?: number }): string {
+	const free = fork.freeBytes === undefined ? "" : `; ${formatBytes(fork.freeBytes)} free on that disk`;
+	return `Fork: the child got a copy of this session (${formatBytes(fork.sessionBytes)}) under ${fork.folder}${free}. Each fork adds one. Once a forked child is accepted or dropped and won't be resumed, delete its <run id> folder there; never one whose run is still active.`;
+}
+
+/** What a call's notes need to know beyond the call and its result. */
+export interface CallFacts {
+	/** Other live runs in the launch's cwd. */
+	liveRunsInCwd?: { cwd: string; count: number };
+	/** The launched agent when it is a writer (acceptanceRole: writer) given a toolBudget. */
+	cappedWriter?: string;
+	fork?: { sessionBytes: number; folder: string; freeBytes?: number };
+}
+
+/** Event guidance (keyed, once) and warnings (every time) for a model's call. Checks read fields and run state only. */
+export function callNotes(request: SubagentParamsLike, result: AgentToolResult<Details>, facts: CallFacts): TeachingNote[] {
+	if (result.isError) return [];
+	const notes: TeachingNote[] = [];
+	const params = request as Record<string, unknown>;
+	if (isLaunchRequest(params)) {
+		notes.push({ key: "event:launch", text: EVENT_NOTES.launch });
+		if (facts.fork) notes.push({ key: "event:fork", text: forkNote(facts.fork) });
+		if (params.worktree === true) notes.push({ key: "event:worktree", text: EVENT_NOTES.worktree });
+		if (params.workflow !== undefined || params.workflowScript !== undefined) notes.push({ key: "event:workflow", text: EVENT_NOTES.workflow });
+		if (facts.liveRunsInCwd && facts.liveRunsInCwd.count > 0) {
+			notes.push({ text: `⚠ ${facts.liveRunsInCwd.count === 1 ? "Another run is" : `${facts.liveRunsInCwd.count} other runs are`} live in ${facts.liveRunsInCwd.cwd}. One writer per folder: if they could both edit, use worktree:true.` });
+		}
+		if (facts.cappedWriter) notes.push({ text: `⚠ ${facts.cappedWriter} is a writer (acceptanceRole: writer) with a toolBudget; a capped writer may stop mid-edit. Launch writers without toolBudget.` });
+	}
+	if (request.action === "resume" || request.action === "steer") notes.push({ key: "event:resume", text: EVENT_NOTES.resume });
+	return notes;
+}
+
+/** Event guidance for a completion notice, each note once while in the chat. */
+export function noticeNotes(runs: ReadonlyArray<{ agent: string; status: string }>, taught: TaughtState): { text: string; taught: string[] } | undefined {
+	taught.ensure();
+	const notes: Array<[string, string]> = [];
+	if (runs.some((run) => run.status === "completed")) notes.push(["notice:complete", EVENT_NOTES.complete]);
+	if (runs.some((run) => run.status === "completed" && /review/i.test(run.agent))) notes.push(["notice:review", EVENT_NOTES.review]);
+	if (runs.some((run) => run.status === "failed")) notes.push(["notice:failed", EVENT_NOTES.failed]);
+	const fresh = notes.filter(([key]) => taught.teach(key).length > 0);
+	return fresh.length ? { text: fresh.map(([, text]) => text).join("\n"), taught: fresh.map(([key]) => key) } : undefined;
 }
 
 export function guideResult(text: string, taught: string[], isError = false): AgentToolResult<Details> {
@@ -272,9 +349,9 @@ export interface GuidedSubagentToolDeps {
  */
 export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentToolDeps): { tool: ToolDefinition<typeof SUBAGENT_TOOL_PARAMETERS, Details>; taught: TaughtState } {
 	const taught = new TaughtState();
-	pi.on("session_start", () => taught.invalidate());
-	pi.on("session_tree", () => taught.invalidate());
-	pi.on("session_compact", () => taught.invalidate());
+	pi.on("session_start", (_event, ctx) => taught.invalidate(ctx));
+	pi.on("session_tree", (_event, ctx) => taught.invalidate(ctx));
+	pi.on("session_compact", (_event, ctx) => taught.invalidate(ctx));
 	pi.on("turn_start", () => taught.nextTurn());
 	// Pi passes parentToolCallId only to tool_call handlers, so record which calls another tool (a codemode script) made.
 	const nestedCallIds = new Set<string>();

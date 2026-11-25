@@ -14,7 +14,7 @@ import { readStatus } from "../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { resolveDisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { flattenSubagentToolOptions } from "./subagent-options.ts";
-import { createGuidedSubagentTool, formatGuide } from "./guided-tool.ts";
+import { callNotes, createGuidedSubagentTool, formatGuide } from "./guided-tool.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, type AsyncStartedEvent, type SubagentState } from "../shared/types.ts";
 import { createChildExternalJobBridgeSweeper } from "../runs/shared/external-job-bridge.ts";
@@ -216,6 +216,8 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 		flatten: (params) => flattenSubagentToolOptions(params, disabledFeatures),
 		authorityPolicy: config.authorityPolicy,
 		run: (id, request, _nested, signal, onUpdate, ctx) => executor.executePublic(id, request, signal ?? new AbortController().signal, onUpdate, ctx),
+		// A child gets the event guidance; the parent owns the run-state warnings.
+		notes: (request, result) => callNotes(request, result, {}),
 	});
 	pi.registerTool(tool);
 	const bridgeSweeper = createChildExternalJobBridgeSweeper();
