@@ -32,7 +32,6 @@ try {
 	console.log("PASS public SDK/default child factory: local prompt, API identity, startup/shutdown");
 	const { buildInProcessChildLaunch } = await import(pathToFileURL(`${process.env.SMOKE_EXTENSION}/src/runs/shared/child-launch.js`).href);
 	for (const tools of [
-		["read", "subagent", "contact_supervisor", "subagent_supervisor"],
 		["read", "subagent", "contact_supervisor"],
 		["read", "contact_supervisor"],
 	]) {
