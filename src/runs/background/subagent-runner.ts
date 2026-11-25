@@ -2574,6 +2574,9 @@ export async function runSubagent(
 		mutatingFailureStates.push(...Array.from({ length: added.addedFlatSteps }, () => createMutatingFailureState()));
 		pendingToolResults.push(...Array.from({ length: added.addedFlatSteps }, () => undefined));
 		pendingToolResultsByCallId.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, PendingToolResult>()));
+		activeToolCalls.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, ActiveToolCall>()));
+		activeToolKeysByName.push(...Array.from({ length: added.addedFlatSteps }, () => new Map<string, string[]>()));
+		activeToolSequences.push(...Array.from({ length: added.addedFlatSteps }, () => 0));
 		if (config.childIntercomTargets) {
 			config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
 		}
@@ -3794,6 +3797,9 @@ export async function runSubagent(
 			mutatingFailureStates.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => createMutatingFailureState()));
 			pendingToolResults.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => undefined));
 			pendingToolResultsByCallId.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, PendingToolResult>()));
+			activeToolCalls.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, ActiveToolCall>()));
+			activeToolKeysByName.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => new Map<string, string[]>()));
+			activeToolSequences.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => 0));
 			const materializedDelta = dynamicStatusSteps.length - 1;
 			for (const group of statusPayload.parallelGroups) {
 				if (group.stepIndex === stepIndex) {

@@ -1714,8 +1714,8 @@ syncBuiltinESMExports();
 		const releaseReview = path.join(tempDir, "release-review");
 		const releaseConsumer = path.join(tempDir, "release-consumer");
 		const heldBashCall = (releasePath: string, text: string) => ({ steps: [
-			{ jsonl: [events.toolStart("bash", { command: "ls" }), events.toolEnd("bash"), events.toolResult("bash", "ok")] },
-			{ waitForPath: releasePath, jsonl: [events.assistantMessage(text)] },
+			{ jsonl: [events.toolStart("bash", { command: "ls" })] },
+			{ waitForPath: releasePath, jsonl: [events.toolEnd("bash"), events.toolResult("bash", "ok"), events.assistantMessage(text)] },
 		] });
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		mockPi.onCall(heldBashCall(releaseReview, "review-a"));
@@ -1747,6 +1747,7 @@ syncBuiltinESMExports();
 		const consuming = await waitForAsyncState(id, (status) => status.steps?.[3]?.status === "running" && status.steps[3].toolCount === 1);
 		assert.deepEqual(consuming.steps?.map((step) => step.agent), ["producer", "reviewer", "reviewer", "consumer"]);
 		assert.equal(consuming.steps?.[3]?.toolBudget?.toolCount, 1);
+		assert.equal(consuming.steps?.[3]?.currentTool, "bash");
 		fs.writeFileSync(releaseConsumer, "");
 		await waitForAsyncResultFile(id, 10_000);
 	});
