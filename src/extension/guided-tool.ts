@@ -441,7 +441,7 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			if (deps.canLaunch !== false && isLaunchRequest(request as Record<string, unknown>)) {
 				if (firstCall) {
 					taught.teach("guide");
-					return guideResult(`${await deps.guide(ctx)}\n\n${holdText(params, false)}`, ["guide"]);
+					return guideResult(`${holdText(params, false)}\n\n${await deps.guide(ctx)}`, ["guide"]);
 				}
 				if (taught.guideArrivedThisTurn()) return guideResult(holdText(params, true), []);
 			}

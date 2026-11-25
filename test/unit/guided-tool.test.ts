@@ -81,9 +81,8 @@ describe("guide first", () => {
 		assert.equal(mockPi.callCount(), 0, "a launch before the guide is in the chat does not start a child");
 		await session.prompt("go");
 		const [held, first, second] = subagentReplies(session);
-		assert.match(held!, /^subagent guide\./);
 		assert.match(held!, /- probe: Probe/);
-		assert.match(held!, /Not launched yet: this is the session's first subagent call, so here is the guide\. Call again to launch\.$/);
+		assert.match(held!, /^Not launched yet: this is the session's first subagent call, so here is the guide\. Call again to launch\.\n\nsubagent guide\./);
 		assert.match(first!, /Async: probe \[/);
 		assert.ok(first!.includes(EVENT_NOTES.launch), first);
 		assert.doesNotMatch(first!, /subagent guide\./, "the guide is not repeated");
@@ -103,7 +102,7 @@ describe("guide first", () => {
 		assert.equal(mockPi.callCount(), 0);
 		const scripted = await startParent([{ async: true, options: { script: `return runs.run("one", { agent: "probe", task: "Inspect" });` } }, "held"]);
 		await scripted.prompt("go");
-		assert.match(subagentReplies(scripted)[0]!, /^subagent guide\.[^]*Not launched yet: this is the session's first subagent call/);
+		assert.match(subagentReplies(scripted)[0]!, /^Not launched yet: this is the session's first subagent call[^]*\n\nsubagent guide\./);
 		assert.equal(mockPi.callCount(), 0);
 	});
 });
@@ -210,7 +209,7 @@ describe("taught state", () => {
 		for (const handler of handlers.get("session_compact") ?? []) handler({}, ctx);
 		const held = await call({ agent: "probe", task: "two" });
 		assert.equal(runs.length, 1, "the launch after compaction is held");
-		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /^GUIDE\n\nNot launched yet/);
+		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /^Not launched yet[^\n]*\n\nGUIDE$/);
 	});
 });
 
