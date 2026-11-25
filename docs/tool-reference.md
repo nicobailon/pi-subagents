@@ -2,7 +2,7 @@
 
 Parameters and actions for the `subagent` tool. These are what the LLM passes when it calls the tool; most users ask naturally or use slash commands instead.
 
-The tool declares its 13 main fields and accepts every other field listed here; the session's first call returns the guide, and a first launch before the guide is in the chat is held once (see [the `subagent` tool](configuration.md#the-subagent-tool)). Wait for a run with `{ action: "wait", id }`, and answer a child's question with `{ action: "reply", replyTo, message }`; `{ action: "status" }` with no id lists runs and waiting child questions.
+The tool declares its 14 main fields and accepts every other field listed here; the session's first call returns the guide, and a first launch before the guide is in the chat is held once (see [the `subagent` tool](configuration.md#the-subagent-tool)). Wait for a run with `{ action: "wait", id }`, and answer a child's question with `{ action: "reply", replyTo, message }`; `{ action: "status" }` with no id lists runs and waiting child questions.
 
 Call `{ action: "guide", options: { topic: "tool-reference" } }` for this reference or `options: { topic: "workflows" }` for [workflow recipes](workflows.md). Use `topic: "agents"` for authoring, `topic: "missions"` for missions/schedules, and `topic: "watchdog"` for watchdog controls, always inside `options`. Guide reads do not change the schema or grant authority.
 
