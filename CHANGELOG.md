@@ -2,10 +2,6 @@
 
 ## [Unreleased]
 
-### Added
-
-- Pi sessions running in Herdr Core can now place native Pi children with `machine: "local"`, keeping their lifecycle, steering, and evidence inside Herdr Core. Thanks to [@asantos00](https://github.com/asantos00) for #3352.
-
 ### Changed
 
 - **Breaking:** Delegating used to cost a parent session several thousand tokens on every request: a loader tool, a large `subagent` schema, `bg_wait`, `subagent_supervisor`, a bundled skill and a prompt list of agents, with settings to juggle them and a prompt-cache miss when the loader swapped tools. Now every session declares one small `subagent` tool with a one-line description and no declared fields (about 110 tokens on Claude) plus `contact_supervisor`. Providers known to blank undeclared fields get the 14 main fields declared instead, and any other provider that blanks them switches once its calls arrive blank, at the cost of one cache miss. The tool's first reply is the guide, with your agents, the launch fields and the actions; a launch made before that is held once. Later replies explain each new thing once, when it first happens. Removed: `subagents_enable`, `bg_wait` (use `subagent({ action: "wait", id })`), `subagent_supervisor` (`subagent({ action: "status" })` lists child questions and `subagent({ action: "reply", replyTo, message })` answers them), the bundled `pi-subagents` skill, the agent `advertise` field and its prompt catalog, and the settings `toolActivation`, `toolDescriptionMode` and `waitTool`. A config that still sets one of those settings fails to load with a message saying what replaces it. A session resumed from an earlier version takes the new tool definition with one prompt-cache miss. See [the `subagent` tool](docs/configuration.md#the-subagent-tool).
@@ -18,6 +14,7 @@
 ### Added
 
 - `stop`, `interrupt` and `dismiss` take a list in `id`, so one call can stop several runs: `subagent({action:"stop", id:["a1","b2","c3"]})`. Each entry works like a single id (prefixes allowed) and one failing entry doesn't stop the others. The reply has one line per entry, each the same text a single id would get, with the id in front when that text doesn't name the run. The call counts as failed only when every entry failed. When `authorityPolicy` asks for confirmation, the user is asked once for the whole list, with the ids named; a policy that forbids the action, or a codemode script, still refuses each entry. The list also works as JSON text, and on providers that get declared fields. A list can't be combined with `runId` or `dir`, and cancelling the call skips the ids not yet reached. A single id works and replies as before.
+- `machine: "local"` now works when Pi runs in a Herdr Core terminal. Before, the launch failed there. The child runs as a headless Herdr Core terminal under this Pi's terminal, so the Herdr app shows it in its agent tree, while pi-subagents still drives it (prompts, steering, stop, results). Because it has no tab to keep, its Pi is ended when the run is disposed. A Herdr Core terminal that also carries `REX_SESSION` now gets a Herdr Core child where it used to get a Rex tab. See [docs/agents.md](docs/agents.md#running-a-pi-child-on-this-machine-rex-herdr-or-herdr-core). Thanks to [@asantos00](https://github.com/asantos00) for #3352.
 
 ### Fixed
 
@@ -377,7 +374,7 @@
 ### Added
 
 - Background workflows cut off by Pi exiting, crashing or reloading now resume on their own when you reopen or reload their session within a day, and steps that already finished are not run again. You can also resume one yourself with `subagent({ action: "resume", id })`, or set `autoResume: false` to resume them only by hand. A stopped workflow is resumed only once, and its notice says how it resumed. If you start a new Pi in the same folder instead, it tells you which session to reopen. See [docs/workflows.md](docs/workflows.md).
-- `machine: "local"` runs a native Pi child in a new background tab of your own Rex session, with the same controls as a Herdr-placed Pi child: prompts, steering, follow-ups, abort, `contact_supervisor` and results. The launch fails if the parent Pi is not running inside Rex, and Claude Code, Codex, Cursor and generic `external-cli` agents are rejected. A finished child's tab stays open until you close it; an aborted or stopped child's tab is closed. See [docs/agents.md](docs/agents.md#running-a-pi-child-in-a-new-tab-on-this-machine-rex-or-herdr).
+- `machine: "local"` runs a native Pi child in a new background tab of your own Rex session, with the same controls as a Herdr-placed Pi child: prompts, steering, follow-ups, abort, `contact_supervisor` and results. The launch fails if the parent Pi is not running inside Rex, and Claude Code, Codex, Cursor and generic `external-cli` agents are rejected. A finished child's tab stays open until you close it; an aborted or stopped child's tab is closed. See [docs/agents.md](docs/agents.md#running-a-pi-child-on-this-machine-rex-herdr-or-herdr-core).
 - A native Pi child can also run in a Rex tab on another Mac over SSH. Name the Mac in your user settings with `subagents.machines.<name>.rex.ssh`, then pass `machine: "<name>"`. The child opens in that Mac's `subagents` Rex session, which is created the first time it is needed. These machines do not need Herdr, and project settings cannot name a Rex host. See [docs/agents.md](docs/agents.md#running-a-pi-child-in-a-rex-pane-on-another-mac).
 
 ### Changed

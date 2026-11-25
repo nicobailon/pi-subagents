@@ -2,6 +2,7 @@ import type { HerdrCoreLocalMachineReference, PlacementMachineReference } from "
 import { SocketRpcClient, type HerdrRpcClient } from "./herdr-connection.ts";
 import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { localMachineAccess } from "./local-machine-access.ts";
+import { getPiSpawnCommand } from "./pi-spawn.ts";
 import { createPlacedRuntimeDir, hashedRuntimeDirName, PlacedRunOwner, removePlacedRuntimeDir } from "./placed-run-owner.ts";
 import type { PlacementBridgeIdentity, PlacementEvidenceProof, PlacementMachineAccess, PlacementOwnedPane, PlacementOwnedRun, PlacementPaneHost, PlacementPromptOptions, PlacementReconnectCheck, PlacementRunState, PlacementSockets } from "./placement-host.ts";
 
@@ -16,6 +17,7 @@ interface HcTerminal {
 export interface HerdrCoreConnection extends PlacementSockets {
 	client: HerdrRpcClient;
 	socketPath: string;
+	parentTerminal: string;
 	close(): Promise<void>;
 }
 
@@ -48,7 +50,7 @@ export function reconcileHerdrCoreRun(identity: HerdrRunIdentity, candidate: Her
 
 export function connectHerdrCore(machine: HerdrCoreLocalMachineReference): HerdrCoreConnection {
 	const sockets = localMachineAccess().openSockets();
-	return { client: new SocketRpcClient(machine.socket), socketPath: machine.socket, ...sockets };
+	return { client: new SocketRpcClient(machine.socket), socketPath: machine.socket, parentTerminal: machine.parentTerminal, ...sockets };
 }
 
 function eventTerminal(event: unknown): { terminalId: unknown; state: PlacementRunState } | undefined {
@@ -64,21 +66,22 @@ function eventTerminal(event: unknown): { terminalId: unknown; state: PlacementR
 }
 
 async function closeOwnedCoreTerminal(connection: HerdrCoreConnection, owned: PlacementOwnedPane, run: PlacementOwnedRun): Promise<void> {
-	if (!run.terminalId || !run.agentName || !run.parentTerminal || owned.paneId !== run.terminalId) throw new Error("Refusing Herdr Core cleanup because terminal ownership is incomplete.");
-	const current = await connection.client.call<HcTerminal>("terminal.get", { terminal: run.terminalId });
-	if (current.address !== run.terminalId || current.parent !== run.parentTerminal || current.labels?.["pi-subagents.run"] !== run.runId || current.labels?.["pi-subagents.agent"] !== run.agentName) throw new Error("Refusing Herdr Core cleanup because terminal ownership changed.");
-	if (current.state === "live") await connection.client.call("terminal.kill", { terminal: run.terminalId });
+	const terminal = owned.paneId;
+	if (!run.agentName || (run.terminalId !== undefined && run.terminalId !== terminal)) throw new Error("Refusing Herdr Core cleanup because terminal ownership is incomplete.");
+	const current = await connection.client.call<HcTerminal>("terminal.get", { terminal });
+	if (current.address !== terminal || current.parent !== connection.parentTerminal || current.labels?.["pi-subagents.run"] !== run.runId || current.labels?.["pi-subagents.agent"] !== run.agentName) throw new Error("Refusing Herdr Core cleanup because terminal ownership changed.");
+	if (current.state === "live") await connection.client.call("terminal.kill", { terminal });
 }
 
-/** Headless Herdr Core placement. Herdr's app discovers the parent link and supplies terminal.peek/terminal.keep UI. */
 export const herdrCoreHost = {
 	connect(machine) { return Promise.resolve(connectHerdrCore(asCoreMachine(machine))); },
 	sessionOf() { return null; },
 	async launch(connection, machine, runId, _runtimeDir, request, onTerminal) {
 		const core = asCoreMachine(machine);
 		if (request.kind !== "pi") throw new Error("Herdr Core local placement supports native Pi children only.");
+		const pi = getPiSpawnCommand(request.args);
 		const terminal = await connection.client.call<HcTerminal>("terminal.run", {
-			argv: ["pi", ...request.args],
+			argv: [pi.command, ...pi.args],
 			cwd: core.cwd,
 			env: request.environment ?? {},
 			name: request.name,
@@ -94,7 +97,6 @@ export const herdrCoreHost = {
 	},
 	async prompt(connection, identity, text, options: PlacementPromptOptions = {}) {
 		if (options.stopped?.()) throw new Error("Herdr Core prompt was not sent because the run was stopped.");
-		// The bridge has already prepared this internal command. Omit `caller` so hc delivers the command verbatim instead of wrapping it in an inter-agent <hc> tag; `force` lets replies and aborts reach a blocked Pi.
 		await connection.client.call("terminal.send", { terminal: identity.terminalId, text, force: true }, options.timeoutMs ?? 20_000);
 	},
 	subscribe(connection, terminalId, listener, onDisconnect) {
@@ -107,7 +109,6 @@ export const herdrCoreHost = {
 	closeOwnedPane: closeOwnedCoreTerminal,
 } satisfies PlacementPaneHost<HerdrCoreConnection, HerdrCoreCandidate>;
 
-/** Owns one headless local hc terminal. Unlike visible legacy panes, it ends the idle Pi when pi-subagents disposes a settled run. */
 export class HerdrCorePlacedRunOwner extends PlacedRunOwner<HerdrCoreConnection, HerdrCoreLocalMachineReference> {
 	private constructor(machine: HerdrCoreLocalMachineReference, runId: string, runtimeDir: string, connection: HerdrCoreConnection, access: PlacementMachineAccess) {
 		super(machine, runId, runtimeDir, connection, herdrCoreHost, access, true);

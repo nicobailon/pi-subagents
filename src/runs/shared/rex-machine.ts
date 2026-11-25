@@ -4,14 +4,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { HerdrCoreLocalMachineReference, HerdrLocalMachineReference, PlacementMachineReference, RexLocalMachineReference } from "../../shared/types.ts";
 
-/** `machine: "local"` is reserved: this machine, in the Herdr Core, legacy Herdr, or Rex runtime this Pi runs in. It never consults the saved-machine catalog. */
+/** `machine: "local"` is reserved: this machine, in the Herdr, Herdr Core, or Rex session this Pi runs in. It never consults the Herdr catalog. */
 export const REX_LOCAL_MACHINE = "local";
 /** Rex CLI exit codes: 3 means the target is gone, 4 means the server is unreachable (state unknown, never "gone"). */
 export const REX_EXIT_GONE = 3, REX_EXIT_UNREACHABLE = 4;
 
 /** A Rex pane in the parent's own Rex session; the other Rex reference is an SSH machine. */
 export function isRexLocalMachine(machine: PlacementMachineReference | undefined): machine is RexLocalMachineReference { return machine?.provider === "rex" && !("target" in machine); }
-/** A placed child without an SSH `target` (Herdr Core, Rex, or legacy Herdr `local`) edits this machine's disk; every other placed child edits the remote one. */
+/** A placed child without an SSH `target` (Rex, Herdr or Herdr Core `local`) edits this machine's disk; every other placed child edits the remote one. */
 export function editsLocalDisk(machine: PlacementMachineReference | undefined): machine is RexLocalMachineReference | HerdrLocalMachineReference | HerdrCoreLocalMachineReference { return machine !== undefined && !("target" in machine); }
 /** The Rex server bundle's CLI, relative to the home directory. */
 export const REX_BUNDLE_BIN = "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex";

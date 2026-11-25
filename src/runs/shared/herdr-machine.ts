@@ -61,7 +61,7 @@ export interface ResolveHerdrMachinePlacementInput {
 
 export interface HerdrMachinePlacement extends MachinePlacement { machine: HerdrMachineReference }
 
-/** A resolved `machine` value: a Herdr saved machine, a Rex SSH host, or the reserved `local` (a new tab of the Herdr or Rex session this Pi runs in). */
+/** A resolved `machine` value: a Herdr saved machine, a Rex SSH host, or the reserved `local` (a child of the Herdr, Herdr Core or Rex terminal this Pi runs in). */
 export interface MachinePlacement {
 	machine: PlacementMachineReference;
 	/** Opt-in `subagents.machines.<name>.env`, exported in front of the remote command. */
@@ -266,7 +266,6 @@ function resolveHerdrLocalPlacement(input: { cwd: string; stepCwd?: string; env:
 	return { provider: "herdr", id: REX_LOCAL_MACHINE, socket: endpoint.socket, ...(endpoint.session ? { session: endpoint.session } : {}), cwd: resolveLocalLaunchCwd(input.cwd, input.stepCwd) };
 }
 
-/** Resolves `machine: "local"` inside Herdr Core to a headless terminal parented to this Pi's terminal. */
 function resolveHerdrCoreLocalPlacement(input: { cwd: string; stepCwd?: string; env: NodeJS.ProcessEnv; hcBin?: string }): HerdrCoreLocalMachineReference {
 	if (process.platform === "win32") throw new Error("Machine 'local' runs the child in a Herdr Core terminal, which is not supported on Windows.");
 	const terminal = input.env.HC_TERMINAL_ID?.trim();
@@ -283,18 +282,18 @@ function resolveHerdrCoreLocalPlacement(input: { cwd: string; stepCwd?: string; 
 	return { provider: "herdr-core", id: REX_LOCAL_MACHINE, socket, parentTerminal: terminal, cwd: resolveLocalLaunchCwd(input.cwd, input.stepCwd) };
 }
 
-/** `local` resolves to a child of the terminal this Pi runs in (headless in Herdr Core, otherwise a new tab in legacy Herdr or Rex); a name with a `rex` entry in user settings to a Rex pane on that SSH host; any other value to a Herdr saved machine. */
+/** `local` resolves to a child of the terminal this Pi runs in (a new tab in Herdr or Rex, a headless terminal in Herdr Core); a name with a `rex` entry in user settings to a Rex pane on that SSH host; any other value to a Herdr saved machine. */
 export function resolveMachinePlacement(input: ResolveHerdrMachinePlacementInput): MachinePlacement {
 	const requested = validateMachineName(input.machine);
 	const settings = input.settings ?? readMachineSettings(input.cwd, [requested]);
 	if (requested === REX_LOCAL_MACHINE) {
 		if (settings?.rex) throw new Error("Machine 'local' is reserved for a new tab on this machine; give the Rex SSH host in subagents.machines.local.rex another name.");
 		const env = input.env ?? process.env;
-		// Legacy Herdr and Herdr Core terminals can inherit REX_SESSION; the runtime that directly owns this Pi wins over Rex.
+		// Herdr panes and Herdr Core terminals can inherit REX_SESSION; the runtime that directly owns this Pi wins over Rex.
 		if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID?.trim()) return { machine: resolveHerdrLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, herdrBin: input.herdrBin }) };
 		if (env.HC_TERMINAL_ID?.trim()) return { machine: resolveHerdrCoreLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env, hcBin: input.hcBin }) };
 		if (env.REX_SESSION?.trim()) return { machine: resolveRexLocalPlacement({ cwd: input.cwd, stepCwd: input.stepCwd, env }) };
-		throw new Error("Machine 'local' opens the child in the terminal runtime this Pi runs in, but this Pi is running in neither Herdr Core (HC_TERMINAL_ID), legacy Herdr (HERDR_ENV=1 with HERDR_PANE_ID), nor Rex (REX_SESSION).");
+		throw new Error("Machine 'local' opens the child in the terminal this Pi runs in, but this Pi is running in neither Herdr (HERDR_ENV=1 with HERDR_PANE_ID), Herdr Core (HC_TERMINAL_ID), nor Rex (REX_SESSION).");
 	}
 	if (settings?.rex) return { machine: { provider: "rex", id: requested, target: settings.rex.ssh, cwd: validateRemoteCwd(remoteMachineCwd(input.stepCwd, settings.cwd, requested), requested) } };
 	return resolveHerdrMachinePlacement(input);
@@ -318,7 +317,7 @@ export function formatHerdrMachineRunnerUnsupported(input: {
 	if (rex) {
 		if (input.runnerType !== undefined && input.runnerType !== "pi") return `Agent '${input.agentName}' requested machine '${name}', but ${local ? "machine 'local' runs" : "Rex supports"} native Pi children only. Remove the machine or use a native Pi agent.`;
 		if (input.worktree === true) return `Agent '${input.agentName}' requested machine '${name}', but managed worktrees cannot be combined with machine placement.`;
-		if (process.platform === "win32") return `Machine '${name}' runs the child in ${local ? "a Herdr or Rex pane" : "a Rex pane"}, which is not supported on Windows.`;
+		if (process.platform === "win32") return `Machine '${name}' runs the child in ${local ? "a Herdr, Herdr Core or Rex terminal" : "a Rex pane"}, which is not supported on Windows.`;
 		return undefined;
 	}
 	if (input.runnerType !== undefined && input.runnerType !== "pi" && input.runnerType !== "external-cli") {

@@ -8,7 +8,7 @@ import { getAgentDir } from "../../shared/utils.ts";
 export type PlacementRunState = "ready" | "working" | "blocked" | "settled" | "unknown";
 export type PlacementAgentKind = "pi" | "claude" | "cursor" | "codex";
 export interface PlacementOwnedPane { workspaceId: string; tabId: string; paneId: string }
-export interface PlacementOwnedRun { runId: string; terminalId?: string; agentName?: string; parentTerminal?: string }
+export interface PlacementOwnedRun { runId: string; terminalId?: string; agentName?: string }
 export interface PlacementBridgeIdentity { runId?: string; nativeSessionId?: string; packageVersion?: string; protocol?: number; evidenceCursor?: number; evidenceFloor?: number }
 export type PlacementEvidenceProof = { ok: true; cursor: number } | { ok: false; reason: string };
 export type PlacementReconnectCheck = { ok: true; state: PlacementRunState; paneId: string; cursor: number } | { ok: false; reason: string };

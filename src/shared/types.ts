@@ -1811,7 +1811,7 @@ export interface RexSshMachineReference {
 
 export type RexMachineReference = RexLocalMachineReference | RexSshMachineReference;
 
-/** `machine: "local"` inside a legacy Herdr pane: a tab in the parent's own Herdr session on this machine, reached over its local socket. `socket` and `session` are recorded in the parent at resolution time; `cwd` is the real local launch directory. */
+/** `machine: "local"` inside a Herdr pane: a tab in the parent's own Herdr session on this machine, reached over its local socket. `socket` and `session` are recorded in the parent at resolution time; `cwd` is the real local launch directory. */
 export interface HerdrLocalMachineReference {
 	provider: "herdr";
 	id: "local";
@@ -1820,7 +1820,6 @@ export interface HerdrLocalMachineReference {
 	cwd: string;
 }
 
-/** `machine: "local"` inside Herdr Core: a headless child terminal parented to the current terminal. Herdr can inspect it with terminal.peek or give it a pane with terminal.keep. */
 export interface HerdrCoreLocalMachineReference {
 	provider: "herdr-core";
 	id: "local";
