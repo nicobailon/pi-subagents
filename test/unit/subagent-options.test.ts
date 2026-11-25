@@ -67,7 +67,9 @@ describe("subagent tool options", () => {
 		assert.deepEqual(normalizePublicSubagentExecution(workflowCall), { ok: true, params: { workflow: true, async: true, worktree: false } });
 		assert.deepEqual(flattenSubagentToolOptions({ action: "validate", agent: "null", task: "null", workflow: "./review.workflow.js" }), { action: "validate", workflow: "./review.workflow.js" });
 		assert.deepEqual(flattenSubagentToolOptions({ action: "list", id: "null", workflow: "false" }), { action: "list" });
-		assert.deepEqual(flattenSubagentToolOptions({ agent: "reviewer", task: "check for null", workflow: "false", options: { timeoutMs: "null", skill: "review" } }), { agent: "reviewer", task: "check for null", skill: "review" });
+		// The real path converts arguments first, so "false" arrives as false.
+		const placeholder = prepareSubagentToolArguments({ agent: "reviewer", task: "check for null", workflow: "false", options: { timeoutMs: "null", skill: "review" } }) as Record<string, unknown>;
+		assert.deepEqual(flattenSubagentToolOptions(placeholder), { agent: "reviewer", task: "check for null", skill: "review" });
 	});
 
 	it("runs options.script given with workflow: true, and refuses it next to a named workflow or script path (#3320)", () => {
@@ -157,7 +159,10 @@ describe("registered subagent tools with options", () => {
 			assert.match(text(await call({ action: "status", options: { view: "fleet" } })), /No active subagent fleet/);
 			assert.match(text(await call({ action: "status", view: "fleet" })), /No active subagent fleet/);
 			await assert.rejects(call({ action: "status", runId: "missing-run", view: "transcript" }), /Transcript target: run missing-run/);
-			await assert.rejects(call({ action: "status", options: { view: "fleet" } }, tools.fanout), /Child-safe subagent fleet view is unavailable/);
+			// The fanout child's first call: its error is returned with the guide it taught.
+			const childFleet = await call({ action: "status", options: { view: "fleet" } }, tools.fanout);
+			assert.equal(childFleet.isError, true);
+			assert.match(text(childFleet), /Child-safe subagent fleet view is unavailable/);
 			await assert.rejects(call({ action: "status", id: "missing-run", options: { view: "transcript", lines: 5 } }), /Transcript target: run missing-run/);
 			await assert.rejects(call({ action: "steer", id: "missing-run", message: "focus", options: { mode: "plan" } }), /action='steer' mode must be/);
 			assert.match(text(await call({ action: "schedule.create", workflow: "./flow.js", options: { every: "1h", name: "nightly" } })), /Trigger: every 1h/);

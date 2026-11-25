@@ -6,9 +6,9 @@ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts
 import { disabledFeatureSectionNotice, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import type { Details } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
-import { isSubagentFieldName, prepareSubagentToolArguments } from "./subagent-options.ts";
+import { prepareSubagentToolArguments } from "./subagent-options.ts";
 
-// The model sees this name, description and the 13 main fields, without descriptions; the guide (the reply to the
+// The model sees this name, description and the 14 main fields, without descriptions; the guide (the reply to the
 // session's first call) and later replies teach everything else, so the declaration never changes and the prompt
 // cache holds on every model. The fields are declared because some providers drop or blank undeclared ones; other
 // fields are still accepted, and rare-action fields can ride inside `args`.
@@ -19,8 +19,9 @@ export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({
 	type: "object",
 	properties: {
 		action: declaredString, agent: declaredString, task: declaredString, id: declaredString, message: declaredString,
-		cwd: declaredString, context: { type: "string", enum: ["fresh", "fork"] }, model: declaredString, output: declaredString,
+		cwd: declaredString, context: declaredString, model: declaredString, output: declaredString,
 		label: declaredString, worktree: { type: "boolean" }, workflow: declaredString, args: { type: "object", additionalProperties: true },
+		topic: declaredString,
 	},
 	additionalProperties: true,
 });
@@ -47,7 +48,7 @@ const LAUNCH_GUIDE = `Launch: subagent({agent, task, ...})
 - task: the child starts cold: goal, cwd, what it may change, evidence, done-when, what to return, when to stop
 - cwd: working directory (default: yours)
 - context: "fresh" (default) or "fork" (the child gets this conversation)
-- model: "provider/id", optional thinking suffix :low|medium|high|xhigh, e.g. "anthropic/claude-opus-5-5:high"
+- model: "provider/id", optional thinking suffix :low|medium|high|xhigh
 - output: file for the child's report, or false
 - label: 2-4 words for run lists
 - worktree: true isolates it in a git worktree (needs a clean checkout)
@@ -76,7 +77,7 @@ const MANAGE_GUIDE = `Manage (id from the launch reply, or a prefix):
 /** The reply to the session's first call. A child that cannot launch learns only what it can do. */
 export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch: boolean; child?: boolean; disabled?: DisabledFeatureSurface }): string {
 	if (!options.canLaunch) {
-		return `subagent guide (child run). This child cannot launch runs. {action:"wait"} (or all:true) blocks until this child's own background work finishes; {action:"status"} lists it. Ask your parent with contact_supervisor.`;
+		return `subagent guide (child run). This child cannot launch runs. {action:"wait"} (or all:true) blocks until this child's own background work finishes. Ask your parent with contact_supervisor.`;
 	}
 	const intro = `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll.${options.child ? " You are a child run: your launches are your own children; agent changes (create, update, delete …) are blocked here." : ""}`;
 	// An "<agent>-writer" variant shares its base agent's line, so the guide grows by agent, not by mode.
@@ -137,19 +138,13 @@ export function actionTopicText(key: string, action = key): string {
 
 /**
  * A call that is not a workflow launch reads its fields from `args` too (top-level wins): some providers drop
- * undeclared fields. An action that also runs a workflow (schedule.create, validate) keeps `args` as script input
- * and lifts only the tool's own field names from it.
+ * undeclared fields. With a top-level workflow (a launch, schedule.create, validate), `args` is script input.
  */
 export function liftArgsFields(params: Record<string, unknown>): Record<string, unknown> {
 	const options = params.options && typeof params.options === "object" ? params.options as Record<string, unknown> : {};
 	const args = params.args;
 	if (!args || typeof args !== "object" || Array.isArray(args)) return params;
-	const runsWorkflow = params.workflow !== undefined || options.script !== undefined;
-	if (runsWorkflow && params.action === undefined) return params;
-	if (runsWorkflow) {
-		const lifted = Object.entries(args).filter(([key]) => isSubagentFieldName(key) && key !== "args" && params[key] === undefined);
-		return lifted.length ? { ...Object.fromEntries(lifted), ...params } : params;
-	}
+	if (params.workflow !== undefined || options.script !== undefined) return params;
 	const { args: _args, ...rest } = params;
 	return { ...(args as Record<string, unknown>), ...rest };
 }
@@ -370,6 +365,8 @@ export interface GuidedSubagentToolDeps {
 	/** Runs the call. `nested` calls come from a codemode script and already passed the script guard. */
 	run(id: string, request: SubagentParamsLike, nested: boolean, signal: AbortSignal | undefined, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Details>>;
 	authorityPolicy?: AuthorityPolicyConfig;
+	/** False for a child that cannot launch: its launches are refused, never held. */
+	canLaunch?: boolean;
 	/** Event guidance and warnings for this call's result, each note once while it is in the chat. */
 	notes?(request: SubagentParamsLike, result: AgentToolResult<Details>, ctx: ExtensionContext): Promise<TeachingNote[]> | TeachingNote[];
 	renderCall?: ToolDefinition<typeof SUBAGENT_TOOL_PARAMETERS, Details>["renderCall"];
@@ -403,9 +400,14 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			const nested = nestedCallIds.delete(id);
 			taught.ensure(ctx);
 			// Again after Pi's validation, which turns output:false and workflow:true into text for the declared strings.
-			const params = liftArgsFields(prepareSubagentToolArguments(rawParams) as Record<string, unknown>);
+			const prepared = prepareSubagentToolArguments(rawParams) as Record<string, unknown>;
+			const lifted = liftArgsFields(prepared);
+			// Fields lifted from args get the same text conversion (args:{all:"true"} → all:true).
+			const params = lifted === prepared ? prepared : prepareSubagentToolArguments(lifted) as Record<string, unknown>;
 			const options = params.options && typeof params.options === "object" ? params.options as Record<string, unknown> : {};
-			const topic = params.topic ?? options.topic;
+			// A "null" topic is a provider's placeholder for an unset field.
+			const rawTopic = params.topic ?? options.topic;
+			const topic = rawTopic === "null" ? undefined : rawTopic;
 			const empty = Object.keys(params).length === 0;
 			// A provider that drops fields can loop on empty calls; once the guide is in the chat, answer with one line.
 			if (empty && taught.has("guide")) return guideResult(EMPTY_CALL_TEXT, []);
@@ -427,9 +429,10 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			} catch (error) {
 				if (!firstCall) throw error;
 				taught.teach("guide");
-				throw new Error(`${error instanceof Error ? error.message : String(error)}\n\n${await deps.guide(ctx)}`);
+				// Returned, not thrown, so details.taught reaches the session and the guide is not shown twice.
+				return guideResult(`${error instanceof Error ? error.message : String(error)}\n\n${await deps.guide(ctx)}`, ["guide"], true);
 			}
-			if (isLaunchRequest(request as Record<string, unknown>)) {
+			if (deps.canLaunch !== false && isLaunchRequest(request as Record<string, unknown>)) {
 				if (firstCall) {
 					taught.teach("guide");
 					return guideResult(`${await deps.guide(ctx)}\n\n${holdText(params, false)}`, ["guide"]);
@@ -438,6 +441,11 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			}
 			let result: AgentToolResult<Details>;
 			const rare = request.action ? rareActionTopic(request.action) : undefined;
+			const record = request as Record<string, unknown>;
+			// A reply whose fields a provider dropped: say how to send them.
+			const replyHint = request.action === "reply" && (record.replyTo === undefined || record.message === undefined)
+				? 'If your fields arrive missing, pass them inside args: subagent({action:"reply", args:{replyTo, message}}).'
+				: undefined;
 			try {
 				if (nested) {
 					const scriptRequest = nestedSubagentRequest(request, deps.authorityPolicy);
@@ -450,27 +458,32 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 					result = await deps.run(id, request, false, signal, onUpdate, ctx);
 				}
 			} catch (error) {
-				// A rare action's failure (often a missing field) shows that action's fields and the args fallback.
-				if (!rare) throw error;
-				throw new Error(`${error instanceof Error ? error.message : String(error)}\n\n${actionTopicText(rare, request.action)}`);
+				// The reply below adds a rare action's fields and the args fallback, and the guide on a first call.
+				result = { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
 			}
 			const notes: string[] = [];
 			const keys: string[] = [];
 			if (firstCall) {
-				notes.push(await deps.guide(ctx));
-				keys.push(...taught.teach("guide"));
+				// Once per batch: a sibling call in the same message already carried it.
+				const fresh = taught.teach("guide");
+				if (fresh.length) {
+					notes.push(await deps.guide(ctx));
+					keys.push(...fresh);
+				}
 			}
 			const freshTopic = rare ? taught.teach(`topic:${rare}`).length > 0 : false;
 			if (rare && (freshTopic || result.isError)) {
 				notes.push(actionTopicText(rare, request.action));
 				if (freshTopic) keys.push(`topic:${rare}`);
 			}
+			if (replyHint && result.isError) notes.push(replyHint);
 			for (const note of await deps.notes?.(request, result, ctx) ?? []) {
 				if (note.key && !taught.teach(note.key).length) continue;
 				notes.push(note.text);
 				if (note.key) keys.push(note.key);
 			}
-			return finalizeToolResult(withTeaching(result, notes, keys));
+			// An error that taught something is returned (Pi honors isError), so details.taught survives.
+			return keys.length > 0 ? withTeaching(result, notes, keys) : finalizeToolResult(withTeaching(result, notes, keys));
 		},
 		...(deps.renderCall ? { renderCall: deps.renderCall } : {}),
 		...(deps.renderResult ? { renderResult: deps.renderResult } : {}),

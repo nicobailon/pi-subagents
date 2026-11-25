@@ -716,6 +716,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		const wait = createWaitExecute(pi, waitState, undefined, { nestedRootRunId });
 		pi.registerTool(createGuidedSubagentTool(pi, {
 			guide: async () => formatGuide([], { canLaunch: false }),
+			canLaunch: false,
 			flatten: (params) => flattenSubagentToolOptions(params),
 			run: async (id, request, _nested, signal, onUpdate, ctx) => {
 				if (request.action === "wait") return wait(id, { id: request.id, all: request.all, nonBlocking: request.nonBlocking, timeoutMs: request.timeoutMs, stopOnAttention: request.stopOnAttention }, signal, onUpdate, ctx);

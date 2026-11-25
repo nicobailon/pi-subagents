@@ -115,7 +115,10 @@ describe("subagent extension child mode", () => {
 				modelRegistry: { getAvailable() { return []; } },
 			};
 			for (const tool of [tools.parent, tools.fanout]) {
-				await assert.rejects(tool.execute("model-script", { workflowScript: "return 1" }, new AbortController().signal, undefined, ctx), /workflowScript was removed.*subagent\(\{ workflow: true \}\)/);
+				// The session's first call returns its error with the guide it taught.
+				const first = await tool.execute("model-script", { workflowScript: "return 1" }, new AbortController().signal, undefined, ctx);
+				assert.equal(first.isError, true);
+				assert.match(first.content[0].text, /workflowScript was removed.*subagent\(\{ workflow: true \}\)/);
 				await assert.rejects(tool.execute("model-path", { workflowScriptPath: "ci/sweep.js" }, new AbortController().signal, undefined, ctx), /workflowScriptPath was removed.*workflow: "\.\/path\/to\/script\.js"/);
 			}
 			assert.deepEqual(expanded, [], "rejected calls must not reach parent execution");
@@ -180,10 +183,9 @@ describe("subagent extension child mode", () => {
 			}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
 			registerSubagentExtension(fakePi);
 			if (!registeredTool) throw new Error("tool not registered");
-			await assert.rejects(
-				registeredTool.execute("blank-action", { action: "", agent: "reviewer" }, new AbortController().signal, undefined, { cwd: process.cwd(), hasUI: false, sessionManager: { buildContextEntries() { return []; } } }),
-				/action must be a non-empty/,
-			);
+			const blank = await registeredTool.execute("blank-action", { action: "", agent: "reviewer" }, new AbortController().signal, undefined, { cwd: process.cwd(), hasUI: false, sessionManager: { buildContextEntries() { return []; } } });
+			assert.equal(blank.isError, true);
+			assert.match(blank.content[0].text, /action must be a non-empty/);
 		`;
 
 		execFileSync(
@@ -1790,18 +1792,15 @@ describe("subagent extension child mode", () => {
 			};
 			const list = await registeredTool.execute("list-check", { action: "list" }, new AbortController().signal, undefined, ctx);
 			if (list.isError) throw new Error("list should be allowed: " + JSON.stringify(list.content));
-			await assert.rejects(
-				registeredTool.execute("create-check", { action: "create", options: { config: { name: "x" } } }, new AbortController().signal, undefined, ctx),
-				/not available from child-safe subagent fanout mode/,
-			);
-			await assert.rejects(
-				registeredTool.execute("refine-check", { action: "refine", agent: "worker" }, new AbortController().signal, undefined, ctx),
-				/not available from child-safe subagent fanout mode/,
-			);
-			await assert.rejects(
-				registeredTool.execute("grant-check", { action: "grant-spawn-budget", options: { additional: 1 } }, new AbortController().signal, undefined, { ...ctx, hasUI: true }),
-				/root interactive parent session/,
-			);
+			// A rare action's first use returns its error with the action's fields it taught.
+			const refused = async (params, pattern, callCtx = ctx) => {
+				const result = await registeredTool.execute("refused", params, new AbortController().signal, undefined, callCtx);
+				assert.equal(result.isError, true);
+				assert.match(result.content.map((part) => part.text ?? "").join("\n"), pattern);
+			};
+			await refused({ action: "create", options: { config: { name: "x" } } }, /not available from child-safe subagent fanout mode/);
+			await refused({ action: "refine", agent: "worker" }, /not available from child-safe subagent fanout mode/);
+			await refused({ action: "grant-spawn-budget", options: { additional: 1 } }, /root interactive parent session/, { ...ctx, hasUI: true });
 		`;
 
 		execFileSync(

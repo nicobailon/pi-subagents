@@ -1070,6 +1070,9 @@ function parseBuiltinOverrideEntry(
 	if (Object.hasOwn(input, "fallbackModels")) {
 		throw new Error(`Builtin override '${name}' in '${filePath}' uses removed field 'fallbackModels'; configure one model instead.`);
 	}
+	if (Object.hasOwn(input, "advertise")) {
+		throw new Error(`Builtin override '${name}' in '${filePath}' uses removed field 'advertise'; the subagent tool's guide now lists every enabled agent, so remove it.`);
+	}
 	if (Object.hasOwn(input, "launcher")) {
 		throw new Error(`Builtin override '${name}' in '${filePath}' sets 'launcher', which settings overrides do not support; set 'launcher' in a user agent file instead.`);
 	}

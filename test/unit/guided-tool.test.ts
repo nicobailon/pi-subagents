@@ -9,6 +9,7 @@ import registerSubagentExtension from "../../src/extension/index.ts";
 import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_PARAMETERS } from "../../src/extension/guided-tool.ts";
+import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
@@ -122,6 +123,40 @@ describe("taught state", () => {
 		assert.match(listed!, /nightly-args/);
 	});
 
+	it("keeps args as script input when the call has a top-level workflow (schedule.create, validate)", { timeout: 60_000 }, async () => {
+		fs.writeFileSync(path.join(root, "backlog.js"), `return runs.run("main", { agent: "probe", task: args.task });`);
+		// docs/missions.md: a fixed recurring workflow from a script file.
+		const session = await startParent([{}, { action: "schedule.create", id: "backlog", workflow: "./backlog.js", args: { task: "Maintain core" }, options: { every: "6h", catchUp: "latest" } }, { action: "validate", workflow: "./backlog.js", args: { task: "review" } }, { action: "schedule.list" }, "done"]);
+		await session.prompt("go");
+		const [, created, validated, listed] = subagentReplies(session);
+		assert.doesNotMatch(created!, /does not accept direct agent, task|requires|unknown field/i, created);
+		assert.doesNotMatch(validated!, /does not accept direct agent, task|cannot be combined/i, validated);
+		assert.match(listed!, /backlog/);
+	});
+
+	it("returns a first call's error with the guide taught, so tree navigation does not hold the next launch", async () => {
+		const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => void>>();
+		const pi = { on: (name: string, handler: (event: unknown, ctx: unknown) => void) => handlers.set(name, [...(handlers.get(name) ?? []), handler]) };
+		let entries: unknown[] = [];
+		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => entries } };
+		const runs: unknown[] = [];
+		const { tool } = createGuidedSubagentTool(pi as never, {
+			guide: async () => "GUIDE",
+			flatten: (params) => flattenSubagentToolOptions(params),
+			run: async (_id, request) => { runs.push(request); return { content: [{ type: "text", text: "launched" }], details: { mode: "single", results: [] } }; },
+		});
+		const call = (params: Record<string, unknown>) => tool.execute("id", params as never, undefined, undefined, ctx as never);
+		for (const handler of handlers.get("session_start") ?? []) handler({}, ctx);
+		const failed = await call({ agent: "probe", task: "one", bogus: 1 });
+		assert.equal(failed.isError, true);
+		assert.deepEqual(failed.details?.taught, ["guide"]);
+		assert.match(failed.content[0]!.type === "text" ? failed.content[0]!.text : "", /unknown field 'bogus'[^]*GUIDE$/);
+		entries = [{ type: "message", message: { role: "toolResult", details: failed.details } }];
+		for (const handler of handlers.get("session_tree") ?? []) handler({}, ctx);
+		await call({ agent: "probe", task: "two" });
+		assert.equal(runs.length, 1, "the launch after tree navigation runs");
+	});
+
 	it("shows the guide again once compaction removed it from the chat", async () => {
 		const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => void>>();
 		const pi = { on: (name: string, handler: (event: unknown, ctx: unknown) => void) => handlers.set(name, [...(handlers.get(name) ?? []), handler]) };
@@ -158,7 +193,7 @@ describe("guided tool surface", () => {
 			assert.ok(agents.some((agent) => agent.name === "scout"), "bundled agents are listed");
 			const size = SUBAGENT_TOOL_DESCRIPTION.length + formatGuide(agents, { canLaunch: true }).length;
 			assert.ok(size <= 2_100, `description + guide is ${size} chars`);
-			assert.deepEqual(Object.keys(SUBAGENT_TOOL_PARAMETERS.properties), ["action", "agent", "task", "id", "message", "cwd", "context", "model", "output", "label", "worktree", "workflow", "args"]);
+			assert.deepEqual(Object.keys(SUBAGENT_TOOL_PARAMETERS.properties), ["action", "agent", "task", "id", "message", "cwd", "context", "model", "output", "label", "worktree", "workflow", "args", "topic"]);
 			assert.equal(SUBAGENT_TOOL_PARAMETERS.additionalProperties, true);
 			const declaration = JSON.stringify({ name: "subagent", description: SUBAGENT_TOOL_DESCRIPTION, parameters: SUBAGENT_TOOL_PARAMETERS }).length;
 			assert.ok(declaration <= 650, `declaration is ${declaration} chars`);
