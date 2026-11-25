@@ -27,7 +27,7 @@ import type {
 } from "../../shared/types.ts";
 import { unresolvedChildWatchdogBlockers } from "../../watchdog/child-status.ts";
 import { isAgentContract } from "./agent-contract.ts";
-import { validateStructuredOutputValue } from "./structured-output.ts";
+import type { validateStructuredOutputValue } from "./structured-output.ts";
 
 const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
 	none: 0,
@@ -1289,7 +1289,7 @@ const TYPED_VERIFY_OUTPUT_MAX_BYTES = 12_000;
  * chars, schema paths escape `/` and `~`), so each one is built from the
  * redacted text or value, never the raw one.
  */
-async function applyTypedVerifyOutput(command: AcceptanceVerifyCommand, run: AcceptanceVerifyResult, rawStdout: string): Promise<void> {
+async function applyTypedVerifyOutput(command: AcceptanceVerifyCommand, run: AcceptanceVerifyResult, rawStdout: string, validateValue: typeof validateStructuredOutputValue): Promise<void> {
 	if (run.status !== "passed") return;
 	const secrets = verifySecrets(command.env);
 	const stdout = rawStdout.trim();
@@ -1313,9 +1313,9 @@ async function applyTypedVerifyOutput(command: AcceptanceVerifyCommand, run: Acc
 	}
 	const redactedValue = parseRedactedVerifyValue(stdout, secrets);
 	if (command.schema) {
-		const validation = await validateStructuredOutputValue(command.schema, value);
+		const validation = await validateValue(command.schema, value);
 		if (validation.status === "invalid") {
-			const redactedValidation = await validateStructuredOutputValue(command.schema, redactedValue);
+			const redactedValidation = await validateValue(command.schema, redactedValue);
 			return fail(`output: "json" stdout does not match gate.schema${redactedValidation.status === "invalid" ? `: ${redactedValidation.message}` : "."}`);
 		}
 	}
@@ -1333,12 +1333,13 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 	abortMessage?: string;
 	artifactsDir?: string;
 	runId?: string;
-} = {}): Promise<AcceptanceVerifyResult> {
+	validateValue: typeof validateStructuredOutputValue;
+}): Promise<AcceptanceVerifyResult> {
 	// Typed gates read inputs (a report file, a log) that can change without
 	// the tracked tree changing, so their verdicts are never reused.
 	if (command.output === "json") {
 		const { run, rawStdout } = await runVerifyCommand(command, defaultCwd, options);
-		await applyTypedVerifyOutput(command, run, rawStdout);
+		await applyTypedVerifyOutput(command, run, rawStdout, options.validateValue);
 		return run;
 	}
 	const cwd = command.cwd ? path.resolve(defaultCwd, command.cwd) : defaultCwd;
@@ -1542,6 +1543,7 @@ export async function evaluateAcceptance(input: {
 	artifactsDir?: string;
 	runId?: string;
 	watchdog?: ChildWatchdogProgress;
+	validateValue: typeof validateStructuredOutputValue;
 }): Promise<AcceptanceLedger> {
 	const acceptance = input.acceptance;
 	const initialStatus = acceptance.level === "none" ? "not-required" : "claimed";
@@ -1629,6 +1631,7 @@ export async function evaluateAcceptance(input: {
 					abortMessage: input.abortMessage,
 					artifactsDir: input.artifactsDir,
 					runId: input.runId,
+					validateValue: input.validateValue,
 				});
 				ledger.verifyRuns.push(run);
 				if (input.signal?.aborted) break;

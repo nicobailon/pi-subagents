@@ -1,7 +1,6 @@
 import type { DynamicParallelStep, ParallelTaskItem } from "../../shared/settings.ts";
-import type { ArtifactPaths, ChainOutputMap, JsonSchemaObject, SingleResult } from "../../shared/types.ts";
+import type { ArtifactPaths, ChainOutputMap, SingleResult } from "../../shared/types.ts";
 import { getSingleResultOutput } from "../../shared/utils.ts";
-import { validateStructuredOutputValue } from "./structured-output.ts";
 
 export class DynamicFanoutError extends Error {}
 
@@ -286,12 +285,4 @@ export function collectDynamicResults(
 			...(result?.artifactPaths ? { artifactPaths: result.artifactPaths } : {}),
 		};
 	});
-}
-
-export async function validateDynamicCollection(schema: JsonSchemaObject | undefined, value: DynamicCollectedResult[]): Promise<void> {
-	if (!schema) return;
-	const validation = await validateStructuredOutputValue(schema, value);
-	if (validation.status === "invalid") {
-		throw new DynamicFanoutError(`Collected output validation failed: ${validation.message}`);
-	}
 }
