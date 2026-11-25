@@ -11,7 +11,6 @@ export const STRUCTURED_OUTPUT_FOLLOW_UP = "You ended without calling `structure
 export const MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR = "Missing acceptanceReport in structured_output call; acceptance.report is \"on\".";
 export const STRUCTURED_OUTPUT_REJECTION_ERROR = "structured_output was invoked but no valid output was captured.";
 export const INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR = "Structured output invocation was rejected: invalid outputSchema.";
-export const STRUCTURED_OUTPUT_VALIDATOR_UNAVAILABLE_ERROR = "Structured output invocation was rejected: validator unavailable.";
 export const MAX_STRUCTURED_OUTPUT_REJECTION_ERROR_BYTES = 4096;
 const MAX_LISTED_ALLOWED_VALUES = 20;
 
@@ -42,7 +41,6 @@ function messageText(content: unknown): string {
 function sanitizeStructuredOutputRejection(text: string): string {
 	const withoutControls = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
 	if (/invalid outputSchema(?:\s*:|$)/i.test(withoutControls)) return INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR;
-	if (/failed to validate structured output:/i.test(withoutControls)) return STRUCTURED_OUTPUT_VALIDATOR_UNAVAILABLE_ERROR;
 	const validationMarker = "Structured output validation failed:";
 	const markerIndex = withoutControls.indexOf(validationMarker);
 	const diagnostic = markerIndex >= 0 ? withoutControls.slice(markerIndex) : withoutControls;
@@ -373,12 +371,8 @@ export async function readStructuredOutput(runtime: StructuredOutputRuntime): Pr
 	} catch (error) {
 		return { error: `Failed to read structured output: ${error instanceof Error ? error.message : String(error)}` };
 	}
-	try {
-		const validation = await validateStructuredOutputValue(runtime.schema, value);
-		if (validation.status === "invalid") return { error: `Structured output validation failed: ${validation.message}` };
-	} catch (error) {
-		return { error: `Failed to validate structured output: ${error instanceof Error ? error.message : String(error)}` };
-	}
+	const validation = await validateStructuredOutputValue(runtime.schema, value);
+	if (validation.status === "invalid") return { error: `Structured output validation failed: ${validation.message}` };
 	return { value };
 }
 
