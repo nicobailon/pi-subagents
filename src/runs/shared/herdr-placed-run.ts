@@ -15,6 +15,7 @@ import { RexPlacedRunOwner } from "./rex-pane-host.ts";
 import { ensureSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
 import { editsLocalDisk } from "./rex-machine.ts";
 import { PLACED_RESTORE_UNSUPPORTED } from "./herdr-machine.ts";
+import { assertPlacedChildThinkingApplied } from "../../shared/child-strict-thinking.ts";
 
 export interface HerdrRunIdentity { runId: string; machineId: string; target: string; session: string | null; workspaceId: string; tabId: string; paneId: string; terminalId: string; agentName: string; nativeSessionId: string; cwd: string; runtimeDir: string }
 export interface HerdrRunSnapshot { connection: "connected" | "unknown" | "closed"; state: PlacementRunState; identity?: HerdrRunIdentity; revision: number }
@@ -135,9 +136,13 @@ export async function reconnectHerdrPiSession<C extends PlacementSockets>(sessio
 }
 
 export async function createHerdrPiSession(launch: ChildSessionLaunch): Promise<ChildSession> {
-	if (!launch.machine) throw new Error("Pane-native Pi launch requires a machine.");
-	if (launch.machine.provider !== "herdr") throw new Error("Herdr pane-native Pi launch requires a Herdr machine.");
+	if (!launch.machine) throw new Error("Placed Pi launch requires a machine.");
 	const policy = serializeHerdrPiLaunch(launch); const runId = safeRunId(launch.runtime.runId);
+	if (launch.machine.provider === "herdr-core") {
+		const { HerdrCorePlacedRunOwner } = await import("./herdr-core-host.ts");
+		return startPlacedPiSession(launch, await HerdrCorePlacedRunOwner.create(launch.machine, runId), policy);
+	}
+	if (launch.machine.provider !== "herdr") throw new Error("Herdr pane-native Pi launch requires a Herdr machine.");
 	return startPlacedPiSession(launch, await HerdrPlacedRunOwner.create(launch.machine, runId), policy);
 }
 
@@ -164,7 +169,9 @@ async function startPlacedPiSession<C extends PlacementSockets>(launch: ChildSes
 		const missingRequired = (launch.runtime.requiredTools ?? []).filter((tool) => !(configured.tools as unknown[]).includes(tool));
 		if (missingRequired.length) throw new Error(`Remote Pi agent '${policy.resources.agent}' did not activate required tools: ${missingRequired.join(", ")}.`);
 		if (launch.model && configured.model !== launch.model.split(":")[0]) throw new Error(`Remote Pi model '${launch.model}' did not resolve to the requested provider/model.`);
-		const identity: HerdrRunIdentity = { runId, machineId: machine.id, target: editsLocalDisk(machine) ? machine.id : machine.target, session: owner.host.sessionOf(connection), workspaceId: owned.workspaceId, tabId: owned.tabId, paneId: owned.paneId, terminalId, agentName, nativeSessionId: manifest.nativeSessionId, cwd: machine.cwd, runtimeDir };
+		const target = machine.provider === "herdr-core" ? machine.parentTerminal : editsLocalDisk(machine) ? machine.id : machine.target;
+		assertPlacedChildThinkingApplied({ model: launch.model, applied: configured.thinkingLevel });
+		const identity: HerdrRunIdentity = { runId, machineId: machine.id, target, session: owner.host.sessionOf(connection), workspaceId: owned.workspaceId, tabId: owned.tabId, paneId: owned.paneId, terminalId, agentName, nativeSessionId: manifest.nativeSessionId, cwd: machine.cwd, runtimeDir };
 		owner.journal(identity);
 		const session = new HerdrPiSession(owner, bridgeForward, bridge, (configured.tools as string[] | undefined), typeof ready.model === "string" ? ready.model : undefined, launch.runtime, ready.initialGit as HerdrRemoteGitStatus | undefined); reconnectSession = session; session.armReconnect(() => reconnectHerdrPiSession(session, launch)); return session;
 	} catch (error) { await owner.cleanup(); throw error; }

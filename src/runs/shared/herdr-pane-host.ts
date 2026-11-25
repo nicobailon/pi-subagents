@@ -5,7 +5,7 @@ import type { HerdrRunIdentity } from "./herdr-placed-run.ts";
 import { HERDR_PI_MODE_ENV, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV } from "./herdr-pi-protocol.ts";
 import { localMachineAccess } from "./local-machine-access.ts";
 import { createPlacedRuntimeDir, hashedRuntimeDirName, PlacedRunOwner, removePlacedRuntimeDir } from "./placed-run-owner.ts";
-import { herdrPaneAllocationKey, withHerdrPaneAllocationLock, type PlacementAgentKind, type PlacementBridgeIdentity, type PlacementEvidenceProof, type PlacementMachineAccess, type PlacementOwnedPane, type PlacementPaneHost, type PlacementPromptOptions, type PlacementReconnectCheck, type PlacementRunState, type PlacementStartOptions } from "./placement-host.ts";
+import { herdrPaneAllocationKey, withHerdrPaneAllocationLock, type PlacementAgentKind, type PlacementBridgeIdentity, type PlacementEvidenceProof, type PlacementMachineAccess, type PlacementOwnedPane, type PlacementOwnedRun, type PlacementPaneHost, type PlacementPromptOptions, type PlacementReconnectCheck, type PlacementRunState, type PlacementStartOptions } from "./placement-host.ts";
 
 type HerdrPlacementMachine = HerdrMachineReference | HerdrLocalMachineReference;
 
@@ -77,8 +77,8 @@ async function startHerdrAgent(connection: HerdrForwardedConnection, owned: Plac
 	const started = parseHerdrAgent(response, "agent_started"), terminalId = idOf(started, "terminal_id"), paneId = idOf(started, "pane_id"); if (paneId !== owned.paneId) throw new Error("Herdr started the native agent in an unexpected pane."); return { terminalId, paneId };
 }
 
-async function closeOwnedHerdrPane(connection: HerdrForwardedConnection, owned: PlacementOwnedPane, terminalId: string | undefined, agentName: string | undefined): Promise<void> {
-	let closed = false; if (terminalId && agentName) { const current = parseHerdrAgent(await connection.client.call<Record<string, unknown>>("agent.get", { target: agentName }), "agent_info"); if (ownsHerdrPane(current, terminalId, owned.paneId)) { await connection.client.call("pane.close", { pane_id: owned.paneId }); closed = true; } } if (!closed) { const snapshot = parseHerdrSessionSnapshot(await connection.client.call<Record<string, unknown>>("session.snapshot")); const occupants = snapshotAgents(snapshot).filter((agent) => agent.pane_id === owned.paneId); if (occupants.length !== 0) throw new Error("Refusing cleanup because startup pane ownership is uncertain."); await connection.client.call("pane.close", { pane_id: owned.paneId }); }
+async function closeOwnedHerdrPane(connection: HerdrForwardedConnection, owned: PlacementOwnedPane, run: PlacementOwnedRun): Promise<void> {
+	let closed = false; if (run.terminalId && run.agentName) { const current = parseHerdrAgent(await connection.client.call<Record<string, unknown>>("agent.get", { target: run.agentName }), "agent_info"); if (ownsHerdrPane(current, run.terminalId, owned.paneId)) { await connection.client.call("pane.close", { pane_id: owned.paneId }); closed = true; } } if (!closed) { const snapshot = parseHerdrSessionSnapshot(await connection.client.call<Record<string, unknown>>("session.snapshot")); const occupants = snapshotAgents(snapshot).filter((agent) => agent.pane_id === owned.paneId); if (occupants.length !== 0) throw new Error("Refusing cleanup because startup pane ownership is uncertain."); await connection.client.call("pane.close", { pane_id: owned.paneId }); }
 }
 
 /** Herdr pane host: Herdr RPC over the Herdr socket, SSH-forwarded for a saved machine and direct for `local`. Ownership is the Herdr terminal_id/pane_id pair; run state comes from agent_status. */

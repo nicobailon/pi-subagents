@@ -115,7 +115,7 @@ The `subagent` tool schema lists `agent`, `task`, `workflow`, `args`, `async`, `
 | `options.extensionBindings` | object | none | Child-only plain JSON keyed by namespaces like `package.name/1` (positive version): at most 16 namespaces, nesting depth 16, 256 total object properties, and 16 KiB of canonical UTF-8 JSON. Native Pi launches only; external runners and retained resumes reject it. A child's extensions read it as canonical JSON from `PI_SUBAGENT_EXTENSION_BINDINGS` in their factory or `session_start`; a foreground child sees it only until its session has started, after which the parent's environment is restored. |
 | `options.preflight` | object | none | Advisory lane hints for raw scripts (`workflow: true` or a script path) only; not accepted with named workflows or direct children. See [bounded workflows](workflows.md#opt-in-bounded-workflows). |
 | `cwd` | string | runtime cwd | Override working directory. With `machine`, the directory on that machine. |
-| `options.machine` | string | - | Herdr saved machine (label or profile id), a Rex host from settings, or `"local"` (a new tab in the Herdr or Rex session this Pi runs in); see [agents.md](agents.md#running-a-pi-child-in-a-new-tab-on-this-machine-rex-or-herdr). |
+| `options.machine` | string | - | Herdr saved machine (label or profile id), a Rex host from settings, or `"local"` (a new tab in the Herdr or Rex session this Pi runs in, or a headless child terminal in Herdr Core); see [agents.md](agents.md#running-a-pi-child-on-this-machine-rex-herdr-or-herdr-core). |
 | `options.maxOutput` | object | none | Final output truncation limits `{ bytes?, lines? }`. For child runs it is only applied when set; there is no default cap on the inline path, so use `outputMode: "file-only"` for large outputs. For workflow script results, the Return, Emitted, and Console sections are always capped, at 200 KB / 5000 lines unless `maxOutput` sets other limits. |
 | `options.artifacts` | boolean | true | Write debug artifacts. |
 | `options.includeProgress` | boolean | false | Include full progress in result. |
@@ -173,7 +173,7 @@ return { first: first.key, rest: rest.map((child) => child.key), receipt };
 
 Use `outputMode: "file-only"` when a saved output may be large and the parent only needs a pointer. The returned text is a compact reference like `Output saved to: /abs/report.md (48.2 KB, 2847 lines). Read this file if needed.` Failed runs and save errors still return normal inline output for debugging.
 
-In a workflow script, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Children with mutation-capable tools retain the direct-write instruction. With `outputSchema`, the runtime persists the structured result as indented JSON instead of the final prose, unless the child wrote the file itself.
+In a workflow script, give each child an explicit output path when later script steps need a durable file reference. A child with only read-only tools, or with `acceptanceRole: "read-only"` whatever its tools, does not need direct filesystem access for `output`: it returns the complete artifact in its final response and the runtime persists it. Other children with mutation-capable tools retain the direct-write instruction. With `outputSchema`, the runtime persists the structured result as indented JSON instead of the final prose, unless the child wrote the file itself.
 
 The `output` field is the API binding; a filename mentioned in task text (for example, `Write your findings to exactly this path: report.md`) is only instruction and does not override runtime routing. When a later workflow step or parent needs a durable file, set `output` on `runs.run`/`runs.all` and return the child’s `outputReference`, `outputPathMapping`, or `artifactPaths`; arbitrary literal strings returned by workflow JavaScript are not rewritten. Omitted child output may use a managed aggregate-derived sibling path.
 
@@ -471,7 +471,7 @@ Acceptance evidence levels are `auto`, `none`, `attested`, `checked`, and `verif
 
 Automatic inference uses only the declared structured role: `acceptanceRole: "writer"` infers checked evidence, with `review: { agent: "reviewer", required: true }` for async and dynamic writers; `"read-only"` infers none; and an omitted role infers lightweight attestation. Task wording, risk vocabulary, and agent names do not affect inference. Explicit acceptance can raise or add policy, while `{ level: "none", reason: "..." }` disables inferred gates according to the existing policy rules.
 
-Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole`. The role affects acceptance inference only and does not change tool access. Review is a separate gate configured with `acceptance.review`.
+Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole`. The role affects acceptance inference and, with `output`, tells a `read-only` child to return the artifact instead of writing the file; it does not change tool access. Review is a separate gate configured with `acceptance.review`.
 
 Edge cases:
 

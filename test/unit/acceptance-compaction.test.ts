@@ -113,7 +113,7 @@ for (const host of ["foreground", "runner"] as const) {
 			} finally {
 				await factory.dispose(); globalThis.fetch = oldFetch;
 				if (oldDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldDir;
-				rmSync(cwd, { recursive: true, force: true });
+				rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 			}
 		});
 	}

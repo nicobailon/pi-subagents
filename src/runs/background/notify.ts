@@ -25,6 +25,7 @@ import { formatParallelHandoffLines, parseKeptBranchLines, readKeptBranches, typ
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
 import { describeWorkflowResume } from "../../workflows/workflow-resume-claim.ts";
 import { isReusableWorkflowStopCause } from "../../workflows/workflow-stop-cause.ts";
+import { isStaleExtensionContextError } from "../../shared/extension-context.ts";
 
 export interface SubagentNotifyChildOutput {
 	workflowKey?: string;
@@ -1089,8 +1090,13 @@ export default function registerSubagentNotify(
 		};
 	};
 	const updateSettleSubscription = (): void => {
-		if (!disposed && unansweredCompletions.size && !unsubscribeSettle)
-			unsubscribeSettle = pi.on?.("agent_before_settle", handleBeforeSettle);
+		if (!disposed && unansweredCompletions.size && !unsubscribeSettle) {
+			try {
+				unsubscribeSettle = pi.on?.("agent_before_settle", handleBeforeSettle);
+			} catch (error) {
+				if (!isStaleExtensionContextError(error)) throw error;
+			}
+		}
 		if (disposed || !unansweredCompletions.size) {
 			unsubscribeSettle?.();
 			unsubscribeSettle = undefined;

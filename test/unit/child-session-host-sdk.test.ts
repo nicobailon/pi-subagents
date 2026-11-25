@@ -52,7 +52,7 @@ describe("loadHostPiCodingAgent", () => {
 		else process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = previous;
 		process.argv[1] = previousArgv1;
 		delete globalThis.__fakeHostSdkLoads;
-		fs.rmSync(tmp, { recursive: true, force: true });
+		fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 	});
 
 	it("imports the SDK entry from the override root", async () => {

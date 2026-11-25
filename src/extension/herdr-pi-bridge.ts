@@ -202,7 +202,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 						if (resolved.tools.includes(WATCHDOG_DIFF_TOOL_NAME) && !pi.getAllTools().some((tool) => tool.name === WATCHDOG_DIFF_TOOL_NAME)) pi.registerTool(createWatchdogDiffTool(captureWatchdogDiffBaseline(process.cwd()), { workingTreeAtLaunch: true }));
 						pi.setActiveTools(resolved.tools); const acknowledged = context ? pi.getActiveTools() : []; const missing = resolved.tools.filter((tool) => !acknowledged.includes(tool)), extra = acknowledged.filter((tool) => !resolved.tools.includes(tool));
 						if (missing.length || extra.length) throw new Error(`Remote Pi did not apply the resolved active-tool set exactly (${[...(missing.length ? [`not available: ${missing.join(", ")}`] : []), ...(extra.length ? [`unexpected: ${extra.join(", ")}`] : [])].join("; ")}).`);
-						configured = true; send({ type: "configured", requestId: frame.requestId, nativeSessionId, agent: resolved.agent, skills: resolved.skills, model: context?.model?.provider && context.model.id ? `${context.model.provider}/${context.model.id}` : undefined, tools: acknowledged }); continue;
+						configured = true; send({ type: "configured", requestId: frame.requestId, nativeSessionId, agent: resolved.agent, skills: resolved.skills, model: context?.model?.provider && context.model.id ? `${context.model.provider}/${context.model.id}` : undefined, thinkingLevel: pi.getThinkingLevel?.(), tools: acknowledged }); continue;
 					}
 					if (frame.type !== "prepare" || typeof frame.requestId !== "string" || pending.has(frame.requestId) || !configured) throw new Error("Invalid, duplicate, or unconfigured bridge request.");
 					const operation = frame.operation;

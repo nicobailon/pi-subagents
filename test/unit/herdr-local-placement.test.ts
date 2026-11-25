@@ -129,6 +129,24 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		} finally { await child?.dispose(); handlers.get("session_shutdown")?.(); restorePane(); }
 	});
 
+	it("refuses a placed child whose remote Pi ran another thinking level when PI_SUBAGENT_STRICT_THINKING is set, and closes its pane", async () => {
+		const cwd = process.cwd(), machine: HerdrLocalMachineReference = { provider: "herdr", id: "local", socket, cwd };
+		const handlers = new Map<string, Function>(), pi = { registerTool() {}, registerCommand() {}, on(name: string, handler: Function) { handlers.set(name, handler); }, getActiveTools: () => ["read"], setActiveTools() {}, getThinkingLevel: () => "medium" };
+		let restorePane = () => {};
+		onAgentStart = (created) => {
+			const env = created.env as Record<string, string>;
+			restorePane = withEnv({ [HERDR_PI_MODE_ENV]: env[HERDR_PI_MODE_ENV]!, [HERDR_PI_RUN_ENV]: env[HERDR_PI_RUN_ENV]!, [HERDR_PI_RUNTIME_DIR_ENV]: env[HERDR_PI_RUNTIME_DIR_ENV]! });
+			registerHerdrPiBridge(pi as never);
+			handlers.get("session_start")?.({}, { sessionManager: { getSessionId: () => "native", getSessionFile: () => "/local/session" }, model: { provider: "p", id: "m" }, isIdle: () => true, hasPendingMessages: () => false });
+		};
+		const launch: ChildSessionLaunch = { cwd, machine, model: "p/m:high", remoteResources: { agent: "worker", toolCeiling: ["read"] }, storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: true, hooks: [], noSkills: true, noContextFiles: true, tools: ["read"], runtime: { ...runtime, runId: "run_herdrstrict01" } };
+		const restoreStrict = withEnv({ PI_SUBAGENT_STRICT_THINKING: "1" });
+		try {
+			await assert.rejects(createHerdrPiSession(launch), /Remote Pi model 'p\/m:high' ran at thinking level 'medium'/u);
+			assert.deepEqual(requests.filter((request) => request.method === "pane.close").map((request) => request.params.pane_id), ["p1"]);
+		} finally { restoreStrict(); handlers.get("session_shutdown")?.(); restorePane(); }
+	});
+
 	it("resolves 'local' to this pane's Herdr server, Herdr over Rex, and refuses outside both before anything starts", () => {
 		const herdrPane = { PATH: process.env.PATH ?? "/usr/bin:/bin", HERDR_BIN: path.join(dir, "herdr"), FAKE_HERDR_DIR: dir, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: socket };
 		assert.deepEqual(resolveMachinePlacement({ machine: "local", cwd: dir, stepCwd: "repo", env: herdrPane, settings: {} }), { machine: { provider: "herdr", id: "local", socket, cwd: path.join(dir, "repo") } });
@@ -137,8 +155,7 @@ describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: p
 		// Herdr inside a Rex tab: its panes inherit REX_SESSION, and Herdr is where this Pi is drawn.
 		assert.deepEqual(resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_SESSION: "work", REX_SESSION: "session:outer", REX_BIN_DIR: path.join(dir, "no-rex") }, settings: {} }).machine, { provider: "herdr", id: "local", socket, session: "work", cwd: dir });
 		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: { ...herdrPane, HERDR_PANE_ID: "w9:p9" }, settings: {} }), /did not return it: herdr pane get w9:p9 exited with code 1: pane not found/u);
-		for (const env of [{ PATH: process.env.PATH ?? "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\) nor Rex \(REX_SESSION\)\.$/u);
-		assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HC_TERMINAL_SOCKET: path.join(dir, "hc.sock"), HC_TERMINAL_ID: "t1" }, settings: {} }), /nor Rex \(REX_SESSION\)\. It runs in a Herdr Core terminal \(HC_TERMINAL_ID\), which machine 'local' does not support\.$/u);
+		for (const env of [{ PATH: process.env.PATH ?? "/usr/bin:/bin" }, { ...herdrPane, HERDR_PANE_ID: " " }, { ...herdrPane, HERDR_ENV: "0" }]) assert.throws(() => resolveMachinePlacement({ machine: "local", cwd: dir, env, settings: {} }), /running in neither Herdr \(HERDR_ENV=1 with HERDR_PANE_ID\), Herdr Core \(HC_TERMINAL_ID\), nor Rex \(REX_SESSION\)\.$/u);
 	});
 	it("runs local scripts with this process's PATH, kept literally", () => {
 		// A quote and a dollar sign are what shell re-quoting or expansion would damage; the
