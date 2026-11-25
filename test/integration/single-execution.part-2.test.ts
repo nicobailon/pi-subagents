@@ -4244,6 +4244,39 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.doesNotMatch(systemPrompt, /runtime will persist it to exactly this path:/);
 	});
 
+	it("tells a read-only role child to return its artifact even when it has bash, and saves the reply", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const tools = ["read", "grep", "bash"];
+		const outputPath = path.join(tempDir, "read-only-role.md");
+		const executor = makeExecutor([
+			makeAgent("analyst", { tools, acceptanceRole: "read-only" }),
+			makeAgent("builder", { tools, acceptanceRole: "writer" }),
+		]);
+
+		mockPi.onCall({ output: "read-only role analysis" });
+		const readOnly = await executor.execute(
+			"single-read-only-role-output",
+			{ agent: "analyst", task: "Write a short design note", output: outputPath, acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const readOnlyTask = readCallArgs().at(-1) ?? "";
+		assert.equal(readOnly.isError, undefined);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "read-only role analysis");
+		assert.match(readOnlyTask, /Return the complete artifact in your final response\./);
+		assert.doesNotMatch(readOnlyTask, /Write your findings to exactly this path/);
+
+		mockPi.onCall({ output: "writer note" });
+		await executor.execute(
+			"single-writer-role-output",
+			{ agent: "builder", task: "Write a short design note", output: path.join(tempDir, "writer-role.md"), acceptance: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.match(readCallArgs().at(-1) ?? "", /Write your findings to exactly this path:/);
+	});
+
 	it("treats string false as disabled output in foreground single runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "inline report" });
 		const executor = makeExecutor([makeAgent("echo", { output: "default-report.md" })]);

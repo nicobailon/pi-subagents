@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import type { OutputMode, PlacementMachineReference, SavedOutputReference } from "../../shared/types.ts";
+import type { AcceptanceRole, OutputMode, PlacementMachineReference, SavedOutputReference } from "../../shared/types.ts";
 import { editsLocalDisk } from "./rex-machine.ts";
 
 const READ_ONLY_OUTPUT_TOOLS = new Set([
@@ -100,6 +100,7 @@ export function resolveSingleOutputPath(
 interface OutputInstructionCapabilities {
 	tools?: string[];
 	mcpDirectTools?: string[];
+	acceptanceRole?: AcceptanceRole;
 }
 
 export function requestedOutputPathFromTask(task: string): string | undefined {
@@ -123,7 +124,7 @@ export function outputPathMappingFromTask(task: string, savedPath: string | unde
 export function injectSingleOutputInstruction(task: string, outputPath: string | undefined, capabilities?: OutputInstructionCapabilities, machine?: PlacementMachineReference): string {
 	if (!outputPath) return task;
 	const remote = machine !== undefined && !editsLocalDisk(machine);
-	const delivery = !remote && (!capabilities || hasOutputWriteCapability(capabilities.tools, capabilities.mcpDirectTools))
+	const delivery = !remote && (!capabilities || (capabilities.acceptanceRole !== "read-only" && hasOutputWriteCapability(capabilities.tools, capabilities.mcpDirectTools)))
 		? `Write your findings to exactly this path: ${outputPath}`
 		: [
 			"Return the complete artifact in your final response.",
