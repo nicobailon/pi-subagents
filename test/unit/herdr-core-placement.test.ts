@@ -101,9 +101,10 @@ describe("Herdr Core local placement", { skip: process.platform === "win32" }, (
 	});
 
 	it("reconnects only to the same parented, labeled terminal and kills the owned Pi on settled disposal", async () => {
-		const candidate = { terminals: [{ address: "t2", parent: "t1", state: "live", status: { state: "working" }, labels: { "pi-subagents.run": "run" } }] };
+		const candidate = { terminals: [{ address: "t2", parent: "t1", state: "live", status: { state: "working" }, labels: { "pi-subagents.run": "run", "pi-subagents.agent": "pi-run" } }] };
 		assert.deepEqual(reconcileHerdrCoreRun(identity, candidate, () => ({ ok: true, cursor: 4 })), { ok: true, state: "working", paneId: "t2", cursor: 4 });
 		assert.match(reconcileHerdrCoreRun(identity, { terminals: [{ ...candidate.terminals[0], parent: "other" }] }, () => ({ ok: true, cursor: 4 })).reason, /ownership changed/u);
+		assert.match(reconcileHerdrCoreRun(identity, { terminals: [{ ...candidate.terminals[0], labels: { ...candidate.terminals[0].labels, "pi-subagents.agent": "other" } }] }, () => ({ ok: true, cursor: 4 })).reason, /ownership changed/u);
 		const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
 		const ownership = { runId: "run", terminalId: "t2", agentName: "pi-run" };
 		await herdrCoreHost.closeOwnedPane(connection(calls), { workspaceId: "t2", tabId: "t2", paneId: "t2" }, ownership);

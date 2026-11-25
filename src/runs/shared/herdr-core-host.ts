@@ -42,7 +42,7 @@ export function reconcileHerdrCoreRun(identity: HerdrRunIdentity, candidate: Her
 	const matches = candidate.terminals.filter((terminal) => terminal.address === identity.terminalId);
 	if (matches.length !== 1) return { ok: false, reason: matches.length ? "Terminal identity is ambiguous." : "Owned terminal is missing." };
 	const terminal = matches[0]!;
-	if (terminal.parent !== identity.target || terminal.labels?.["pi-subagents.run"] !== identity.runId) return { ok: false, reason: "Herdr Core terminal ownership changed." };
+	if (terminal.parent !== identity.target || terminal.labels?.["pi-subagents.run"] !== identity.runId || terminal.labels?.["pi-subagents.agent"] !== identity.agentName) return { ok: false, reason: "Herdr Core terminal ownership changed." };
 	const proof = proveEvidence();
 	if (!proof.ok) return proof;
 	return { ok: true, state: coreRunState(terminal), paneId: identity.terminalId, cursor: proof.cursor };
