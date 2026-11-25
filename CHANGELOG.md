@@ -10,7 +10,7 @@
 - When a foreground single-agent launch finishes or is paused, its reply now names the run id and the exact call that resumes it. Before, the id appeared only in run lists, and the reply gave advice meant for background runs ("completion wakes you"). A detached run keeps that advice, since it can't be resumed while detached.
 - The guide's agent list now says it is a snapshot and that `{action:"list"}` shows the current agents, since agents can be created, disabled or enabled mid-session.
 - When workflow scripts are turned off by config, refusing a `workflow` option or a script now also says to use the top-level `tasks` or `chain` fields instead.
-- The guide now names the run deadline (`timeoutMs`, 30 minutes by default, so a long writer needs more) and points straight at the per-item lanes section (`workflows/parallel-sequential-lanes`) instead of the whole workflows topic, which took two more calls to reach. Guide section lists now show the same `{action:"guide", topic}` form as the guide; `options.topic` still works.
+- The guide now names the run deadline (`timeoutMs`, 30 minutes by default, so a long writer needs more) and points straight at the per-item lanes section (`workflows/parallel-sequential-lanes`) instead of the whole workflows topic, which took an extra call to reach. Guide section lists now show the same `{action:"guide", topic}` form as the guide; `options.topic` still works.
 
 ### Added
 
@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- A number field that a provider blanked to `true` or `"true"`, such as `timeoutMs`, used to become `1`, so a launch could start with a 1 ms deadline. The call now fails and says to pass the field inside `args`.
 - When a builtin agent was disabled in user settings and project settings changed some other field of it, `enable` with `agentScope: "project"` failed with a message that pointed back to the project scope and project settings file, so following it never worked. The message now names the user scope and user settings file that keep the agent disabled.
 - An agent with `extensions: []` no longer prints a warning on every launch saying it may lose a model-provider extension. For a provider built into Pi or defined in `models.json`, nothing was lost, so the warning was a false alarm that hid the real case. Now only a background child whose model's provider is registered by an extension in the parent, and that doesn't load that extension itself, gets a warning, naming the provider and saying its requests go through the provider Pi has without that extension. Foreground children inherit the parent's providers, so they get no warning. Thanks to [@mystery4f](https://github.com/mystery4f) for the report (#3353).
 - A background completion that came due after the host disposed the session without `session_shutdown` (for example an SDK host calling `session.dispose()`) no longer crashes the process. Subscribing the settle hook on the stale extension ctx threw `This extension ctx is stale after session replacement or reload.` from a timer, as an uncaught exception. The stale-ctx error is now ignored; the notice is not sent to the disposed session and its result stays saved. Thanks to [@suveng](https://github.com/suveng) for #3345.

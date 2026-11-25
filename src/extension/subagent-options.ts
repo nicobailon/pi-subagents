@@ -46,6 +46,10 @@ function convertField(key: string, value: unknown, schema: TSchema): unknown {
 		return spelled !== undefined && validator.Check(spelled) ? spelled : value;
 	}
 	if (validator.Check(value)) return value;
+	const numeric = (schema as { type?: unknown }).type === "integer" || (schema as { type?: unknown }).type === "number";
+	if (numeric && (typeof value === "boolean" || value === "true" || value === "false")) {
+		throw new Error(`subagent: '${key}' must be a number, not ${JSON.stringify(value)}. If your fields arrive missing or changed, pass them inside args: subagent({..., args:{${key}: <number>}}).`);
+	}
 	const converted = Value.Convert(schema, structuredClone(value));
 	if (validator.Check(converted)) return converted;
 	if (typeof value !== "string" || !/^\s*[[{]/.test(value)) return value;

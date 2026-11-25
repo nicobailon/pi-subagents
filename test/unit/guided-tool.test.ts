@@ -137,6 +137,14 @@ describe("guide first", () => {
 		assert.equal(subagentReplies(session)[1], "No stoppable async run found for 'x1'.\nNo stoppable async run found for 'x2'.");
 	});
 
+	it("refuses a blanked number field from a provider that gets declared fields, instead of launching with it", { timeout: 60_000 }, async () => {
+		const session = await startParent([{}, { agent: "probe", task: "Inspect", timeoutMs: true }, "done"], undefined, "xai");
+		await session.prompt("go");
+		const reply = subagentReplies(session)[1]!;
+		assert.match(reply, /'timeoutMs' must be a number, not true\. If your fields arrive missing or changed, pass them inside args/);
+		assert.doesNotMatch(reply, /Async:|Run [0-9a-f]{8}/);
+	});
+
 	const listTool = (answer: boolean) => {
 		const prompts: string[] = [];
 		const pi = { on: () => {} };
