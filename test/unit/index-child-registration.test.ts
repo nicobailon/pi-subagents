@@ -304,6 +304,45 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
+	it("keeps the folded guide row within compactResultMaxLines, and stable when expanded in summary display", () => {
+		const heldRows = (subagentConfig: object) => {
+			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-config-"));
+			try {
+				const configDir = path.join(agentDir, "extensions", "subagent");
+				fs.mkdirSync(configDir, { recursive: true });
+				fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(subagentConfig), "utf-8");
+				const script = String.raw`
+					import registerSubagentExtension from "./index.ts";
+					let tool;
+					registerSubagentExtension(new Proxy({
+						events: { on() { return () => {}; }, emit() {} },
+						registerTool(registered) { if (registered.name === "subagent") tool = registered; },
+						registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+					}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } }));
+					const ctx = { cwd: process.cwd(), hasUI: false, sessionManager: { getSessionId() { return "guide-config"; }, getSessionFile() { return null; }, buildContextEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } };
+					const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
+					const result = await tool.execute("held", { agent: "reviewer", task: "Review the auth changes" }, new AbortController().signal, undefined, ctx);
+					const render = (expanded) => tool.renderResult(result, { expanded }, theme, { isError: false, state: {} }).render(200).map((line) => line.trimEnd());
+					process.stdout.write(JSON.stringify({ folded: render(false), expanded: render(true) }));
+				`;
+				return JSON.parse(execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" })) as { folded: string[]; expanded: string[] };
+			} finally {
+				fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+			}
+		};
+
+		const capped = heldRows({ mainWindowRenderer: { compactResultMaxLines: 4 } });
+		assert.equal(capped.folded.length, 4);
+		assert.equal(capped.folded[0], 'held · Would launch reviewer, task "Review the auth changes".');
+		assert.match(capped.folded[3]!, /^… 3 rows hidden · Press .* to expand$/);
+		assert.match(capped.expanded.join("\n"), /^Not launched yet: /);
+
+		const summary = heldRows({ inlineToolDisplay: "summary" });
+		assert.equal(summary.folded.length, 1);
+		assert.match(summary.folded[0]!, /^↳ guide \(~[\d,]+ tok, once\)$/);
+		assert.deepEqual(summary.expanded, summary.folded);
+	});
+
 	it("rejects blank action at the public executor boundary", () => {
 		const script = String.raw`
 			import assert from "node:assert/strict";

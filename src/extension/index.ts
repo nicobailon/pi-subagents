@@ -21,7 +21,7 @@ import { getAgentDir } from "../shared/utils.ts";
 import { isStaleExtensionContextError, withCachedUiContext } from "../shared/extension-context.ts";
 import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
-import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary, setInlineWorkflowCoverage } from "../tui/render.ts";
+import { capFoldedMainWindowResult, clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary, setInlineWorkflowCoverage } from "../tui/render.ts";
 import { guideView, withHeldBadge, withTeachingNotes } from "../tui/teaching-notes.ts";
 import { getInspectorPlugins, registerInspectorEventListener } from "../inspectors/plugins.ts";
 import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
@@ -799,8 +799,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			clearLegacyResultAnimationTimer(context);
 			const renderedResult = { ...result, isError: context.isError };
 			if (result.details?.heldLaunch !== undefined && context.state) (context.state as { heldForGuide?: boolean }).heldForGuide = true;
-			const guide = options.expanded || context.isError ? undefined : guideView(result.details, theme, summaryInlineToolDisplay);
-			if (guide) return summaryInlineToolDisplay ? guide : withTeachingNotes(guide, renderedResult, false, theme);
+			const guide = context.isError || (options.expanded && !summaryInlineToolDisplay) ? undefined : guideView(result.details, theme, summaryInlineToolDisplay);
+			if (guide) return summaryInlineToolDisplay ? guide : withTeachingNotes(capFoldedMainWindowResult(guide, config.mainWindowRenderer, theme), renderedResult, false, theme);
 			return summaryInlineToolDisplay
 				? renderSubagentSummary(renderedResult, options, theme)
 				: withTeachingNotes(renderSubagentResult(renderedResult, options, theme, undefined, config.mainWindowRenderer, foregroundDetachShortcut), renderedResult, options.expanded, theme);
