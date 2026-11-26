@@ -50,7 +50,7 @@ import { listHerdrProjectPaneRoots, restoreHerdrProjectPaneSnapshots } from "../
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { createWaitExecute } from "../runs/background/wait-tool.ts";
-import { buildGuide, callNotes, createGuidedSubagentTool, noticeNotes, type CallFacts, type GuideReply, type TaughtState } from "./guided-tool.ts";
+import { buildGuide, callNotes, createGuidedSubagentTool, liftArgsFields, noticeNotes, type CallFacts, type GuideReply, type TaughtState } from "./guided-tool.ts";
 import { registerPinnedTool, setDeclarationPinning } from "./declaration-pinning.ts";
 import { buildActiveRunsSection } from "./active-runs-prompt.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
@@ -774,7 +774,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		run: (id, request, nested, signal, onUpdate, ctx) => nested
 			? executeSubagentReady(id, request, new AbortController().signal, onUpdate, ctx)
 			: executeSubagentCollapsed(id, request, signal ?? new AbortController().signal, onUpdate, ctx),
-		renderCall(args, theme, context) {
+		renderCall(callArgs, theme, context) {
+			const args = liftArgsFields(callArgs);
 			const gap = " ".repeat(config.mainWindowRenderer?.horizontalSpacing ?? 1);
 			const title = theme.fg("toolTitle", theme.bold("subagent"));
 			const options = args.options && typeof args.options === "object" ? args.options as Record<string, unknown> : {};

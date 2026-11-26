@@ -188,7 +188,7 @@ describe("guide first", () => {
 	});
 
 	it("accepts a list id from a provider that blanks undeclared fields", { timeout: 60_000 }, async () => {
-		const session = await startParent([{}, { action: "stop", id: ["x1", "x2"] }, "stopped"], undefined, "xai");
+		const session = await startParent([{}, { args: { action: "stop", id: ["x1", "x2"] } }, "stopped"], undefined, "xai");
 		await session.prompt("go");
 		assert.equal(subagentReplies(session)[1], "No stoppable async run found for 'x1'.\nNo stoppable async run found for 'x2'.");
 	});
@@ -394,6 +394,7 @@ describe("taught state", () => {
 		const [guide, blank, empty, launched, status, parallel] = subagentReplies(session);
 		assert.match(guide!, /^- fields arrive blank\? put them all in args: subagent\(\{args:\{agent, task, …\}\}\)$/m);
 		assert.equal(blank, BLANK_CALL_TEXT);
+		assert.match(blank!, /The full guide: subagent\(\{action:"guide"\}\)\.$/);
 		assert.equal(empty, BLANK_CALL_TEXT);
 		assert.match(launched!, /done/);
 		assert.doesNotMatch(status!, /blank|unknown|must be/i, status);
@@ -404,6 +405,40 @@ describe("taught state", () => {
 		await first.prompt("go");
 		assert.match(subagentReplies(first)[0]!, new RegExp(`^${BLANK_CALL_TEXT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n\\nsubagent guide\\.`));
 		assert.equal(mockPi.callCount(), 2, "a blank first launch starts nothing");
+	});
+
+	it("teaches the args form when a named workflow arrives as workflow: true, then runs it from args", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const tasks = [{ agent: "probe", task: "Inspect" }];
+		const blanked = { workflow: true, args: { tasks } };
+		const session = await startParent([blanked, "held", blanked, { args: { workflow: "parallel", args: { tasks }, async: false } }, "done"], undefined, "xai");
+		await session.prompt("go");
+		await session.prompt("go");
+		const [held, failed] = subagentReplies(session);
+		assert.ok(held!.includes('put the whole call in args: subagent({args:{workflow:"parallel", args:{tasks:[…]}}})'), held);
+		assert.ok(failed!.includes('put the whole call in args: subagent({args:{workflow:"parallel", args:{tasks:[…]}}})'), failed);
+		assert.equal(mockPi.callCount(), 1, "the parallel workflow sent inside args runs");
+	});
+
+	it("keeps a field's value from args when the same field arrives blank at the top level", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const session = await startParent([{}, { agent: true, task: true, args: { agent: "probe", task: "Inspect", async: false } }, { action: true, args: { action: "status" } }, "done"], undefined, "xai");
+		await session.prompt("go");
+		const [, launched, status] = subagentReplies(session);
+		assert.match(launched!, /done/);
+		assert.equal(mockPi.callCount(), 1);
+		assert.doesNotMatch(status!, /Unknown|must be/, status);
+	});
+
+	it("treats args: \"null\" as left out instead of failing validation", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const session = await startParent([{}, { agent: "probe", task: "Inspect", async: false, args: "null" }, "done"]);
+		await session.prompt("go");
+		assert.match(subagentReplies(session)[1]!, /done/);
+		assert.equal(mockPi.callCount(), 1);
 	});
 
 	it("creates a schedule whose fields arrive only inside args", { timeout: 60_000 }, async () => {

@@ -165,6 +165,17 @@ describe("watchdog turn delta formatter", () => {
 		assert.doesNotMatch(activity, /launched call-3/);
 	});
 
+	it("counts launches and actions whose fields arrive inside args as orchestration activity", () => {
+		const calls = [{ args: { agent: "probe", task: "Inspect" } }, { args: { action: "status" } }, { args: { workflow: "parallel", args: { tasks: [] } } }]
+			.map((args, index) => ({ type: "toolCall", id: `call-${index}`, name: "subagent", arguments: args }));
+		const activity = formatWatchdogOrchestrationActivity({
+			type: "turn_end",
+			message: { content: calls },
+			toolResults: calls.map((call) => ({ role: "toolResult", toolCallId: call.id, toolName: "subagent", content: [{ type: "text", text: `launched ${call.id}` }] })),
+		});
+		for (const id of ["call-0", "call-1", "call-2"]) assert.match(activity, new RegExp(`launched ${id}`));
+	});
+
 	it("keeps only answered contact_supervisor decision and interview requests as supervisor replies", () => {
 		const calls = [
 			{ id: "decision", reason: "need_decision" },

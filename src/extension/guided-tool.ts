@@ -7,7 +7,7 @@ import { disabledFeatureSectionNotice, type DisabledFeatureSurface } from "../sh
 import { isStaleExtensionContextError } from "../shared/extension-context.ts";
 import type { Details, GuideSummary } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
-import { prepareSubagentToolArguments } from "./subagent-options.ts";
+import { isUnsetPlaceholder, prepareSubagentToolArguments } from "./subagent-options.ts";
 
 export const SUBAGENT_TOOL_DESCRIPTION = "Delegate work to child agents and manage their runs. Call subagent({}) first for the guide: agents, fields, all actions.";
 export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({ type: "object", properties: { args: { type: "object", additionalProperties: true } }, additionalProperties: true });
@@ -25,7 +25,15 @@ export function isBlankCall(params: Record<string, unknown>): boolean {
 	return !entries.every(realAsBlank);
 }
 
-export const BLANK_CALL_TEXT = 'This call\'s fields arrived empty or blank: this provider may drop fields the tool doesn\'t declare. Pass them inside args: subagent({args:{agent, task, …}}) or subagent({args:{action:"status"}}).';
+export const BLANK_CALL_TEXT = 'This call\'s fields arrived empty or blank: this provider may drop fields the tool doesn\'t declare. Pass them inside args: subagent({args:{agent, task, …}}) or subagent({args:{action:"status"}}). The full guide: subagent({action:"guide"}).';
+
+export const BLANK_WORKFLOW_TEXT = 'If workflow:"<name>" arrived as true, this provider may blank fields the tool doesn\'t declare; put the whole call in args: subagent({args:{workflow:"parallel", args:{tasks:[…]}}}).';
+
+function blankedWorkflowName(request: Record<string, unknown>): boolean {
+	const args = request.args;
+	return (request.workflow === true || request.workflow === "true") && request.workflowScript === undefined
+		&& typeof args === "object" && args !== null && !Array.isArray(args) && Object.keys(args).length > 0;
+}
 
 export interface GuideAgent {
 	name: string;
@@ -164,7 +172,9 @@ export function liftArgsFields(params: Record<string, unknown>): Record<string, 
 	const hasWorkflow = workflow !== undefined && workflow !== "null" && workflow !== false && workflow !== "false";
 	if (hasWorkflow || options.script !== undefined) return params;
 	const { args: _args, ...rest } = params;
-	return { ...(args as Record<string, unknown>), ...rest };
+	const inner = args as Record<string, unknown>;
+	const kept = Object.entries(rest).filter(([key, value]) => !(Object.hasOwn(inner, key) && blankValue(value)));
+	return { ...inner, ...Object.fromEntries(kept) };
 }
 
 const TAUGHT_BY_GUIDE = new Set(["status", "steer", "resume", "stop", "interrupt", "wait", "reply", "list", "guide"]);
@@ -242,7 +252,7 @@ export function holdText(request: Record<string, unknown>, sibling: boolean): st
 	const held = sibling
 		? `Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.${block}`
 		: `Not launched yet: this is the session's first subagent call, so here is the guide. Call again to launch.${block}`;
-	return `${held}\n${launchPreview(request)}`;
+	return `${held}\n${launchPreview(request)}${blankedWorkflowName(request) ? `\n${BLANK_WORKFLOW_TEXT}` : ""}`;
 }
 
 export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolicy: AuthorityPolicyConfig | undefined): SubagentParamsLike | string {
@@ -443,7 +453,12 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 		label: "Subagent",
 		description: SUBAGENT_TOOL_DESCRIPTION,
 		parameters: SUBAGENT_TOOL_PARAMETERS,
-		prepareArguments: (args) => prepareSubagentToolArguments(args) as Record<string, unknown>,
+		prepareArguments: (args) => {
+			const prepared = prepareSubagentToolArguments(args) as Record<string, unknown>;
+			if (!isUnsetPlaceholder(prepared.args)) return prepared;
+			const { args: _unset, ...rest } = prepared;
+			return rest;
+		},
 		async execute(id, rawParams, signal, onUpdate, ctx) {
 			const nested = nestedCallIds.delete(id);
 			taught.ensure(ctx);
@@ -555,6 +570,7 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				if (freshTopic) keys.push(`topic:${rare}`);
 			}
 			if (replyHint && result.isError) notes.push(replyHint);
+			if (result.isError && blankedWorkflowName(record)) notes.push(BLANK_WORKFLOW_TEXT);
 			for (const note of await deps.notes?.(request, result, ctx) ?? []) {
 				if (note.key && !taught.teach(note.key).length) continue;
 				notes.push(note.text);

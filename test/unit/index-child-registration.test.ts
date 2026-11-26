@@ -87,8 +87,11 @@ describe("subagent extension child mode", () => {
 				registeredTool.renderCall({ workflow: true, async: true }, theme).text,
 				registeredTool.renderCall({ workflow: "./ci/sweep.js" }, theme).text,
 				registeredTool.renderCall({ workflow: "review" }, theme).text,
+				registeredTool.renderCall({ args: { agent: "probe", task: "Inspect" } }, theme).text,
+				registeredTool.renderCall({ args: { action: "status" } }, theme).text,
+				registeredTool.renderCall({ args: { workflow: "parallel", args: { tasks: [] } } }, theme).text,
 			];
-			const expected = ["subagent workflow (reply block) [async]", "subagent workflow ./ci/sweep.js", "subagent workflow review"];
+			const expected = ["subagent workflow (reply block) [async]", "subagent workflow ./ci/sweep.js", "subagent workflow review", "subagent probe", "subagent status", "subagent workflow parallel"];
 			if (JSON.stringify(rows) !== JSON.stringify(expected)) throw new Error("expected " + JSON.stringify(expected) + ", got " + JSON.stringify(rows));
 		`;
 		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" });
