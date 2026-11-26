@@ -17,6 +17,8 @@ async function until(predicate: () => boolean, diagnostic?: () => unknown) {
 	while (!predicate()) { assert.ok(Date.now() < deadline, `condition did not become true${diagnostic ? `: ${JSON.stringify(diagnostic())}` : ""}`); await delay(10); }
 }
 function processAlive(pid: number) { try { process.kill(pid, 0); return true; } catch { return false; } }
+const MSYS_MISSING_TMP_WARNING = "bash.exe: warning: could not find /tmp, please create!\n";
+function commandOutput(text: string) { return text.startsWith(MSYS_MISSING_TMP_WARNING) ? text.slice(MSYS_MISSING_TMP_WARNING.length) : text; }
 function serviceCommand(pidFile: string) {
 	const script = `${pidFile}.cjs`;
 	const pending = `${pidFile}.pending`;
@@ -40,7 +42,7 @@ describe("child commands using Pi's real bash backend", () => {
 			const pid2 = Number(fs.readFileSync(secondPid));
 			assert.ok(pid1 > 0 && pid2 > 0, `services must publish valid PIDs: ${pid1}, ${pid2}`);
 			const continued = await bash.execute("continue", { command: "printf continued" }, undefined, undefined, ctx);
-			assert.equal(continued.content[0].text, "continued");
+			assert.equal(commandOutput(continued.content[0].text), "continued");
 			const cancelled = await controlChildCommand(dir, "cancel", "first");
 			assert.equal(cancelled.commands[0].toolCallId, "first");
 			assert.ok(["cancel_requested", "cancelled"].includes(cancelled.commands[0].state));
@@ -83,7 +85,7 @@ describe("child commands using Pi's real bash backend", () => {
 			await assert.rejects(bash.execute("timeout", { command: "sleep 10", timeout: 0.05 }, undefined, undefined, ctx), /timed out/);
 			assert.equal(commands.operate("status", "timeout").commands[0].state, "failed");
 			const result = await bash.execute("recover", { command: "printf recovered" }, undefined, undefined, ctx);
-			assert.equal(result.content[0].text, "recovered");
+			assert.equal(commandOutput(result.content[0].text), "recovered");
 			await commands.finish();
 		} finally { await commands.shutdown(); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
@@ -133,7 +135,7 @@ describe("Pi agent loop command cancellation", () => {
 			assert.equal(results[0].toolCallId, "blocked");
 			assert.equal(results[0].isError, true);
 			assert.equal(results[1].toolCallId, "after-cancel");
-			assert.equal(results[1].content[0].text, "continued");
+			assert.equal(commandOutput(results[1].content[0].text), "continued");
 			assert.equal(agent.state.errorMessage, undefined);
 		} finally { agent.abort(); await commands.shutdown(); await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 	});
@@ -160,7 +162,7 @@ describe("Pi agent loop command cancellation", () => {
 			await commands.finish();
 			const results = agent.state.messages.filter((message) => message.role === "toolResult");
 			assert.match(results[0].content[0].text, /still running/);
-			assert.equal(results[1].content[0].text, "continued");
+			assert.equal(commandOutput(results[1].content[0].text), "continued");
 			assert.equal(results[2].isError, false);
 			assert.equal(JSON.parse(results[2].content[0].text).commands[0].state, "cancelled");
 			assert.equal(agent.state.errorMessage, undefined);
