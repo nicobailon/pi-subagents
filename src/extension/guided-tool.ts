@@ -10,27 +10,7 @@ import { finalizeToolResult } from "./tool-result.ts";
 import { prepareSubagentToolArguments } from "./subagent-options.ts";
 
 export const SUBAGENT_TOOL_DESCRIPTION = "Delegate work to child agents and manage their runs. Call subagent({}) first for the guide: agents, fields, all actions.";
-export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({ type: "object", properties: {}, additionalProperties: true });
-const declaredString = { type: "string" } as const;
-export const SUBAGENT_TOOL_FIELD_PARAMETERS = Type.Unsafe<Record<string, unknown>>({
-	type: "object",
-	properties: {
-		action: declaredString, agent: declaredString, task: declaredString, id: declaredString, message: declaredString,
-		cwd: declaredString, context: declaredString, model: declaredString, output: declaredString,
-		label: declaredString, worktree: { type: "boolean" }, workflow: declaredString, args: { type: "object", additionalProperties: true },
-		topic: declaredString,
-	},
-	additionalProperties: true,
-});
-
-const modelsNeedingFields = new Set<string>();
-
-export function needsDeclaredFields(model: { provider?: string; id?: string } | undefined): boolean {
-	if (!model?.provider) return false;
-	if (model.provider === "xai") return true;
-	if (model.provider === "github-copilot" && model.id?.toLowerCase().includes("kimi")) return true;
-	return modelsNeedingFields.has(`${model.provider}/${model.id ?? ""}`);
-}
+export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({ type: "object", properties: { args: { type: "object", additionalProperties: true } }, additionalProperties: true });
 
 const TRUE_VALUED_FIELDS = new Set(["workflow", "async", "worktree", "all", "nonBlocking", "stopOnAttention", "clarify", "share", "fast", "foregroundOnly"]);
 const blankValue = (value: unknown) => value === true || value === "true" || value === null || value === "null"
@@ -45,11 +25,7 @@ export function isBlankCall(params: Record<string, unknown>): boolean {
 	return !entries.every(realAsBlank);
 }
 
-export function fieldsTaughtKey(model: { provider?: string; id?: string }): string {
-	return `fields:${model.provider}/${model.id ?? ""}`;
-}
-
-export const FIELDS_DECLARED_TEXT = "This call's fields arrived blank: this provider drops fields the tool doesn't declare. The tool now declares its main fields; call again.";
+export const BLANK_CALL_TEXT = 'This call\'s fields arrived empty or blank: this provider may drop fields the tool doesn\'t declare. Pass them inside args: subagent({args:{agent, task, …}}) or subagent({args:{action:"status"}}).';
 
 export interface GuideAgent {
 	name: string;
@@ -96,7 +72,8 @@ const MANAGE_GUIDE = `Manage (id from the launch reply, or a prefix):
 - {action:"wait", id} (or all:true) blocks, only when this same turn needs the result
 - also: list, get, models, doctor, validate, create, update, delete, dismiss
 - families: schedule, mission, worktree, lane, inspector, project, watchdog, command, refine
-- unsure? {action:"guide", topic:"<action, family or subject, e.g. workflows>"}; a wrong guess lists topics`;
+- unsure? {action:"guide", topic:"<action, family or subject, e.g. workflows>"}; a wrong guess lists topics
+- fields arrive blank? put them all in args: subagent({args:{agent, task, …}})`;
 
 const GUIDE_LAUNCH_ROW_SKIPS = new Set(["task", "label"]);
 const GUIDE_LAUNCH_ROW = [
@@ -176,7 +153,7 @@ export function actionTopicKey(name: string): string | undefined {
 }
 
 export function actionTopicText(key: string, action = key): string {
-	return `${ACTION_TOPICS[key]!}\nIf your fields arrive missing, pass them inside args: subagent({action:"${action}", args:{…}}).`;
+	return `${ACTION_TOPICS[key]!}\nIf your fields arrive missing, pass them inside args: subagent({args:{action:"${action}", …}}).`;
 }
 
 export function liftArgsFields(params: Record<string, unknown>): Record<string, unknown> {
@@ -189,8 +166,6 @@ export function liftArgsFields(params: Record<string, unknown>): Record<string, 
 	const { args: _args, ...rest } = params;
 	return { ...(args as Record<string, unknown>), ...rest };
 }
-
-export const EMPTY_CALL_TEXT = 'This call arrived with no fields. If you sent fields, this provider may drop them; pass the fields an action needs inside args. The full guide: subagent({action:"guide"}).';
 
 const TAUGHT_BY_GUIDE = new Set(["status", "steer", "resume", "stop", "interrupt", "wait", "reply", "list", "guide"]);
 
@@ -206,10 +181,6 @@ export function misplacedGuideCall(action: string): string | undefined {
 }
 
 const LIST_ID_ACTIONS = new Set(["stop", "interrupt", "dismiss"]);
-
-function listIdAsText(args: Record<string, unknown>): Record<string, unknown> {
-	return typeof args.action === "string" && LIST_ID_ACTIONS.has(args.action) && Array.isArray(args.id) ? { ...args, id: JSON.stringify(args.id) } : args;
-}
 
 function listedIds(params: Record<string, unknown>): string[] | undefined {
 	if (typeof params.action !== "string" || !LIST_ID_ACTIONS.has(params.action)) return undefined;
@@ -463,24 +434,8 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 	pi.on("session_compact", (_event, ctx) => taught.invalidate(ctx));
 	pi.on("turn_start", () => taught.nextTurn());
 	const nestedCallIds = new Set<string>();
-	let emptyCallsInARow = 0;
 	pi.on("tool_call", (event) => {
 		if (event.toolName === "subagent" && event.parentToolCallId) nestedCallIds.add(event.toolCallId);
-	});
-	const declare = (fields: boolean) => {
-		const parameters = fields ? SUBAGENT_TOOL_FIELD_PARAMETERS : SUBAGENT_TOOL_PARAMETERS;
-		if (tool.parameters === parameters) return;
-		tool.parameters = parameters;
-		pi.registerTool(tool);
-	};
-	const fieldsFor = (model: { provider?: string; id?: string } | undefined) => needsDeclaredFields(model) || (model?.provider !== undefined && taught.has(fieldsTaughtKey(model)));
-	pi.on("session_start", (_event, ctx) => {
-		taught.ensure(ctx);
-		declare(fieldsFor(ctx?.model));
-	});
-	pi.on("model_select", (event) => {
-		taught.ensure();
-		declare(fieldsFor(event.model));
 	});
 	const tool: ToolDefinition<typeof SUBAGENT_TOOL_PARAMETERS, Details> = {
 		name: "subagent",
@@ -488,21 +443,16 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 		label: "Subagent",
 		description: SUBAGENT_TOOL_DESCRIPTION,
 		parameters: SUBAGENT_TOOL_PARAMETERS,
-		prepareArguments: (args) => listIdAsText(prepareSubagentToolArguments(args) as Record<string, unknown>),
+		prepareArguments: (args) => prepareSubagentToolArguments(args) as Record<string, unknown>,
 		async execute(id, rawParams, signal, onUpdate, ctx) {
 			const nested = nestedCallIds.delete(id);
 			taught.ensure(ctx);
-			const blank = !nested && taught.has("guide") && isBlankCall(rawParams as Record<string, unknown>);
-			const noFields = Object.keys(rawParams as Record<string, unknown>).length === 0;
-			emptyCallsInARow = blank && noFields ? emptyCallsInARow + 1 : 0;
-			if (blank) {
-				if (tool.parameters !== SUBAGENT_TOOL_FIELD_PARAMETERS && (!noFields || emptyCallsInARow >= 2)) {
-					const keys = ctx?.model?.provider ? taught.teach(fieldsTaughtKey(ctx.model)) : [];
-					if (ctx?.model?.provider) modelsNeedingFields.add(`${ctx.model.provider}/${ctx.model.id ?? ""}`);
-					declare(true);
-					return guideResult(FIELDS_DECLARED_TEXT, keys);
-				}
-				return guideResult(EMPTY_CALL_TEXT, []);
+			const raw = rawParams as Record<string, unknown>;
+			if (!nested && Object.keys(raw).length > 0 && isBlankCall(raw)) {
+				if (taught.has("guide")) return guideResult(BLANK_CALL_TEXT, []);
+				taught.teach("guide");
+				const reply = await deps.guide(ctx);
+				return guideResult(`${BLANK_CALL_TEXT}\n\n${reply.text}`, ["guide"], reply.summary ? { guide: reply.summary } : {});
 			}
 			const prepared = prepareSubagentToolArguments(rawParams) as Record<string, unknown>;
 			const lifted = liftArgsFields(prepared);
@@ -511,7 +461,7 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			const rawTopic = params.topic ?? options.topic;
 			const topic = rawTopic === "null" ? undefined : rawTopic;
 			const empty = Object.keys(params).length === 0;
-			if (empty && taught.has("guide")) return guideResult(EMPTY_CALL_TEXT, []);
+			if (empty && taught.has("guide")) return guideResult(BLANK_CALL_TEXT, []);
 			if (empty || (params.action === "guide" && topic === undefined)) {
 				const again = taught.teach("guide").length === 0;
 				const reply = await deps.guide(ctx);
@@ -549,7 +499,7 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			const rare = request.action ? rareActionTopic(request.action) : undefined;
 			const record = request as Record<string, unknown>;
 			const replyHint = request.action === "reply" && (record.replyTo === undefined || record.message === undefined)
-				? 'If your fields arrive missing, pass them inside args: subagent({action:"reply", args:{replyTo, message}}).'
+				? 'If your fields arrive missing, pass them inside args: subagent({args:{action:"reply", replyTo, message}}).'
 				: undefined;
 			const runOne = async (one: SubagentParamsLike, runCtx: ExtensionContext = ctx): Promise<AgentToolResult<Details>> => {
 				try {
