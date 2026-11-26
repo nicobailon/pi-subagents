@@ -363,18 +363,21 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
 	return lines.join("\n");
 }
 
-// A status lookup that was given an id and found nothing names the id, so the caller can tell an id that
-// never arrived from one that matches no run (#3093), and says what is active, so it has nothing left to guess.
-export function formatMissedStatusTarget(requestedId: string | undefined, activeRunIds: () => string[]): string {
+function formatMissedStatusTarget(requestedId: string | undefined, deps: RunStatusDeps): string {
 	if (!requestedId) return "Async run not found. Provide id or dir.";
 	const missed = `Async run not found for '${requestedId}'. No run matches that id or prefix.`;
-	let active: string[];
+	const sessionId = deps.state?.currentSessionId;
+	if (deps.nested || !sessionId) return `${missed} Use the run id from the launch reply.`;
 	try {
-		active = activeRunIds();
+		const runs = listAsyncRuns(deps.asyncDirRoot ?? DIRS.async, {
+			states: ["queued", "running"], sessionId, resultsDir: deps.resultsDir ?? DIRS.results,
+			kill: deps.kill, now: deps.now, includeNested: false,
+		});
+		return runs.length === 0 ? `${missed} No active top-level async runs were found in this session.`
+			: `${missed} Active top-level async runs in this session: ${runs.map((run) => run.id).join(", ")}.`;
 	} catch {
 		return missed;
 	}
-	return active.length === 0 ? `${missed} No async run is active in this session.` : `${missed} Active async runs in this session: ${active.join(", ")}.`;
 }
 
 export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDeps = {}): AgentToolResult<Details> {
@@ -490,7 +493,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 
 	if (!asyncDir && !resultPath) {
 		return {
-			content: [{ type: "text", text: formatMissedStatusTarget(location.resolvedId, () => listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: currentSessionId, resultsDir, kill: deps.kill, now: deps.now }).map((run) => run.id)) }],
+			content: [{ type: "text", text: formatMissedStatusTarget(resolvedId, deps) }],
 			isError: true,
 			details: { mode: "single", results: [] },
 		};

@@ -1054,7 +1054,7 @@ describe("async run status inspection", () => {
 
 			const missed = inspect();
 			assert.equal(missed.isError, true);
-			assert.equal(textContent(missed), "Async run not found for 'mission'. No run matches that id or prefix. No async run is active in this session.");
+			assert.equal(textContent(missed), "Async run not found for 'mission'. No run matches that id or prefix. No active top-level async runs were found in this session.");
 
 			const sessionFile = path.join(root, "session.jsonl");
 			fs.writeFileSync(sessionFile, "", "utf-8");
@@ -1066,7 +1066,10 @@ describe("async run status inspection", () => {
 			updateActiveRunIndex(path.join(asyncRoot, "live-run"), "running");
 			const withActive = inspect();
 			assert.equal(withActive.isError, true);
-			assert.equal(textContent(withActive), "Async run not found for 'mission'. No run matches that id or prefix. Active async runs in this session: live-run.");
+			assert.equal(textContent(withActive), "Async run not found for 'mission'. No run matches that id or prefix. Active top-level async runs in this session: live-run.");
+
+			const unscoped = inspectSubagentStatus({ id: "mission" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(textContent(unscoped), "Async run not found for 'mission'. No run matches that id or prefix. Use the run id from the launch reply.");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
