@@ -17,9 +17,6 @@ export const DEFAULT_FAST_TOOL_TIMEOUT_TOOLS = new Set([
 
 export const TOOL_TIMEOUT_EXEMPT_TOOLS = new Set(["contact_supervisor", "intercom", "subagent"]);
 
-// Backward-compatible export name for existing callers/tests.
-export const TOOL_TIMEOUT_ALLOWLIST = TOOL_TIMEOUT_EXEMPT_TOOLS;
-
 export function isToolTimeoutExempt(toolName: string | undefined): boolean {
 	return toolName !== undefined && TOOL_TIMEOUT_EXEMPT_TOOLS.has(toolName);
 }

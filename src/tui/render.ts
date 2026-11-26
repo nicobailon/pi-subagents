@@ -3340,7 +3340,6 @@ function foregroundWorkflowChecklist(details: Details): WorkflowChecklistProject
 	if (details.mode !== "workflow") return undefined;
 	const stageNodes = details.workflowGraph ? workflowGraphStageNodes(details.workflowGraph) : [];
 	const steps: WorkflowChecklistStep[] = details.results.flatMap((result, resultIndex) => {
-		const stableIndex = foregroundResultIndex(details, resultIndex);
 		const workflowKey = (result as { workflowKey?: unknown }).workflowKey;
 		if (details.workflowGraph && typeof workflowKey !== "string") return [];
 		const node = typeof workflowKey === "string"

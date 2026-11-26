@@ -15,7 +15,7 @@ export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({ t
 
 const TRUE_VALUED_FIELDS = new Set(["workflow", "async", "worktree", "all", "nonBlocking", "stopOnAttention", "clarify", "share", "fast", "foregroundOnly"]);
 
-export function isBlankCall(params: Record<string, unknown>): boolean {
+function isBlankCall(params: Record<string, unknown>): boolean {
 	const entries = Object.entries(params);
 	if (entries.length === 0) return true;
 	if (!entries.every(([, value]) => isBlankValue(value))) return false;
@@ -26,7 +26,7 @@ export function isBlankCall(params: Record<string, unknown>): boolean {
 
 export const BLANK_CALL_TEXT = 'This call\'s fields arrived empty or blank: this provider may drop fields the tool doesn\'t declare. Pass them inside args: subagent({args:{agent, task, …}}) or subagent({args:{action:"status"}}). The full guide: subagent({action:"guide"}).';
 
-export const BLANK_WORKFLOW_TEXT = 'If workflow:"<name>" arrived as true or was dropped, put the whole call in args: subagent({args:{workflow:"<name>", args:{…}}}).';
+const BLANK_WORKFLOW_TEXT = 'If workflow:"<name>" arrived as true or was dropped, put the whole call in args: subagent({args:{workflow:"<name>", args:{…}}}).';
 
 function blankedWorkflowName(request: Record<string, unknown>): boolean {
 	const args = request.args;
@@ -39,7 +39,7 @@ function droppedWorkflowName(params: Record<string, unknown>, message: string): 
 		&& ["tasks", "chain"].some((key) => params[key] !== undefined && message.includes(`unknown field '${key}'`));
 }
 
-export interface GuideAgent {
+interface GuideAgent {
 	name: string;
 	description?: string;
 }
@@ -103,10 +103,6 @@ export interface GuideReply {
 	summary?: GuideSummary;
 }
 
-export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch: boolean; child?: boolean; disabled?: DisabledFeatureSurface }): string {
-	return buildGuide(agents, options).text;
-}
-
 export function buildGuide(agents: readonly GuideAgent[], options: { canLaunch: boolean; child?: boolean; disabled?: DisabledFeatureSurface }): GuideReply {
 	if (!options.canLaunch) {
 		return { text: `subagent guide (child run). This child cannot launch runs. {action:"wait"} (or all:true) blocks until this child's own background work finishes. Ask your parent with contact_supervisor.` };
@@ -164,17 +160,17 @@ export function actionTopicKey(name: string): string | undefined {
 	return undefined;
 }
 
-export function actionTopicText(key: string, action = key): string {
+function actionTopicText(key: string, action = key): string {
 	return `${ACTION_TOPICS[key]!}\nIf your fields arrive missing, pass them inside args: subagent({args:{action:"${action}", …}}).`;
 }
 
 const TAUGHT_BY_GUIDE = new Set(["status", "steer", "resume", "stop", "interrupt", "wait", "reply", "list", "guide"]);
 
-export function rareActionTopic(action: string): string | undefined {
+function rareActionTopic(action: string): string | undefined {
 	return TAUGHT_BY_GUIDE.has(action) ? undefined : actionTopicKey(action);
 }
 
-export function misplacedGuideCall(action: string): string | undefined {
+function misplacedGuideCall(action: string): string | undefined {
 	const match = /^(?:(.+)\.guide|guide\.(.+))$/.exec(action);
 	if (!match) return undefined;
 	const topic = match[1] ?? match[2]!;
@@ -207,7 +203,7 @@ function listedIdsResult(ids: readonly string[], results: readonly AgentToolResu
 	return { content: [{ type: "text", text: lines.join("\n") }], ...(results.every((result) => result.isError) ? { isError: true } : {}), details: { mode: "management", results: [] } };
 }
 
-export function isLaunchRequest(params: Record<string, unknown>): boolean {
+function isLaunchRequest(params: Record<string, unknown>): boolean {
 	return params.action === undefined && (params.agent !== undefined || params.task !== undefined || params.workflow !== undefined || params.workflowScript !== undefined || params.tasks !== undefined || params.chain !== undefined);
 }
 
@@ -238,7 +234,7 @@ function launchPreview(request: Record<string, unknown>): string {
 	return `Would launch ${parts.join(", ")}.`;
 }
 
-export function holdText(request: Record<string, unknown>, sibling: boolean, workflowHint = false): string {
+function holdText(request: Record<string, unknown>, sibling: boolean, workflowHint = false): string {
 	const block = request.workflow === true || request.workflow === "true" ? " Repeat the call with its ```js workflow block in that reply." : "";
 	const held = sibling
 		? `Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.${block}`
@@ -269,7 +265,7 @@ export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolic
 	return { ...params, async: true };
 }
 
-export function taughtInContext(ctx: Pick<ExtensionContext, "sessionManager">): Set<string> {
+function taughtInContext(ctx: Pick<ExtensionContext, "sessionManager">): Set<string> {
 	const taught = new Set<string>();
 	for (const entry of ctx.sessionManager.buildContextEntries()) {
 		const details = entry.type === "message" && entry.message.role === "toolResult" ? entry.message.details : entry.type === "custom_message" ? entry.details : undefined;
@@ -345,7 +341,7 @@ function formatBytes(bytes: number): string {
 	return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function forkNote(fork: { sessionBytes: number; folder: string; freeBytes?: number }): string {
+function forkNote(fork: { sessionBytes: number; folder: string; freeBytes?: number }): string {
 	const free = fork.freeBytes === undefined ? "" : `; ${formatBytes(fork.freeBytes)} free on that disk`;
 	return `Fork: the child got a copy of this session (${formatBytes(fork.sessionBytes)}) under ${fork.folder}${free}. Each fork adds one. Once a forked child is accepted or dropped and won't be resumed, delete its <run id> folder there; never one whose run is still active.`;
 }
@@ -398,11 +394,11 @@ export function noticeNotes(runs: ReadonlyArray<{ agent: string; status: string 
 
 type GuideView = Pick<Details, "guide" | "heldLaunch" | "guideTopic">;
 
-export function guideResult(text: string, taught: string[], view: GuideView = {}, isError = false): AgentToolResult<Details> {
+function guideResult(text: string, taught: string[], view: GuideView = {}, isError = false): AgentToolResult<Details> {
 	return { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}), details: { mode: "management", results: [], ...(taught.length ? { taught } : {}), ...view } };
 }
 
-export function withTeaching(result: AgentToolResult<Details>, notes: string[], taught: string[]): AgentToolResult<Details> {
+function withTeaching(result: AgentToolResult<Details>, notes: string[], taught: string[]): AgentToolResult<Details> {
 	if (notes.length === 0 && taught.length === 0) return result;
 	const details = result.details ?? { mode: "management", results: [] };
 	return {
@@ -412,12 +408,12 @@ export function withTeaching(result: AgentToolResult<Details>, notes: string[], 
 	};
 }
 
-export interface TeachingNote {
+interface TeachingNote {
 	key?: string;
 	text: string;
 }
 
-export interface GuidedSubagentToolDeps {
+interface GuidedSubagentToolDeps {
 	guide(ctx: ExtensionContext): Promise<GuideReply>;
 	flatten(params: Record<string, unknown>): SubagentParamsLike;
 	run(id: string, request: SubagentParamsLike, nested: boolean, signal: AbortSignal | undefined, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Details>>;

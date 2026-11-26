@@ -9,7 +9,7 @@ import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { projectRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
 
 type OwnedCapture = Required<Pick<ChildRuntimeConfig, "toolDiagnostic" | "runtimeAcknowledgements">>;
-type PromptProof = { config: ChildRuntimeConfig; snapshot: string; factories?: ChildHookExtension["factory"][]; observeNext?: ReadonlyDrainObservation; observation?: ReadonlyDrainObservation; capture?: OwnedCapture; reporting?: { launch: ChildSessionLaunch; callback: ChildSessionLaunch["onExtensionError"] } };
+type PromptProof = { config: ChildRuntimeConfig; snapshot: string; factories?: ChildHookExtension["factory"][]; observeNext?: ReadonlyDrainObservation; observation?: ReadonlyDrainObservation; capture?: OwnedCapture };
 const promptProofs = new WeakMap<ChildHookExtension["factory"], PromptProof>();
 
 function ownedProof(hooks: ChildHookExtension[]): PromptProof | undefined {
@@ -17,21 +17,11 @@ function ownedProof(hooks: ChildHookExtension[]): PromptProof | undefined {
 	return proof?.factories?.length === hooks.length && proof.factories.every((factory, index) => hooks[index]?.factory === factory) ? proof : undefined;
 }
 
-/** The host's mandatory transcript reporting, owned by the existing hook certificate. */
+/** The host's mandatory transcript reporting. */
 export function withChildSessionErrorReporting(session: Omit<ChildSessionLaunch, "onExtensionError">, transcriptWriter: ChildTranscriptWriter | undefined): ChildSessionLaunch {
-	const launch: ChildSessionLaunch = { ...session, onExtensionError: (error) => {
+	return { ...session, onExtensionError: (error) => {
 		transcriptWriter?.writeStderrLine(`Extension error (${error.extensionPath}, ${error.event}): ${error.error instanceof Error ? error.error.message : String(error.error)}`);
 	} };
-	const proof = ownedProof(launch.hooks);
-	if (proof?.capture && proof.config === launch.runtime) proof.reporting = { launch, callback: launch.onExtensionError };
-	return launch;
-}
-
-export function isReadonlyChildSessionReporting(launch: ChildSessionLaunch): boolean {
-	const proof = ownedProof(launch.hooks);
-	const descriptor = Object.getOwnPropertyDescriptor(launch, "onExtensionError");
-	if (descriptor && (!descriptor.enumerable || !("value" in descriptor))) return false;
-	return proof?.reporting ? proof.reporting.launch === launch && proof.reporting.callback === descriptor?.value : !descriptor && !("onExtensionError" in launch);
 }
 
 /** Admit only own enumerable data: inspecting descriptors must not invoke getters. */
@@ -79,15 +69,6 @@ function noBackgroundProviders(): boolean {
 	try {
 		return listBackgroundWorkProviders().length === 0;
 	} catch { return false; }
-}
-
-/** Internal proof of the captured closure/config, not its caller-controlled display name. */
-export function isReadonlyChildHookProfile(hooks: ChildHookExtension[], config: ChildRuntimeConfig): boolean {
-	const proof = ownedProof(hooks);
-	if (!proof) return false;
-	const valid = proof.config === config && readonlyConfig(config, proof.capture) === proof.snapshot && noBackgroundProviders();
-	if (!valid) proof.observation?.deny();
-	return valid && (proof.observation?.check() ?? true);
 }
 
 /** Arm just the next installation; ordinary installations retain the original API/handlers. */

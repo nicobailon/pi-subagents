@@ -357,7 +357,7 @@ export function modelBefore(messages: readonly { role: string }[], forkedAt: num
  * than who it is. A fork is told which tools it can call, and it inherited the rest with the
  * parent's prompt, so its own versions of these sections are not repeated in its task message.
  */
-const LOADOUT_SECTIONS = new Set(["tools", "rules", "docs", "skills", "advertised_subagents", "mcp_servers", "project_context"]);
+const LOADOUT_SECTIONS = new Set(["tools", "rules", "docs", "skills", "mcp_servers", "project_context"]);
 
 /** The `<project_instructions path="…">` blocks Pi writes into a `project_context` section, by path. */
 function projectInstructionBlocks(section: string | null | undefined): Map<string, string> {

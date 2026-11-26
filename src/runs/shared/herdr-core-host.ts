@@ -21,7 +21,7 @@ export interface HerdrCoreConnection extends PlacementSockets {
 	close(): Promise<void>;
 }
 
-export interface HerdrCoreCandidate {
+interface HerdrCoreCandidate {
 	terminals: HcTerminal[];
 	bridge?: PlacementBridgeIdentity;
 }
@@ -48,7 +48,7 @@ export function reconcileHerdrCoreRun(identity: HerdrRunIdentity, candidate: Her
 	return { ok: true, state: coreRunState(terminal), paneId: identity.terminalId, cursor: proof.cursor };
 }
 
-export function connectHerdrCore(machine: HerdrCoreLocalMachineReference): HerdrCoreConnection {
+function connectHerdrCore(machine: HerdrCoreLocalMachineReference): HerdrCoreConnection {
 	const sockets = localMachineAccess().openSockets();
 	return { client: new SocketRpcClient(machine.socket), socketPath: machine.socket, parentTerminal: machine.parentTerminal, ...sockets };
 }

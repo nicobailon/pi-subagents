@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExternalProcessStatus, HerdrCoreLocalMachineReference, HerdrLocalMachineReference, HerdrMachineReference, PlacementMachineReference } from "../../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
-import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS, type CodeOwnedExternalCliAdapterId } from "./external-cli-contract.ts";
+import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS } from "./external-cli-contract.ts";
 import type { runExternalCli } from "./external-cli-runner.ts";
 import { herdrLocalEnv, parseHerdrEndpoint } from "./herdr-connection.ts";
 import { REX_LOCAL_MACHINE, resolveLocalLaunchCwd, resolveRexLocalPlacement } from "./rex-machine.ts";
@@ -23,8 +23,6 @@ const HERDR_MACHINE_LIST_TIMEOUT_MS = 7_500;
 const MAX_HERDR_MACHINE_LIST_BYTES = 1024 * 1024;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/u;
 const SUPPORTED_MACHINE_ADAPTERS = new Set<string>(CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS);
-/** The local ssh process gets only what ssh itself needs; remote runs use the machine's own credentials. */
-export const HERDR_SSH_ENV_ALLOWLIST = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "SSH_AUTH_SOCK"] as const;
 
 type RunExternalCliInput = Parameters<typeof runExternalCli>[0];
 
