@@ -34,13 +34,11 @@ export function isBlankValue(value: unknown): boolean {
 	return value === true || value === "true" || value === null || value === "null" || (isPlainObject(value) && Object.keys(value).length === 0);
 }
 
+const isWorkflowCall = (workflow: unknown) => workflow !== undefined && !isUnsetPlaceholder(workflow) && workflow !== false && workflow !== "false";
+
 function liftableArgs(params: Record<string, unknown>): Record<string, unknown> | undefined {
-	const options = isPlainObject(params.options) ? params.options : {};
-	const args = params.args;
-	if (!isPlainObject(args)) return undefined;
-	const workflow = params.workflow;
-	const hasWorkflow = workflow !== undefined && workflow !== "null" && workflow !== false && workflow !== "false";
-	return hasWorkflow || options.script !== undefined ? undefined : args;
+	if (!isPlainObject(params.args) || isWorkflowCall(params.workflow) || (isPlainObject(params.options) && params.options.script !== undefined)) return undefined;
+	return params.args;
 }
 
 function dropBlankArgsDuplicates(params: Record<string, unknown>): Record<string, unknown> {
@@ -68,13 +66,13 @@ function parseJsonText(text: string): unknown {
 
 function convertField(key: string, value: unknown, schema: TSchema, workflowCall: boolean): unknown {
 	const validator = fieldValidator(schema);
+	const type = (schema as { type?: unknown }).type;
 	if (typeof value === "string" && validator.Check(value)) {
 		const spelled = value === "true" ? true : value === "false" ? false : parseJsonText(value);
 		return spelled !== undefined && validator.Check(spelled) ? spelled : value;
 	}
 	if (validator.Check(value)) return value;
-	const numeric = (schema as { type?: unknown }).type === "integer" || (schema as { type?: unknown }).type === "number";
-	if (numeric && (typeof value === "boolean" || value === "true" || value === "false")) {
+	if ((type === "integer" || type === "number") && (typeof value === "boolean" || value === "true" || value === "false")) {
 		const hint = workflowCall
 			? `For a workflow call, set ${key} on each child in a workflow: true script.`
 			: `If your fields arrive missing or changed, pass them inside args: subagent({..., args:{${key}: <number>}}).`;
@@ -85,7 +83,7 @@ function convertField(key: string, value: unknown, schema: TSchema, workflowCall
 	if (typeof value !== "string" || !/^\s*[[{]/.test(value)) return value;
 	const parsed = parseJsonText(value);
 	if (parsed === undefined) {
-		const shape = (schema as { type?: unknown }).type === "array" ? "a list" : "an object";
+		const shape = type === "array" ? "a list" : "an object";
 		throw new Error(`subagent: '${key}' must be ${shape}, and its text is not valid JSON. Pass the value itself, e.g. ${key}: ${shape === "a list" ? "[...]" : "{...}"}, not a string.`);
 	}
 	return parsed;
@@ -104,8 +102,12 @@ function convertFields(fields: Record<string, unknown>, schemas: Record<string, 
 
 export function prepareSubagentToolArguments(input: unknown): unknown {
 	if (!isPlainObject(input)) return input;
-	const args = dropBlankArgsDuplicates(input);
-	const workflowCall = args.workflow !== undefined && !isUnsetPlaceholder(args.workflow) && args.workflow !== false && args.workflow !== "false";
+	let args = dropBlankArgsDuplicates(input);
+	if (isUnsetPlaceholder(args.args)) {
+		const { args: _unset, ...rest } = args;
+		args = rest;
+	}
+	const workflowCall = isWorkflowCall(args.workflow);
 	const converted = convertFields(args, MODEL_FIELDS, workflowCall);
 	if (!isPlainObject(converted.options)) return converted;
 	const options = convertFields(converted.options, SubagentOptionParams.properties, workflowCall);
@@ -175,8 +177,7 @@ export function flattenSubagentToolOptions(params: Record<string, unknown>, disa
 	}
 	const disabledKey = entries.find(([key]) => disabled?.params.has(key))?.[0];
 	if (disabledKey) throw new Error(`subagent option 'options.${disabledKey}' is disabled by config ${disabled!.params.get(disabledKey)}.`);
-	// Pi converts only the declared top-level parameters ("true" -> true); `options` is an untyped bag in the
-	// tool schema, so its values get the same conversion here. Some providers send nested scalars as strings.
+	// Some providers send nested scalars as strings.
 	const converted = Value.Convert(SubagentOptionParams, structuredClone(options));
 	if (!optionsValidator.Check(converted)) {
 		const errors = [...optionsValidator.Errors(converted)].slice(0, 4).map((error) => `options${error.instancePath.replaceAll("/", ".")} ${error.message}`);

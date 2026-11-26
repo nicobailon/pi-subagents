@@ -15,6 +15,7 @@ import { createChildSafeState } from "../../src/extension/fanout-child.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
 import { createMockPi } from "../support/mock-pi.ts";
+import { guideTaughtEntries } from "../support/helpers.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
 type Step = Record<string, unknown> | Array<Record<string, unknown>> | string | (() => ReturnType<typeof fauxAssistantMessage>);
@@ -66,6 +67,14 @@ function subagentDetails(session: Session): Array<{ timeoutMs?: number }> {
 	return (session.messages as Array<{ role: string; toolName?: string; details?: { timeoutMs?: number } }>)
 		.filter((message) => message.role === "toolResult" && message.toolName === "subagent")
 		.map((message) => message.details ?? {});
+}
+
+const replyText = (result: { content: Array<{ type: string; text?: string }> }) => result.content.map((part) => part.type === "text" ? part.text : "").join("\n");
+
+function guidedTool(deps: Partial<Parameters<typeof createGuidedSubagentTool>[1]>, entries: () => unknown[] = () => []) {
+	const { tool } = createGuidedSubagentTool({ on: () => {} } as never, { guide: async () => ({ text: "GUIDE" }), flatten: (params) => flattenSubagentToolOptions(params), run: async () => assert.fail("not run"), ...deps });
+	const ctx = { cwd: root, hasUI: false, sessionManager: { buildContextEntries: entries } };
+	return (params: Record<string, unknown>, signal?: AbortSignal) => tool.execute("id", params as never, signal, undefined, ctx as never);
 }
 
 before(() => {
@@ -219,7 +228,7 @@ describe("guide first", () => {
 			discoverAgents: () => ({ agents: [] }),
 		});
 		const ui = { confirm: async (title: string) => { prompts.push(title); return answer; } };
-		const sessionManager = { getSessionId: () => "session", getSessionFile: () => null, buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] };
+		const sessionManager = { getSessionId: () => "session", getSessionFile: () => null, buildContextEntries: guideTaughtEntries };
 		const ctx = { cwd: root, hasUI: true, ui, sessionManager, modelRegistry: { getAvailable: () => [] } };
 		const { tool } = createGuidedSubagentTool(pi as never, {
 			guide: async () => ({ text: "GUIDE" }),
@@ -229,7 +238,7 @@ describe("guide first", () => {
 		});
 		const call = async (params: Record<string, unknown> = { action: "stop", id: ["a1", "b2"] }) => {
 			const result = await tool.execute("stop", params as never, undefined, undefined, ctx as never);
-			return { text: result.content.map((part) => part.type === "text" ? part.text : "").join("\n"), isError: result.isError === true };
+			return { text: replyText(result), isError: result.isError === true };
 		};
 		return { prompts, call };
 	};
@@ -246,19 +255,14 @@ describe("guide first", () => {
 	it("skips the rest of a list once the call is cancelled", async () => {
 		const controller = new AbortController();
 		const ran: string[] = [];
-		const sessionManager = { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] };
-		const { tool } = createGuidedSubagentTool({ on: () => {} } as never, {
-			guide: async () => ({ text: "GUIDE" }),
-			flatten: (params) => flattenSubagentToolOptions(params),
-			run: async (_id, request) => {
-				ran.push(String(request.id));
-				controller.abort();
-				return { content: [{ type: "text", text: `Stop requested for async run ${request.id}.` }], details: { mode: "management", results: [] } };
-			},
-		});
-		const result = await tool.execute("stop", { action: "stop", id: ["a1", "b2", "c3"] } as never, controller.signal, undefined, { cwd: os.tmpdir(), hasUI: false, sessionManager } as never);
+		const call = guidedTool({ run: async (_id, request) => {
+			ran.push(String(request.id));
+			controller.abort();
+			return { content: [{ type: "text", text: `Stop requested for async run ${request.id}.` }], details: { mode: "management", results: [] } };
+		} }, guideTaughtEntries);
+		const result = await call({ action: "stop", id: ["a1", "b2", "c3"] }, controller.signal);
 		assert.deepEqual(ran, ["a1"]);
-		assert.equal(result.content.map((part) => part.type === "text" ? part.text : "").join("\n"), "Stop requested for async run a1.\nb2: skipped, the call was cancelled.\nc3: skipped, the call was cancelled.");
+		assert.equal(replyText(result), "Stop requested for async run a1.\nb2: skipped, the call was cancelled.\nc3: skipped, the call was cancelled.");
 	});
 
 	it("refuses a list in id next to runId or dir, or with an entry containing spaces", async () => {
@@ -270,18 +274,10 @@ describe("guide first", () => {
 	});
 
 	it("gives a detached foreground run the launch note and a paused one the resume call", async () => {
-		const pi = { on: () => {} };
-		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] } };
-		const launch = async (run: Record<string, unknown>) => {
-			const { tool } = createGuidedSubagentTool(pi as never, {
-				guide: async () => ({ text: "GUIDE" }),
-				flatten: (params) => flattenSubagentToolOptions(params),
-				run: async () => ({ content: [{ type: "text", text: "child reply" }], details: { mode: "single", runId: "abcdef12-3456", results: [run as never] } }),
-				notes: (request, result) => callNotes(request, result, {}),
-			});
-			const result = await tool.execute("launch", { agent: "probe", task: "t", async: false } as never, undefined, undefined, ctx as never);
-			return result.content.map((part) => part.type === "text" ? part.text : "").join("\n");
-		};
+		const launch = async (run: Record<string, unknown>) => replyText(await guidedTool({
+			run: async () => ({ content: [{ type: "text", text: "child reply" }], details: { mode: "single", runId: "abcdef12-3456", results: [run as never] } }),
+			notes: (request, result) => callNotes(request, result, {}),
+		}, guideTaughtEntries)({ agent: "probe", task: "t", async: false }));
 		const detached = await launch({ agent: "probe", detached: true });
 		assert.ok(detached.includes(EVENT_NOTES.launch), detached);
 		assert.doesNotMatch(detached, /resume/);
@@ -289,39 +285,25 @@ describe("guide first", () => {
 	});
 
 	it("refuses multi-line workflow text on the first call with the guide instead of holding it", async () => {
-		const pi = { on: () => {} };
-		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
-		const { tool } = createGuidedSubagentTool(pi as never, { guide: async () => ({ text: "GUIDE" }), flatten: (params) => flattenSubagentToolOptions(params), run: async () => assert.fail("refused") });
-		const result = await tool.execute("script-text", { workflow: "const r = await runs.run(\"scan\", { agent: \"scout\", task: \"Read /Users/someone/repo/src/index.ts\" });\nreturn r.output;" } as never, undefined, undefined, ctx as never);
-		const text = result.content[0]!.type === "text" ? result.content[0]!.text : "";
+		const text = replyText(await guidedTool({})({ workflow: "const r = await runs.run(\"scan\", { agent: \"scout\", task: \"Read /Users/someone/repo/src/index.ts\" });\nreturn r.output;" }));
 		assert.match(text, /^subagent: workflow has line breaks, so it is script text; pass it as options\.script/);
 		assert.match(text, /\n\nGUIDE$/);
 		assert.doesNotMatch(text, /Call again to launch|Would launch/);
 	});
 
 	it("previews a chain's parallel step in plain words", async () => {
-		const pi = { on: () => {} };
-		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
-		const { tool } = createGuidedSubagentTool(pi as never, { guide: async () => ({ text: "GUIDE" }), flatten: (params) => params, run: async () => assert.fail("held") });
-		const held = await tool.execute("chain", { chain: [{ agent: "scout" }, { parallel: [{ agent: "reviewer" }] }], task: "Check" } as never, undefined, undefined, ctx as never);
-		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /\nWould launch a chain: scout → parallel step, task "Check"\.\n/);
+		const held = await guidedTool({ flatten: (params) => params })({ chain: [{ agent: "scout" }, { parallel: [{ agent: "reviewer" }] }], task: "Check" });
+		assert.match(replyText(held), /\nWould launch a chain: scout → parallel step, task "Check"\.\n/);
 	});
 
 	const launchesWith = async (facts: (request: Record<string, unknown>) => CallFacts, launches: Array<Record<string, unknown>>) => {
-		const pi = { on: () => {} };
-		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
-		const { tool } = createGuidedSubagentTool(pi as never, {
-			guide: async () => ({ text: "GUIDE" }),
-			flatten: (params) => flattenSubagentToolOptions(params),
+		const call = guidedTool({
 			run: async () => ({ content: [{ type: "text", text: "Async: worker [r-1]" }], details: { mode: "single", results: [] } }),
 			notes: (request, result) => callNotes(request, result, facts(request as Record<string, unknown>)),
 		});
-		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
+		await call({});
 		const replies: string[] = [];
-		for (const params of launches) {
-			const result = await tool.execute("launch", params as never, undefined, undefined, ctx as never);
-			replies.push(result.content.map((part) => part.type === "text" ? part.text : "").join("\n"));
-		}
+		for (const params of launches) replies.push(replyText(await call(params)));
 		return replies;
 	};
 
@@ -367,15 +349,9 @@ describe("guide first", () => {
 
 describe("taught state", () => {
 	it("reads a reply's fields from args when workflow is a placeholder", async () => {
-		const pi = { on: () => {} };
-		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] } };
 		const runs: Array<Record<string, unknown>> = [];
-		const { tool } = createGuidedSubagentTool(pi as never, {
-			guide: async () => ({ text: "GUIDE" }),
-			flatten: (params) => flattenSubagentToolOptions(params),
-			run: async (_id, request) => { runs.push(request as Record<string, unknown>); return { content: [{ type: "text", text: "replied" }], details: { mode: "management", results: [] } }; },
-		});
-		await tool.execute("id", { action: "reply", workflow: "null", args: { replyTo: "q-1", message: "Use option A" } } as never, undefined, undefined, ctx as never);
+		const call = guidedTool({ run: async (_id, request) => { runs.push(request as Record<string, unknown>); return { content: [{ type: "text", text: "replied" }], details: { mode: "management", results: [] } }; } }, guideTaughtEntries);
+		await call({ action: "reply", workflow: "null", args: { replyTo: "q-1", message: "Use option A" } });
 		assert.deepEqual(runs, [{ action: "reply", replyTo: "q-1", message: "Use option A" }]);
 	});
 
@@ -404,7 +380,7 @@ describe("taught state", () => {
 		assert.deepEqual([...declared], [JSON.stringify({ type: "object", properties: { args: { type: "object", additionalProperties: true } }, additionalProperties: true })]);
 		const first = await startParent([{ agent: true, task: true }, "held"], undefined, "xai");
 		await first.prompt("go");
-		assert.match(subagentReplies(first)[0]!, new RegExp(`^${BLANK_CALL_TEXT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n\\nsubagent guide\\.`));
+		assert.ok(subagentReplies(first)[0]!.startsWith(`${BLANK_CALL_TEXT}\n\nsubagent guide.`), subagentReplies(first)[0]);
 		assert.equal(mockPi.callCount(), 2, "a blank first launch starts nothing");
 	});
 
@@ -447,26 +423,16 @@ describe("taught state", () => {
 		for (const reply of [held!, failed!]) assert.doesNotMatch(reply, /arrived as true|put the whole call in args/, reply);
 	});
 
-	it("keeps a number from args when the same field arrives blank at the top level", { timeout: 60_000 }, async () => {
+	it("keeps a field's value from args, numbers included, when the same field arrives blank at the top level", { timeout: 60_000 }, async () => {
 		mockPi.reset();
 		mockPi.onCall({ output: "done" });
-		const session = await startParent([{}, { timeoutMs: true, args: { agent: "probe", task: "Inspect", timeoutMs: 30000, async: false } }, "done"], undefined, "xai");
-		await session.prompt("go");
-		const launched = subagentReplies(session)[1]!;
-		assert.doesNotMatch(launched, /must be a number/, launched);
-		assert.match(launched, /done/);
-		assert.equal(mockPi.callCount(), 1);
-		assert.equal(subagentDetails(session)[1]?.timeoutMs, 30000);
-	});
-
-	it("keeps a field's value from args when the same field arrives blank at the top level", { timeout: 60_000 }, async () => {
-		mockPi.reset();
-		mockPi.onCall({ output: "done" });
-		const session = await startParent([{}, { agent: true, task: true, args: { agent: "probe", task: "Inspect", async: false } }, { action: true, args: { action: "status" } }, "done"], undefined, "xai");
+		const session = await startParent([{}, { agent: true, task: true, timeoutMs: true, args: { agent: "probe", task: "Inspect", timeoutMs: 30000, async: false } }, { action: true, args: { action: "status" } }, "done"], undefined, "xai");
 		await session.prompt("go");
 		const [, launched, status] = subagentReplies(session);
+		assert.doesNotMatch(launched!, /must be a number/, launched);
 		assert.match(launched!, /done/);
 		assert.equal(mockPi.callCount(), 1);
+		assert.equal(subagentDetails(session)[1]?.timeoutMs, 30000);
 		assert.doesNotMatch(status!, /Unknown|must be/, status);
 	});
 
@@ -548,17 +514,12 @@ describe("taught state", () => {
 
 	it("keeps the guide's display summary out of the text the model gets", async () => {
 		const summary = { tokens: 900, launch: ["subagent({agent, task, …})", "cwd"], manage: ["status"], agents: ["scout"] };
-		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
-		const { tool } = createGuidedSubagentTool({ on: () => {} } as never, {
-			guide: async () => ({ text: "GUIDE", summary }),
-			flatten: (params) => params,
-			run: async () => assert.fail("held"),
-		});
-		const held = await tool.execute("id", { agent: "probe", task: "Review the auth changes" } as never, undefined, undefined, ctx as never);
+		const call = guidedTool({ guide: async () => ({ text: "GUIDE", summary }), flatten: (params) => params });
+		const held = await call({ agent: "probe", task: "Review the auth changes" });
 		assert.deepEqual(held.content, [{ type: "text", text: "Not launched yet: this is the session's first subagent call, so here is the guide. Call again to launch.\nWould launch probe, task \"Review the auth changes\".\n\nGUIDE" }]);
 		assert.deepEqual(held.details?.guide, summary);
 		assert.equal(held.details?.heldLaunch, "Would launch probe, task \"Review the auth changes\".");
-		const topic = await tool.execute("id", { action: "guide", topic: "schedule" } as never, undefined, undefined, ctx as never);
+		const topic = await call({ action: "guide", topic: "schedule" });
 		assert.equal(topic.details?.guideTopic?.title, "schedule");
 		assert.match(topic.details?.guideTopic?.lead ?? "", /^schedule\.create: name or id, /);
 		assert.doesNotMatch(topic.details?.guideTopic?.lead ?? "", /Example:/);
@@ -566,44 +527,10 @@ describe("taught state", () => {
 });
 
 describe("guided tool surface", () => {
-	const declaredTool = () => {
-		const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => void>>();
-		const declarations: number[] = [];
-		const pi = {
-			on: (name: string, handler: (event: unknown, ctx: unknown) => void) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
-			registerTool: (tool: { parameters: { properties: object } }) => declarations.push(Object.keys(tool.parameters.properties).length),
-		};
-		const { tool } = createGuidedSubagentTool(pi as never, {
-			guide: async () => ({ text: "GUIDE" }),
-			flatten: (params) => flattenSubagentToolOptions(params),
-			run: async () => ({ content: [{ type: "text", text: "ok" }], details: { mode: "management", results: [] } }),
-		});
-		pi.registerTool(tool as never);
-		const emit = (name: string, event: unknown, ctx: unknown) => { for (const handler of handlers.get(name) ?? []) handler(event, ctx); };
-		return { tool, declarations, emit };
-	};
-
-	it("registers its one schema once and never again, across model switches and blank calls", async () => {
-		const { tool, declarations, emit } = declaredTool();
-		const ctx = { cwd: root, model: { provider: "xai", id: "grok-4.6" }, sessionManager: { buildContextEntries: () => [] } };
-		emit("session_start", {}, ctx);
-		emit("model_select", { model: { provider: "github-copilot", id: "kimi-k3" } }, ctx);
-		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
-		for (const blank of [{ agent: true, task: true }, {}, {}]) {
-			const result = await tool.execute("blank", blank as never, undefined, undefined, ctx as never);
-			assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", BLANK_CALL_TEXT);
-		}
-		emit("model_select", { model: { provider: "anthropic", id: "claude-opus-5-5" } }, ctx);
-		assert.deepEqual(declarations, [1]);
-	});
-
 	it("runs a workflow with empty input after the guide instead of treating it as blank", async () => {
-		const { tool, emit } = declaredTool();
-		const ctx = { cwd: root, model: { provider: "keeps-fields-2", id: "m" }, sessionManager: { buildContextEntries: () => [] } };
-		emit("session_start", {}, ctx);
-		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
-		const result = await tool.execute("flow", { workflow: true, args: {} } as never, undefined, undefined, ctx as never);
-		assert.notEqual(result.content[0]?.type === "text" ? result.content[0].text : "", BLANK_CALL_TEXT);
+		const call = guidedTool({ run: async () => ({ content: [{ type: "text", text: "ok" }], details: { mode: "management", results: [] } }) });
+		await call({});
+		assert.equal(replyText(await call({ workflow: true, args: {} })), "ok");
 	});
 
 	it("keeps the declaration within its cap, and the description and the guide with the bundled agents within 2,500", () => {
@@ -614,9 +541,8 @@ describe("guided tool surface", () => {
 			assert.ok(agents.some((agent) => agent.name === "scout"), "bundled agents are listed");
 			const size = SUBAGENT_TOOL_DESCRIPTION.length + buildGuide(agents, { canLaunch: true }).text.length;
 			assert.ok(size <= 2_500, `description + guide is ${size} chars`);
-			assert.match(buildGuide(agents, { canLaunch: true }).text, /Not for messaging a Pi session that is already open; use a messaging tool for that\./);
+			assert.match(buildGuide(agents, { canLaunch: true }).text, /Not for messaging an open Pi session; use a messaging tool\./);
 			assert.doesNotMatch(buildGuide(agents, { canLaunch: true, child: true }).text, /messaging tool/);
-			assert.deepEqual(SUBAGENT_TOOL_PARAMETERS, { type: "object", properties: { args: { type: "object", additionalProperties: true } }, additionalProperties: true });
 			const declared = (parameters: unknown) => JSON.stringify({ name: "subagent", description: SUBAGENT_TOOL_DESCRIPTION, parameters }).length;
 			assert.ok(declared(SUBAGENT_TOOL_PARAMETERS) <= 290, `declaration is ${declared(SUBAGENT_TOOL_PARAMETERS)} chars`);
 		} finally {

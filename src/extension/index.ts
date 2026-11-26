@@ -553,9 +553,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		expandTilde,
 		discoverAgents: discoverAgentsForRuntime,
 		discoverAgentsAll: (cwd, provider) => discoverAgentsAll(cwd, provider, { globalNpmRoot: globalRoot }),
-		onAgentsChanged: () => {
-			clearAgentDiscoveryCache();
-		},
+		onAgentsChanged: clearAgentDiscoveryCache,
 		activateSupervisorTransport: () => supervisorChannel.activateTransport(),
 		findPendingAsks: (target) => supervisorChannel.findPendingAsks(target),
 		refreshResultDelivery: () => refreshResultDelivery(),
@@ -728,30 +726,27 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		disabledFeatures,
 	});
 
-
+	const agentsFor = (ctx: ExtensionContext) => discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider, { projectTrusted: typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined }).agents;
 	const guideFor = async (ctx: ExtensionContext): Promise<GuideReply> => {
 		await waitForAgentDiscovery();
-		const projectTrusted = typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;
-		return buildGuide(discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider, { projectTrusted }).agents, { canLaunch: true, disabled: disabledFeatures });
+		return buildGuide(agentsFor(ctx), { canLaunch: true, disabled: disabledFeatures });
 	};
 	const callFacts = (request: SubagentParamsLike, result: AgentToolResult<Details>, ctx: ExtensionContext): CallFacts => {
-		const params = request as Record<string, unknown>;
 		const facts: CallFacts = {};
 		if (result.isError || request.action !== undefined) return facts;
-		const launchCwd = path.resolve(ctx.cwd, typeof params.cwd === "string" ? params.cwd : ".");
-		if (params.worktree !== true) {
+		const launchCwd = path.resolve(ctx.cwd, typeof request.cwd === "string" ? request.cwd : ".");
+		if (request.worktree !== true) {
 			const runs = [...state.asyncJobs.values()]
-				.filter((job) => job.asyncId !== result.details?.asyncId && (job.status === "queued" || job.status === "running") && job.cwd === launchCwd)
+				.filter((job) => job.asyncId !== result.details.asyncId && (job.status === "queued" || job.status === "running") && job.cwd === launchCwd)
 				.map((job) => ({ label: job.agents?.[0] ?? job.mode ?? "run", id: job.asyncId.slice(0, 8) }));
 			if (runs.length > 0) facts.liveRunsInCwd = { cwd: launchCwd, runs };
 		}
-		if (params.toolBudget !== undefined && typeof params.agent === "string") {
-			const projectTrusted = typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;
-			const agent = discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider, { projectTrusted }).agents.find((candidate) => candidate.name === params.agent);
+		if (request.toolBudget !== undefined && typeof request.agent === "string") {
+			const agent = agentsFor(ctx).find((candidate) => candidate.name === request.agent);
 			if (agent?.acceptanceRole === "writer") facts.cappedWriter = agent.name;
 		}
 		const sessionFile = ctx.sessionManager.getSessionFile();
-		if (sessionFile && (params.context === "fork" || result.details?.context === "fork" || result.details?.context === "mixed")) {
+		if (sessionFile && (request.context === "fork" || result.details.context === "fork" || result.details.context === "mixed")) {
 			try {
 				const folder = path.join(path.dirname(sessionFile), path.basename(sessionFile, ".jsonl"), "forks");
 				let freeBytes: number | undefined;

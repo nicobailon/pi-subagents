@@ -7,7 +7,7 @@ import { validateToolArguments, type AssistantMessage, type Message, type Model,
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 import { convertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
-import { createEventBus } from "../support/helpers.ts";
+import { createEventBus, guideTaughtEntries as taughtEntries } from "../support/helpers.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
 import { clearStructuredOutputCaptures } from "../../src/runs/shared/structured-output.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
@@ -35,8 +35,6 @@ import registerSubagentPromptRuntime, {
 	stripProjectContext,
 	stripSubagentOrchestrationSkill,
 } from "../../src/runs/shared/subagent-prompt-runtime.ts";
-
-const taughtEntries = () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }];
 
 function childConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
 	return { fanoutChild: false, depth: 1, fast: false, ...overrides };
