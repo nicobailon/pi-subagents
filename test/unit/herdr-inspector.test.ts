@@ -107,6 +107,20 @@ describe("Herdr inspector", () => {
 		if (!oldResult.ok) assert.equal(oldResult.error.code, "HERDR_UNSUPPORTED_VERSION");
 	});
 
+	it("formats the inspector command for the pane's own shell", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-inspector-shell-"));
+		try {
+			writeRun(root);
+			const deps = (env: NodeJS.ProcessEnv) => ({ cwd: root, asyncDirRoot: root, env, plugins: [], runnerPath: path.join(root, "runner.ts") });
+			const posix = await handleInspectorAction("inspector.command", { id: "run-123" }, deps({ SHELL: "/usr/bin/bash.exe" }));
+			assert.doesNotMatch(text(posix), /^& /, "a Git Bash pane cannot parse the PowerShell call operator");
+			const powershell = await handleInspectorAction("inspector.command", { id: "run-123" }, deps({}));
+			assert.equal(text(powershell).startsWith("& "), process.platform === "win32");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("opens one raw inspector pane, persists its binding, and closes only that pane", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-inspector-"));
 		try {
@@ -397,7 +411,9 @@ describe("Herdr inspector", () => {
 	it("opens, reports, and closes a project-owned Herdr pane", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi=herdr project pane-"));
 		const previousPiBinary = process.env[PI_SUBAGENT_PI_BINARY_ENV];
+		const previousShell = process.env.SHELL;
 		process.env[PI_SUBAGENT_PI_BINARY_ENV] = path.join(root, "pi-bin");
+		delete process.env.SHELL;
 		try {
 			const projectRoot = fs.realpathSync(root);
 			const ownerRoot = path.join(root, "owner");
@@ -470,6 +486,8 @@ describe("Herdr inspector", () => {
 		} finally {
 			if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
 			else process.env[PI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
+			if (previousShell === undefined) delete process.env.SHELL;
+			else process.env.SHELL = previousShell;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});

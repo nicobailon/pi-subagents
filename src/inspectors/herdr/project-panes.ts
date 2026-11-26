@@ -7,7 +7,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { Details, HerdrProjectPaneSnapshot, SubagentState } from "../../shared/types.ts";
 import { createHerdrClient, detectHerdr, type HerdrClient, type HerdrErrorCode } from "./client.ts";
 import { focusHerdrPane, herdrPaneFocusTarget, herdrPaneRecord } from "./focus.ts";
-import { formatShellCommand, type ShellFlavor } from "../shell-command.ts";
+import { formatShellCommand, shellFlavorFor } from "../shell-command.ts";
 
 export const HERDR_PROJECT_PANE_ACTIONS = ["project.open", "project.status", "project.close"] as const;
 export type HerdrProjectPaneAction = typeof HERDR_PROJECT_PANE_ACTIONS[number];
@@ -406,16 +406,10 @@ async function inspectPane(client: HerdrClient, paneId: string, signal?: AbortSi
 	return { ok: true, data: runtime };
 }
 
-export function projectPaneShellFlavor(platform: NodeJS.Platform, shell: string | undefined): ShellFlavor {
-	// Herdr types the command into the pane's own shell: Git Bash on Windows cannot parse PowerShell's `&` call operator.
-	if (platform !== "win32") return "auto";
-	return /(^|[\\/])(bash|zsh|sh|dash|ksh)(\.exe)?$/i.test(shell ?? "") ? "posix" : "auto";
-}
-
 function projectPaneCommand(message: string | undefined): string {
 	const args = message?.trim() ? [message.trim()] : [];
 	const command = getPiSpawnCommand(args);
-	return formatShellCommand(command.command, command.args, process.platform, projectPaneShellFlavor(process.platform, process.env.SHELL));
+	return formatShellCommand(command.command, command.args, process.platform, shellFlavorFor(process.platform, process.env.SHELL));
 }
 
 function canonicalRuntimePath(value: string | undefined): string | undefined {

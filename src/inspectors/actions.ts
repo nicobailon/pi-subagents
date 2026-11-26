@@ -12,7 +12,7 @@ import { readStatus } from "../shared/utils.ts";
 import { resolveSubagentRunId } from "../runs/background/run-id-resolver.ts";
 import { resolveNodeExecutable } from "../shared/node-executable.ts";
 import { encodeSessionRoots } from "./session-roots-codec.ts";
-import { formatShellCommand } from "./shell-command.ts";
+import { formatShellCommand, shellFlavorFor } from "./shell-command.ts";
 import type { InspectorAction, InspectorContext, InspectorLaunch, InspectorParams, InspectorPlugin, InspectorTarget } from "./types.ts";
 
 export { INSPECTOR_ACTIONS } from "./types.ts";
@@ -102,7 +102,7 @@ function launchFor(target: InspectorTarget, deps: InspectorDispatcherDeps): Insp
 	if (target.index !== undefined) argv.push("--index", String(target.index));
 	if (mission) argv.push("--mission-path", mission.path);
 	const executable = resolveNodeExecutable();
-	const launch: InspectorLaunch = { executable, argv, displayCommand: formatShellCommand(executable, argv), allowSteer, allowStop, sessionRoots };
+	const launch: InspectorLaunch = { executable, argv, displayCommand: formatShellCommand(executable, argv, process.platform, shellFlavorFor(process.platform, (deps.env ?? process.env).SHELL)), allowSteer, allowStop, sessionRoots };
 	if (mission) launch.mission = mission;
 	return launch;
 }
