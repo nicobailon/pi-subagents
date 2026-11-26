@@ -7473,15 +7473,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							: item),
 					};
 				};
+				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const withChildQuestions = async (result: AgentToolResult<Details>): Promise<AgentToolResult<Details>> => {
 					if (!deps.runSupervisorAction) return result;
 					const pending = await deps.runSupervisorAction({ action: "pending" });
 					if (!pending.details.pending?.some((request) => request.expectsReply)) return result;
 					const questions = { type: "text" as const, text: `Child questions waiting for an answer (subagent({action:"reply", replyTo, message})):\n${pending.content.flatMap((item) => item.type === "text" ? [item.text] : []).join("\n")}` };
-					if (result.isError) return { content: [questions], details: result.details };
+					// A child-safe caller without a foreground run can read its questions, but cannot list runs without an id.
+					if (result.isError && nestedScope && !paramsWithResolvedCwd.view) return { content: [questions], details: result.details };
 					return { ...result, content: [...result.content, questions] };
 				};
-				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRoots(ctx.sessionManager.getSessionFile() ?? null, deps);
 				if (action === "debug.run") {
 					if (!targetRunId && !hasDirectoryTarget) {
