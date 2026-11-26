@@ -447,6 +447,18 @@ describe("taught state", () => {
 		for (const reply of [held!, failed!]) assert.doesNotMatch(reply, /arrived as true|put the whole call in args/, reply);
 	});
 
+	it("keeps a number from args when the same field arrives blank at the top level", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const session = await startParent([{}, { timeoutMs: true, args: { agent: "probe", task: "Inspect", timeoutMs: 30000, async: false } }, "done"], undefined, "xai");
+		await session.prompt("go");
+		const launched = subagentReplies(session)[1]!;
+		assert.doesNotMatch(launched, /must be a number/, launched);
+		assert.match(launched, /done/);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(subagentDetails(session)[1]?.timeoutMs, 30000);
+	});
+
 	it("keeps a field's value from args when the same field arrives blank at the top level", { timeout: 60_000 }, async () => {
 		mockPi.reset();
 		mockPi.onCall({ output: "done" });
