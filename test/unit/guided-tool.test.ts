@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { loadConfig } from "../../src/extension/config.ts";
@@ -17,7 +17,7 @@ import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
-type Step = Record<string, unknown> | Array<Record<string, unknown>> | string;
+type Step = Record<string, unknown> | Array<Record<string, unknown>> | string | (() => ReturnType<typeof fauxAssistantMessage>);
 
 const mockPi = createMockPi();
 const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -38,6 +38,7 @@ async function startParent(steps: Step[], onRequest?: (context: RequestContext) 
 		onRequest?.(context);
 		const next = steps.shift() ?? "ok";
 		if (typeof next === "string") return fauxAssistantMessage(next);
+		if (typeof next === "function") return next();
 		const calls = Array.isArray(next) ? next : [next];
 		return fauxAssistantMessage(calls.map((args) => fauxToolCall("subagent", args)), { stopReason: "toolUse" });
 	}));
@@ -416,9 +417,34 @@ describe("taught state", () => {
 		await session.prompt("go");
 		await session.prompt("go");
 		const [held, failed] = subagentReplies(session);
-		assert.ok(held!.includes('put the whole call in args: subagent({args:{workflow:"parallel", args:{tasks:[…]}}})'), held);
-		assert.ok(failed!.includes('put the whole call in args: subagent({args:{workflow:"parallel", args:{tasks:[…]}}})'), failed);
+		const hint = 'If workflow:"<name>" arrived as true or was dropped, put the whole call in args: subagent({args:{workflow:"<name>", args:{…}}}).';
+		assert.ok(held!.includes(hint), held);
+		assert.ok(failed!.includes(hint), failed);
 		assert.equal(mockPi.callCount(), 1, "the parallel workflow sent inside args runs");
+	});
+
+	it("teaches the args form when a provider drops a named workflow and only args:{tasks} arrives, then runs it from args", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const tasks = [{ agent: "probe", task: "Inspect" }];
+		const session = await startParent([{}, { args: { tasks } }, { args: { workflow: "parallel", args: { tasks }, async: false } }, "done"], undefined, "github-copilot");
+		await session.prompt("go");
+		const [, dropped] = subagentReplies(session);
+		assert.match(dropped!, /unknown field 'tasks'/);
+		assert.ok(dropped!.includes('If workflow:"<name>" arrived as true or was dropped, put the whole call in args: subagent({args:{workflow:"<name>", args:{…}}}).'), dropped);
+		assert.equal(mockPi.callCount(), 1, "the parallel workflow sent inside args runs");
+	});
+
+	it("gives no args hint to a workflow: true call whose js block reached the session", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		const scripted = () => fauxAssistantMessage([fauxText("```js workflow\nthrow new Error(\"boom\");\n```"), fauxToolCall("subagent", { workflow: true, args: { n: 1 }, async: false })], { stopReason: "toolUse" });
+		const session = await startParent([scripted, "held", scripted, "done"]);
+		await session.prompt("go");
+		await session.prompt("go");
+		const [held, failed] = subagentReplies(session);
+		assert.match(held!, /^Not launched yet/);
+		assert.match(failed!, /boom/);
+		for (const reply of [held!, failed!]) assert.doesNotMatch(reply, /arrived as true|put the whole call in args/, reply);
 	});
 
 	it("keeps a field's value from args when the same field arrives blank at the top level", { timeout: 60_000 }, async () => {

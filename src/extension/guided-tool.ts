@@ -7,19 +7,18 @@ import { disabledFeatureSectionNotice, type DisabledFeatureSurface } from "../sh
 import { isStaleExtensionContextError } from "../shared/extension-context.ts";
 import type { Details, GuideSummary } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
-import { isUnsetPlaceholder, prepareSubagentToolArguments } from "./subagent-options.ts";
+import { readReplyWorkflowScript } from "./reply-workflow-script.ts";
+import { isBlankValue, isUnsetPlaceholder, liftArgsFields, prepareSubagentToolArguments } from "./subagent-options.ts";
 
 export const SUBAGENT_TOOL_DESCRIPTION = "Delegate work to child agents and manage their runs. Call subagent({}) first for the guide: agents, fields, all actions.";
 export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({ type: "object", properties: { args: { type: "object", additionalProperties: true } }, additionalProperties: true });
 
 const TRUE_VALUED_FIELDS = new Set(["workflow", "async", "worktree", "all", "nonBlocking", "stopOnAttention", "clarify", "share", "fast", "foregroundOnly"]);
-const blankValue = (value: unknown) => value === true || value === "true" || value === null || value === "null"
-	|| (typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === 0);
 
 export function isBlankCall(params: Record<string, unknown>): boolean {
 	const entries = Object.entries(params);
 	if (entries.length === 0) return true;
-	if (!entries.every(([, value]) => blankValue(value))) return false;
+	if (!entries.every(([, value]) => isBlankValue(value))) return false;
 	const realAsBlank = ([key, value]: [string, unknown]) => (TRUE_VALUED_FIELDS.has(key) && (value === true || value === "true"))
 		|| ((key === "args" || key === "options") && typeof value === "object" && value !== null);
 	return !entries.every(realAsBlank);
@@ -27,12 +26,17 @@ export function isBlankCall(params: Record<string, unknown>): boolean {
 
 export const BLANK_CALL_TEXT = 'This call\'s fields arrived empty or blank: this provider may drop fields the tool doesn\'t declare. Pass them inside args: subagent({args:{agent, task, …}}) or subagent({args:{action:"status"}}). The full guide: subagent({action:"guide"}).';
 
-export const BLANK_WORKFLOW_TEXT = 'If workflow:"<name>" arrived as true, this provider may blank fields the tool doesn\'t declare; put the whole call in args: subagent({args:{workflow:"parallel", args:{tasks:[…]}}}).';
+export const BLANK_WORKFLOW_TEXT = 'If workflow:"<name>" arrived as true or was dropped, put the whole call in args: subagent({args:{workflow:"<name>", args:{…}}}).';
 
 function blankedWorkflowName(request: Record<string, unknown>): boolean {
 	const args = request.args;
 	return (request.workflow === true || request.workflow === "true") && request.workflowScript === undefined
 		&& typeof args === "object" && args !== null && !Array.isArray(args) && Object.keys(args).length > 0;
+}
+
+function droppedWorkflowName(params: Record<string, unknown>, message: string): boolean {
+	return params.workflow === undefined && params.action === undefined
+		&& ["tasks", "chain"].some((key) => params[key] !== undefined && message.includes(`unknown field '${key}'`));
 }
 
 export interface GuideAgent {
@@ -164,19 +168,6 @@ export function actionTopicText(key: string, action = key): string {
 	return `${ACTION_TOPICS[key]!}\nIf your fields arrive missing, pass them inside args: subagent({args:{action:"${action}", …}}).`;
 }
 
-export function liftArgsFields(params: Record<string, unknown>): Record<string, unknown> {
-	const options = params.options && typeof params.options === "object" ? params.options as Record<string, unknown> : {};
-	const args = params.args;
-	if (!args || typeof args !== "object" || Array.isArray(args)) return params;
-	const workflow = params.workflow;
-	const hasWorkflow = workflow !== undefined && workflow !== "null" && workflow !== false && workflow !== "false";
-	if (hasWorkflow || options.script !== undefined) return params;
-	const { args: _args, ...rest } = params;
-	const inner = args as Record<string, unknown>;
-	const kept = Object.entries(rest).filter(([key, value]) => !(Object.hasOwn(inner, key) && blankValue(value)));
-	return { ...inner, ...Object.fromEntries(kept) };
-}
-
 const TAUGHT_BY_GUIDE = new Set(["status", "steer", "resume", "stop", "interrupt", "wait", "reply", "list", "guide"]);
 
 export function rareActionTopic(action: string): string | undefined {
@@ -247,12 +238,12 @@ function launchPreview(request: Record<string, unknown>): string {
 	return `Would launch ${parts.join(", ")}.`;
 }
 
-export function holdText(request: Record<string, unknown>, sibling: boolean): string {
+export function holdText(request: Record<string, unknown>, sibling: boolean, workflowHint = false): string {
 	const block = request.workflow === true || request.workflow === "true" ? " Repeat the call with its ```js workflow block in that reply." : "";
 	const held = sibling
 		? `Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.${block}`
 		: `Not launched yet: this is the session's first subagent call, so here is the guide. Call again to launch.${block}`;
-	return `${held}\n${launchPreview(request)}${blankedWorkflowName(request) ? `\n${BLANK_WORKFLOW_TEXT}` : ""}`;
+	return `${held}\n${launchPreview(request)}${workflowHint ? `\n${BLANK_WORKFLOW_TEXT}` : ""}`;
 }
 
 export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolicy: AuthorityPolicyConfig | undefined): SubagentParamsLike | string {
@@ -498,17 +489,20 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				const conflicts = ids ? (["runId", "dir"] as const).filter((key) => request[key] !== undefined) : [];
 				if (conflicts.length) throw new Error(`subagent: a list in id can't be combined with ${conflicts.join(" or ")}; put every target in id.`);
 			} catch (error) {
-				if (!firstCall) throw error;
+				const message = error instanceof Error ? error.message : String(error);
+				const hinted = lifted !== prepared && droppedWorkflowName(params, message);
+				if (!firstCall) throw hinted ? new Error(`${message}\n${BLANK_WORKFLOW_TEXT}`) : error;
 				taught.teach("guide");
-				return guideResult(`${error instanceof Error ? error.message : String(error)}\n\n${(await deps.guide(ctx)).text}`, ["guide"], {}, true);
+				return guideResult(`${message}${hinted ? `\n${BLANK_WORKFLOW_TEXT}` : ""}\n\n${(await deps.guide(ctx)).text}`, ["guide"], {}, true);
 			}
+			const workflowHint = () => blankedWorkflowName(request as Record<string, unknown>) && (!ctx?.sessionManager || "error" in readReplyWorkflowScript(ctx.sessionManager, id));
 			if (deps.canLaunch !== false && isLaunchRequest(request as Record<string, unknown>)) {
 				if (firstCall) {
 					taught.teach("guide");
 					const reply = await deps.guide(ctx);
-					return guideResult(`${holdText(request as Record<string, unknown>, false)}\n\n${reply.text}`, ["guide"], { guide: reply.summary, heldLaunch: launchPreview(request as Record<string, unknown>) });
+					return guideResult(`${holdText(request as Record<string, unknown>, false, workflowHint())}\n\n${reply.text}`, ["guide"], { guide: reply.summary, heldLaunch: launchPreview(request as Record<string, unknown>) });
 				}
-				if (taught.guideArrivedThisTurn()) return guideResult(holdText(request as Record<string, unknown>, true), [], { heldLaunch: launchPreview(request as Record<string, unknown>) });
+				if (taught.guideArrivedThisTurn()) return guideResult(holdText(request as Record<string, unknown>, true, workflowHint()), [], { heldLaunch: launchPreview(request as Record<string, unknown>) });
 			}
 			let result: AgentToolResult<Details>;
 			const rare = request.action ? rareActionTopic(request.action) : undefined;
@@ -570,7 +564,7 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				if (freshTopic) keys.push(`topic:${rare}`);
 			}
 			if (replyHint && result.isError) notes.push(replyHint);
-			if (result.isError && blankedWorkflowName(record)) notes.push(BLANK_WORKFLOW_TEXT);
+			if (result.isError && workflowHint()) notes.push(BLANK_WORKFLOW_TEXT);
 			for (const note of await deps.notes?.(request, result, ctx) ?? []) {
 				if (note.key && !taught.teach(note.key).length) continue;
 				notes.push(note.text);

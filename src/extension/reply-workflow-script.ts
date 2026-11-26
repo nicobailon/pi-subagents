@@ -1,7 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { liftArgsFields } from "./guided-tool.ts";
-import { isUnsetPlaceholder } from "./subagent-options.ts";
+import { isUnsetPlaceholder, liftArgsFields } from "./subagent-options.ts";
 
 const WORKFLOW_FENCE = /^```(?:js|javascript) workflow[ \t]*$/;
 const PLAIN_JS_FENCE = /^```(?:js|javascript)[ \t]*$/;

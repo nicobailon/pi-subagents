@@ -30,6 +30,22 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+export function isBlankValue(value: unknown): boolean {
+	return value === true || value === "true" || value === null || value === "null" || (isPlainObject(value) && Object.keys(value).length === 0);
+}
+
+export function liftArgsFields(params: Record<string, unknown>): Record<string, unknown> {
+	const options = isPlainObject(params.options) ? params.options : {};
+	const args = params.args;
+	if (!isPlainObject(args)) return params;
+	const workflow = params.workflow;
+	const hasWorkflow = workflow !== undefined && workflow !== "null" && workflow !== false && workflow !== "false";
+	if (hasWorkflow || options.script !== undefined) return params;
+	const { args: _args, ...rest } = params;
+	const kept = Object.entries(rest).filter(([key, value]) => !(Object.hasOwn(args, key) && isBlankValue(value)));
+	return { ...args, ...Object.fromEntries(kept) };
+}
+
 function parseJsonText(text: string): unknown {
 	if (!/^\s*[[{]/.test(text)) return undefined;
 	try {

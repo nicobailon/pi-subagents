@@ -1,4 +1,4 @@
-import { liftArgsFields } from "../extension/guided-tool.ts";
+import { liftArgsFields } from "../extension/subagent-options.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "./types.ts";
 
 type MessageLike = {
