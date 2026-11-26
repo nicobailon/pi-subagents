@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -50,6 +51,32 @@ describe("restricted Node workflow process", { skip: Boolean(process.versions.bu
 		await worker.terminate();
 		assert.deepEqual(proof, { read: "ERR_ACCESS_DENIED", readUrl: "ERR_ACCESS_DENIED", supervisor: "ALLOWED", packageManifest: "ERR_ACCESS_DENIED", write: "ERR_ACCESS_DENIED", spawn: "ERR_ACCESS_DENIED", worker: "ERR_ACCESS_DENIED", inheritedEnvironment: [] });
 		assert.equal(fs.existsSync(canary), false);
+	});
+
+	it("starts from the Node on PATH after the host's Node binary is removed, and names the cause when there is none", { skip: process.platform === "win32", timeout: 30_000 }, (t) => {
+		const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workflow-stale-node-")));
+		t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+		const probe = path.join(root, "probe.mjs");
+		fs.writeFileSync(probe, `
+			import { rmSync } from "node:fs";
+			import { runWorkflowScript } from ${JSON.stringify(new URL("../../src/workflows/scripted-workflow.ts", import.meta.url).href)};
+			rmSync(process.execPath);
+			const host = { async launch(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; }, async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; } };
+			try { console.log(JSON.stringify((await runWorkflowScript({ ...host, script: "return 7;" })).value)); }
+			catch (error) { console.log(error.message); }
+		`);
+		const run = (name: string, PATH: string) => {
+			const staleNode = path.join(root, name, "node");
+			fs.mkdirSync(path.dirname(staleNode));
+			try { fs.linkSync(process.execPath, staleNode); } catch { fs.copyFileSync(process.execPath, staleNode); }
+			const result = spawnSync(staleNode, ["--experimental-strip-types", "--no-warnings", probe], { env: { PATH }, encoding: "utf8", timeout: 20_000 });
+			assert.equal(fs.existsSync(staleNode), false);
+			return { stdout: result.stdout.trim(), staleNode };
+		};
+		assert.equal(run("with-path", path.dirname(process.execPath)).stdout, "7");
+		const missing = run("no-path", "");
+		assert.match(missing.stdout, /Workflow worker could not start/);
+		assert.ok(missing.stdout.includes(`Node executable ${missing.staleNode} no longer exists`), missing.stdout);
 	});
 
 	it("does not inherit Node startup flags from the host", async () => {
