@@ -13,6 +13,7 @@ describe("shellFlavorFor", () => {
 
 	it("keeps the PowerShell call operator for other Windows shells", () => {
 		assert.equal(shellFlavorFor(platform, "C:\\Windows\\System32\\cmd.exe"), "auto");
+		assert.equal(shellFlavorFor(platform, "C:\\Program Files\\PowerShell\\7\\pwsh.exe"), "auto");
 		assert.equal(shellFlavorFor(platform, undefined), "auto");
 	});
 

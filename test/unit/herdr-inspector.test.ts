@@ -411,7 +411,9 @@ describe("Herdr inspector", () => {
 	it("opens, reports, and closes a project-owned Herdr pane", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi=herdr project pane-"));
 		const previousPiBinary = process.env[PI_SUBAGENT_PI_BINARY_ENV];
+		const previousShell = process.env.SHELL;
 		process.env[PI_SUBAGENT_PI_BINARY_ENV] = path.join(root, "pi-bin");
+		delete process.env.SHELL;
 		try {
 			const projectRoot = fs.realpathSync(root);
 			const ownerRoot = path.join(root, "owner");
@@ -453,9 +455,7 @@ describe("Herdr inspector", () => {
 			assert.deepEqual(splitCall, ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot, "--no-focus"]);
 			assert.equal(binding?.lastFocusedAt, undefined);
 			const runCall = calls.find((args) => args[0] === "pane" && args[1] === "run" && args[2] === "w1:p10");
-			// A Herdr pane on Windows may run Git Bash, whose shell cannot parse the call operator.
-			const posixPaneShell = process.platform === "win32" && /(bash|zsh|sh)/i.test(process.env.SHELL ?? "");
-			assert.equal(runCall?.[3]?.startsWith("& "), process.platform === "win32" && !posixPaneShell);
+			assert.equal(runCall?.[3]?.startsWith("& "), process.platform === "win32");
 			if (process.platform !== "win32") assert.match(runCall?.[3] ?? "", /^sh -c 'exec \"\$0\" \"\$@\"' '/);
 			assert.match(runCall?.[3] ?? "", /pi-bin/);
 			assert.match(runCall?.[3] ?? "", /Own this project mission\./);
@@ -486,6 +486,8 @@ describe("Herdr inspector", () => {
 		} finally {
 			if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
 			else process.env[PI_SUBAGENT_PI_BINARY_ENV] = previousPiBinary;
+			if (previousShell === undefined) delete process.env.SHELL;
+			else process.env.SHELL = previousShell;
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
