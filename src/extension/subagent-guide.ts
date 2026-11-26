@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { GuideTopicView } from "../shared/types.ts";
 
 export const SUBAGENT_GUIDE_TOPICS = [
 	"overview",
@@ -101,26 +102,46 @@ function readGuideFiles(topic: string, files: string[], root: string): string[] 
 	}
 }
 
+function leadSentence(lines: readonly string[]): string {
+	let frontmatter = false;
+	for (const raw of lines) {
+		const line = raw.trim();
+		if (line === "---") {
+			frontmatter = !frontmatter;
+			continue;
+		}
+		if (frontmatter || !line || /^(#|<|!|\[|\||```|~~~|>|- |\* |\d+\. )/.test(line)) continue;
+		const plain = line.replace(/`/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+		return /^.*?[.!?](?=\s|$)/.exec(plain)?.[0] ?? plain;
+	}
+	return "";
+}
+
 /** Docs-backed topics return their intro and table of contents; `topic/section` returns one section. */
 export function readSubagentGuide(topic = "overview", root = packageRoot): string {
+	return readSubagentGuideTopic(topic, root).text;
+}
+
+export function readSubagentGuideTopic(topic = "overview", root = packageRoot): { text: string; view?: GuideTopicView } {
 	const separator = topic.indexOf("/");
 	const name = separator === -1 ? topic : topic.slice(0, separator);
 	const sectioned = isGuideTopic(name) && name !== "overview" && name !== "council";
 	if (!isGuideTopic(name) || (separator !== -1 && !sectioned)) {
-		return `Unknown subagents guide topic '${topic}'. Valid topics: ${SUBAGENT_GUIDE_TOPICS.join(", ")}. No files were changed.`;
+		return { text: `Unknown subagents guide topic '${topic}'. Valid topics: ${SUBAGENT_GUIDE_TOPICS.join(", ")}. No files were changed.` };
 	}
 	if (!sectioned) {
 		const files = name === "overview" ? ["README.md"] : COUNCIL_FILES;
 		const contents = readGuideFiles(name, files, root);
-		return files.length === 1 ? contents[0]! : contents.map((content, index) => `<!-- ${files[index]} -->\n\n${content}`).join("\n\n");
+		const text = files.length === 1 ? contents[0]! : contents.map((content, index) => `<!-- ${files[index]} -->\n\n${content}`).join("\n\n");
+		return { text, view: { title: name, lead: leadSentence(contents[0]!.split("\n")) } };
 	}
 	const lines = readGuideFiles(name, [path.join("docs", `${name}.md`)], root)[0]!.split("\n");
 	const sections = parseSections(name, lines);
 	if (separator === -1) {
 		const intro = lines.slice(0, sections[0]?.start ?? lines.length).join("\n").trim();
-		return `${intro}\n\n${tableOfContents(name, sections)}`;
+		return { text: `${intro}\n\n${tableOfContents(name, sections)}`, view: { title: name, lead: `${sections.length} sections` } };
 	}
 	const section = sections.find((candidate) => candidate.address === topic);
-	if (!section) return `Unknown section '${topic}'. No files were changed.\n\n${tableOfContents(name, sections)}`;
-	return sectionText(lines, section);
+	if (!section) return { text: `Unknown section '${topic}'. No files were changed.\n\n${tableOfContents(name, sections)}` };
+	return { text: sectionText(lines, section), view: { title: section.title, lead: leadSentence(lines.slice(section.start + 1, section.end)) } };
 }

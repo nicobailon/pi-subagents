@@ -23,7 +23,7 @@ import { projectScopeRequiresTrustMessage, resolveExecutionAgentScope } from "..
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
-import { readSubagentGuide } from "../../extension/subagent-guide.ts";
+import { readSubagentGuideTopic } from "../../extension/subagent-guide.ts";
 import { approveWorkflowChildLaunch, type SubagentLaunchArgs } from "../../extension/subagent-launch-tool.ts";
 import { isWorkflowScriptPath, isWorkflowScriptText, normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
 import { readReplyWorkflowScript } from "../../extension/reply-workflow-script.ts";
@@ -7379,11 +7379,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 			if (action === "guide") {
 				try {
-					const guide = readSubagentGuide(paramsWithResolvedCwd.topic);
+					const guide = readSubagentGuideTopic(paramsWithResolvedCwd.topic);
 					const notice = paramsWithResolvedCwd.topic?.includes("/") ? disabledFeatureSectionNotice(disabledFeatures) : disabledFeatureNotice(disabledFeatures);
 					return {
-						content: [{ type: "text", text: notice ? `${notice}\n\n${guide}` : guide }],
-						details: { mode: "management", results: [] },
+						content: [{ type: "text", text: notice ? `${notice}\n\n${guide.text}` : guide.text }],
+						details: { mode: "management", results: [], ...(guide.view ? { guideTopic: guide.view } : {}) },
 					};
 				} catch (error) {
 					return {

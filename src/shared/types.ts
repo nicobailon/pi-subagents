@@ -1450,10 +1450,25 @@ export interface AgentCapabilityRow {
 	extensions?: { names?: string[]; subagentOnly?: string[]; skills?: string[] };
 }
 
+export interface GuideSummary {
+	tokens: number;
+	launch: string[];
+	manage: string[];
+	agents: string[];
+}
+
+export interface GuideTopicView {
+	title: string;
+	lead: string;
+}
+
 export interface Details {
 	commands?: import("../runs/shared/child-commands.ts").ChildCommandSnapshot[];
 	mode: SubagentResultMode | "management";
 	taught?: string[];
+	guide?: GuideSummary;
+	heldLaunch?: string;
+	guideTopic?: GuideTopicView;
 	workflowReceiptPath?: string;
 	runId?: string;
 	/** Host tool-call id retained when it differs from the internal run id. */
