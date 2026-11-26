@@ -107,6 +107,20 @@ describe("Herdr inspector", () => {
 		if (!oldResult.ok) assert.equal(oldResult.error.code, "HERDR_UNSUPPORTED_VERSION");
 	});
 
+	it("formats the inspector command for the pane's own shell", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-inspector-shell-"));
+		try {
+			writeRun(root);
+			const deps = (env: NodeJS.ProcessEnv) => ({ cwd: root, asyncDirRoot: root, env, plugins: [], runnerPath: path.join(root, "runner.ts") });
+			const posix = await handleInspectorAction("inspector.command", { id: "run-123" }, deps({ SHELL: "/usr/bin/bash.exe" }));
+			assert.doesNotMatch(text(posix), /^& /, "a Git Bash pane cannot parse the PowerShell call operator");
+			const powershell = await handleInspectorAction("inspector.command", { id: "run-123" }, deps({}));
+			assert.equal(text(powershell).startsWith("& "), process.platform === "win32");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("opens one raw inspector pane, persists its binding, and closes only that pane", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-inspector-"));
 		try {
@@ -439,7 +453,9 @@ describe("Herdr inspector", () => {
 			assert.deepEqual(splitCall, ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot, "--no-focus"]);
 			assert.equal(binding?.lastFocusedAt, undefined);
 			const runCall = calls.find((args) => args[0] === "pane" && args[1] === "run" && args[2] === "w1:p10");
-			assert.equal(runCall?.[3]?.startsWith("& "), process.platform === "win32");
+			// A Herdr pane on Windows may run Git Bash, whose shell cannot parse the call operator.
+			const posixPaneShell = process.platform === "win32" && /(bash|zsh|sh)/i.test(process.env.SHELL ?? "");
+			assert.equal(runCall?.[3]?.startsWith("& "), process.platform === "win32" && !posixPaneShell);
 			if (process.platform !== "win32") assert.match(runCall?.[3] ?? "", /^sh -c 'exec \"\$0\" \"\$@\"' '/);
 			assert.match(runCall?.[3] ?? "", /pi-bin/);
 			assert.match(runCall?.[3] ?? "", /Own this project mission\./);
