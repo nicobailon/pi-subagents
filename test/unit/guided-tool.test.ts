@@ -3,12 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { loadConfig } from "../../src/extension/config.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { actionTopicKey, callNotes, createGuidedSubagentTool, EMPTY_CALL_TEXT, EVENT_NOTES, FIELDS_DECLARED_TEXT, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_FIELD_PARAMETERS, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
+import { actionTopicKey, BLANK_CALL_TEXT, callNotes, createGuidedSubagentTool, EVENT_NOTES, formatGuide, nestedSubagentRequest, SUBAGENT_TOOL_DESCRIPTION, SUBAGENT_TOOL_PARAMETERS, type CallFacts } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 import { readSubagentGuide } from "../../src/extension/subagent-guide.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
@@ -17,7 +17,7 @@ import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
 import { createMockPi } from "../support/mock-pi.ts";
 
 type Session = Awaited<ReturnType<typeof createAgentSession>>["session"];
-type Step = Record<string, unknown> | Array<Record<string, unknown>> | string;
+type Step = Record<string, unknown> | Array<Record<string, unknown>> | string | (() => ReturnType<typeof fauxAssistantMessage>);
 
 const mockPi = createMockPi();
 const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -38,6 +38,7 @@ async function startParent(steps: Step[], onRequest?: (context: RequestContext) 
 		onRequest?.(context);
 		const next = steps.shift() ?? "ok";
 		if (typeof next === "string") return fauxAssistantMessage(next);
+		if (typeof next === "function") return next();
 		const calls = Array.isArray(next) ? next : [next];
 		return fauxAssistantMessage(calls.map((args) => fauxToolCall("subagent", args)), { stopReason: "toolUse" });
 	}));
@@ -187,13 +188,13 @@ describe("guide first", () => {
 		assert.match(wrong!, /^Unknown subagents guide topic 'nope'\. Valid topics: overview, workflows, /);
 	});
 
-	it("accepts a list id from a provider that gets declared fields", { timeout: 60_000 }, async () => {
-		const session = await startParent([{}, { action: "stop", id: ["x1", "x2"] }, "stopped"], undefined, "xai");
+	it("accepts a list id from a provider that blanks undeclared fields", { timeout: 60_000 }, async () => {
+		const session = await startParent([{}, { args: { action: "stop", id: ["x1", "x2"] } }, "stopped"], undefined, "xai");
 		await session.prompt("go");
 		assert.equal(subagentReplies(session)[1], "No stoppable async run found for 'x1'.\nNo stoppable async run found for 'x2'.");
 	});
 
-	it("refuses a blanked number field from a provider that gets declared fields, instead of launching with it", { timeout: 60_000 }, async () => {
+	it("refuses a blanked number field from a provider that blanks undeclared fields, instead of launching with it", { timeout: 60_000 }, async () => {
 		const session = await startParent([{}, { agent: "probe", task: "Inspect", timeoutMs: true }, { workflow: "parallel", args: { tasks: [{ agent: "probe", task: "Inspect" }] }, timeoutMs: true }, "done"], undefined, "xai");
 		await session.prompt("go");
 		const [, reply, workflowReply] = subagentReplies(session);
@@ -378,28 +379,104 @@ describe("taught state", () => {
 		assert.deepEqual(runs, [{ action: "reply", replyTo: "q-1", message: "Use option A" }]);
 	});
 
-	it("declares the main fields after a blank call on a provider that blanks them, then launches", { timeout: 60_000 }, async () => {
+	it("keeps one schema on a provider that blanks fields, teaches args after a blank call, then launches from args", { timeout: 60_000 }, async () => {
 		mockPi.reset();
 		mockPi.onCall({ output: "done" });
-		const declared: number[] = [];
-		const fieldCount = (context: RequestContext) => {
-			const subagent = getCurrentTools(context.messages).find((tool) => tool.name === "subagent") as { parameters?: { properties?: object } } | undefined;
-			declared.push(Object.keys(subagent?.parameters?.properties ?? {}).length);
+		mockPi.onCall({ output: "done" });
+		const declared = new Set<string>();
+		const schema = (context: RequestContext) => {
+			const subagent = getCurrentTools(context.messages).find((tool) => tool.name === "subagent") as { parameters?: unknown } | undefined;
+			declared.add(JSON.stringify(subagent?.parameters));
 		};
-		const session = await startParent([{}, "read", { agent: true, task: true }, { agent: "probe", task: "Inspect", async: false }, "launched"], fieldCount);
+		const steps: Step[] = [{}, "read", { agent: true, task: true }, {}, { args: { agent: "probe", task: "Inspect", async: false } }, { args: { action: "status" } }, { args: { workflow: "parallel", args: { tasks: [{ agent: "probe", task: "Inspect" }] }, async: false } }, "launched"];
+		const session = await startParent(steps, schema, "xai");
 		await session.prompt("go");
 		await session.prompt("go");
-		const [guide, blank, launched] = subagentReplies(session);
-		assert.match(guide!, /^subagent guide\./);
-		assert.equal(blank, FIELDS_DECLARED_TEXT);
+		const [guide, blank, empty, launched, status, parallel] = subagentReplies(session);
+		assert.match(guide!, /^- fields arrive blank\? put them all in args: subagent\(\{args:\{agent, task, …\}\}\)$/m);
+		assert.equal(blank, BLANK_CALL_TEXT);
+		assert.match(blank!, /The full guide: subagent\(\{action:"guide"\}\)\.$/);
+		assert.equal(empty, BLANK_CALL_TEXT);
 		assert.match(launched!, /done/);
-		assert.equal(mockPi.callCount(), 1, "the next real launch runs");
-		assert.equal(declared[0], 0, "a provider not on the known list starts with no declared fields");
-		assert.equal(declared.at(-1), 14, "after the blank call the tool declares its 14 main fields");
-		const again = await startParent([{}, "read", {}, "again"]);
-		await again.prompt("go");
-		await again.prompt("go");
-		assert.equal(subagentReplies(again)[1], EMPTY_CALL_TEXT, "the same model already needs fields in this process");
+		assert.doesNotMatch(status!, /blank|unknown|must be/i, status);
+		assert.match(parallel!, /done/);
+		assert.equal(mockPi.callCount(), 2, "the args launch and the parallel workflow through args both run");
+		assert.deepEqual([...declared], [JSON.stringify({ type: "object", properties: { args: { type: "object", additionalProperties: true } }, additionalProperties: true })]);
+		const first = await startParent([{ agent: true, task: true }, "held"], undefined, "xai");
+		await first.prompt("go");
+		assert.match(subagentReplies(first)[0]!, new RegExp(`^${BLANK_CALL_TEXT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n\\nsubagent guide\\.`));
+		assert.equal(mockPi.callCount(), 2, "a blank first launch starts nothing");
+	});
+
+	it("teaches the args form when a named workflow arrives as workflow: true, then runs it from args", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const tasks = [{ agent: "probe", task: "Inspect" }];
+		const blanked = { workflow: true, args: { tasks } };
+		const session = await startParent([blanked, "held", blanked, { args: { workflow: "parallel", args: { tasks }, async: false } }, "done"], undefined, "xai");
+		await session.prompt("go");
+		await session.prompt("go");
+		const [held, failed] = subagentReplies(session);
+		const hint = 'If workflow:"<name>" arrived as true or was dropped, put the whole call in args: subagent({args:{workflow:"<name>", args:{…}}}).';
+		assert.ok(held!.includes(hint), held);
+		assert.ok(failed!.includes(hint), failed);
+		assert.equal(mockPi.callCount(), 1, "the parallel workflow sent inside args runs");
+	});
+
+	it("teaches the args form when a provider drops a named workflow and only args:{tasks} arrives, then runs it from args", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const tasks = [{ agent: "probe", task: "Inspect" }];
+		const session = await startParent([{}, { args: { tasks } }, { args: { workflow: "parallel", args: { tasks }, async: false } }, "done"], undefined, "github-copilot");
+		await session.prompt("go");
+		const [, dropped] = subagentReplies(session);
+		assert.match(dropped!, /unknown field 'tasks'/);
+		assert.ok(dropped!.includes('If workflow:"<name>" arrived as true or was dropped, put the whole call in args: subagent({args:{workflow:"<name>", args:{…}}}).'), dropped);
+		assert.equal(mockPi.callCount(), 1, "the parallel workflow sent inside args runs");
+	});
+
+	it("gives no args hint to a workflow: true call whose js block reached the session", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		const scripted = () => fauxAssistantMessage([fauxText("```js workflow\nthrow new Error(\"boom\");\n```"), fauxToolCall("subagent", { workflow: true, args: { n: 1 }, async: false })], { stopReason: "toolUse" });
+		const session = await startParent([scripted, "held", scripted, "done"]);
+		await session.prompt("go");
+		await session.prompt("go");
+		const [held, failed] = subagentReplies(session);
+		assert.match(held!, /^Not launched yet/);
+		assert.match(failed!, /boom/);
+		for (const reply of [held!, failed!]) assert.doesNotMatch(reply, /arrived as true|put the whole call in args/, reply);
+	});
+
+	it("keeps a number from args when the same field arrives blank at the top level", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const session = await startParent([{}, { timeoutMs: true, args: { agent: "probe", task: "Inspect", timeoutMs: 30000, async: false } }, "done"], undefined, "xai");
+		await session.prompt("go");
+		const launched = subagentReplies(session)[1]!;
+		assert.doesNotMatch(launched, /must be a number/, launched);
+		assert.match(launched, /done/);
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(subagentDetails(session)[1]?.timeoutMs, 30000);
+	});
+
+	it("keeps a field's value from args when the same field arrives blank at the top level", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const session = await startParent([{}, { agent: true, task: true, args: { agent: "probe", task: "Inspect", async: false } }, { action: true, args: { action: "status" } }, "done"], undefined, "xai");
+		await session.prompt("go");
+		const [, launched, status] = subagentReplies(session);
+		assert.match(launched!, /done/);
+		assert.equal(mockPi.callCount(), 1);
+		assert.doesNotMatch(status!, /Unknown|must be/, status);
+	});
+
+	it("treats args: \"null\" as left out instead of failing validation", { timeout: 60_000 }, async () => {
+		mockPi.reset();
+		mockPi.onCall({ output: "done" });
+		const session = await startParent([{}, { agent: "probe", task: "Inspect", async: false, args: "null" }, "done"]);
+		await session.prompt("go");
+		assert.match(subagentReplies(session)[1]!, /done/);
+		assert.equal(mockPi.callCount(), 1);
 	});
 
 	it("creates a schedule whose fields arrive only inside args", { timeout: 60_000 }, async () => {
@@ -506,65 +583,42 @@ describe("guided tool surface", () => {
 		return { tool, declarations, emit };
 	};
 
-	it("declares no fields by default and the 14 main fields for a provider known to blank undeclared ones", () => {
-		const anthropic = declaredTool();
-		const session = { sessionManager: { buildContextEntries: () => [] } };
-		anthropic.emit("session_start", {}, { ...session, model: { provider: "anthropic", id: "claude-opus-5-5" } });
-		assert.deepEqual(anthropic.declarations, [0]);
-		const xai = declaredTool();
-		xai.emit("session_start", {}, { ...session, model: { provider: "xai", id: "grok-4.6" } });
-		assert.deepEqual(xai.declarations, [0, 14]);
-		xai.emit("model_select", { model: { provider: "anthropic", id: "claude-opus-5-5" } }, {});
-		assert.deepEqual(xai.declarations, [0, 14, 0], "switching to a provider that keeps fields drops them again");
-	});
-
-	it("declares the fields at once when a resumed session recorded a blank call on its model", () => {
-		const resumed = declaredTool();
-		const entries = [{ type: "message", message: { role: "toolResult", details: { taught: ["guide", "fields:restarted/m"] } } }];
-		resumed.emit("session_start", {}, { model: { provider: "restarted", id: "m" }, sessionManager: { buildContextEntries: () => entries } });
-		assert.deepEqual(resumed.declarations, [0, 14]);
+	it("registers its one schema once and never again, across model switches and blank calls", async () => {
+		const { tool, declarations, emit } = declaredTool();
+		const ctx = { cwd: root, model: { provider: "xai", id: "grok-4.6" }, sessionManager: { buildContextEntries: () => [] } };
+		emit("session_start", {}, ctx);
+		emit("model_select", { model: { provider: "github-copilot", id: "kimi-k3" } }, ctx);
+		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
+		for (const blank of [{ agent: true, task: true }, {}, {}]) {
+			const result = await tool.execute("blank", blank as never, undefined, undefined, ctx as never);
+			assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", BLANK_CALL_TEXT);
+		}
+		emit("model_select", { model: { provider: "anthropic", id: "claude-opus-5-5" } }, ctx);
+		assert.deepEqual(declarations, [1]);
 	});
 
 	it("runs a workflow with empty input after the guide instead of treating it as blank", async () => {
-		const { tool, declarations, emit } = declaredTool();
+		const { tool, emit } = declaredTool();
 		const ctx = { cwd: root, model: { provider: "keeps-fields-2", id: "m" }, sessionManager: { buildContextEntries: () => [] } };
 		emit("session_start", {}, ctx);
 		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
 		const result = await tool.execute("flow", { workflow: true, args: {} } as never, undefined, undefined, ctx as never);
-		assert.notEqual(result.content[0]?.type === "text" ? result.content[0].text : "", EMPTY_CALL_TEXT);
-		assert.notEqual(result.content[0]?.type === "text" ? result.content[0].text : "", FIELDS_DECLARED_TEXT);
-		assert.deepEqual(declarations, [0]);
+		assert.notEqual(result.content[0]?.type === "text" ? result.content[0].text : "", BLANK_CALL_TEXT);
 	});
 
-	it("keeps the 0-field declaration when a later call is not blank", async () => {
-		const { tool, declarations, emit } = declaredTool();
-		const ctx = { cwd: root, model: { provider: "keeps-fields", id: "m" }, sessionManager: { buildContextEntries: () => [] } };
-		emit("session_start", {}, ctx);
-		await tool.execute("guide", {} as never, undefined, undefined, ctx as never);
-		await tool.execute("list", { action: "list", agent: true } as never, undefined, undefined, ctx as never);
-		assert.deepEqual(declarations, [0]);
-		await tool.execute("again", {} as never, undefined, undefined, ctx as never);
-		assert.deepEqual(declarations, [0]);
-		await tool.execute("again-2", {} as never, undefined, undefined, ctx as never);
-		assert.deepEqual(declarations, [0, 14]);
-	});
-
-	it("keeps both declarations within their caps, and the description and the guide with the bundled agents within 2,400", () => {
+	it("keeps the declaration within its cap, and the description and the guide with the bundled agents within 2,500", () => {
 		const empty = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-size-"));
 		process.env.PI_CODING_AGENT_DIR = empty;
 		try {
 			const agents = discoverAgents(empty, "both").agents;
 			assert.ok(agents.some((agent) => agent.name === "scout"), "bundled agents are listed");
 			const size = SUBAGENT_TOOL_DESCRIPTION.length + formatGuide(agents, { canLaunch: true }).length;
-			assert.ok(size <= 2_400, `description + guide is ${size} chars`);
+			assert.ok(size <= 2_500, `description + guide is ${size} chars`);
 			assert.match(formatGuide(agents, { canLaunch: true }), /Not for messaging a Pi session that is already open; use a messaging tool for that\./);
 			assert.doesNotMatch(formatGuide(agents, { canLaunch: true, child: true }), /messaging tool/);
-			assert.deepEqual(SUBAGENT_TOOL_PARAMETERS, { type: "object", properties: {}, additionalProperties: true });
-			assert.deepEqual(Object.keys(SUBAGENT_TOOL_FIELD_PARAMETERS.properties), ["action", "agent", "task", "id", "message", "cwd", "context", "model", "output", "label", "worktree", "workflow", "args", "topic"]);
-			assert.equal(SUBAGENT_TOOL_FIELD_PARAMETERS.additionalProperties, true);
+			assert.deepEqual(SUBAGENT_TOOL_PARAMETERS, { type: "object", properties: { args: { type: "object", additionalProperties: true } }, additionalProperties: true });
 			const declared = (parameters: unknown) => JSON.stringify({ name: "subagent", description: SUBAGENT_TOOL_DESCRIPTION, parameters }).length;
-			assert.ok(declared(SUBAGENT_TOOL_PARAMETERS) <= 240, `0-field declaration is ${declared(SUBAGENT_TOOL_PARAMETERS)} chars`);
-			assert.ok(declared(SUBAGENT_TOOL_FIELD_PARAMETERS) <= 650, `14-field declaration is ${declared(SUBAGENT_TOOL_FIELD_PARAMETERS)} chars`);
+			assert.ok(declared(SUBAGENT_TOOL_PARAMETERS) <= 290, `declaration is ${declared(SUBAGENT_TOOL_PARAMETERS)} chars`);
 		} finally {
 			process.env.PI_CODING_AGENT_DIR = agentDir;
 			fs.rmSync(empty, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

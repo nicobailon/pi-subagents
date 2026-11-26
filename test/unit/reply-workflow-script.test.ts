@@ -27,6 +27,11 @@ describe("reply workflow block", () => {
 		assert.ok("error" in placeholder && /2 subagent calls with workflow: true; a reply can carry only one/.test(placeholder.error), JSON.stringify(placeholder));
 	});
 
+	it("counts a workflow: true call whose fields arrive inside args toward the one-block limit", () => {
+		const result = readReplyWorkflowScript(branch({ type: "text", text: "```js workflow\nreturn 1;\n```" }, call("call-1"), call("call-2", { args: { workflow: true } })), "call-1");
+		assert.ok("error" in result && /2 subagent calls with workflow: true; a reply can carry only one/.test(result.error), JSON.stringify(result));
+	});
+
 	it("fails instead of guessing when the block or its owning call is ambiguous or missing", () => {
 		const block = "```js workflow\nreturn 1;\n```";
 		for (const [manager, pattern] of [

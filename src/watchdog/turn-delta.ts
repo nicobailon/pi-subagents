@@ -1,3 +1,4 @@
+import { liftArgsFields } from "../extension/subagent-options.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "./types.ts";
 
 type MessageLike = {
@@ -173,9 +174,9 @@ export function formatWatchdogOrchestrationActivity(event: unknown): string {
 	const sections: string[] = [];
 	for (const call of turn.message.content) {
 		if (call?.type !== "toolCall" || typeof call.id !== "string") continue;
-		const args = call.arguments;
-		if (!args || typeof args !== "object") continue;
-		const eligible = call.name === "subagent" && (["status", "resume", "interrupt", "steer", "stop", "wait", "reply"].includes(args.action)
+		if (!call.arguments || typeof call.arguments !== "object") continue;
+		const args = liftArgsFields(call.arguments);
+		const eligible = call.name === "subagent" && ((typeof args.action === "string" && ["status", "resume", "interrupt", "steer", "stop", "wait", "reply"].includes(args.action))
 			|| (args.action === undefined && (typeof args.agent === "string" || args.workflow !== undefined)));
 		if (!eligible) continue;
 		const result = turn.toolResults.find((value) => {

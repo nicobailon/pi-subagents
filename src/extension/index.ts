@@ -68,7 +68,7 @@ import { autoResumeFailureText, cancelPendingWorkflowAutoResumes, finishWorkflow
 import { recordWorkflowResumeRefusal, releaseWorkflowResumeClaim, resumedRunStarted } from "../workflows/workflow-resume-claim.ts";
 import { workflowResumeRefusal } from "../workflows/workflow-resume.ts";
 import { finalizeToolResult } from "./tool-result.ts";
-import { flattenSubagentToolOptions, prepareSubagentToolArguments } from "./subagent-options.ts";
+import { flattenSubagentToolOptions, liftArgsFields, prepareSubagentToolArguments } from "./subagent-options.ts";
 import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
 import { restoreForegroundRunHistory } from "../runs/foreground/foreground-history.ts";
 import { createInterruptedElsewhereCollector } from "../runs/background/interrupted-elsewhere.ts";
@@ -774,7 +774,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		run: (id, request, nested, signal, onUpdate, ctx) => nested
 			? executeSubagentReady(id, request, new AbortController().signal, onUpdate, ctx)
 			: executeSubagentCollapsed(id, request, signal ?? new AbortController().signal, onUpdate, ctx),
-		renderCall(args, theme, context) {
+		renderCall(callArgs, theme, context) {
+			const args = liftArgsFields(callArgs);
 			const gap = " ".repeat(config.mainWindowRenderer?.horizontalSpacing ?? 1);
 			const title = theme.fg("toolTitle", theme.bold("subagent"));
 			const options = args.options && typeof args.options === "object" ? args.options as Record<string, unknown> : {};

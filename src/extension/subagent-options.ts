@@ -30,6 +30,33 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+export function isBlankValue(value: unknown): boolean {
+	return value === true || value === "true" || value === null || value === "null" || (isPlainObject(value) && Object.keys(value).length === 0);
+}
+
+function liftableArgs(params: Record<string, unknown>): Record<string, unknown> | undefined {
+	const options = isPlainObject(params.options) ? params.options : {};
+	const args = params.args;
+	if (!isPlainObject(args)) return undefined;
+	const workflow = params.workflow;
+	const hasWorkflow = workflow !== undefined && workflow !== "null" && workflow !== false && workflow !== "false";
+	return hasWorkflow || options.script !== undefined ? undefined : args;
+}
+
+function dropBlankArgsDuplicates(params: Record<string, unknown>): Record<string, unknown> {
+	const args = liftableArgs(params);
+	if (!args) return params;
+	const blank = Object.keys(params).filter((key) => key !== "args" && Object.hasOwn(args, key) && isBlankValue(params[key]));
+	return blank.length ? Object.fromEntries(Object.entries(params).filter(([key]) => !blank.includes(key))) : params;
+}
+
+export function liftArgsFields(params: Record<string, unknown>): Record<string, unknown> {
+	const args = liftableArgs(params);
+	if (!args) return params;
+	const { args: _args, ...rest } = dropBlankArgsDuplicates(params);
+	return { ...args, ...rest };
+}
+
 function parseJsonText(text: string): unknown {
 	if (!/^\s*[[{]/.test(text)) return undefined;
 	try {
@@ -75,8 +102,9 @@ function convertFields(fields: Record<string, unknown>, schemas: Record<string, 
 	return converted ?? fields;
 }
 
-export function prepareSubagentToolArguments(args: unknown): unknown {
-	if (!isPlainObject(args)) return args;
+export function prepareSubagentToolArguments(input: unknown): unknown {
+	if (!isPlainObject(input)) return input;
+	const args = dropBlankArgsDuplicates(input);
 	const workflowCall = args.workflow !== undefined && !isUnsetPlaceholder(args.workflow) && args.workflow !== false && args.workflow !== "false";
 	const converted = convertFields(args, MODEL_FIELDS, workflowCall);
 	if (!isPlainObject(converted.options)) return converted;
