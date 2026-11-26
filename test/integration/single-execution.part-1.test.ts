@@ -5270,6 +5270,37 @@ Answer only from the supplied synthetic text.
 		assert.match(errors[0]?.message ?? "", /runs\.all item: Unknown agent 'worker'\./);
 	});
 
+	it("checks a child with its own absolute cwd when the workflow cwd differs from the parent cwd", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const childCwd = path.join(tempDir, "project", "child-cwd");
+		fs.mkdirSync(childCwd, { recursive: true });
+		// 'reviewer' exists only at the child cwd; nothing exists at the workflow cwd or the parent cwd.
+		const executor = makeExecutor([], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), (cwd) => cwd === childCwd ? [makeAgent("reviewer")] : []);
+		mockPi.onCall({ output: "Child cwd agent completed" });
+		const result = await executor.executePublic(
+			"parallel-agent-own-cwd-under-workflow-cwd",
+			{ workflow: "parallel", cwd: "project", args: { tasks: [{ agent: "reviewer", cwd: childCwd, task: "Review" }] }, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "parallel workflow failed");
+		assert.equal(mockPi.callCount(), 1);
+
+		// The same child with an agent that exists nowhere is rejected before launch, by name.
+		const misplaced = await executor.executePublic(
+			"parallel-unknown-agent-own-cwd-under-workflow-cwd",
+			{ workflow: "parallel", cwd: "project", args: { tasks: [{ agent: "reviwer", cwd: childCwd, task: "Review" }] }, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(misplaced.isError, true);
+		assert.equal(mockPi.callCount(), 1);
+		const errors = JSON.parse(misplaced.content[0]?.text ?? "").errors.map((error: { kind?: string; message?: string }) => ({ kind: error.kind, message: error.message }));
+		assert.deepEqual(errors.map((error) => error.kind), ["agent"]);
+		assert.match(errors[0]?.message ?? "", /runs\.all item: Unknown agent 'reviwer'\./);
+	});
+
 	it("checks literal agents with the parent model's provider-specific discovery", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), (_cwd, provider) => provider === "openai-codex" ? [makeAgent("reviewer")] : []);
 		const ctx = { ...makeMinimalCtx(tempDir), model: { provider: "openai-codex", id: "gpt-test" } };

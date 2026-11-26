@@ -1,6 +1,6 @@
 import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve as resolvePath } from "node:path";
+import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
 import { createWorkflowScriptWorker } from "./workflow-script-worker.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
@@ -41,7 +41,7 @@ export interface WorkflowScriptValidationResult {
 
 export interface WorkflowScriptValidationOptions {
 	maxSubagentSpawnsPerRun?: number;
-	/** Returns why launch-time resolution would reject this literal child agent name. `child.cwd` and `child.agentScope` are the child's own literal values; launch looks the name up there, not at the workflow cwd and scope. */
+	/** Returns why launch-time resolution would reject this literal child agent name. `child.cwd` is the child's own literal absolute cwd and `child.agentScope` its own literal scope; launch looks the name up there, not at the workflow cwd and scope. */
 	agentNameError?: (name: string, child: { cwd?: string; agentScope?: string }) => string | undefined;
 }
 
@@ -920,14 +920,16 @@ function validateStaticLaneResumes(call: AstNode): WorkflowScriptValidationError
 
 interface StaticChildAgent {
 	agent: AstNode;
-	/** The child's own literal cwd; absent when launch resolves the agent at the workflow cwd. */
+	/** The child's own literal absolute cwd; absent when launch resolves the agent at the workflow cwd or elsewhere. */
 	cwd?: string;
 	agentScope?: string;
 }
 // A spread or computed key can replace `agent`, a resume keeps the retained child's agent, and a cwd or
-// agentScope built at runtime could point anywhere; those stay with launch-time resolution. A child with its
-// own literal cwd or agentScope is looked up where launch resolves it: there. A placed child's cwd names a
-// directory on its machine, so launch resolves the agent at the workflow cwd and the cwd is left out.
+// agentScope built at runtime could point anywhere; those stay with launch-time resolution. So does a relative
+// cwd: a foreground child resolves it against the parent cwd and a detached one against the workflow cwd, so
+// neither can be checked here without risking a false rejection. A child with its own literal absolute cwd or
+// agentScope is looked up where launch resolves it: there. A placed child's cwd names a directory on its
+// machine, so launch resolves the agent at the workflow cwd and the cwd is left out.
 function staticChildAgent(params: unknown): StaticChildAgent | undefined {
 	if (!astNode(params) || params.type !== "ObjectExpression" || !Array.isArray(params.properties)) return undefined;
 	let agent: AstNode | undefined;
@@ -941,7 +943,7 @@ function staticChildAgent(params: unknown): StaticChildAgent | undefined {
 		if (key === "agent") agent = property.kind === "init" && astNode(property.value) ? property.value : undefined;
 		else if (key === "cwd") {
 			cwd = literalString(property.value);
-			if (cwd === undefined) return undefined;
+			if (cwd === undefined || !isAbsolute(cwd)) return undefined;
 		} else if (key === "agentScope") {
 			agentScope = literalString(property.value);
 			if (agentScope === undefined) return undefined;

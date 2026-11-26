@@ -633,7 +633,7 @@ describe("scripted workflow runtime", () => {
 		// Agents known per cwd and scope, the way discovery depends on both.
 		const known = new Map([
 			[".|both", new Set(["worker", "reviewer", "placed-agent"])],
-			["../other|both", new Set(["remote-only"])],
+			["/elsewhere/other|both", new Set(["remote-only"])],
 			[".|project", new Set(["project-only"])],
 		]);
 		const lookups: Array<[name: string, cwd: string | undefined, agentScope: string | undefined]> = [];
@@ -645,8 +645,9 @@ describe("scripted workflow runtime", () => {
 			`const scan = await runs.run("scan", { agent: "worker", task: "Scan" });`,
 			`await runs.all([{ key: "review", agent: "reviwer", task: scan.output }]);`,
 			`await runs.lanes([{ key: "lane", stages: [{ key: "write", agent: "wroker", task: "Write" }, { key: "fix", resume: "previous", task: "Fix" }] }]);`,
-			`await runs.run("elsewhere", { agent: "remote-only", cwd: "../other", task: "Scan" });`,
-			`await runs.run("elsewhere-typo", { agent: "remote-onlx", cwd: "../other", agentScope: "project", task: "Scan" });`,
+			`await runs.run("elsewhere", { agent: "remote-only", cwd: "/elsewhere/other", task: "Scan" });`,
+			`await runs.run("elsewhere-typo", { agent: "remote-onlx", cwd: "/elsewhere/other", agentScope: "project", task: "Scan" });`,
+			`await runs.run("relative", { agent: "missing", cwd: "../other", task: "Scan" });`,
 			`await runs.run("placed", { agent: "placed-agent", cwd: "/on/its/machine", machine: "remote", task: "Scan" });`,
 			`await runs.run("scoped", { agent: "project-only", agentScope: "project", task: "Scan" });`,
 			`await runs.run("spread", { agent: "missing", ...overrides });`,
@@ -661,13 +662,14 @@ describe("scripted workflow runtime", () => {
 			{ kind: "agent", message: "runs.lanes stage: Unknown agent 'wroker'.", line: 3 },
 			{ kind: "agent", message: "runs.run: Unknown agent 'remote-onlx'.", line: 5 },
 		]);
-		// A child with its own literal cwd or agentScope is looked up there; a placed child keeps the workflow cwd.
+		// A child with its own literal absolute cwd or agentScope is looked up there; a placed child keeps the workflow
+		// cwd; a relative cwd resolves differently per launch path, so it stays with launch-time resolution.
 		assert.deepEqual(lookups, [
 			["worker", undefined, undefined],
 			["reviwer", undefined, undefined],
 			["wroker", undefined, undefined],
-			["remote-only", "../other", undefined],
-			["remote-onlx", "../other", "project"],
+			["remote-only", "/elsewhere/other", undefined],
+			["remote-onlx", "/elsewhere/other", "project"],
 			["placed-agent", undefined, undefined],
 			["project-only", undefined, "project"],
 		]);

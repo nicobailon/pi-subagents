@@ -2729,9 +2729,10 @@ function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLik
 		agentNameError: (name, child) => {
 			const childScope = child.agentScope === undefined ? scope : resolveExecutionAgentScope(child.agentScope);
 			// Mirrors resolveWorkflowChildLocalCwd: a child whose agent is a placed (machine) agent keeps the workflow cwd.
+			// child.cwd is absolute; a relative one never reaches this check (see staticChildAgent).
 			const childCwd = child.cwd === undefined || resolveAgentName(name, discover(cwd, childScope).agents).agent?.machine !== undefined
 				? cwd
-				: resolveChildCwd(cwd, child.cwd);
+				: child.cwd;
 			const atChild = discover(childCwd, childScope);
 			const { agents } = atChild;
 			const resolved = resolveAgentName(name, agents);
