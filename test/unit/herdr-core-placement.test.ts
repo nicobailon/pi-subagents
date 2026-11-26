@@ -14,7 +14,6 @@ const machine: HerdrCoreLocalMachineReference = { provider: "herdr-core", id: "l
 
 function connection(calls: Array<{ method: string; params: Record<string, unknown> }>, terminal: Record<string, unknown> = { address: "t2", parent: "t1", state: "live", labels: { "pi-subagents.run": "run", "pi-subagents.agent": "pi-run" } }): HerdrCoreConnection {
 	return {
-		socketPath: machine.socket,
 		parentTerminal: machine.parentTerminal,
 		client: {
 			async call(method, params = {}) { calls.push({ method, params }); if (method === "terminal.run" || method === "terminal.get" || method === "terminal.kill") return terminal as never; return {} as never; },

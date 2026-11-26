@@ -140,11 +140,6 @@ export function createStructuredOutputToolParameters(schema: JsonSchemaObject, o
 	};
 }
 
-interface CompiledJsonSchema {
-	Check(value: unknown): boolean;
-	Errors(value: unknown): Iterable<JsonSchemaValidationError>;
-}
-
 interface JsonSchemaValidationError {
 	keyword?: string;
 	schemaPath?: string;
@@ -315,10 +310,6 @@ export function createStructuredOutputRuntime(schema: JsonSchemaObject, baseDir?
 	};
 }
 
-export async function validateStructuredOutputValue(schema: JsonSchemaObject, value: unknown): Promise<{ status: "valid" } | { status: "invalid"; message: string }> {
-	return validateWithCompile(schema, value);
-}
-
 /**
  * The tool's `prepareArguments` hook: checks the raw `value` before Pi converts tool arguments
  * (Pi can turn `"x"` into `["x"]` or `null` into `"null"`), so only a value that already matches
@@ -326,13 +317,13 @@ export async function validateStructuredOutputValue(schema: JsonSchemaObject, va
  */
 export function prepareStructuredOutputArguments(schema: JsonSchemaObject, args: unknown): unknown {
 	if (!args || typeof args !== "object" || !("value" in args)) return args;
-	const validation = validateWithCompile(schema, args.value);
+	const validation = validateStructuredOutputValue(schema, args.value);
 	if (validation.status === "invalid") throw new Error(`Structured output validation failed: ${validation.message}`);
 	return args;
 }
 
-function validateWithCompile(schema: JsonSchemaObject, value: unknown): { status: "valid" } | { status: "invalid"; message: string } {
-	let validator: CompiledJsonSchema;
+export function validateStructuredOutputValue(schema: JsonSchemaObject, value: unknown): { status: "valid" } | { status: "invalid"; message: string } {
+	let validator: ReturnType<typeof Compile>;
 	try {
 		validator = Compile(schema);
 	} catch (error) {
@@ -371,7 +362,7 @@ export async function readStructuredOutput(runtime: StructuredOutputRuntime): Pr
 	} catch (error) {
 		return { error: `Failed to read structured output: ${error instanceof Error ? error.message : String(error)}` };
 	}
-	const validation = await validateStructuredOutputValue(runtime.schema, value);
+	const validation = validateStructuredOutputValue(runtime.schema, value);
 	if (validation.status === "invalid") return { error: `Structured output validation failed: ${validation.message}` };
 	return { value };
 }

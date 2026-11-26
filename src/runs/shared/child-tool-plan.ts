@@ -97,7 +97,7 @@ export function fastModeUnsupportedError(reason: string, serviceTier?: FastServi
 	);
 }
 
-export function isFastModeAdapter(api: string | undefined): boolean {
+export function isFastModeAdapter(api: string): boolean {
 	return api === "openai-responses" || api === "openai-codex-responses";
 }
 

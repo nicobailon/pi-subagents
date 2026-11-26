@@ -273,10 +273,9 @@ function resolveHerdrCoreLocalPlacement(input: { cwd: string; stepCwd?: string; 
 	const result = spawnSync(bin, ["--json", "get", terminal], { env: input.env, encoding: "utf-8", maxBuffer: MAX_HERDR_MACHINE_LIST_BYTES, timeout: HERDR_MACHINE_LIST_TIMEOUT_MS, windowsHide: true });
 	if (result.error) throw new Error((result.error as NodeJS.ErrnoException).code === "ENOENT" ? `Machine 'local' needs the Herdr Core CLI, but '${bin}' was not found on PATH.` : `Failed to run hc get ${terminal}: ${result.error.message}`, { cause: result.error });
 	if (result.status !== 0) throw new Error(`Machine 'local' could not confirm this Pi's Herdr Core terminal ${terminal}: ${(result.stderr || result.stdout).trim().slice(0, 512)}`);
-	let record: unknown;
-	try { record = JSON.parse(result.stdout) as unknown; } catch { throw new Error(`Machine 'local' received malformed terminal data from Herdr Core for ${terminal}.`); }
-	const found = record as { address?: unknown; state?: unknown };
-	if (found.address !== terminal || found.state !== "live") throw new Error(`Herdr Core did not confirm live parent terminal ${terminal}.`);
+	let found: { address?: unknown; state?: unknown } | null;
+	try { found = JSON.parse(result.stdout); } catch (error) { throw new Error(`Machine 'local' received malformed terminal data from Herdr Core for ${terminal}.`, { cause: error }); }
+	if (found?.address !== terminal || found.state !== "live") throw new Error(`Herdr Core did not confirm live parent terminal ${terminal}.`);
 	return { provider: "herdr-core", id: REX_LOCAL_MACHINE, socket, parentTerminal: terminal, cwd: resolveLocalLaunchCwd(input.cwd, input.stepCwd) };
 }
 
