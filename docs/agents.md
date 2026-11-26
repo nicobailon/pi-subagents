@@ -666,7 +666,3 @@ If an agent has an explicit `tools` allowlist and resolved skills, `read` is add
 Missing skills do not fail execution. The result summary shows a warning.
 
 Agent-local `skillPath` candidates never enter Pi's parent/global skills catalog. Pair `inheritSkills: false` with explicit `skills` and `skillPath` when a child should receive only its selected private skills.
-
-## How the parent learns the tool
-
-No skill is bundled. The `subagent` tool's first reply in a session is the guide (enabled agents, launch fields, actions), and later replies add guidance once each, when the event it is about happens (see [the `subagent` tool](configuration.md#the-subagent-tool)). When to delegate is the user's or project's policy, for example in `AGENTS.md`. A fresh child never sees the parent's guide; a forked child keeps the history it inherited, including the guide, and receives its own instructions in its task message (see [fork context details](tool-reference.md#fork-context-details)).
