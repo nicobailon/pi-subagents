@@ -1,13 +1,11 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Static } from "typebox";
-import { SubagentWaitParams } from "../../extension/schemas.ts";
 import type { Details, SubagentState } from "../../shared/types.ts";
-import { waitForSubagents } from "./subagent-wait.ts";
+import { waitForSubagents, type SubagentWaitParams } from "./subagent-wait.ts";
 import type { WaitSubscriptionManager } from "./wait-subscriptions.ts";
 import { finalizeToolResult } from "../../extension/tool-result.ts";
 
-export type WaitExecute = (id: string, params: Static<typeof SubagentWaitParams>, signal: AbortSignal | undefined, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext | undefined) => Promise<AgentToolResult<Details>>;
+export type WaitExecute = (id: string, params: SubagentWaitParams, signal: AbortSignal | undefined, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext | undefined) => Promise<AgentToolResult<Details>>;
 
 export function createWaitExecute(
 	pi: ExtensionAPI,

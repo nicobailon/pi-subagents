@@ -1526,7 +1526,7 @@ setTimeout(() => process.exit(90), 15000).unref();
 		}
 	});
 
-	it("bg_wait wakes when an async child is waiting on contact_supervisor", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("wait wakes when an async child is waiting on contact_supervisor", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const id = `async-supervisor-attention-${Date.now().toString(36)}`;
 		const replyReleasePath = path.join(tempDir, `${id}.reply`);
 		const finalReleasePath = path.join(tempDir, `${id}.final`);

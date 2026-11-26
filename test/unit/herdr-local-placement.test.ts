@@ -43,7 +43,7 @@ const RESULTS: Record<string, unknown> = {
 	"agent.get": { type: "agent_info", agent: { terminal_id: "term1", pane_id: "p1" } },
 	"pane.close": {},
 };
-const runtime = { runId: "run", agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false, waitTool: { enabled: true } };
+const runtime = { runId: "run", agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false };
 
 describe("Herdr placement on this machine (machine 'local' in Herdr)", { skip: process.platform === "win32" }, () => {
 	let dir: string, socket: string, server: net.Server, requests: Array<{ method: string; params: Record<string, unknown> }>, restore: () => void, onAgentStart: ((created: Record<string, unknown>) => void) | undefined;

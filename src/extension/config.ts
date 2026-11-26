@@ -18,7 +18,6 @@ const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "mo
 
 const REMOVED_CONFIG_KEYS: Record<string, string> = {
 	toolActivation: "the subagent tool is now always declared, small and unchanging; remove the key",
-	toolExposure: 'codemode scripts can always call subagent, and codemode.mode "only" in Pi settings hides it from the model; remove the key',
 	toolDescriptionMode: "the subagent tool description is now fixed and its first reply is the guide; remove the key",
 	waitTool: 'waiting is subagent({action:"wait"}); remove the key',
 };

@@ -648,17 +648,12 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					settingsManager,
 					sessionStartEvent: { type: "session_start", reason: "startup" },
 				});
-				try {
-					assertChildThinkingApplied({ requested: resolvedModel?.thinkingLevel, session });
-				} catch (error) {
-					disposeChildSession(session);
-					throw error;
-				}
 				pinChildCacheRetention(session.agent);
 				// Pi reports handler failures through onError instead of throwing, so required startup failures must be collected here.
 				const requiredStartupErrors: string[] = [];
 				let binding = true;
 				try {
+					assertChildThinkingApplied({ requested: resolvedModel?.thinkingLevel, session });
 					if (launch.runtime.fast) installChildFastMode(session, modelRuntime);
 					await session.bindExtensions({
 						mode: "print",

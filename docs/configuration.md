@@ -88,7 +88,7 @@ Wait for a run with `subagent({ action: "wait", id })` only when the same turn n
 
 Codemode scripts can call `tools.subagent(...)`. A launch from a script always runs in the background, even for an agent whose frontmatter sets `async: false`; `async: false`, a foreground-only launch, `workflow: true` (pass `options.script` or a script path instead) and `action: "wait"` are refused. `refine` and any action whose [`authorityPolicy`](#authoritypolicy) decision is `"confirm"` are refused too, because they would wait. Pi's `codemode.mode: "only"` setting hides `subagent` from the model and lists it in codemode instead.
 
-The settings `toolActivation`, `toolExposure`, `toolDescriptionMode` and `waitTool` were removed. A config that still sets one fails to load, with a message naming what replaces it; delete the key.
+The settings `toolActivation`, `toolDescriptionMode` and `waitTool` were removed. A config that still sets one fails to load, with a message naming what replaces it; delete the key.
 
 ## `pinToolDeclarations`
 
@@ -183,7 +183,7 @@ With `"summary"`, a tool result looks like this:
 
 Set to `false` to register none of the pi-subagents slash commands (`/run`, `/subagents`, `/subagents-fleet`, `/subagents-watchdog`, `/prompt-workflow`, and the rest) and no [`foregroundDetachShortcut`](#foregrounddetachshortcut). The `subagent` tool, RPC, the async widget, and the extension's other features are unchanged. Prompt templates whose frontmatter has `chain:` launch through `/prompt-workflow`, so they stop working too. Defaults to `true`. Restart Pi or run `/reload` after changing it.
 
-The package's prompt shortcuts, such as `/parallel-review` and `/review-loop`, are Pi prompt templates, not commands, so this setting leaves them alone. The same goes for its skills (`pi-subagents` and `council-mode`) and built-in agents. To turn them off, use Pi's package filter for prompts and skills and `disableBuiltins` for the agents, in Pi's `settings.json`. This turns off every prompt, the `council-mode` skill and every built-in agent:
+The package's prompt shortcuts, such as `/parallel-review` and `/review-loop`, are Pi prompt templates, not commands, so this setting leaves them alone. The same goes for its `council-mode` skill and built-in agents. To turn them off, use Pi's package filter for prompts and skills and `disableBuiltins` for the agents, in Pi's `settings.json`. This turns off every prompt, the `council-mode` skill and every built-in agent:
 
 ```json
 {
@@ -279,7 +279,7 @@ With `"fork"`, the setting uses the existing implicit-fork behavior. A launch st
 { "fastServiceTier": "ultrafast" }
 ```
 
-Sets the OpenAI `service_tier` that `fast: true` requests for native children using Pi’s OpenAI Responses or Codex Responses adapter: `"priority"` (default) or `"ultrafast"`. An explicit tier already on the request takes precedence. If this config file is invalid, a Fast launch fails instead of falling back to Priority. Whether the requested tier is available depends on the model and account.
+Sets the OpenAI `service_tier` that `fast: true` requests for native children using Pi's OpenAI Responses or Codex Responses adapter: `"priority"` (default) or `"ultrafast"`. An explicit tier already on the request takes precedence. If this config file is invalid, a Fast launch fails instead of falling back to Priority. Whether the requested tier is available depends on the model and account.
 
 ## `forkContext`
 
@@ -421,9 +421,7 @@ This deadline bounds the whole run. The wait for a single model response is boun
 
 In a non-interactive session (`pi -p`), the same value is how long Pi stays open at the end of a turn waiting for background subagent work to finish. When it is unset, Pi waits 30 minutes, then fails and exits if that work is still running.
 
-Use it when foreground orchestration needs a longer default than 30 minutes, or when background runs should have a hard default deadline.
-
-Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Each child is its own run: it takes its agent's `timeoutMs`, else this value. With neither, a child has no deadline in an interactive session, where the parent gets its 30-minute check-ins, and 30 minutes in a session without a UI. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
+Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Each child is its own run and takes its agent's `timeoutMs`, else this value, else the background default above. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
 
 ## `toolTimeoutMs`
 

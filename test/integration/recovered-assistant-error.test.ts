@@ -62,7 +62,7 @@ async function runFixture(host: Host, response: MockPiResponse, withStructuredOu
 
 	if (host === "foreground") {
 		const structuredOutput = withStructuredOutput ? createStructuredOutputRuntime(structuredSchema, tempDir) : undefined;
-		const options = { runId, acceptance: false as const, waitToolEnabled: false };
+		const options = { runId, acceptance: false as const };
 		const result = structuredOutput
 			? await runSync(tempDir, [agent], agent.name, "Exercise the scripted child lifecycle", { ...options, structuredOutput })
 			: await runSync(tempDir, [agent], agent.name, "Exercise the scripted child lifecycle", options);
@@ -79,7 +79,6 @@ async function runFixture(host: Host, response: MockPiResponse, withStructuredOu
 		shareEnabled: false,
 		sessionRoot: path.join(tempDir, "sessions"),
 		maxSubagentDepth: 2,
-		waitToolEnabled: false,
 		acceptance: false as const,
 	};
 	const launch = withStructuredOutput

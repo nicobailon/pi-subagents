@@ -103,7 +103,7 @@ describe("in-process foreground child", () => {
 
 	it("projects authoritative native-machine Git evidence into the public foreground result", async () => {
 		mockPi.onCall({ output: "done" }); const base = childSessionFactory(); const wrapped: ChildSessionFactory = { async create(input) { const child = await base.create(input); Object.defineProperty(child, "machineEvidence", { value: { provider: "herdr", machineId: "remote-machine", initial: { head: "aaa", dirty: false }, final: { head: "bbb", dirty: true } } }); return child; }, dispose: () => base.dispose() };
-		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "native-git-evidence", waitToolEnabled: false, childSessionFactory: wrapped });
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "native-git-evidence", childSessionFactory: wrapped });
 		assert.deepEqual(result.nativeMachine, { provider: "herdr", machineId: "remote-machine", initialGit: { head: "aaa", dirty: false }, finalGit: { head: "bbb", dirty: true } });
 	});
 
@@ -118,7 +118,7 @@ describe("in-process foreground child", () => {
 			fs.writeFileSync(file, "input\n");
 			mockPi.onCall({ writeFiles: [{ path: file, content: "changed\n" }], hangUntilAbort: true });
 			const base = childSessionFactory(); const wrapped: ChildSessionFactory = { async create(input) { const child = await base.create({ ...input, machine: undefined }); Object.defineProperty(child, "machineEvidence", { value: { provider: machine.provider, machineId: machine.id, initial: { head: "aaa", dirty: false }, final: { head: "aaa", dirty: false } } }); return child; }, dispose: () => base.dispose() };
-			const result = await runSync(repo, makeAgentConfigs(["echo"]), "echo", "Task", { runId: `git-evidence-${name}`, timeoutMs: 500, machine, waitToolEnabled: false, childSessionFactory: wrapped });
+			const result = await runSync(repo, makeAgentConfigs(["echo"]), "echo", "Task", { runId: `git-evidence-${name}`, timeoutMs: 500, machine, childSessionFactory: wrapped });
 			changed[name] = result.timeoutRecovery?.changedFiles;
 		}
 		assert.deepEqual(changed, { local: ["input.md"], rexSsh: [], herdr: [] });
@@ -412,7 +412,7 @@ function stubPi(session: Record<string, unknown> = {}, onReload?: () => void): P
 		createAgentSession: async () => ({ session: { bindExtensions: async () => {}, dispose() {}, extensionRunner: { hasHandlers: () => false }, subscribe: () => () => {}, prompt: async () => {}, abort: async () => {}, steer: async () => {}, followUp: async () => {}, messages: [], sessionId: "s", ...session } }),
 	} as unknown as PiCodingAgentModule;
 }
-const stubLaunch: ChildSessionLaunch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] };
+const stubLaunch: ChildSessionLaunch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"] };
 
 describe("default child session factory", () => {
 	it("serializes process env through extension loading and session start across concurrent launches", async () => {

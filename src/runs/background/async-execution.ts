@@ -1022,7 +1022,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		maxSubagentDepth,
 		worktreeBaseDir,
 		worktreeProvider,
-		worktreeBranchPrefix,
 		asyncDir,
 	} = params;
 	// One runner hosts every new step, so they share one launcher or none. Covers initial chains and

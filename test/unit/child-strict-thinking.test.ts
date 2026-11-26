@@ -95,7 +95,7 @@ describe("native child launch with PI_SUBAGENT_STRICT_THINKING", () => {
 		hooks: [],
 		noSkills: true,
 		noContextFiles: true,
-		runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false },
+		runtime: { fanoutChild: false, depth: 1, fast: false },
 	};
 
 	it("starts the child at Pi's adjusted level when unset", async () => {

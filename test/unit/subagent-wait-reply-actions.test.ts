@@ -4,34 +4,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { createChildSafeState } from "../../src/extension/fanout-child.ts";
 import { createNativeSupervisorChannel, ensureSupervisorChannelDir, resolveSupervisorChannelDir } from "../../src/intercom/native-supervisor-channel.ts";
 import { createWaitExecute } from "../../src/runs/background/wait-tool.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import type { SubagentState } from "../../src/shared/types.ts";
 
 const SESSION = "session-wait-reply";
 
-function createState(): SubagentState {
-	return {
-		baseCwd: "",
-		currentSessionId: SESSION,
-		supervisorOwnerSessionId: SESSION,
-		asyncJobs: new Map(),
-		foregroundRuns: new Map(),
-		foregroundControls: new Map(),
-		lastForegroundControlId: null,
-		cleanupTimers: new Map(),
-		lastUiContext: null,
-		poller: null,
-		completionSeen: new Map(),
-		watcher: null,
-		watcherRestartTimer: null,
-		resultFileCoalescer: { schedule: () => false, clear: () => {} },
-	};
-}
-
 function setup() {
-	const state = createState();
+	const state = { ...createChildSafeState(), currentSessionId: SESSION, supervisorOwnerSessionId: SESSION };
 	const pi = {
 		events: { emit() {}, on() { return () => {}; } },
 		on() {},
@@ -39,18 +20,18 @@ function setup() {
 		registerTool() {},
 		sendMessage() {},
 		getSessionName: () => "parent",
-	} as any;
+	} as never;
 	const channel = createNativeSupervisorChannel(pi, state);
 	const executor = createSubagentExecutor({
 		pi,
 		state,
-		config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as any,
+		config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as never,
 		asyncByDefault: true,
 		tempArtifactsDir: os.tmpdir(),
 		getSubagentSessionRoot: () => os.tmpdir(),
 		expandTilde: (value) => value,
 		discoverAgents: () => ({ agents: [] }),
-		wait: createWaitExecute(pi, state, true),
+		wait: createWaitExecute(pi, state),
 		runSupervisorAction: (input) => channel.runParentAction(input),
 	});
 	const ctx = {
@@ -58,7 +39,7 @@ function setup() {
 		hasUI: false,
 		sessionManager: { getSessionId: () => SESSION, getSessionFile: () => null, getEntries: () => [], getBranch: () => [] },
 		modelRegistry: { getAvailable: () => [] },
-	} as any;
+	} as never;
 	const call = (params: Record<string, unknown>) => executor.execute(randomUUID(), params, new AbortController().signal, undefined, ctx);
 	return { channel, call };
 }
@@ -99,7 +80,7 @@ describe("subagent wait and reply actions", () => {
 		}
 	});
 
-	it("wait waits the way the wait tool does, with its fields", async () => {
+	it("wait reports that no run matched, with its fields", async () => {
 		const { channel, call } = setup();
 		try {
 			assert.match(text(await call({ action: "wait", id: "missing-run" })), /No active run matched "missing-run"\. Nothing to wait for\./);

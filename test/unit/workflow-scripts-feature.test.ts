@@ -6,7 +6,7 @@ import { disabledFeatureUseError, resolveDisabledFeatureSurface } from "../../sr
 import { normalizePublicSubagentExecution } from "../../src/extension/public-execution.ts";
 import { createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
-import { formatGuide } from "../../src/extension/guided-tool.ts";
+import { buildGuide } from "../../src/extension/guided-tool.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../../src/runs/foreground/subagent-executor.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
 import { registerSlashCommands } from "../../src/slash/slash-commands.ts";
@@ -56,9 +56,9 @@ describe("workflow-scripts tool surface", () => {
 	});
 
 	it("replaces script guidance in the guide with chain/tasks guidance", () => {
-		const enabled = formatGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface({}) });
+		const enabled = buildGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface({}) }).text;
 		assert.match(enabled, /Parallel: subagent\(\{workflow:"parallel"/);
-		const guide = formatGuide([], { canLaunch: true, disabled: surface });
+		const guide = buildGuide([], { canLaunch: true, disabled: surface }).text;
 		assert.doesNotMatch(guide, /workflow:|topic:"workflows/);
 		for (const text of ["Parallel: subagent({tasks:[{agent, task, cwd?, model?}]})", "Dependent steps: subagent({task, chain:[{agent, task?, as?}]})", "{previous}", "{outputs.<as>}", "use the top-level tasks or chain fields"]) {
 			assert.ok(guide.includes(text), `guide lacks ${text}`);

@@ -46,7 +46,6 @@ import {
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
 	DIRS,
-	type Details,
 	type FleetKeybindingsConfig,
 	type SingleResult,
 	type SubagentState,

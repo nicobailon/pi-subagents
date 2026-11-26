@@ -657,7 +657,7 @@ function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, p
 	throw new Error("Multiple pending supervisor requests need replies. Use replyTo.");
 }
 
-function publicPendingRequests(pending: Map<string, PendingSupervisorRequest>): Array<Record<string, unknown>> {
+function publicPendingRequests(pending: Map<string, PendingSupervisorRequest>) {
 	return [...pending.values()].map((request) => ({
 		id: request.id,
 		runId: request.runId,
@@ -668,7 +668,9 @@ function publicPendingRequests(pending: Map<string, PendingSupervisorRequest>): 
 	}));
 }
 
-function createParentActions(pi: ExtensionAPI, pending: Map<string, PendingSupervisorRequest>, state: SubagentState, onLifecycle: SupervisorRequestLifecycleObserver, discover: () => void, runState: (request: SupervisorRequest) => SubagentState, ended: Map<string, EndedSupervisorRequest>): (input: ParentActionInput) => Promise<AgentToolResult<Record<string, unknown>>> {
+export type ParentAction = (input: ParentActionInput) => Promise<AgentToolResult<{ pending?: ReturnType<typeof publicPendingRequests>; replyTo?: string; runId?: string; agent?: string }>>;
+
+function createParentActions(pi: ExtensionAPI, pending: Map<string, PendingSupervisorRequest>, state: SubagentState, onLifecycle: SupervisorRequestLifecycleObserver, discover: () => void, runState: (request: SupervisorRequest) => SubagentState, ended: Map<string, EndedSupervisorRequest>): ParentAction {
 	return async (input) => {
 		discover();
 		refreshPendingRequests(pending, state, onLifecycle, runState);
@@ -694,7 +696,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	dispose: () => void;
 	pending: Map<string, PendingSupervisorRequest>;
 	getSupervisorRequestState: (event: ControlEvent) => SupervisorRequestState;
-	runParentAction: (input: ParentActionInput) => Promise<AgentToolResult<Record<string, unknown>>>;
+	runParentAction: ParentAction;
 } {
 	const watch = deps.watch ?? fs.watch;
 	const timers = deps.timers ?? globalThis;

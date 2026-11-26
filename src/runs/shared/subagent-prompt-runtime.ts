@@ -357,7 +357,7 @@ export function modelBefore(messages: readonly { role: string }[], forkedAt: num
  * than who it is. A fork is told which tools it can call, and it inherited the rest with the
  * parent's prompt, so its own versions of these sections are not repeated in its task message.
  */
-const LOADOUT_SECTIONS = new Set(["tools", "rules", "docs", "skills", "advertised_subagents", "mcp_servers", "project_context"]);
+const LOADOUT_SECTIONS = new Set(["tools", "rules", "docs", "skills", "mcp_servers", "project_context"]);
 
 /** The `<project_instructions path="…">` blocks Pi writes into a `project_context` section, by path. */
 function projectInstructionBlocks(section: string | null | undefined): Map<string, string> {
@@ -659,7 +659,7 @@ function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<
 		parameters,
 		prepareArguments: (args: unknown) => prepareStructuredOutputArguments(structured.schema, args),
 		async execute(_id: string, params: { value: unknown; acceptanceReport?: unknown }) {
-			const validation = await validateStructuredOutputValue(structured.schema, params.value);
+			const validation = validateStructuredOutputValue(structured.schema, params.value);
 			if (validation.status === "invalid") {
 				throw new Error(`Structured output validation failed: ${validation.message}`);
 			}
@@ -795,11 +795,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	onRuntimeEvent("context_with_system", (event: unknown, ctx?: ExtensionContext) => {
 		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
 		const fork = config.forkCacheKey ? readInherited(ctx) : undefined;
-		let sessionStart = 0;
-		try {
-			const started = Date.parse(ctx?.sessionManager?.getHeader?.()?.timestamp ?? "");
-			if (Number.isFinite(started)) sessionStart = started;
-		} catch {}
+		const sessionStart = Date.parse(ctx?.sessionManager?.getHeader()?.timestamp ?? "") || 0;
 		const stripped = stripParentOnlySubagentMessages(event.messages, {
 			sanitizeToolIds: !COMPOSITE_TOOL_ID_APIS.has(ctx?.model?.api ?? ""),
 			// Providers that reuse the Codex Responses wire under their own api id (e.g. cliproxyapi-codex-responses) split call_id|item_id the same way.

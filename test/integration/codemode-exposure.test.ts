@@ -59,7 +59,7 @@ async function runCodemodeSession(responses: FauxResponseStep[], agents: Record<
 	}
 }
 
-test("direct exposure: a codemode script's launch runs async, and its wait is refused", { timeout: 60_000 }, async () => {
+test("a codemode script's launch runs async, and its wait is refused", { timeout: 60_000 }, async () => {
 	const mockPi = createMockPi();
 	mockPi.install();
 	mockPi.onCall({ output: "probe done", delay: 2_000 });

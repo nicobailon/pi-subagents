@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExternalProcessStatus, HerdrCoreLocalMachineReference, HerdrLocalMachineReference, HerdrMachineReference, PlacementMachineReference } from "../../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
-import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS, type CodeOwnedExternalCliAdapterId } from "./external-cli-contract.ts";
+import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS } from "./external-cli-contract.ts";
 import type { runExternalCli } from "./external-cli-runner.ts";
 import { herdrLocalEnv, parseHerdrEndpoint } from "./herdr-connection.ts";
 import { REX_LOCAL_MACHINE, resolveLocalLaunchCwd, resolveRexLocalPlacement } from "./rex-machine.ts";
@@ -23,8 +23,6 @@ const HERDR_MACHINE_LIST_TIMEOUT_MS = 7_500;
 const MAX_HERDR_MACHINE_LIST_BYTES = 1024 * 1024;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/u;
 const SUPPORTED_MACHINE_ADAPTERS = new Set<string>(CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS);
-/** The local ssh process gets only what ssh itself needs; remote runs use the machine's own credentials. */
-export const HERDR_SSH_ENV_ALLOWLIST = ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "SSH_AUTH_SOCK"] as const;
 
 type RunExternalCliInput = Parameters<typeof runExternalCli>[0];
 
@@ -275,10 +273,9 @@ function resolveHerdrCoreLocalPlacement(input: { cwd: string; stepCwd?: string; 
 	const result = spawnSync(bin, ["--json", "get", terminal], { env: input.env, encoding: "utf-8", maxBuffer: MAX_HERDR_MACHINE_LIST_BYTES, timeout: HERDR_MACHINE_LIST_TIMEOUT_MS, windowsHide: true });
 	if (result.error) throw new Error((result.error as NodeJS.ErrnoException).code === "ENOENT" ? `Machine 'local' needs the Herdr Core CLI, but '${bin}' was not found on PATH.` : `Failed to run hc get ${terminal}: ${result.error.message}`, { cause: result.error });
 	if (result.status !== 0) throw new Error(`Machine 'local' could not confirm this Pi's Herdr Core terminal ${terminal}: ${(result.stderr || result.stdout).trim().slice(0, 512)}`);
-	let record: unknown;
-	try { record = JSON.parse(result.stdout) as unknown; } catch { throw new Error(`Machine 'local' received malformed terminal data from Herdr Core for ${terminal}.`); }
-	const found = record as { address?: unknown; state?: unknown };
-	if (found.address !== terminal || found.state !== "live") throw new Error(`Herdr Core did not confirm live parent terminal ${terminal}.`);
+	let found: { address?: unknown; state?: unknown } | null;
+	try { found = JSON.parse(result.stdout); } catch (error) { throw new Error(`Machine 'local' received malformed terminal data from Herdr Core for ${terminal}.`, { cause: error }); }
+	if (found?.address !== terminal || found.state !== "live") throw new Error(`Herdr Core did not confirm live parent terminal ${terminal}.`);
 	return { provider: "herdr-core", id: REX_LOCAL_MACHINE, socket, parentTerminal: terminal, cwd: resolveLocalLaunchCwd(input.cwd, input.stepCwd) };
 }
 

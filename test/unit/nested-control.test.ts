@@ -113,7 +113,6 @@ function fanoutChildRuntime(route: ReturnType<typeof createNestedRoute>, parentR
 	return {
 		fanoutChild: true,
 		depth: 1,
-		waitTool: { enabled: true },
 		fast: false,
 		nestedRoute: route,
 		nestedParent: { parentRunId, parentChildIndex: 0, depth: 1, path: [{ runId: parentRunId, stepIndex: 0 }] },

@@ -57,7 +57,7 @@ function launch(dir: string, runId: string): ChildSessionLaunch {
 	return {
 		cwd: dir, storage: { kind: "memory" }, tools: ["bash", "subagent_command"], extensionPaths: [], ambientExtensions: true,
 		hooks: [{ name: "pi-subagents:prompt-runtime", factory() {} }], noSkills: true, noContextFiles: true,
-		runtime: { runId, agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+		runtime: { runId, agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"],
 	};
 }
 

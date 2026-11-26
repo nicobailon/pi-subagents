@@ -520,7 +520,7 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			assert.deepEqual(readCall().runtime?.toolBudget, toolBudget);
 			assert.equal(mockPi.callCount(), 1);
 		} finally {
-			// bg_wait completes at the logical result, not the parent's process-close publication.
+			// The wait completes at the logical result, not the parent's process-close publication.
 			// Await that publication even on assertion failure, before reading proof or deleting artifacts.
 			if (asyncDir) {
 				const eventsPath = path.join(asyncDir, "events.jsonl");
@@ -1316,7 +1316,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, {
 				fanoutChild: true,
 				depth: 1,
-				waitTool: { enabled: true },
 				fast: false,
 				runFanoutBudget: { ...descriptor, parentPath: "tasks[0]" },
 			});
@@ -1688,7 +1687,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 			const executor = makeExecutor([makeAgent("echo", { model: "openai/gpt-5-mini", thinking: "high" })], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, {
 				fanoutChild: true,
 				depth: 1,
-				waitTool: { enabled: true },
 				fast: false,
 				nestedRoute: route,
 				nestedParent: { parentRunId: "parent-run", parentChildIndex: 2, depth: 1, path: [] },

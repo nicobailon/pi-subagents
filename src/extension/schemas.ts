@@ -3,31 +3,6 @@ import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { RUNNER_LAUNCHER_NAME_PATTERN } from "../shared/types.ts";
 import { MAX_ARGS_BYTES, MAX_ARGS_DEPTH, MAX_ARGS_FIELDS, MAX_ARGS_ITEMS } from "../workflows/workflow-resources.ts";
 
-function keepTopLevelParameterDescriptions<T>(schema: T): T {
-	return pruneNestedDescriptions(schema, []) as T;
-}
-
-function pruneNestedDescriptions(value: unknown, path: string[]): unknown {
-	if (!value || typeof value !== "object") return value;
-
-	const result = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
-	for (const key of Reflect.ownKeys(value)) {
-		const descriptor = Object.getOwnPropertyDescriptor(value, key);
-		if (!descriptor) continue;
-		if (key === "description" && !isTopLevelParameterDescription(path)) continue;
-		if ("value" in descriptor) {
-			const nextPath = typeof key === "string" ? [...path, key] : path;
-			descriptor.value = pruneNestedDescriptions(descriptor.value, nextPath);
-		}
-		Object.defineProperty(result, key, descriptor);
-	}
-	return result;
-}
-
-function isTopLevelParameterDescription(path: string[]): boolean {
-	return path.length === 2 && path[0] === "properties";
-}
-
 const SkillOverride = Type.Unsafe({
 	anyOf: [
 		{ type: "array", items: { type: "string" } },
@@ -290,7 +265,6 @@ const SubagentParamProperties = {
 /** Full flat parameter shape accepted by RPC, slash, scheduled and workflow callers. */
 export const SubagentFlatParams = Type.Object(SubagentParamProperties);
 
-// Management/control fields go inside one opaque `options` object, so they are not sent on every request.
 const { runId: _runId, maxRuntimeMs: _maxRuntimeMs, isolation: _isolation, ...ModelProperties } = SubagentParamProperties;
 const { agent, task, workflow, args, async, model, cwd, worktree, output, action, id, message, ...SubagentOptionProperties } = ModelProperties;
 
@@ -302,14 +276,12 @@ export const SubagentOptionParams = Type.Object(SubagentOptionProperties, { addi
 const ModelTopLevelProperties = {
 	agent, task, workflow, args, async, model, cwd, worktree, output, action, id, message,
 	options: Type.Optional(Type.Unsafe<Record<string, unknown>>({ type: "object", additionalProperties: true, description: "Every field not listed here, such as acceptance, timeoutMs, context, view and index; guide tool-reference/parameter-reference." })),
-	// Appended after options so the earlier fields keep their order.
 	label: Type.Optional(Type.String({ minLength: 1, maxLength: 80, description: "2-4 words on what it does; appears wherever the run is listed." })),
 };
 
-export const SubagentParams = keepTopLevelParameterDescriptions(Type.Object(ModelTopLevelProperties));
+export const SubagentParams = Type.Object(ModelTopLevelProperties);
 
-// Replaces workflow scripts when disabledFeatures lists "workflow-scripts". Kept small because every
-// field is sent on every request; the executor validates step shapes and placeholders strictly.
+// Replaces workflow scripts when disabledFeatures lists "workflow-scripts"; the executor validates step shapes and placeholders strictly.
 const StructuredTask = { type: "object", properties: { agent: { type: "string", minLength: 1 }, task: { type: "string" }, cwd: { type: "string" }, model: { type: "string" } }, required: ["agent", "task"], additionalProperties: false };
 const StructuredWorkflowProperties = {
 	action: Type.Optional(Type.String({ minLength: 1, description: "Management/control only; omit for execution. Discover actions with {action:\"guide\",options:{topic:\"tool-reference\"}}." })),
@@ -334,15 +306,5 @@ export function createSubagentParamsSchema(disabled?: DisabledFeatureSurface): t
 		return [[name, schema]];
 	}));
 	// SAFETY: only optional properties are dropped or added; the executor rejects disabled options and admits chain/tasks at runtime.
-	return keepTopLevelParameterDescriptions(Type.Object(enabledProperties)) as typeof SubagentParams;
+	return Type.Object(enabledProperties) as typeof SubagentParams;
 }
-
-const SubagentWaitParamsSchema = Type.Object({
-	id: Type.Optional(Type.String({ description: "Run id or prefix." })),
-	nonBlocking: Type.Optional(Type.Boolean({ description: "Subscribe to id's wake and return immediately; requires id, not with all." })),
-	all: Type.Optional(Type.Boolean({ description: "Wait for all work active at call time." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Max wait; default 30 min." })),
-	stopOnAttention: Type.Optional(Type.Boolean({ description: "false: keep waiting through all attention except supervisor requests." })),
-});
-
-export const SubagentWaitParams = keepTopLevelParameterDescriptions(SubagentWaitParamsSchema);

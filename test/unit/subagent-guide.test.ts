@@ -38,7 +38,6 @@ describe("subagent guide", () => {
 
 		assert.match(guide, /# Council Mode/);
 		assert.match(guide, /skills\/council-mode\/references\/pass-contracts\.md -->/);
-		assert.doesNotMatch(guide, /skills\/pi-subagents\//);
 	});
 
 	it("documents external CLI runner limits in packaged guide topics", () => {

@@ -59,7 +59,7 @@ describe("Rex local placement against a private Rex server and a real Pi", { ski
 			assert.deepEqual(resolved, machine);
 			// Any model the operator's Pi is logged in to; override with PI_SUBAGENTS_REX_SMOKE_MODEL.
 			const model = process.env.PI_SUBAGENTS_REX_SMOKE_MODEL ?? "opencode-go/glm-5.3-flash";
-			const launch: ChildSessionLaunch = { cwd: project, machine, remoteResources: { agent: "rex-smoke" }, storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: true, hooks: [], noSkills: true, noContextFiles: true, tools: ["read"], model, runtime: { runId: "rexsmoke", agent: "rex-smoke", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false, waitTool: { enabled: true } } };
+			const launch: ChildSessionLaunch = { cwd: project, machine, remoteResources: { agent: "rex-smoke" }, storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: true, hooks: [], noSkills: true, noContextFiles: true, tools: ["read"], model, runtime: { runId: "rexsmoke", agent: "rex-smoke", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false } };
 			const factory = createPlacementAwareChildSessionFactory({ create: async () => { throw new Error("local factory must not run for machine 'local'"); }, dispose: async () => {} });
 			const started = Date.now();
 			const child = await factory.create(launch);

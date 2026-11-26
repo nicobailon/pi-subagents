@@ -7,7 +7,7 @@ import { SUBAGENT_FEATURES, resolveDisabledFeatureSurface, validateDisabledFeatu
 import { SUBAGENT_OPTION_KEYS, SubagentParams, createSubagentParamsSchema } from "../../src/extension/schemas.ts";
 import { SUBAGENT_RPC_PROTOCOL_VERSION, SUBAGENT_RPC_REQUEST_EVENT, registerSubagentRpcBridge, subagentRpcReplyEvent } from "../../src/extension/rpc.ts";
 import { readSubagentGuide, SUBAGENT_GUIDE_TOPICS } from "../../src/extension/subagent-guide.ts";
-import { formatGuide } from "../../src/extension/guided-tool.ts";
+import { buildGuide } from "../../src/extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../src/extension/subagent-options.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { createChildSafeState } from "../../src/extension/fanout-child.ts";
@@ -155,9 +155,9 @@ describe("disabled feature execution boundaries", () => {
 
 describe("disabled feature discovery", () => {
 	it("tells the guide's reader that config disabled some features and keeps the launch and manage lines", () => {
-		const enabled = formatGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface({}) });
+		const enabled = buildGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface({}) }).text;
 		assert.doesNotMatch(enabled, /disabled by config/);
-		const guide = formatGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface(ALL_DISABLED) });
+		const guide = buildGuide([], { canLaunch: true, disabled: resolveDisabledFeatureSurface(ALL_DISABLED) }).text;
 		assert.match(guide, /Some options and actions are disabled by config in this session; guide topic tool-reference lists them\./);
 		for (const line of ["Launch: subagent({agent, task, ...})", '{action:"status"} lists all runs', '{action:"reply", replyTo, message}']) assert.ok(guide.includes(line), `guide lacks ${line}`);
 	});

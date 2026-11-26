@@ -7,7 +7,6 @@ export interface PermissionConfig { rules?: PermissionRules }
 const COORDINATION_TOOLS = new Set(["contact_supervisor", "intercom", "structured_output"]);
 const isInternalTool = (tool: string) => COORDINATION_TOOLS.has(tool);
 const DECISIONS = new Set<PermissionDecision>(["allow", "ask", "deny"]);
-const MAX_POLICY_BYTES = 16 * 1024;
 const MAX_PREVIEW_BYTES = 2048;
 const SECRET_KEY = /(?:authorization|cookie|credential|password|secret|token|api[-_]?key)/i;
 const SECRET_VALUE = /\b(?:Bearer\s+\S+|(?:sk|ghp|github_pat|xox[baprs])[-_A-Za-z0-9]{8,})\b/gi;

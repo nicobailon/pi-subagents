@@ -8,16 +8,15 @@ import { isStaleExtensionContextError } from "../shared/extension-context.ts";
 import type { Details, GuideSummary } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { readReplyWorkflowScript } from "./reply-workflow-script.ts";
-import { isBlankValue, isUnsetPlaceholder, liftArgsFields, prepareSubagentToolArguments } from "./subagent-options.ts";
+import { isBlankValue, liftArgsFields, prepareSubagentToolArguments } from "./subagent-options.ts";
 
 export const SUBAGENT_TOOL_DESCRIPTION = "Delegate work to child agents and manage their runs. Call subagent({}) first for the guide: agents, fields, all actions.";
 export const SUBAGENT_TOOL_PARAMETERS = Type.Unsafe<Record<string, unknown>>({ type: "object", properties: { args: { type: "object", additionalProperties: true } }, additionalProperties: true });
 
 const TRUE_VALUED_FIELDS = new Set(["workflow", "async", "worktree", "all", "nonBlocking", "stopOnAttention", "clarify", "share", "fast", "foregroundOnly"]);
 
-export function isBlankCall(params: Record<string, unknown>): boolean {
+function isBlankCall(params: Record<string, unknown>): boolean {
 	const entries = Object.entries(params);
-	if (entries.length === 0) return true;
 	if (!entries.every(([, value]) => isBlankValue(value))) return false;
 	const realAsBlank = ([key, value]: [string, unknown]) => (TRUE_VALUED_FIELDS.has(key) && (value === true || value === "true"))
 		|| ((key === "args" || key === "options") && typeof value === "object" && value !== null);
@@ -26,11 +25,11 @@ export function isBlankCall(params: Record<string, unknown>): boolean {
 
 export const BLANK_CALL_TEXT = 'This call\'s fields arrived empty or blank: this provider may drop fields the tool doesn\'t declare. Pass them inside args: subagent({args:{agent, task, …}}) or subagent({args:{action:"status"}}). The full guide: subagent({action:"guide"}).';
 
-export const BLANK_WORKFLOW_TEXT = 'If workflow:"<name>" arrived as true or was dropped, put the whole call in args: subagent({args:{workflow:"<name>", args:{…}}}).';
+const BLANK_WORKFLOW_TEXT = 'If workflow:"<name>" arrived as true or was dropped, put the whole call in args: subagent({args:{workflow:"<name>", args:{…}}}).';
 
 function blankedWorkflowName(request: Record<string, unknown>): boolean {
 	const args = request.args;
-	return (request.workflow === true || request.workflow === "true") && request.workflowScript === undefined
+	return request.workflow === true && request.workflowScript === undefined
 		&& typeof args === "object" && args !== null && !Array.isArray(args) && Object.keys(args).length > 0;
 }
 
@@ -39,7 +38,7 @@ function droppedWorkflowName(params: Record<string, unknown>, message: string): 
 		&& ["tasks", "chain"].some((key) => params[key] !== undefined && message.includes(`unknown field '${key}'`));
 }
 
-export interface GuideAgent {
+interface GuideAgent {
 	name: string;
 	description?: string;
 }
@@ -103,17 +102,13 @@ export interface GuideReply {
 	summary?: GuideSummary;
 }
 
-export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch: boolean; child?: boolean; disabled?: DisabledFeatureSurface }): string {
-	return buildGuide(agents, options).text;
-}
-
 export function buildGuide(agents: readonly GuideAgent[], options: { canLaunch: boolean; child?: boolean; disabled?: DisabledFeatureSurface }): GuideReply {
 	if (!options.canLaunch) {
 		return { text: `subagent guide (child run). This child cannot launch runs. {action:"wait"} (or all:true) blocks until this child's own background work finishes. Ask your parent with contact_supervisor.` };
 	}
 	const intro = options.child
 		? `subagent guide (child run). Your launches are your own children and run in the background; their results do not wake you. Collect them with {action:"wait"} (or all:true) before you finish. Agent changes (create, update, delete …) are blocked here.`
-		: `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll. Not for messaging a Pi session that is already open; use a messaging tool for that.`;
+		: `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll. Not for messaging an open Pi session; use a messaging tool.`;
 	const names = new Set(agents.map((agent) => agent.name));
 	const writerVariant = (name: string) => name.endsWith("-writer") && names.has(name.slice(0, -"-writer".length));
 	const listed = agents.filter((agent) => !writerVariant(agent.name));
@@ -164,17 +159,17 @@ export function actionTopicKey(name: string): string | undefined {
 	return undefined;
 }
 
-export function actionTopicText(key: string, action = key): string {
+function actionTopicText(key: string, action = key): string {
 	return `${ACTION_TOPICS[key]!}\nIf your fields arrive missing, pass them inside args: subagent({args:{action:"${action}", …}}).`;
 }
 
 const TAUGHT_BY_GUIDE = new Set(["status", "steer", "resume", "stop", "interrupt", "wait", "reply", "list", "guide"]);
 
-export function rareActionTopic(action: string): string | undefined {
+function rareActionTopic(action: string): string | undefined {
 	return TAUGHT_BY_GUIDE.has(action) ? undefined : actionTopicKey(action);
 }
 
-export function misplacedGuideCall(action: string): string | undefined {
+function misplacedGuideCall(action: string): string | undefined {
 	const match = /^(?:(.+)\.guide|guide\.(.+))$/.exec(action);
 	if (!match) return undefined;
 	const topic = match[1] ?? match[2]!;
@@ -204,10 +199,10 @@ function listedIdsResult(ids: readonly string[], results: readonly AgentToolResu
 		const text = result.content.map((part) => part.type === "text" ? part.text : "").join(" ").replace(/\s*\n\s*/g, " ").trim();
 		return text.includes(ids[index]!) ? text : `${ids[index]}: ${text}`;
 	});
-	return { content: [{ type: "text", text: lines.join("\n") }], ...(results.every((result) => result.isError) ? { isError: true } : {}), details: { mode: "management", results: [] } };
+	return guideResult(lines.join("\n"), [], {}, results.every((result) => result.isError));
 }
 
-export function isLaunchRequest(params: Record<string, unknown>): boolean {
+function isLaunchRequest(params: Record<string, unknown>): boolean {
 	return params.action === undefined && (params.agent !== undefined || params.task !== undefined || params.workflow !== undefined || params.workflowScript !== undefined || params.tasks !== undefined || params.chain !== undefined);
 }
 
@@ -224,7 +219,7 @@ function launchPreview(request: Record<string, unknown>): string {
 		return typeof agent === "string" ? agent : Array.isArray(parallel) ? "parallel step" : "?";
 	});
 	const what = request.workflowScript !== undefined ? "a workflow script"
-		: request.workflow === true || request.workflow === "true" ? "a ```js workflow block"
+		: request.workflow === true ? "a ```js workflow block"
 		: typeof request.workflow === "string" ? `workflow ${request.workflow}`
 		: Array.isArray(request.tasks) ? `${request.tasks.length} in parallel: ${agents(request.tasks).join(", ")}`
 		: Array.isArray(request.chain) ? `a chain: ${agents(request.chain).join(" → ")}`
@@ -232,18 +227,18 @@ function launchPreview(request: Record<string, unknown>): string {
 	const parts = [what];
 	if (typeof request.task === "string" && request.task.trim()) parts.push(`task "${clip(request.task, 48)}"`);
 	if (typeof request.cwd === "string") parts.push(`cwd ${request.cwd}`);
-	if (request.worktree === true || request.worktree === "true") parts.push("in a worktree");
+	if (request.worktree === true) parts.push("in a worktree");
 	if (request.context === "fork") parts.push("forked context");
 	if (typeof request.model === "string") parts.push(`model ${request.model}`);
 	return `Would launch ${parts.join(", ")}.`;
 }
 
-export function holdText(request: Record<string, unknown>, sibling: boolean, workflowHint = false): string {
-	const block = request.workflow === true || request.workflow === "true" ? " Repeat the call with its ```js workflow block in that reply." : "";
+function holdText(request: Record<string, unknown>, preview: string, sibling: boolean, workflowHint: boolean): string {
+	const block = request.workflow === true ? " Repeat the call with its ```js workflow block in that reply." : "";
 	const held = sibling
 		? `Not launched yet: the guide came back in another subagent call of this same message. Read it, then call again to launch.${block}`
 		: `Not launched yet: this is the session's first subagent call, so here is the guide. Call again to launch.${block}`;
-	return `${held}\n${launchPreview(request)}${workflowHint ? `\n${BLANK_WORKFLOW_TEXT}` : ""}`;
+	return `${held}\n${preview}${workflowHint ? `\n${BLANK_WORKFLOW_TEXT}` : ""}`;
 }
 
 export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolicy: AuthorityPolicyConfig | undefined): SubagentParamsLike | string {
@@ -260,7 +255,7 @@ export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolic
 			? `subagent action '${action}' cannot run from a codemode script: authorityPolicy.${authority.authority} is "confirm", so it would wait for the user to confirm.`
 			: params;
 	}
-	if ((params.workflow === true || params.workflow === "true") && params.workflowScript === undefined) {
+	if (params.workflow === true && params.workflowScript === undefined) {
 		return "subagent workflow:true reads a ```js block from the reply, which a codemode script has none of. Pass the script source as options.script, or a script path as workflow.";
 	}
 	if (params.async === false || params.clarify === true || params.foregroundOnly === true) {
@@ -269,7 +264,7 @@ export function nestedSubagentRequest(params: SubagentParamsLike, authorityPolic
 	return { ...params, async: true };
 }
 
-export function taughtInContext(ctx: Pick<ExtensionContext, "sessionManager">): Set<string> {
+function taughtInContext(ctx: Pick<ExtensionContext, "sessionManager">): Set<string> {
 	const taught = new Set<string>();
 	for (const entry of ctx.sessionManager.buildContextEntries()) {
 		const details = entry.type === "message" && entry.message.role === "toolResult" ? entry.message.details : entry.type === "custom_message" ? entry.details : undefined;
@@ -297,13 +292,11 @@ export class TaughtState {
 		this.keys.clear();
 		this.guideTurn = undefined;
 		if (ctx) this.sessionCtx = ctx;
-		let keys = new Set<string>();
 		try {
-			if (ctx) keys = taughtInContext(ctx);
+			if (ctx) for (const key of taughtInContext(ctx)) this.keys.add(key);
 		} catch (error) {
 			if (!isStaleExtensionContextError(error)) throw error;
 		}
-		for (const key of keys) this.keys.add(key);
 	}
 
 	nextTurn(): void {
@@ -327,7 +320,7 @@ export class TaughtState {
 }
 
 export const EVENT_NOTES = {
-	launch: 'Next: {action:"status", id} checks it; {action:"steer", id, message} redirects it; {action:"wait", id} only if this same turn needs the result. Completion wakes you: keep working or end your turn.',
+	launch: 'Next: {action:"status", id} checks it; {action:"steer", id, message} redirects it; {action:"wait", id} only if this same turn needs the result.',
 	childLaunch: 'Next: {action:"status", id} checks it; {action:"steer", id, message} redirects it. Its result does not wake you: collect it with {action:"wait", id} (or all:true) before you finish.',
 	worktree: "Worktree: the child edits its own git worktree, made from a clean checkout (untracked files count). One writer per folder: give each writer its own worktree; parallelize reading and review.",
 	workflow: 'Workflow scripts: a statement body with top-level await and an explicit return; no nested async functions or arrows. Every runs.run / runs.all item needs a stable key and a short verb + behavior label. Bind a report to a file with output:"plans/x.md" (a filename in the task text does not route output). runs.all resolves to an ordered array.',
@@ -345,7 +338,7 @@ function formatBytes(bytes: number): string {
 	return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function forkNote(fork: { sessionBytes: number; folder: string; freeBytes?: number }): string {
+function forkNote(fork: { sessionBytes: number; folder: string; freeBytes?: number }): string {
 	const free = fork.freeBytes === undefined ? "" : `; ${formatBytes(fork.freeBytes)} free on that disk`;
 	return `Fork: the child got a copy of this session (${formatBytes(fork.sessionBytes)}) under ${fork.folder}${free}. Each fork adds one. Once a forked child is accepted or dropped and won't be resumed, delete its <run id> folder there; never one whose run is still active.`;
 }
@@ -360,10 +353,9 @@ export interface CallFacts {
 export function callNotes(request: SubagentParamsLike, result: AgentToolResult<Details>, facts: CallFacts): TeachingNote[] {
 	if (result.isError) return [];
 	const notes: TeachingNote[] = [];
-	const params = request as Record<string, unknown>;
-	if (isLaunchRequest(params)) {
+	if (isLaunchRequest(request as Record<string, unknown>)) {
 		const details = result.details;
-		if (details?.mode === "single" && details.runId && details.asyncId === undefined && !details.results.some((run) => run.detached)) {
+		if (details.mode === "single" && details.runId && details.asyncId === undefined && !details.results.some((run) => run.detached)) {
 			const id = details.runId.slice(0, 8);
 			const state = details.results.some((run) => run.interrupted) ? "paused" : "done";
 			notes.push({ text: `Run ${id} is ${state}. To continue it: subagent({action:"resume", id:"${id}", message})` });
@@ -371,8 +363,8 @@ export function callNotes(request: SubagentParamsLike, result: AgentToolResult<D
 			notes.push({ key: "event:launch", text: facts.child ? EVENT_NOTES.childLaunch : EVENT_NOTES.launch });
 		}
 		if (facts.fork) notes.push({ key: "event:fork", text: forkNote(facts.fork) });
-		if (params.worktree === true) notes.push({ key: "event:worktree", text: EVENT_NOTES.worktree });
-		if (params.workflow !== undefined || params.workflowScript !== undefined) notes.push({ key: "event:workflow", text: EVENT_NOTES.workflow });
+		if (request.worktree === true) notes.push({ key: "event:worktree", text: EVENT_NOTES.worktree });
+		if (request.workflow !== undefined || request.workflowScript !== undefined) notes.push({ key: "event:workflow", text: EVENT_NOTES.workflow });
 		if (facts.liveRunsInCwd && facts.liveRunsInCwd.runs.length > 0) {
 			const { cwd, runs } = facts.liveRunsInCwd;
 			const listed = runs.slice(0, 5).map((run) => `${run.label} ${run.id}`);
@@ -398,13 +390,13 @@ export function noticeNotes(runs: ReadonlyArray<{ agent: string; status: string 
 
 type GuideView = Pick<Details, "guide" | "heldLaunch" | "guideTopic">;
 
-export function guideResult(text: string, taught: string[], view: GuideView = {}, isError = false): AgentToolResult<Details> {
+function guideResult(text: string, taught: string[], view: GuideView = {}, isError = false): AgentToolResult<Details> {
 	return { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}), details: { mode: "management", results: [], ...(taught.length ? { taught } : {}), ...view } };
 }
 
-export function withTeaching(result: AgentToolResult<Details>, notes: string[], taught: string[]): AgentToolResult<Details> {
+function withTeaching(result: AgentToolResult<Details>, notes: string[], taught: string[]): AgentToolResult<Details> {
 	if (notes.length === 0 && taught.length === 0) return result;
-	const details = result.details ?? { mode: "management", results: [] };
+	const details = result.details;
 	return {
 		...result,
 		content: notes.length ? [...result.content, ...notes.map((text) => ({ type: "text" as const, text }))] : result.content,
@@ -412,12 +404,12 @@ export function withTeaching(result: AgentToolResult<Details>, notes: string[], 
 	};
 }
 
-export interface TeachingNote {
+interface TeachingNote {
 	key?: string;
 	text: string;
 }
 
-export interface GuidedSubagentToolDeps {
+interface GuidedSubagentToolDeps {
 	guide(ctx: ExtensionContext): Promise<GuideReply>;
 	flatten(params: Record<string, unknown>): SubagentParamsLike;
 	run(id: string, request: SubagentParamsLike, nested: boolean, signal: AbortSignal | undefined, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Details>>;
@@ -444,17 +436,11 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 		label: "Subagent",
 		description: SUBAGENT_TOOL_DESCRIPTION,
 		parameters: SUBAGENT_TOOL_PARAMETERS,
-		prepareArguments: (args) => {
-			const prepared = prepareSubagentToolArguments(args) as Record<string, unknown>;
-			if (!isUnsetPlaceholder(prepared.args)) return prepared;
-			const { args: _unset, ...rest } = prepared;
-			return rest;
-		},
+		prepareArguments: (args) => prepareSubagentToolArguments(args) as Record<string, unknown>,
 		async execute(id, rawParams, signal, onUpdate, ctx) {
 			const nested = nestedCallIds.delete(id);
 			taught.ensure(ctx);
-			const raw = rawParams as Record<string, unknown>;
-			if (!nested && Object.keys(raw).length > 0 && isBlankCall(raw)) {
+			if (!nested && isBlankCall(rawParams)) {
 				if (taught.has("guide")) return guideResult(BLANK_CALL_TEXT, []);
 				taught.teach("guide");
 				const reply = await deps.guide(ctx);
@@ -489,45 +475,45 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				const conflicts = ids ? (["runId", "dir"] as const).filter((key) => request[key] !== undefined) : [];
 				if (conflicts.length) throw new Error(`subagent: a list in id can't be combined with ${conflicts.join(" or ")}; put every target in id.`);
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				let message = error instanceof Error ? error.message : String(error);
 				const hinted = lifted !== prepared && droppedWorkflowName(params, message);
-				if (!firstCall) throw hinted ? new Error(`${message}\n${BLANK_WORKFLOW_TEXT}`) : error;
+				if (hinted) message += `\n${BLANK_WORKFLOW_TEXT}`;
+				if (!firstCall) throw hinted ? new Error(message) : error;
 				taught.teach("guide");
-				return guideResult(`${message}${hinted ? `\n${BLANK_WORKFLOW_TEXT}` : ""}\n\n${(await deps.guide(ctx)).text}`, ["guide"], {}, true);
+				return guideResult(`${message}\n\n${(await deps.guide(ctx)).text}`, ["guide"], {}, true);
 			}
-			const workflowHint = () => blankedWorkflowName(request as Record<string, unknown>) && (!ctx?.sessionManager || "error" in readReplyWorkflowScript(ctx.sessionManager, id));
-			if (deps.canLaunch !== false && isLaunchRequest(request as Record<string, unknown>)) {
+			const record = request as Record<string, unknown>;
+			const workflowHint = () => blankedWorkflowName(record) && (!ctx?.sessionManager || "error" in readReplyWorkflowScript(ctx.sessionManager, id));
+			if (deps.canLaunch !== false && isLaunchRequest(record)) {
+				const preview = launchPreview(record);
 				if (firstCall) {
 					taught.teach("guide");
 					const reply = await deps.guide(ctx);
-					return guideResult(`${holdText(request as Record<string, unknown>, false, workflowHint())}\n\n${reply.text}`, ["guide"], { guide: reply.summary, heldLaunch: launchPreview(request as Record<string, unknown>) });
+					return guideResult(`${holdText(record, preview, false, workflowHint())}\n\n${reply.text}`, ["guide"], { guide: reply.summary, heldLaunch: preview });
 				}
-				if (taught.guideArrivedThisTurn()) return guideResult(holdText(request as Record<string, unknown>, true, workflowHint()), [], { heldLaunch: launchPreview(request as Record<string, unknown>) });
+				if (taught.guideArrivedThisTurn()) return guideResult(holdText(record, preview, true, workflowHint()), [], { heldLaunch: preview });
 			}
 			let result: AgentToolResult<Details>;
 			const rare = request.action ? rareActionTopic(request.action) : undefined;
-			const record = request as Record<string, unknown>;
-			const replyHint = request.action === "reply" && (record.replyTo === undefined || record.message === undefined)
+			const replyHint = request.action === "reply" && (request.replyTo === undefined || request.message === undefined)
 				? 'If your fields arrive missing, pass them inside args: subagent({args:{action:"reply", replyTo, message}}).'
 				: undefined;
 			const runOne = async (one: SubagentParamsLike, runCtx: ExtensionContext = ctx): Promise<AgentToolResult<Details>> => {
 				try {
 					if (!nested) return await deps.run(id, one, false, signal, onUpdate, runCtx);
 					const scriptRequest = nestedSubagentRequest(one, deps.authorityPolicy);
-					return typeof scriptRequest === "string"
-						? { content: [{ type: "text", text: scriptRequest }], isError: true, details: { mode: "management", results: [] } }
-						: signal?.aborted
-							? { content: [{ type: "text", text: "subagent call was cancelled before it started; nothing was launched." }], isError: true, details: { mode: "management", results: [] } }
-							: await deps.run(id, scriptRequest, true, signal, onUpdate, ctx);
+					if (typeof scriptRequest === "string") return guideResult(scriptRequest, [], {}, true);
+					if (signal?.aborted) return guideResult("subagent call was cancelled before it started; nothing was launched.", [], {}, true);
+					return await deps.run(id, scriptRequest, true, signal, onUpdate, ctx);
 				} catch (error) {
-					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
+					return guideResult(error instanceof Error ? error.message : String(error), [], {}, true);
 				}
 			};
 			if (ids) {
 				const action = request.action!;
-				const confirm = !nested && ctx?.hasUI === true && managementActionAuthority(action, record.mode, deps.authorityPolicy)?.decision === "confirm";
+				const confirm = !nested && ctx?.hasUI === true && managementActionAuthority(action, request.mode, deps.authorityPolicy)?.decision === "confirm";
 				if (confirm && !await ctx.ui.confirm(authorityConfirmTitle(action, ids), `Authority policy requires confirmation before '${action}'.`)) {
-					result = { content: [{ type: "text", text: `Action '${action}' canceled; authority was not granted.` }], details: { mode: "management", results: [] } };
+					result = guideResult(`Action '${action}' canceled; authority was not granted.`, []);
 				} else {
 					const prompt = authorityConfirmTitle(action);
 					const runCtx = confirm
@@ -538,7 +524,7 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 					const results: AgentToolResult<Details>[] = [];
 					for (const entry of ids) {
 						results.push(signal?.aborted
-							? { content: [{ type: "text", text: `${entry}: skipped, the call was cancelled.` }], isError: true, details: { mode: "management", results: [] } }
+							? guideResult(`${entry}: skipped, the call was cancelled.`, [], {}, true)
 							: await runOne({ ...request, id: entry }, runCtx));
 					}
 					result = listedIdsResult(ids, results);
@@ -570,9 +556,9 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				notes.push(note.text);
 				if (note.key) keys.push(note.key);
 			}
-			if (keys.length === 0) return finalizeToolResult(withTeaching(result, notes, keys));
 			const taughtResult = withTeaching(result, notes, keys);
-			return attachedGuide ? { ...taughtResult, details: { ...taughtResult.details!, guide: attachedGuide } } : taughtResult;
+			if (keys.length === 0) return finalizeToolResult(taughtResult);
+			return attachedGuide ? { ...taughtResult, details: { ...taughtResult.details, guide: attachedGuide } } : taughtResult;
 		},
 		...(deps.renderCall ? { renderCall: deps.renderCall } : {}),
 		...(deps.renderResult ? { renderResult: deps.renderResult } : {}),

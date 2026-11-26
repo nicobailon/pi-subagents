@@ -7,7 +7,6 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	formatUnresolvedBuiltinMcpSelectors,
 	formatUnresolvedMcpDirectToolSelectors,
@@ -98,7 +97,7 @@ export function fastModeUnsupportedError(reason: string, serviceTier?: FastServi
 	);
 }
 
-export function isFastModeAdapter(api: string | undefined): boolean {
+export function isFastModeAdapter(api: string): boolean {
 	return api === "openai-responses" || api === "openai-codex-responses";
 }
 

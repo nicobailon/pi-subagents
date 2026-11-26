@@ -262,7 +262,7 @@ describe("background-work provider protocol", () => {
 	});
 });
 
-describe("bg_wait with background-work providers", () => {
+describe("subagent wait with background-work providers", () => {
 	it("waits for provider work keyed by the Pi session id in a session that has a file", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-provider-session-id-"));
 		try {

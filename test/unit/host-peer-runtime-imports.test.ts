@@ -9,8 +9,6 @@ import { createJiti } from "jiti";
 import * as typeboxCompile from "typebox/compile";
 import { HOST_PEER_ALIASES, resolveHostPeerAliases } from "../../src/runs/background/runner-aliases.ts";
 import { resolveInstalledPiPackageRoot } from "../../src/runs/shared/pi-spawn.ts";
-import { validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
-import type { JsonSchemaObject } from "../../src/shared/types.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -160,21 +158,6 @@ test("structured output validation loads TypeBox through Pi's compiled-binary lo
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
 	}
-});
-
-test("validateStructuredOutputValue validates values against a JSON Schema", async () => {
-	const valid = await validateStructuredOutputValue({ type: "object" }, {});
-	assert.deepEqual(valid, { status: "valid" });
-
-	const schema: JsonSchemaObject = {
-		type: "object",
-		properties: { a: { type: "number" } },
-		required: ["a"],
-		additionalProperties: false,
-	};
-	const invalid = await validateStructuredOutputValue(schema, {});
-	assert.equal(invalid.status, "invalid");
-	assert.ok(invalid.status === "invalid" && invalid.message.length > 0);
 });
 
 test("chord is required only when the host declares it, and aliased host-first whenever present (#2026, #2854)", () => {

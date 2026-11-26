@@ -18,7 +18,7 @@ import type { ForegroundRunControl, ForegroundSteerInput, SubagentState } from "
 import { DIRS, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { setChildSessionFactory, type ChildSessionFactory, type ChildSessionLaunch, type ChildSessionEvent } from "../../src/runs/shared/child-session.ts";
-import { createEventBus, makeAgent } from "../support/helpers.ts";
+import { createEventBus, guideTaughtEntries, makeAgent } from "../support/helpers.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 
 const createdChannels: string[] = [];
@@ -53,7 +53,7 @@ function makeCtx(sessionId: string, sessionFile: string | null = null): { cwd: s
 			getSessionId: () => sessionId,
 			getSessionFile: () => sessionFile,
 			getEntries: () => [],
-			buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }],
+			buildContextEntries: guideTaughtEntries,
 		},
 	};
 }

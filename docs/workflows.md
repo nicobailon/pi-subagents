@@ -18,9 +18,9 @@ A background child awaited by an `async: false` workflow cannot receive a superv
 
 Child-safety boundaries are enforced at runtime:
 
-- Child sessions do not receive the bundled `pi-subagents` skill.
+- Fresh (non-fork) child sessions never receive a skill named `pi-subagents`; a fork keeps the parent's prompt, skills included.
 - Child context filtering removes parent-only subagent artifacts (hidden orchestration-instruction messages, slash/status/control messages, and `subagent` tool-call/tool-result history) while preserving ordinary prose and unrelated tool calls/results. A forked child sends the history it inherited exactly as the parent sent it, so its first request can reuse the parent's prompt cache; it still cannot run `subagent`.
-- By default, children do not register the `subagent` tool and receive boundary instructions that they are not the parent orchestrator and must not propose or run subagents.
+- By default, a child's `subagent` tool can only wait for its own background work, and the child receives boundary instructions that it is not the parent orchestrator and must not propose or run subagents.
 - The explicit exception is an agent whose resolved builtin `tools` includes `subagent`; that child gets a child-safe `subagent` tool for the fanout work the parent assigned, still bounded by `maxSubagentDepth`.
 
 ### Failed lane recovery and execution-mode boundaries
@@ -228,7 +228,7 @@ return patch.output;
 
 ### Parallel sequential lanes
 
-For a bounded set of independent chains, `runs.lanes(...)` removes the mechanical loop that would otherwise connect each lane's stages. It is a helper inside a workflow script, not a new top-level `subagent` execution mode. Run the block below with `subagent({ workflow: true })` in the same reply, or pass its source as `options.script`; script rules are in `workflows/scripted-workflows`. Each stage is its own run. A stage with no `timeoutMs` from the stage, its agent or config has no deadline in an interactive session, where the parent gets a check-in every 30 minutes while it runs, and stops at 30 minutes in a session without a UI. Set `timeoutMs` on a stage to bound it, or on the workflow call to bound the whole workflow.
+For a bounded set of independent chains, `runs.lanes(...)` removes the mechanical loop that would otherwise connect each lane's stages. It is a helper inside a workflow script, not a new top-level `subagent` execution mode. Run the block below with `subagent({ workflow: true })` in the same reply, or pass its source as `options.script`; script rules are in `workflows/scripted-workflows`. Each stage is its own run with the background deadline rules of [`timeoutMs`](configuration.md#timeoutms); set `timeoutMs` on a stage to bound it, or on the workflow call to bound the whole workflow.
 
 ```js workflow
 const board = await runs.lanes([

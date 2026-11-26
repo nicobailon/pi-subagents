@@ -72,9 +72,8 @@ export function withTeachingNotes(base: Component, result: Pick<AgentToolResult<
 			const lines = base.render(width);
 			const hintPrefix = expandKeyHint("").trimEnd();
 			const baseHasHint = lines.some((line) => stripTerminalSequences(line).includes(hintPrefix));
-			let cut = false;
+			let cut = Boolean(attachedGuide);
 			const guideLines = attachedGuide ? guideBlock(attachedGuide, theme, false).map((line) => truncLine(line, width)) : [];
-			if (attachedGuide) cut = true;
 			const noteLines = (attachedGuide ? notes.slice(1) : notes).map((note) => {
 				const [first = "", ...rest] = note.split("\n");
 				const line = `↳ ${first}`;
@@ -85,7 +84,7 @@ export function withTeachingNotes(base: Component, result: Pick<AgentToolResult<
 			return [...lines, ...guideLines, ...noteLines, ...hint];
 		},
 		invalidate() {
-			base.invalidate?.();
+			base.invalidate();
 		},
 	};
 }

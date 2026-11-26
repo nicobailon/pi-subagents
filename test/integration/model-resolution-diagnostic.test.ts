@@ -82,7 +82,6 @@ describe("child model resolution diagnostic", () => {
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => unresolvedModelPi() });
 		const result = await runSync(tempDir, [makeAgent("provider-model-worker", { model: MODEL })], "provider-model-worker", "Task", {
 			runId: "foreground-model-resolution",
-			waitToolEnabled: false,
 			childSessionFactory: factory,
 		});
 
@@ -100,7 +99,6 @@ describe("child model resolution diagnostic", () => {
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => unresolvedModelPi() });
 		const result = await runSync(tempDir, [makeAgent("provider-model-worker", { model: MODEL })], "provider-model-worker", "Task", {
 			runId: "foreground-model-policy",
-			waitToolEnabled: false,
 			childSessionFactory: factory,
 			capabilityCeiling: { version: 1, denyExtensions: true, sources: ["policy-fixture"] },
 		});
@@ -118,7 +116,6 @@ describe("child model resolution diagnostic", () => {
 			const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => bridgePi([...replies]) });
 			const result = await runSync(tempDir, [makeAgent("bridge-worker", { model: "bridge/model" })], "bridge-worker", "Task", {
 				runId,
-				waitToolEnabled: false,
 				childSessionFactory: factory,
 				parentProviderRegistry: bridgeParent,
 			});
@@ -134,7 +131,6 @@ describe("child model resolution diagnostic", () => {
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => bridgePi([errorReply]) });
 		const result = await runSync(tempDir, [makeAgent("bridge-worker", { model: "bridge/model" })], "bridge-worker", "Task", {
 			runId: "foreground-inherited-policy",
-			waitToolEnabled: false,
 			childSessionFactory: factory,
 			parentProviderRegistry: bridgeParent,
 			capabilityCeiling: { version: 1, denyExtensions: true, sources: ["policy-fixture"] },
@@ -151,7 +147,6 @@ describe("child model resolution diagnostic", () => {
 			const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
 			const result = await runSync(tempDir, [makeAgent("bridge-worker", { model: "bridge/model" })], "bridge-worker", "Task", {
 				runId,
-				waitToolEnabled: false,
 				childSessionFactory: factory,
 				parentProviderRegistry: bridgeParent,
 			});
@@ -257,7 +252,6 @@ describe("child model resolution diagnostic", () => {
 			warnings.length = 0;
 			const foreground = await runSync(tempDir, [makeAgent("locked-down", { model: "bridge/model", extensions: [] })], "locked-down", "Task", {
 				runId: "foreground-provider-warning",
-				waitToolEnabled: false,
 				childSessionFactory: createDefaultChildSessionFactory({ loadPiCodingAgent: async () => bridgePi([doneReply]) }),
 				parentProviderRegistry: bridgeParent,
 			});

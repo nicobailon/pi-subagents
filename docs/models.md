@@ -92,7 +92,7 @@ Set `fast: true` on a run, in agent frontmatter, or in `subagents.agentOverrides
 
 Fast applies to local native child turns using Pi's `openai-responses` or `openai-codex-responses` adapter. This includes `openai/*` with Sign in with ChatGPT or an API key, and legacy `openai-codex/*` where available. An explicit `service_tier` already on the request takes precedence.
 
-Fast rejects other APIs, unresolved or virtual model selections, provider-registered custom streams, and non-local or non-native runners. When the parent's model registry already shows the model uses another API, the launch fails before it starts; the remaining checks run when the child session opens. The existing `denyExtensions` policy still disallows Fast. Replacing the API implementation process-wide is outside this contract, as are Pi's own compaction and summary requests. Forwarding a tier does not guarantee the provider will serve it.
+Fast rejects other APIs, unresolved or virtual model selections, provider-registered custom streams, and non-local or non-native runners. When the parent's model registry already shows the model uses another API, the launch fails before it starts; the remaining checks run when the child session opens. A launch with `denyExtensions` refuses Fast, and Pi's own compaction and summary requests don't get the tier. Forwarding a tier does not guarantee the provider will serve it.
 
 ## Recommended model tiering (optional)
 

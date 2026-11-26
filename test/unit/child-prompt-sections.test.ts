@@ -63,7 +63,7 @@ describe("child provider system prompt", () => {
 			? [reply(fauxAssistantMessage(fauxToolCall("read", { path: "notes.txt" }), { stopReason: "toolUse" })), reply(fauxAssistantMessage("done"))]
 			: [reply(fauxAssistantMessage("done"))]));
 		const { session, config } = buildInProcessChildLaunch({
-			host: "parent", cwd: repo, childAgentName: "worker", childIndex: 0, sessionEnabled: false, waitToolEnabled: false,
+			host: "parent", cwd: repo, childAgentName: "worker", childIndex: 0, sessionEnabled: false,
 			model: "probe/local", systemPrompt: "Role instructions.", systemPromptMode: "append", ...run.flags,
 			...(run.fanout ? { allowNestedSubagents: true } : {}),
 			...(run.structured ? { structuredOutput: createStructuredOutputRuntime({ type: "object" }, repo) } : {}),

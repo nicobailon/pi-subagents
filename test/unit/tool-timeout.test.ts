@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import {
 	DEFAULT_FAST_TOOL_TIMEOUT_MS,
 	DEFAULT_FAST_TOOL_TIMEOUT_TOOLS,
-	TOOL_TIMEOUT_ALLOWLIST,
+	TOOL_TIMEOUT_EXEMPT_TOOLS,
 	TOOL_TIMEOUT_ENV,
 	defaultToolTimeoutMs,
 	effectiveToolTimeoutMs,
@@ -84,7 +84,7 @@ describe("effectiveToolTimeoutMs", () => {
 		}
 		assert.equal(isToolTimeoutExempt("bash"), false);
 		assert.equal(isToolTimeoutExempt(undefined), false);
-		assert.deepEqual([...TOOL_TIMEOUT_ALLOWLIST].sort(), ["contact_supervisor", "intercom", "subagent"]);
+		assert.deepEqual([...TOOL_TIMEOUT_EXEMPT_TOOLS].sort(), ["contact_supervisor", "intercom", "subagent"]);
 	});
 });
 
