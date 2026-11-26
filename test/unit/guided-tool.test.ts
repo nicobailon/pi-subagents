@@ -221,7 +221,7 @@ describe("guide first", () => {
 		const sessionManager = { getSessionId: () => "session", getSessionFile: () => null, buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] };
 		const ctx = { cwd: root, hasUI: true, ui, sessionManager, modelRegistry: { getAvailable: () => [] } };
 		const { tool } = createGuidedSubagentTool(pi as never, {
-			guide: async () => "GUIDE",
+			guide: async () => ({ text: "GUIDE" }),
 			flatten: (params) => flattenSubagentToolOptions(params),
 			authorityPolicy,
 			run: (id, request, _nested, signal, onUpdate, runCtx) => executor.execute(id, request, signal ?? new AbortController().signal, onUpdate, runCtx),
@@ -247,7 +247,7 @@ describe("guide first", () => {
 		const ran: string[] = [];
 		const sessionManager = { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] };
 		const { tool } = createGuidedSubagentTool({ on: () => {} } as never, {
-			guide: async () => "GUIDE",
+			guide: async () => ({ text: "GUIDE" }),
 			flatten: (params) => flattenSubagentToolOptions(params),
 			run: async (_id, request) => {
 				ran.push(String(request.id));
@@ -273,7 +273,7 @@ describe("guide first", () => {
 		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] } };
 		const launch = async (run: Record<string, unknown>) => {
 			const { tool } = createGuidedSubagentTool(pi as never, {
-				guide: async () => "GUIDE",
+				guide: async () => ({ text: "GUIDE" }),
 				flatten: (params) => flattenSubagentToolOptions(params),
 				run: async () => ({ content: [{ type: "text", text: "child reply" }], details: { mode: "single", runId: "abcdef12-3456", results: [run as never] } }),
 				notes: (request, result) => callNotes(request, result, {}),
@@ -290,7 +290,7 @@ describe("guide first", () => {
 	it("refuses multi-line workflow text on the first call with the guide instead of holding it", async () => {
 		const pi = { on: () => {} };
 		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
-		const { tool } = createGuidedSubagentTool(pi as never, { guide: async () => "GUIDE", flatten: (params) => flattenSubagentToolOptions(params), run: async () => assert.fail("refused") });
+		const { tool } = createGuidedSubagentTool(pi as never, { guide: async () => ({ text: "GUIDE" }), flatten: (params) => flattenSubagentToolOptions(params), run: async () => assert.fail("refused") });
 		const result = await tool.execute("script-text", { workflow: "const r = await runs.run(\"scan\", { agent: \"scout\", task: \"Read /Users/someone/repo/src/index.ts\" });\nreturn r.output;" } as never, undefined, undefined, ctx as never);
 		const text = result.content[0]!.type === "text" ? result.content[0]!.text : "";
 		assert.match(text, /^subagent: workflow has line breaks, so it is script text; pass it as options\.script/);
@@ -301,7 +301,7 @@ describe("guide first", () => {
 	it("previews a chain's parallel step in plain words", async () => {
 		const pi = { on: () => {} };
 		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
-		const { tool } = createGuidedSubagentTool(pi as never, { guide: async () => "GUIDE", flatten: (params) => params, run: async () => assert.fail("held") });
+		const { tool } = createGuidedSubagentTool(pi as never, { guide: async () => ({ text: "GUIDE" }), flatten: (params) => params, run: async () => assert.fail("held") });
 		const held = await tool.execute("chain", { chain: [{ agent: "scout" }, { parallel: [{ agent: "reviewer" }] }], task: "Check" } as never, undefined, undefined, ctx as never);
 		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /\nWould launch a chain: scout → parallel step, task "Check"\.\n/);
 	});
@@ -310,7 +310,7 @@ describe("guide first", () => {
 		const pi = { on: () => {} };
 		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
 		const { tool } = createGuidedSubagentTool(pi as never, {
-			guide: async () => "GUIDE",
+			guide: async () => ({ text: "GUIDE" }),
 			flatten: (params) => flattenSubagentToolOptions(params),
 			run: async () => ({ content: [{ type: "text", text: "Async: worker [r-1]" }], details: { mode: "single", results: [] } }),
 			notes: (request, result) => callNotes(request, result, facts(request as Record<string, unknown>)),
@@ -370,7 +370,7 @@ describe("taught state", () => {
 		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [{ type: "message", message: { role: "toolResult", details: { taught: ["guide"] } } }] } };
 		const runs: Array<Record<string, unknown>> = [];
 		const { tool } = createGuidedSubagentTool(pi as never, {
-			guide: async () => "GUIDE",
+			guide: async () => ({ text: "GUIDE" }),
 			flatten: (params) => flattenSubagentToolOptions(params),
 			run: async (_id, request) => { runs.push(request as Record<string, unknown>); return { content: [{ type: "text", text: "replied" }], details: { mode: "management", results: [] } }; },
 		});
@@ -428,7 +428,7 @@ describe("taught state", () => {
 		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => entries } };
 		const runs: unknown[] = [];
 		const { tool } = createGuidedSubagentTool(pi as never, {
-			guide: async () => "GUIDE",
+			guide: async () => ({ text: "GUIDE" }),
 			flatten: (params) => flattenSubagentToolOptions(params),
 			run: async (_id, request) => { runs.push(request); return { content: [{ type: "text", text: "launched" }], details: { mode: "single", results: [] } }; },
 		});
@@ -451,7 +451,7 @@ describe("taught state", () => {
 		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => entries } };
 		const runs: unknown[] = [];
 		const { tool } = createGuidedSubagentTool(pi as never, {
-			guide: async () => "GUIDE",
+			guide: async () => ({ text: "GUIDE" }),
 			flatten: (params) => params,
 			run: async (_id, request) => { runs.push(request); return { content: [{ type: "text", text: "launched" }], details: { mode: "single", results: [] } }; },
 		});
@@ -468,6 +468,24 @@ describe("taught state", () => {
 		assert.equal(runs.length, 1, "the launch after compaction is held");
 		assert.match(held.content[0]!.type === "text" ? held.content[0]!.text : "", /^Not launched yet[^\n]*\nWould launch probe, task "two"\.\n\nGUIDE$/);
 	});
+
+	it("keeps the guide's display summary out of the text the model gets", async () => {
+		const summary = { tokens: 900, launch: ["subagent({agent, task, …})", "cwd"], manage: ["status"], agents: ["scout"] };
+		const ctx = { cwd: root, sessionManager: { buildContextEntries: () => [] } };
+		const { tool } = createGuidedSubagentTool({ on: () => {} } as never, {
+			guide: async () => ({ text: "GUIDE", summary }),
+			flatten: (params) => params,
+			run: async () => assert.fail("held"),
+		});
+		const held = await tool.execute("id", { agent: "probe", task: "Review the auth changes" } as never, undefined, undefined, ctx as never);
+		assert.deepEqual(held.content, [{ type: "text", text: "Not launched yet: this is the session's first subagent call, so here is the guide. Call again to launch.\nWould launch probe, task \"Review the auth changes\".\n\nGUIDE" }]);
+		assert.deepEqual(held.details?.guide, summary);
+		assert.equal(held.details?.heldLaunch, "Would launch probe, task \"Review the auth changes\".");
+		const topic = await tool.execute("id", { action: "guide", topic: "schedule" } as never, undefined, undefined, ctx as never);
+		assert.equal(topic.details?.guideTopic?.title, "schedule");
+		assert.match(topic.details?.guideTopic?.lead ?? "", /^schedule\.create: name or id, /);
+		assert.doesNotMatch(topic.details?.guideTopic?.lead ?? "", /Example:/);
+	});
 });
 
 describe("guided tool surface", () => {
@@ -479,7 +497,7 @@ describe("guided tool surface", () => {
 			registerTool: (tool: { parameters: { properties: object } }) => declarations.push(Object.keys(tool.parameters.properties).length),
 		};
 		const { tool } = createGuidedSubagentTool(pi as never, {
-			guide: async () => "GUIDE",
+			guide: async () => ({ text: "GUIDE" }),
 			flatten: (params) => flattenSubagentToolOptions(params),
 			run: async () => ({ content: [{ type: "text", text: "ok" }], details: { mode: "management", results: [] } }),
 		});

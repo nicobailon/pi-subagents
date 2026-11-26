@@ -220,6 +220,129 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
+	it("shows what the guide taught in the folded row, and the full text expanded", () => {
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-view-"));
+		const script = String.raw`
+			import assert from "node:assert/strict";
+			import registerSubagentExtension from "./index.ts";
+			const register = () => {
+				let registered;
+				registerSubagentExtension(new Proxy({
+					events: { on() { return () => {}; }, emit() {} },
+					registerTool(tool) { if (tool.name === "subagent") registered = tool; },
+					registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } }));
+				return registered;
+			};
+			let registeredTool = register();
+			const ctx = { cwd: process.cwd(), hasUI: false, sessionManager: { getSessionId() { return "guide-view"; }, getSessionFile() { return null; }, buildContextEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } };
+			const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
+			const row = async (args, expanded = false) => {
+				const result = await registeredTool.execute("guide-view", args, new AbortController().signal, undefined, ctx);
+				const context = { isError: false, state: {} };
+				const call = registeredTool.renderCall(args, theme, context);
+				const lines = registeredTool.renderResult(result, { expanded }, theme, context).render(200).map((line) => line.trimEnd());
+				return { result, call: call.render(200)[0].trimEnd(), lines };
+			};
+
+			const held = await row({ agent: "reviewer", task: "Review the auth changes" });
+			assert.match(held.call, /^subagent reviewer \[held for guide\]$/);
+			assert.equal(held.lines[0], 'held · Would launch reviewer, task "Review the auth changes".');
+			assert.match(held.lines[1], /^↳ guide \(~[\d,]+ tok, once\)$/);
+			assert.match(held.lines[2], /^   Launch  subagent\(\{agent, task, …\}\) · cwd · .* · timeoutMs$/);
+			assert.ok(held.lines[2].length <= 96, held.lines[2]);
+			assert.equal(held.lines[3], "   Manage  status · steer · resume · stop · reply · wait");
+			assert.match(held.lines[4], /^   Agents  \S+(, \S+)*$/);
+			assert.match(held.lines[5], /^Press .* to read it all$/);
+			assert.equal(held.lines.length, 6);
+			assert.match(held.result.content[0].text, /^Not launched yet: this is the session's first subagent call[^\n]*\nWould launch reviewer, task "Review the auth changes"\.\n\nsubagent guide\. /);
+			assert.doesNotMatch(held.result.content[0].text, /↳|tok, once/);
+
+			const again = await row({ action: "guide" });
+			assert.equal(again.call, "subagent guide");
+			assert.match(again.lines[0], /^↳ guide \(~[\d,]+ tok, again\)$/);
+			assert.deepEqual(again.lines.slice(1, 4).map((line) => line.slice(0, 11)), ["   Launch  ", "   Manage  ", "   Agents  "]);
+			assert.match(again.lines[4], /^Press .* to read it all$/);
+			assert.equal(again.lines.length, 5);
+
+			const section = await row({ action: "guide", topic: "workflows/parallel-sequential-lanes" });
+			assert.deepEqual(section.lines.slice(0, 2), ["↳ Parallel sequential lanes", "   For a bounded set of independent chains, runs.lanes(...) removes the mechanical loop that would otherwise connect each lane's stages."]);
+			assert.match(section.lines[2], /^Press .* to read it$/);
+			assert.equal(section.lines.length, 3);
+
+			const configuration = await row({ action: "guide", topic: "configuration/mainwindowrenderer" });
+			assert.deepEqual(configuration.lines.slice(0, 2), ["↳ mainWindowRenderer", "   Controls only the main chat subagent call/result renderer."]);
+
+			const action = await row({ action: "guide", topic: "schedule" });
+			assert.equal(action.lines[0], "↳ schedule");
+			assert.match(action.lines[1], /^   schedule\.create: name or id, /);
+			assert.match(action.lines[2], /^Press .* to read it$/);
+			assert.equal(action.lines.length, 3);
+
+			const expanded = (await row({ action: "guide", topic: "workflows/parallel-sequential-lanes" }, true)).lines.join("\n");
+			assert.match(expanded, /### Parallel sequential lanes/);
+			assert.match(expanded, /runs\.lanes\(\[/);
+			assert.doesNotMatch(expanded, /^↳/m);
+
+			registeredTool = register();
+			const status = await row({ action: "status" });
+			assert.match(status.result.content[1].text, /^subagent guide\. /);
+			const guideAt = status.lines.findIndex((line) => line.startsWith("↳ guide ("));
+			assert.match(status.lines[guideAt], /^↳ guide \(~[\d,]+ tok, once\)$/);
+			assert.deepEqual(status.lines.slice(guideAt + 1, guideAt + 4).map((line) => line.slice(0, 11)), ["   Launch  ", "   Manage  ", "   Agents  "]);
+			assert.equal(status.lines.some((line) => line.startsWith("↳ subagent guide")), false);
+		`;
+
+		try {
+			execFileSync(
+				process.execPath,
+				["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
+				{ cwd: projectRoot, env: parentToolEnv(agentDir), stdio: "pipe" },
+			);
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+		}
+	});
+
+	it("keeps the folded guide row within compactResultMaxLines, and stable when expanded in summary display", () => {
+		const heldRows = (subagentConfig: object) => {
+			const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-guide-config-"));
+			try {
+				const configDir = path.join(agentDir, "extensions", "subagent");
+				fs.mkdirSync(configDir, { recursive: true });
+				fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(subagentConfig), "utf-8");
+				const script = String.raw`
+					import registerSubagentExtension from "./index.ts";
+					let tool;
+					registerSubagentExtension(new Proxy({
+						events: { on() { return () => {}; }, emit() {} },
+						registerTool(registered) { if (registered.name === "subagent") tool = registered; },
+						registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {}, sendMessage() {}, getSessionName() {},
+					}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } }));
+					const ctx = { cwd: process.cwd(), hasUI: false, sessionManager: { getSessionId() { return "guide-config"; }, getSessionFile() { return null; }, buildContextEntries() { return []; } }, modelRegistry: { getAvailable() { return []; } } };
+					const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
+					const result = await tool.execute("held", { agent: "reviewer", task: "Review the auth changes" }, new AbortController().signal, undefined, ctx);
+					const render = (expanded) => tool.renderResult(result, { expanded }, theme, { isError: false, state: {} }).render(200).map((line) => line.trimEnd());
+					process.stdout.write(JSON.stringify({ folded: render(false), expanded: render(true) }));
+				`;
+				return JSON.parse(execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env: parentToolEnv(agentDir), encoding: "utf-8" })) as { folded: string[]; expanded: string[] };
+			} finally {
+				fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+			}
+		};
+
+		const capped = heldRows({ mainWindowRenderer: { compactResultMaxLines: 4 } });
+		assert.equal(capped.folded.length, 4);
+		assert.equal(capped.folded[0], 'held · Would launch reviewer, task "Review the auth changes".');
+		assert.match(capped.folded[3]!, /^… 3 rows hidden · Press .* to expand$/);
+		assert.match(capped.expanded.join("\n"), /^Not launched yet: /);
+
+		const summary = heldRows({ inlineToolDisplay: "summary" });
+		assert.equal(summary.folded.length, 1);
+		assert.match(summary.folded[0]!, /^↳ guide \(~[\d,]+ tok, once\)$/);
+		assert.deepEqual(summary.expanded, summary.folded);
+	});
+
 	it("rejects blank action at the public executor boundary", () => {
 		const script = String.raw`
 			import assert from "node:assert/strict";

@@ -5,7 +5,7 @@ import { authorityConfirmTitle, managementActionAuthority, type AuthorityPolicyC
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { disabledFeatureSectionNotice, type DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { isStaleExtensionContextError } from "../shared/extension-context.ts";
-import type { Details } from "../shared/types.ts";
+import type { Details, GuideSummary } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
 import { prepareSubagentToolArguments } from "./subagent-options.ts";
 
@@ -98,23 +98,45 @@ const MANAGE_GUIDE = `Manage (id from the launch reply, or a prefix):
 - families: schedule, mission, worktree, lane, inspector, project, watchdog, command, refine
 - unsure? {action:"guide", topic:"<action, family or subject, e.g. workflows>"}; a wrong guess lists topics`;
 
+const GUIDE_LAUNCH_ROW_SKIPS = new Set(["task", "label"]);
+const GUIDE_LAUNCH_ROW = [
+	LAUNCH_GUIDE.split("\n")[0]!.replace(/^Launch: /, "").replace("...", "…"),
+	...[...LAUNCH_GUIDE.matchAll(/^- (\w+):/gm)].map((match) => match[1]!).filter((field) => !GUIDE_LAUNCH_ROW_SKIPS.has(field)),
+];
+const GUIDE_MANAGE_ROW = [...MANAGE_GUIDE.matchAll(/^- \{action:"([\w.-]+)"/gm)].map((match) => match[1]!);
+
+function estimateTokens(text: string): number {
+	return Math.round(text.length / 2.3 / 50) * 50;
+}
+
+export interface GuideReply {
+	text: string;
+	summary?: GuideSummary;
+}
+
 export function formatGuide(agents: readonly GuideAgent[], options: { canLaunch: boolean; child?: boolean; disabled?: DisabledFeatureSurface }): string {
+	return buildGuide(agents, options).text;
+}
+
+export function buildGuide(agents: readonly GuideAgent[], options: { canLaunch: boolean; child?: boolean; disabled?: DisabledFeatureSurface }): GuideReply {
 	if (!options.canLaunch) {
-		return `subagent guide (child run). This child cannot launch runs. {action:"wait"} (or all:true) blocks until this child's own background work finishes. Ask your parent with contact_supervisor.`;
+		return { text: `subagent guide (child run). This child cannot launch runs. {action:"wait"} (or all:true) blocks until this child's own background work finishes. Ask your parent with contact_supervisor.` };
 	}
 	const intro = options.child
 		? `subagent guide (child run). Your launches are your own children and run in the background; their results do not wake you. Collect them with {action:"wait"} (or all:true) before you finish. Agent changes (create, update, delete …) are blocked here.`
 		: `subagent guide. Children run in the background; a finished child's result wakes you: keep working or end your turn. Don't poll. Not for messaging a Pi session that is already open; use a messaging tool for that.`;
 	const names = new Set(agents.map((agent) => agent.name));
 	const writerVariant = (name: string) => name.endsWith("-writer") && names.has(name.slice(0, -"-writer".length));
-	const agentLines = agents.filter((agent) => !writerVariant(agent.name)).map((agent) => {
+	const listed = agents.filter((agent) => !writerVariant(agent.name));
+	const agentLines = listed.map((agent) => {
 		const summary = agentSummary(agent.description);
 		const writer = names.has(`${agent.name}-writer`) ? `; ${agent.name}-writer edits` : "";
 		return `- ${agent.name}${summary ? `: ${summary}` : ""}${writer}`;
 	});
 	const launch = options.disabled?.features.has("workflow-scripts") ? LAUNCH_GUIDE.replace(/\nParallel:[^]*$/, NO_SCRIPTS_GUIDE) : LAUNCH_GUIDE;
 	const notice = options.disabled ? disabledFeatureSectionNotice(options.disabled) : undefined;
-	return [intro, `${launch}\n${MANAGE_GUIDE}`, ...(notice ? [notice] : []), agentLines.length ? `Agents (as of now; {action:"list"} refreshes):\n${agentLines.join("\n")}` : "Agents: none found; {action:\"list\"} shows why."].join("\n\n");
+	const text = [intro, `${launch}\n${MANAGE_GUIDE}`, ...(notice ? [notice] : []), agentLines.length ? `Agents (as of now; {action:"list"} refreshes):\n${agentLines.join("\n")}` : "Agents: none found; {action:\"list\"} shows why."].join("\n\n");
+	return { text, summary: { tokens: estimateTokens(text), launch: GUIDE_LAUNCH_ROW, manage: GUIDE_MANAGE_ROW, agents: listed.map((agent) => agent.name) } };
 }
 
 const ACTION_TOPICS: Record<string, string> = {
@@ -402,8 +424,10 @@ export function noticeNotes(runs: ReadonlyArray<{ agent: string; status: string 
 	return fresh.length ? { text: fresh.map(([, text]) => text).join("\n"), taught: fresh.map(([key]) => key) } : undefined;
 }
 
-export function guideResult(text: string, taught: string[], isError = false): AgentToolResult<Details> {
-	return { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}), details: { mode: "management", results: [], ...(taught.length ? { taught } : {}) } };
+type GuideView = Pick<Details, "guide" | "heldLaunch" | "guideTopic">;
+
+export function guideResult(text: string, taught: string[], view: GuideView = {}, isError = false): AgentToolResult<Details> {
+	return { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}), details: { mode: "management", results: [], ...(taught.length ? { taught } : {}), ...view } };
 }
 
 export function withTeaching(result: AgentToolResult<Details>, notes: string[], taught: string[]): AgentToolResult<Details> {
@@ -422,7 +446,7 @@ export interface TeachingNote {
 }
 
 export interface GuidedSubagentToolDeps {
-	guide(ctx: ExtensionContext): Promise<string>;
+	guide(ctx: ExtensionContext): Promise<GuideReply>;
 	flatten(params: Record<string, unknown>): SubagentParamsLike;
 	run(id: string, request: SubagentParamsLike, nested: boolean, signal: AbortSignal | undefined, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Details>>;
 	authorityPolicy?: AuthorityPolicyConfig;
@@ -489,13 +513,14 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			const empty = Object.keys(params).length === 0;
 			if (empty && taught.has("guide")) return guideResult(EMPTY_CALL_TEXT, []);
 			if (empty || (params.action === "guide" && topic === undefined)) {
-				taught.teach("guide");
-				return guideResult(await deps.guide(ctx), ["guide"]);
+				const again = taught.teach("guide").length === 0;
+				const reply = await deps.guide(ctx);
+				return guideResult(reply.text, ["guide"], reply.summary ? { guide: again ? { ...reply.summary, again } : reply.summary } : {});
 			}
 			const topicKey = params.action === "guide" && typeof topic === "string" ? actionTopicKey(topic) : undefined;
 			if (topicKey) {
 				taught.teach(`topic:${topicKey}`);
-				return guideResult(actionTopicText(topicKey, topic as string), [`topic:${topicKey}`]);
+				return guideResult(actionTopicText(topicKey, topic as string), [`topic:${topicKey}`], { guideTopic: { title: topic as string, lead: ACTION_TOPICS[topicKey]!.split(" Example:")[0]! } });
 			}
 			const misplaced = typeof params.action === "string" ? misplacedGuideCall(params.action) : undefined;
 			if (misplaced) throw new Error(misplaced);
@@ -510,14 +535,15 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			} catch (error) {
 				if (!firstCall) throw error;
 				taught.teach("guide");
-				return guideResult(`${error instanceof Error ? error.message : String(error)}\n\n${await deps.guide(ctx)}`, ["guide"], true);
+				return guideResult(`${error instanceof Error ? error.message : String(error)}\n\n${(await deps.guide(ctx)).text}`, ["guide"], {}, true);
 			}
 			if (deps.canLaunch !== false && isLaunchRequest(request as Record<string, unknown>)) {
 				if (firstCall) {
 					taught.teach("guide");
-					return guideResult(`${holdText(request as Record<string, unknown>, false)}\n\n${await deps.guide(ctx)}`, ["guide"]);
+					const reply = await deps.guide(ctx);
+					return guideResult(`${holdText(request as Record<string, unknown>, false)}\n\n${reply.text}`, ["guide"], { guide: reply.summary, heldLaunch: launchPreview(request as Record<string, unknown>) });
 				}
-				if (taught.guideArrivedThisTurn()) return guideResult(holdText(request as Record<string, unknown>, true), []);
+				if (taught.guideArrivedThisTurn()) return guideResult(holdText(request as Record<string, unknown>, true), [], { heldLaunch: launchPreview(request as Record<string, unknown>) });
 			}
 			let result: AgentToolResult<Details>;
 			const rare = request.action ? rareActionTopic(request.action) : undefined;
@@ -563,11 +589,14 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			}
 			const notes: string[] = [];
 			const keys: string[] = [];
+			let attachedGuide: GuideSummary | undefined;
 			if (firstCall) {
 				const fresh = taught.teach("guide");
 				if (fresh.length) {
-					notes.push(await deps.guide(ctx));
+					const reply = await deps.guide(ctx);
+					notes.push(reply.text);
 					keys.push(...fresh);
+					if (reply.summary) attachedGuide = { ...reply.summary, attached: true };
 				}
 			}
 			const freshTopic = rare ? taught.teach(`topic:${rare}`).length > 0 : false;
@@ -581,7 +610,9 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				notes.push(note.text);
 				if (note.key) keys.push(note.key);
 			}
-			return keys.length > 0 ? withTeaching(result, notes, keys) : finalizeToolResult(withTeaching(result, notes, keys));
+			if (keys.length === 0) return finalizeToolResult(withTeaching(result, notes, keys));
+			const taughtResult = withTeaching(result, notes, keys);
+			return attachedGuide ? { ...taughtResult, details: { ...taughtResult.details!, guide: attachedGuide } } : taughtResult;
 		},
 		...(deps.renderCall ? { renderCall: deps.renderCall } : {}),
 		...(deps.renderResult ? { renderResult: deps.renderResult } : {}),

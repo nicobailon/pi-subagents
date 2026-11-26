@@ -89,6 +89,10 @@ function capCompactMainWindowResult(component: Component, layout: MainWindowRend
 	return capped;
 }
 
+export function capFoldedMainWindowResult(component: Component, rendererConfig: MainWindowRendererConfig | undefined, theme: Theme): Component {
+	return capCompactMainWindowResult(component, resolveMainWindowRenderLayout(rendererConfig), theme, true);
+}
+
 export function expandKeyHint(action: string): string {
 	// keyText is empty wherever Pi's app keybindings are not loaded (RPC, print mode), even when the key is bound.
 	return `Press ${keyText("app.tools.expand") || "the expand key"} ${action}`;

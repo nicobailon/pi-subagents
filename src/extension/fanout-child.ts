@@ -14,7 +14,7 @@ import { readStatus } from "../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { resolveDisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { flattenSubagentToolOptions } from "./subagent-options.ts";
-import { callNotes, createGuidedSubagentTool, formatGuide } from "./guided-tool.ts";
+import { buildGuide, callNotes, createGuidedSubagentTool } from "./guided-tool.ts";
 import { loadConfig, resolveAsyncByDefault } from "./config.ts";
 import { SUBAGENT_ASYNC_STARTED_EVENT, type AsyncStartedEvent, type SubagentState } from "../shared/types.ts";
 import { createChildExternalJobBridgeSweeper } from "../runs/shared/external-job-bridge.ts";
@@ -212,7 +212,7 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI, c
 
 	const disabledFeatures = resolveDisabledFeatureSurface(config);
 	const { tool } = createGuidedSubagentTool(pi, {
-		guide: async (ctx) => formatGuide(discoverAgents(ctx.cwd, "both", ctx.model?.provider).agents, { canLaunch: true, child: true, disabled: disabledFeatures }),
+		guide: async (ctx) => buildGuide(discoverAgents(ctx.cwd, "both", ctx.model?.provider).agents, { canLaunch: true, child: true, disabled: disabledFeatures }),
 		flatten: (params) => flattenSubagentToolOptions(params, disabledFeatures),
 		authorityPolicy: config.authorityPolicy,
 		run: (id, request, _nested, signal, onUpdate, ctx) => executor.executePublic(id, request, signal ?? new AbortController().signal, onUpdate, ctx),

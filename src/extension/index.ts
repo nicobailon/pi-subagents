@@ -21,8 +21,8 @@ import { getAgentDir } from "../shared/utils.ts";
 import { isStaleExtensionContextError, withCachedUiContext } from "../shared/extension-context.ts";
 import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
 import { cleanupOldChainDirs } from "../shared/settings.ts";
-import { clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary, setInlineWorkflowCoverage } from "../tui/render.ts";
-import { withTeachingNotes } from "../tui/teaching-notes.ts";
+import { capFoldedMainWindowResult, clearLegacyResultAnimationTimer, renderSubagentResult, renderSubagentSummary, setInlineWorkflowCoverage } from "../tui/render.ts";
+import { guideView, withHeldBadge, withTeachingNotes } from "../tui/teaching-notes.ts";
 import { getInspectorPlugins, registerInspectorEventListener } from "../inspectors/plugins.ts";
 import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
 import { readMainThinkingLevel, setMainThinkingLevelSource } from "../tui/running-tone.ts";
@@ -50,7 +50,7 @@ import { listHerdrProjectPaneRoots, restoreHerdrProjectPaneSnapshots } from "../
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { createWaitExecute } from "../runs/background/wait-tool.ts";
-import { callNotes, createGuidedSubagentTool, formatGuide, noticeNotes, type CallFacts, type TaughtState } from "./guided-tool.ts";
+import { buildGuide, callNotes, createGuidedSubagentTool, noticeNotes, type CallFacts, type GuideReply, type TaughtState } from "./guided-tool.ts";
 import { registerPinnedTool, setDeclarationPinning } from "./declaration-pinning.ts";
 import { buildActiveRunsSection } from "./active-runs-prompt.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
@@ -731,10 +731,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 
-	const guideFor = async (ctx: ExtensionContext): Promise<string> => {
+	const guideFor = async (ctx: ExtensionContext): Promise<GuideReply> => {
 		await waitForAgentDiscovery();
 		const projectTrusted = typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : undefined;
-		return formatGuide(discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider, { projectTrusted }).agents, { canLaunch: true, disabled: disabledFeatures });
+		return buildGuide(discoverAgentsForRuntime(ctx.cwd, "both", ctx.model?.provider, { projectTrusted }).agents, { canLaunch: true, disabled: disabledFeatures });
 	};
 	const callFacts = (request: SubagentParamsLike, result: AgentToolResult<Details>, ctx: ExtensionContext): CallFacts => {
 		const params = request as Record<string, unknown>;
@@ -774,10 +774,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		run: (id, request, nested, signal, onUpdate, ctx) => nested
 			? executeSubagentReady(id, request, new AbortController().signal, onUpdate, ctx)
 			: executeSubagentCollapsed(id, request, signal ?? new AbortController().signal, onUpdate, ctx),
-		renderCall(args, theme) {
+		renderCall(args, theme, context) {
 			const gap = " ".repeat(config.mainWindowRenderer?.horizontalSpacing ?? 1);
 			const title = theme.fg("toolTitle", theme.bold("subagent"));
 			const options = args.options && typeof args.options === "object" ? args.options as Record<string, unknown> : {};
+			const held = (line: string) => withHeldBadge(line, () => (context?.state as { heldForGuide?: boolean } | undefined)?.heldForGuide === true, `${gap}${theme.fg("warning", "[held for guide]")}`);
 			if (typeof args.action === "string") {
 				const target = typeof args.agent === "string" ? args.agent : "";
 				return new Text(
@@ -788,21 +789,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			if (Object.keys(args).length === 0) return new Text(`${title}${gap}guide`, 0, 0);
 			const preflight = options.preflight ?? args.preflight;
 			if (args.workflow !== undefined)
-				return new Text(
+				return held(
 					`${title}${gap}${theme.fg("accent", args.workflow === true || args.workflow === "true" ? "workflow (reply block)" : `workflow ${String(args.workflow)}`)}${args.async === true ? `${gap}${theme.fg("warning", "[async]")}` : ""}${preflight !== undefined ? `${gap}${theme.fg("dim", formatWorkflowPreflightCall(preflight))}` : ""}`,
-					0,
-					0,
 				);
 			const asyncLabel = args.async === true ? `${gap}${theme.fg("warning", "[async]")}` : "";
-			return new Text(
-				`${title}${gap}${theme.fg("accent", typeof args.agent === "string" ? args.agent : "?")}${asyncLabel}`,
-				0,
-				0,
-			);
+			return held(`${title}${gap}${theme.fg("accent", typeof args.agent === "string" ? args.agent : "?")}${asyncLabel}`);
 		},
 		renderResult(result, options, theme, context) {
 			clearLegacyResultAnimationTimer(context);
 			const renderedResult = { ...result, isError: context.isError };
+			if (result.details?.heldLaunch !== undefined && context.state) (context.state as { heldForGuide?: boolean }).heldForGuide = true;
+			const guide = context.isError || (options.expanded && !summaryInlineToolDisplay) ? undefined : guideView(result.details, theme, summaryInlineToolDisplay);
+			if (guide) return summaryInlineToolDisplay ? guide : withTeachingNotes(capFoldedMainWindowResult(guide, config.mainWindowRenderer, theme), renderedResult, false, theme);
 			return summaryInlineToolDisplay
 				? renderSubagentSummary(renderedResult, options, theme)
 				: withTeachingNotes(renderSubagentResult(renderedResult, options, theme, undefined, config.mainWindowRenderer, foregroundDetachShortcut), renderedResult, options.expanded, theme);

@@ -24,7 +24,7 @@ import { inheritedNestedRouteOf } from "./nested-events.ts";
 import { createWaitExecute } from "../background/wait-tool.ts";
 import { drainOutstandingWork } from "../background/auto-drain.ts";
 import { MODEL_ONLY_TOOL } from "../../shared/extension-context.ts";
-import { createGuidedSubagentTool, formatGuide } from "../../extension/guided-tool.ts";
+import { buildGuide, createGuidedSubagentTool } from "../../extension/guided-tool.ts";
 import { flattenSubagentToolOptions } from "../../extension/subagent-options.ts";
 import {
 	childSupervisorMetadata,
@@ -720,7 +720,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 	if (!config.fanoutChild && typeof pi.registerTool === "function") {
 		const wait = createWaitExecute(pi, waitState, undefined, { nestedRootRunId });
 		pi.registerTool(createGuidedSubagentTool(pi, {
-			guide: async () => formatGuide([], { canLaunch: false }),
+			guide: async () => buildGuide([], { canLaunch: false }),
 			canLaunch: false,
 			flatten: (params) => flattenSubagentToolOptions(params),
 			run: async (id, request, _nested, signal, onUpdate, ctx) => {
