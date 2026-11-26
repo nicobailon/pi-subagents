@@ -254,6 +254,12 @@ describe("nested control routing", () => {
 			assert.equal(transcript.isError, undefined);
 			assert.match(text(transcript), /^Transcript target: run root-control · child 0\nSpawn budget:/);
 			assert.match(text(transcript), /LIVE_FOREGROUND_ACTIVITY/);
+
+			// A miss is an error, not a status payload: it keeps its target label and carries no budget or capacity lines.
+			const missed = await createExecutor(state).execute("status-missed", { action: "status", id: "no-such-run" }, new AbortController().signal, undefined, ctx(root));
+			assert.equal(missed.isError, true);
+			assert.match(text(missed), /^Status target: run no-such-run\nAsync run not found for 'no-such-run'\. No run matches that id or prefix\./);
+			assert.doesNotMatch(text(missed), /Spawn budget|Active async capacity/);
 			for (const hasUI of [false, true]) {
 				const implicit = await createExecutor(state).execute("implicit-transcript", { action: "status", view: "transcript" }, new AbortController().signal, undefined, { ...ctx(root), hasUI });
 				assert.equal(implicit.isError, undefined);
@@ -291,9 +297,11 @@ describe("nested control routing", () => {
 			assert.match(text(result), new RegExp(`Run: ${runId}`));
 			assert.doesNotMatch(text(result), /foreground-live/);
 
+			// This run has no sessionId, so the transcript view is an ownership error: labeled, but with no budget or capacity lines.
 			const transcript = await executor.execute("transcript-dir", { action: "status", dir: asyncDir, view: "transcript" }, new AbortController().signal, undefined, ctx(root));
-			assert.ok(text(transcript).startsWith(`Transcript target: dir ${asyncDir}\nSpawn budget:`), text(transcript));
-			assert.doesNotMatch(text(transcript), /Live foreground transcript/);
+			assert.equal(transcript.isError, true);
+			assert.ok(text(transcript).startsWith(`Transcript target: dir ${asyncDir}\nTranscript view is only available for async runs owned by the current session.`), text(transcript));
+			assert.doesNotMatch(text(transcript), /Spawn budget|Active async capacity|Live foreground transcript/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 			fs.rmSync(asyncDir, { recursive: true, force: true });
