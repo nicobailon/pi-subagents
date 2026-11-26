@@ -98,9 +98,10 @@ const MANAGE_GUIDE = `Manage (id from the launch reply, or a prefix):
 - families: schedule, mission, worktree, lane, inspector, project, watchdog, command, refine
 - unsure? {action:"guide", topic:"<action, family or subject, e.g. workflows>"}; a wrong guess lists topics`;
 
+const GUIDE_LAUNCH_ROW_SKIPS = new Set(["task", "label"]);
 const GUIDE_LAUNCH_ROW = [
 	LAUNCH_GUIDE.split("\n")[0]!.replace(/^Launch: /, "").replace("...", "…"),
-	...[...LAUNCH_GUIDE.matchAll(/^- (\w+):/gm)].map((match) => match[1]!).filter((field) => field !== "task"),
+	...[...LAUNCH_GUIDE.matchAll(/^- (\w+):/gm)].map((match) => match[1]!).filter((field) => !GUIDE_LAUNCH_ROW_SKIPS.has(field)),
 ];
 const GUIDE_MANAGE_ROW = [...MANAGE_GUIDE.matchAll(/^- \{action:"([\w.-]+)"/gm)].map((match) => match[1]!);
 
@@ -512,9 +513,9 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			const empty = Object.keys(params).length === 0;
 			if (empty && taught.has("guide")) return guideResult(EMPTY_CALL_TEXT, []);
 			if (empty || (params.action === "guide" && topic === undefined)) {
-				taught.teach("guide");
+				const again = taught.teach("guide").length === 0;
 				const reply = await deps.guide(ctx);
-				return guideResult(reply.text, ["guide"], { guide: reply.summary });
+				return guideResult(reply.text, ["guide"], reply.summary ? { guide: again ? { ...reply.summary, again } : reply.summary } : {});
 			}
 			const topicKey = params.action === "guide" && typeof topic === "string" ? actionTopicKey(topic) : undefined;
 			if (topicKey) {
@@ -588,11 +589,14 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 			}
 			const notes: string[] = [];
 			const keys: string[] = [];
+			let attachedGuide: GuideSummary | undefined;
 			if (firstCall) {
 				const fresh = taught.teach("guide");
 				if (fresh.length) {
-					notes.push((await deps.guide(ctx)).text);
+					const reply = await deps.guide(ctx);
+					notes.push(reply.text);
 					keys.push(...fresh);
+					if (reply.summary) attachedGuide = { ...reply.summary, attached: true };
 				}
 			}
 			const freshTopic = rare ? taught.teach(`topic:${rare}`).length > 0 : false;
@@ -606,7 +610,9 @@ export function createGuidedSubagentTool(pi: ExtensionAPI, deps: GuidedSubagentT
 				notes.push(note.text);
 				if (note.key) keys.push(note.key);
 			}
-			return keys.length > 0 ? withTeaching(result, notes, keys) : finalizeToolResult(withTeaching(result, notes, keys));
+			if (keys.length === 0) return finalizeToolResult(withTeaching(result, notes, keys));
+			const taughtResult = withTeaching(result, notes, keys);
+			return attachedGuide ? { ...taughtResult, details: { ...taughtResult.details!, guide: attachedGuide } } : taughtResult;
 		},
 		...(deps.renderCall ? { renderCall: deps.renderCall } : {}),
 		...(deps.renderResult ? { renderResult: deps.renderResult } : {}),

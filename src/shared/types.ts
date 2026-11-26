@@ -1455,6 +1455,8 @@ export interface GuideSummary {
 	launch: string[];
 	manage: string[];
 	agents: string[];
+	again?: boolean;
+	attached?: boolean;
 }
 
 export interface GuideTopicView {

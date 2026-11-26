@@ -104,13 +104,21 @@ function readGuideFiles(topic: string, files: string[], root: string): string[] 
 
 function leadSentence(lines: readonly string[]): string {
 	let frontmatter = false;
+	let fence: string | undefined;
 	for (const raw of lines) {
 		const line = raw.trim();
+		const marker = /^(```+|~~~+)/.exec(line)?.[1];
+		if (marker) {
+			if (!fence) fence = marker;
+			else if (marker.startsWith(fence)) fence = undefined;
+			continue;
+		}
+		if (fence) continue;
 		if (line === "---") {
 			frontmatter = !frontmatter;
 			continue;
 		}
-		if (frontmatter || !line || /^(#|<|!|\[|\||```|~~~|>|- |\* |\d+\. )/.test(line)) continue;
+		if (frontmatter || !line || /^(#|<|!|\[|\||>|- |\* |\d+\. )/.test(line)) continue;
 		const plain = line.replace(/`/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
 		return /^.*?[.!?](?=\s|$)/.exec(plain)?.[0] ?? plain;
 	}
@@ -143,5 +151,5 @@ export function readSubagentGuideTopic(topic = "overview", root = packageRoot): 
 	}
 	const section = sections.find((candidate) => candidate.address === topic);
 	if (!section) return { text: `Unknown section '${topic}'. No files were changed.\n\n${tableOfContents(name, sections)}` };
-	return { text: sectionText(lines, section), view: { title: section.title, lead: leadSentence(lines.slice(section.start + 1, section.end)) } };
+	return { text: sectionText(lines, section), view: { title: section.title.replace(/`/g, ""), lead: leadSentence(lines.slice(section.start + 1, section.end)) } };
 }
