@@ -5230,6 +5230,46 @@ Answer only from the supplied synthetic text.
 		assert.deepEqual(JSON.parse(validation.content[0]?.text ?? "").errors.map((error: { kind?: string; line?: number }) => ({ kind: error.kind, line: error.line })), [{ kind: "agent", line: 2 }]);
 	});
 
+	it("rejects an unknown literal agent in a child with its own cwd before launching any workflow child", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("reviewer")]);
+		// The named parallel workflow writes each task's cwd onto its runs.all item; that must not hide the agent name from validation.
+		const result = await executor.executePublic(
+			"parallel-unknown-agent-own-cwd",
+			{ workflow: "parallel", args: { tasks: [{ agent: "reviwer", cwd: tempDir, task: "Review src/api" }] } },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.equal(mockPi.callCount(), 0);
+		assert.deepEqual(result.details.results, []);
+		const errors = JSON.parse(result.content[0]?.text ?? "").errors.map((error: { kind?: string; message?: string }) => ({ kind: error.kind, message: error.message }));
+		assert.deepEqual(errors.map((error) => error.kind), ["agent"]);
+		assert.match(errors[0]?.message ?? "", /runs\.all item: Unknown agent 'reviwer'\. Did you mean 'reviewer'\?/);
+	});
+
+	it("checks a child with its own cwd against the agents discovered there", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const childCwd = path.join(tempDir, "child-cwd");
+		fs.mkdirSync(childCwd, { recursive: true });
+		// 'reviewer' exists only at the child cwd; 'worker' exists only at the workflow cwd.
+		const executor = makeExecutor([], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), (cwd) => cwd === childCwd ? [makeAgent("reviewer")] : [makeAgent("worker")]);
+		const launch = (id: string, tasks: Array<{ agent: string; task: string; cwd?: string }>) => executor.executePublic(id, { workflow: "parallel", args: { tasks }, async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+		mockPi.onCall({ output: "Child cwd agent completed" });
+		mockPi.onCall({ output: "Workflow cwd agent completed" });
+		const placed = await launch("parallel-agent-own-cwd", [{ agent: "reviewer", cwd: childCwd, task: "Review" }, { agent: "worker", task: "Write" }]);
+		assert.equal(placed.isError, undefined, placed.content[0]?.text ?? "parallel workflow failed");
+		assert.equal(mockPi.callCount(), 2);
+
+		const misplaced = await launch("parallel-agent-own-cwd-misplaced", [{ agent: "worker", cwd: childCwd, task: "Write" }]);
+		assert.equal(misplaced.isError, true);
+		assert.equal(mockPi.callCount(), 2);
+		const errors = JSON.parse(misplaced.content[0]?.text ?? "").errors.map((error: { kind?: string; message?: string }) => ({ kind: error.kind, message: error.message }));
+		assert.deepEqual(errors.map((error) => error.kind), ["agent"]);
+		assert.match(errors[0]?.message ?? "", /runs\.all item: Unknown agent 'worker'\./);
+	});
+
 	it("checks literal agents with the parent model's provider-specific discovery", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), (_cwd, provider) => provider === "openai-codex" ? [makeAgent("reviewer")] : []);
 		const ctx = { ...makeMinimalCtx(tempDir), model: { provider: "openai-codex", id: "gpt-test" } };
