@@ -94,7 +94,7 @@ describe("getFinalOutput", () => {
 			"Done",
 			"```json",
 			JSON.stringify({
-				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "verified" }],
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "counted ```mermaid blocks" }],
 				validationOutput: ["tests passed"],
 			}),
 			"```",

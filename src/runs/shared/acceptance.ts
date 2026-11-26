@@ -25,6 +25,7 @@ import type {
 	SubagentRunMode,
 	ChildWatchdogProgress,
 } from "../../shared/types.ts";
+import { closedAcceptanceReportFences } from "../../shared/acceptance-report-fences.ts";
 import { unresolvedChildWatchdogBlockers } from "../../watchdog/child-status.ts";
 import { isAgentContract } from "./agent-contract.ts";
 import type { validateStructuredOutputValue } from "./structured-output.ts";
@@ -805,12 +806,6 @@ function parseReportJson(body: string): unknown {
 	}
 }
 
-function fencedBlocks(output: string, tag: string): string[] {
-	return [...output.matchAll(new RegExp(`\`\`\`${tag}\\s*\\n([\\s\\S]*?)\`\`\``, "gi"))]
-		.map((match) => match[1]?.trim())
-		.filter((value): value is string => Boolean(value));
-}
-
 function parseAcceptanceReportBody(body: string): { report?: AcceptanceReport; errors: string[] } {
 	return validateAcceptanceReport(parseReportJson(body));
 }
@@ -824,12 +819,12 @@ interface AcceptanceReportParseResult {
 }
 
 function parseUnterminatedAcceptanceReportFence(output: string): AcceptanceReportParseResult {
-	const opener = /```acceptance[-_]report\b[^\n]*\n/gi.exec(output);
+	const opener = /(?:^|\n)[ \t]*`{3,}acceptance[-_]report\b[^\n]*/i.exec(output);
 	if (!opener) return {};
-	const bodyStart = opener.index + opener[0].length;
-	if (output.indexOf("```", bodyStart) !== -1) return {};
+	const body = output.slice(opener.index + opener[0].length).trim();
+	if (!body) return { error: "Failed to parse acceptance-report: Empty or unterminated acceptance-report fence.", malformed: true };
 	try {
-		const validation = validateAcceptanceReport(JSON.parse(output.slice(bodyStart).trim()) as unknown);
+		const validation = validateAcceptanceReport(JSON.parse(body) as unknown);
 		return validation.report
 			? { report: validation.report }
 			: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}`, malformed: true };
@@ -855,10 +850,17 @@ function parseGenericJsonAcceptanceReportBody(body: string): AcceptanceReportPar
 export const ACCEPTANCE_REPORT_NOT_FOUND = "Structured acceptance report not found.";
 
 export function parseAcceptanceReport(output: string): AcceptanceReportParseResult {
-	const explicitFencePresent = /```acceptance[-_]report\b/i.test(output);
-	const fenced = fencedBlocks(output, "acceptance[-_]report");
+	const genericBodies: string[] = [];
 	const parseErrors: string[] = [];
-	for (const body of fenced) {
+	for (const { explicit, body } of closedAcceptanceReportFences(output)) {
+		if (!explicit) {
+			genericBodies.push(body);
+			continue;
+		}
+		if (!body) {
+			parseErrors.push("Empty or unterminated acceptance-report fence.");
+			continue;
+		}
 		try {
 			const validation = parseAcceptanceReportBody(body);
 			if (validation.report) return { report: validation.report };
@@ -868,12 +870,9 @@ export function parseAcceptanceReport(output: string): AcceptanceReportParseResu
 		}
 	}
 	if (parseErrors.length > 0) return { error: `Failed to parse acceptance-report: ${parseErrors.join("; ")}`, malformed: true };
-	if (explicitFencePresent) {
-		const recovered = parseUnterminatedAcceptanceReportFence(output);
-		if (recovered.report || recovered.error) return recovered;
-		return { error: "Failed to parse acceptance-report: Empty or unterminated acceptance-report fence.", malformed: true };
-	}
-	for (const body of fencedBlocks(output, "(?:json|jsonc|json5)")) {
+	const recovered = parseUnterminatedAcceptanceReportFence(output);
+	if (recovered.report || recovered.error) return recovered;
+	for (const body of genericBodies) {
 		try {
 			const parsed = parseGenericJsonAcceptanceReportBody(body);
 			if (parsed.report) return { report: parsed.report };
@@ -932,26 +931,17 @@ function parseAcceptanceReportSources(
 }
 
 export function stripAcceptanceReport(output: string): string {
-	const trailingFencePattern = /\n?```(acceptance[-_]report|json|jsonc|json5)\s*\n([\s\S]*?)```\s*/gi;
-	let trailingFence: { index: number; tag: string; body: string } | undefined;
-	for (const match of output.matchAll(trailingFencePattern)) {
-		const end = (match.index ?? 0) + match[0].length;
-		if (output.slice(end).trim().length === 0 && match[1] && match[2]) {
-			trailingFence = { index: match.index ?? 0, tag: match[1].toLowerCase(), body: match[2] };
-		}
-	}
-	if (trailingFence) {
-		if (trailingFence.tag === "acceptance-report" || trailingFence.tag === "acceptance_report") return output.slice(0, trailingFence.index).trimEnd();
+	const trimmed = output.trimEnd();
+	for (const fence of closedAcceptanceReportFences(trimmed)) {
+		if (fence.end !== trimmed.length) continue;
+		if (fence.explicit) return trimmed.slice(0, fence.start).trimEnd();
 		try {
-			if (parseGenericJsonAcceptanceReportBody(trailingFence.body).report) return output.slice(0, trailingFence.index).trimEnd();
+			if (parseGenericJsonAcceptanceReportBody(fence.body).report) return trimmed.slice(0, fence.start).trimEnd();
 		} catch {
 			// Leave unrelated or malformed generic JSON fences visible.
 		}
 	}
-	return output
-		.replace(/\n?```acceptance[-_]report\s*\n[\s\S]*?```\s*$/i, "")
-		.replace(/\n?ACCEPTANCE_REPORT\s*:\s*\{[\s\S]*\}\s*$/i, "")
-		.trimEnd();
+	return trimmed.replace(/\n?ACCEPTANCE_REPORT\s*:\s*\{[\s\S]*\}\s*$/i, "").trimEnd();
 }
 
 function isStringArray(value: unknown): value is string[] {
