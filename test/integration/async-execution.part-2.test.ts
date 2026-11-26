@@ -1710,6 +1710,48 @@ syncBuiltinESMExports();
 		assert.deepEqual(finalStatus.parallelGroups, [{ start: 1, count: 2, stepIndex: 1 }]);
 	});
 
+	it("async chains read each running step's own tool budget after a dynamic fanout group expands", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const releaseReview = path.join(tempDir, "release-review");
+		const releaseConsumer = path.join(tempDir, "release-consumer");
+		const heldBashCall = (releasePath: string, text: string) => ({ steps: [
+			{ jsonl: [events.toolStart("bash", { command: "ls" })] },
+			{ waitForPath: releasePath, jsonl: [events.toolEnd("bash"), events.toolResult("bash", "ok"), events.assistantMessage(text)] },
+		] });
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
+		mockPi.onCall(heldBashCall(releaseReview, "review-a"));
+		mockPi.onCall({ output: "review-b" });
+		mockPi.onCall(heldBashCall(releaseConsumer, "used reviews"));
+		const id = `async-dynamic-budget-${Date.now().toString(36)}`;
+		const result = executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
+					parallel: { agent: "reviewer", task: "Review {target.path}" },
+					collect: { as: "reviews" },
+					concurrency: 1,
+				},
+				{ agent: "consumer", task: "Use {outputs.reviews}", toolBudget: { hard: 5 } },
+			],
+			agents: [makeAgent("producer"), makeAgent("reviewer"), makeAgent("consumer")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-budget" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		assert.ok(!result.isError);
+		const reviewing = await waitForAsyncState(id, (status) => status.steps?.[1]?.status === "running" && status.steps[1].toolCount === 1);
+		assert.equal(reviewing.steps?.[1]?.toolBudget, undefined);
+		fs.writeFileSync(releaseReview, "");
+		const consuming = await waitForAsyncState(id, (status) => status.steps?.[3]?.status === "running" && status.steps[3].toolCount === 1);
+		assert.deepEqual(consuming.steps?.map((step) => step.agent), ["producer", "reviewer", "reviewer", "consumer"]);
+		assert.equal(consuming.steps?.[3]?.toolBudget?.toolCount, 1);
+		assert.equal(consuming.steps?.[3]?.currentTool, "bash");
+		fs.writeFileSync(releaseConsumer, "");
+		await waitForAsyncResultFile(id, 10_000);
+	});
+
 	it("async chains expand dynamic fanout and persist collected output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		mockPi.onCall({ matchArgIncludes: "Review src/a.ts", output: "review-a", structuredOutput: { ok: "a" } });
