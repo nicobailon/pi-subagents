@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { resolveLiveNodeExecutable } from "../shared/node-executable.ts";
 
 const WORKFLOW_WORKER_URL = new URL("../../workflow-script-worker.cjs", import.meta.url);
 const WORKFLOW_PROCESS_URL = new URL("../../workflow-script-process.cjs", import.meta.url);
@@ -17,9 +18,12 @@ export class WorkflowScriptProcess extends EventEmitter {
 	constructor(acornPath: string) {
 		super();
 		const acorn = realpathSync(acornPath);
+		const execPath = resolveLiveNodeExecutable();
+		if (!execPath) throw new Error(`Node executable ${process.execPath} no longer exists (was Node upgraded or removed while Pi was running?), and no node was found on PATH. Restart Pi.`);
 		// Fork a path, not the URL. A host that runs Pi on Electron does not strip execArgv from a child started
 		// from a file URL, so the flags below would arrive in the child's argv ahead of the script.
 		this.child = fork(fileURLToPath(WORKFLOW_PROCESS_URL), [acorn], {
+			execPath,
 			// Under --permission, Node lets worker threads read everything under the process cwd, so the cwd must
 			// hold only public files: acorn's own directory. It also never holds a caller's cwd open on Windows.
 			cwd: dirname(acorn),

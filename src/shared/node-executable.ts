@@ -19,3 +19,14 @@ export function resolveNodeExecutable(execPath = process.execPath): string {
 	if (isNodeExecutableName(execPath) && canUseNodeExecutable(execPath)) return execPath;
 	return process.platform === "win32" ? "node.exe" : "node";
 }
+
+export function resolveLiveNodeExecutable(execPath = process.execPath, env: NodeJS.ProcessEnv = process.env): string | undefined {
+	if (canUseNodeExecutable(execPath)) return execPath;
+	const name = process.platform === "win32" ? "node.exe" : "node";
+	for (const dir of (env.PATH ?? "").split(path.delimiter)) {
+		if (!path.isAbsolute(dir)) continue;
+		const candidate = path.join(dir, name);
+		if (canUseNodeExecutable(candidate)) return candidate;
+	}
+	return undefined;
+}
