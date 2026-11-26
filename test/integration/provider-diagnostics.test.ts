@@ -38,7 +38,7 @@ async function runFixture(response: MockPiResponse, options: { cancel?: boolean;
 	const updates: SubagentDelegationUpdate[] = [];
 	const controller = new AbortController();
 	const result = await runSync(tempDir, [agent], agent.name, request.task, {
-		acceptance: false, waitToolEnabled: false, suppressUnchangedDelegationUpdates: true,
+		acceptance: false, suppressUnchangedDelegationUpdates: true,
 		signal: controller.signal, timeoutMs: options.timeoutMs, sessionFile: options.sessionFile,
 		onUpdate(update) {
 			const projected = toSubagentDelegationUpdate(request, update);
@@ -118,7 +118,7 @@ describe("foreground provider diagnostics propagation", { skip: !available ? "pi
 			executeStructured: async (_id, params, signal, ctx, onUpdate) => {
 				const result = await runSync(ctx.cwd, [agent], params.agent!, params.task!, {
 					cwd: params.cwd, signal, onUpdate, suppressUnchangedDelegationUpdates: true,
-					acceptance: false, waitToolEnabled: false,
+					acceptance: false,
 				});
 				return { details: { mode: "single", results: [result] } };
 			},

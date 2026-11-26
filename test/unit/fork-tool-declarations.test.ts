@@ -225,7 +225,7 @@ describe("a forked child session", () => {
 			return message;
 		}));
 		const { session, capture } = buildInProcessChildLaunch({
-			host: "parent", cwd: root, childAgentName: "worker", childIndex: 0, sessionEnabled: true, sessionFile: options.sessionFile, waitToolEnabled: false,
+			host: "parent", cwd: root, childAgentName: "worker", childIndex: 0, sessionEnabled: true, sessionFile: options.sessionFile,
 			model: "probe/local", systemPrompt: "Role instructions.", systemPromptMode: "append", tools: options.tools,
 			...(options.forkCacheKey ? { forkCacheKey: options.forkCacheKey } : {}),
 			...options.launch,
@@ -430,7 +430,7 @@ describe("a child's context handler", () => {
 			on: (name: string, handler: (event: unknown, ctx?: unknown) => unknown) => handlers.set(name, handler),
 			registerTool: () => {},
 			events: { on: () => () => {} },
-		} as never, { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false, ...config });
+		} as never, { fanoutChild: false, depth: 1, fast: false, ...config });
 		const ctx = { model: { api: "anthropic-messages" }, sessionManager: { getHeader: () => ({ id: "fork", timestamp: new Date(FORKED_AT).toISOString() }), buildSessionProjection: () => ({ messages: [] }) } };
 		return (messages: unknown[]) => (handlers.get("context_with_system")!({ messages }, ctx) as { messages: unknown[] } | undefined)?.messages ?? messages;
 	};

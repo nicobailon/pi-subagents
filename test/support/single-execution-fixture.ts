@@ -118,7 +118,7 @@ interface MockPiCallRecord {
 	/** In-process child session launch (foreground children). */
 	launch?: { cwd: string; storage: { kind: string; sessionFile?: string; sessionDir?: string }; model?: string; tools?: string[]; excludeTools?: string[]; extensionPaths: string[]; hooks: string[]; noSkills: boolean; noContextFiles: boolean };
 	/** Typed child runtime config the in-process hooks received. */
-	runtime?: Record<string, unknown> & { sessionName?: string; intercomSessionName?: string; orchestratorTarget?: string; runId?: string; agent?: string; childIndex?: number; fanoutChild?: boolean; nestedParent?: { parentRunId: string; parentChildIndex?: number; depth: number }; depth?: number; maxDepth?: number; waitTool?: { enabled: boolean }; inheritProjectContext?: boolean; inheritSkills?: boolean; toolBudget?: unknown };
+	runtime?: Record<string, unknown> & { sessionName?: string; intercomSessionName?: string; orchestratorTarget?: string; runId?: string; agent?: string; childIndex?: number; fanoutChild?: boolean; nestedParent?: { parentRunId: string; parentChildIndex?: number; depth: number }; depth?: number; maxDepth?: number; inheritProjectContext?: boolean; inheritSkills?: boolean; toolBudget?: unknown };
 }
 
 function writeWatchdogSettings(projectDir: string, tailMs = 120_000): void {

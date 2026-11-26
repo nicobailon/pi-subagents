@@ -1714,7 +1714,7 @@ describe("subagent wait action", () => {
 
 			const result = await Promise.race([
 				p,
-				new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("event wake did not resolve bg_wait")), 1_000)),
+				new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("event wake did not resolve the wait")), 1_000)),
 			]);
 			assert.equal(result.isError, undefined);
 			assert.match(textOf(result), /done/i);

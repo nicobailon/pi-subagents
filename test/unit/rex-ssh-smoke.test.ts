@@ -27,7 +27,7 @@ describe("Rex SSH placement against a real Mac and a real Pi", { skip: !target ?
 		log(`remote project ${project}; sessions before ${sessionsBefore.replace(/\s+/gu, " ")}`);
 		const machine: RexSshMachineReference = { provider: "rex", id: "smokemac", target: target!, cwd: project };
 		const model = process.env.PI_SUBAGENTS_REX_SMOKE_MODEL ?? "opencode-go/glm-5.3-flash";
-		const launch: ChildSessionLaunch = { cwd: project, machine, remoteResources: { agent: "rex-smoke" }, storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: true, hooks: [], noSkills: true, noContextFiles: true, tools: ["read"], model, runtime: { runId: "rexsshsmoke", agent: "rex-smoke", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false, waitTool: { enabled: true } } };
+		const launch: ChildSessionLaunch = { cwd: project, machine, remoteResources: { agent: "rex-smoke" }, storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: true, hooks: [], noSkills: true, noContextFiles: true, tools: ["read"], model, runtime: { runId: "rexsshsmoke", agent: "rex-smoke", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false } };
 		const factory = createPlacementAwareChildSessionFactory({ create: async () => { throw new Error("the local factory must not run for a Rex SSH machine"); }, dispose: async () => {} });
 		try {
 			const started = Date.now();

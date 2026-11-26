@@ -33,7 +33,7 @@ describe("childSessionHasQueuedMessages", () => {
 	});
 });
 
-const memoryLaunch = { cwd: process.cwd(), storage: { kind: "memory" as const }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] };
+const memoryLaunch = { cwd: process.cwd(), storage: { kind: "memory" as const }, extensionPaths: [], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"] };
 const factoryOver = (session: unknown) => createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
 	ModelRuntime: { create: async () => ({}) }, SettingsManager: { create: () => ({}) },
 	DefaultResourceLoader: class { async reload() {} }, SessionManager: { inMemory: () => ({}) },
@@ -122,7 +122,7 @@ describe("default factory queued-message probe", () => {
 				resolveCliModel: () => { modelResolved = true; return {}; },
 			} as unknown as PiCodingAgentModule),
 		});
-		await assert.rejects(() => factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, model: "provider/model", extensionPaths: [requiredPath], requiredExtensions: [{ id: "provider", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] }), /Required child extension failed to load/);
+		await assert.rejects(() => factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, model: "provider/model", extensionPaths: [requiredPath], requiredExtensions: [{ id: "provider", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"] }), /Required child extension failed to load/);
 		assert.equal(modelResolved, false);
 	});
 
@@ -135,7 +135,7 @@ describe("default factory queued-message probe", () => {
 			DefaultResourceLoader: class { async reload() {} getExtensions() { return { extensions: [], errors: [], runtime: { pendingProviderRegistrations: [{ name: "required", config: {}, extensionPath: requiredPath }], pendingNativeProviderRegistrations: [] } }; } },
 			resolveCliModel: () => { modelResolved = true; return {}; },
 		} as unknown as PiCodingAgentModule) });
-		await assert.rejects(() => factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, model: "provider/model", extensionPaths: [requiredPath], requiredExtensions: [{ id: "provider", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] }), /provider registration failed.*bad provider/);
+		await assert.rejects(() => factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, model: "provider/model", extensionPaths: [requiredPath], requiredExtensions: [{ id: "provider", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"] }), /provider registration failed.*bad provider/);
 		assert.equal(modelResolved, false);
 	});
 
@@ -172,7 +172,7 @@ describe("default factory queued-message probe", () => {
 			hooks: [],
 			noSkills: true,
 			noContextFiles: true,
-			runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+			runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"],
 		});
 		assert.ok(child);
 		assert.deepEqual(events, [`virtual:${JSON.stringify(definition)}`, "refresh", "resolve"]);
@@ -187,7 +187,7 @@ describe("default factory queued-message probe", () => {
 			DefaultResourceLoader: class { async reload() {} getExtensions() { return { extensions: [], errors: [], runtime: { pendingProviderRegistrations: [], pendingNativeProviderRegistrations: [], pendingVirtualModelRegistrations: [{ definition: {}, extensionPath: requiredPath }] } }; } },
 			resolveCliModel: () => { modelResolved = true; return {}; },
 		} as unknown as PiCodingAgentModule) });
-		await assert.rejects(() => factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, model: "router/auto", extensionPaths: [requiredPath], requiredExtensions: [{ id: "router", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] }), /virtual model registration failed.*bad virtual model/);
+		await assert.rejects(() => factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, model: "router/auto", extensionPaths: [requiredPath], requiredExtensions: [{ id: "router", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"] }), /virtual model registration failed.*bad virtual model/);
 		assert.equal(modelResolved, false);
 	});
 
@@ -213,7 +213,7 @@ describe("default factory queued-message probe", () => {
 				},
 			}),
 		}) as unknown as PiCodingAgentModule });
-		const launch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [requiredPath, ordinaryPath], requiredExtensions: [{ id: "policy", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, onExtensionError: ({ extensionPath, event }) => { if (extensionPath !== "<loader>") reported.push(`${extensionPath} ${event}`); }, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] } satisfies ChildSessionLaunch;
+		const launch = { cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [requiredPath, ordinaryPath], requiredExtensions: [{ id: "policy", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, onExtensionError: ({ extensionPath, event }) => { if (extensionPath !== "<loader>") reported.push(`${extensionPath} ${event}`); }, runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"] } satisfies ChildSessionLaunch;
 		await assert.rejects(() => createFactory(requiredPath).create(launch), /Required child extension failed during startup: \/tmp\/required-policy\.mjs \(session_start\): policy init failed/);
 		assert.deepEqual(lifecycle, ["session_shutdown", "dispose"]);
 		assert.ok(await createFactory(ordinaryPath).create(launch));
@@ -253,7 +253,7 @@ describe("default factory queued-message probe", () => {
 			hooks: [],
 			noSkills: true,
 			noContextFiles: true,
-			runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+			runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"],
 		});
 		assert.equal(child.hasQueuedMessages?.(), false);
 		assert.equal(childSessionHasQueuedMessages(child), false);
@@ -292,7 +292,7 @@ describe("default factory queued-message probe", () => {
 			hooks: [],
 			noSkills: true,
 			noContextFiles: true,
-			runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+			runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"],
 		});
 		assert.equal(child.hasQueuedMessages?.(), true);
 		assert.equal(childSessionHasQueuedMessages(child), true);
@@ -328,7 +328,7 @@ describe("default factory virtual model selection", () => {
 			hooks: [],
 			noSkills: true,
 			noContextFiles: true,
-			runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+			runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"],
 		});
 		assert.equal(child.virtualModelId, undefined);
 		session.model = { provider: "router", id: "auto", api: "pi-virtual" };

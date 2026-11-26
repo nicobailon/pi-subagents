@@ -59,7 +59,7 @@ it("does not acknowledge queued steering when the child transport rejects it", a
 		launch: { session: {
 			cwd: process.cwd(), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: false,
 			hooks: [], noSkills: true, noContextFiles: true,
-			runtime: { fanoutChild: false, fast: false, depth: 1, waitTool: { enabled: false } },
+			runtime: { fanoutChild: false, fast: false, depth: 1 },
 		} } as InProcessChildLaunch,
 		prompt: "wait",
 		appendChildEvent() {}, writeOutputLine() {},

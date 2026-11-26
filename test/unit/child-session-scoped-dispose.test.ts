@@ -44,7 +44,7 @@ function launchFor(parentSessionFile: string | undefined): ChildSessionLaunch {
 		hooks: [],
 		noSkills: true,
 		noContextFiles: true,
-		runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false },
+		runtime: { fanoutChild: false, depth: 1, fast: false },
 	};
 }
 

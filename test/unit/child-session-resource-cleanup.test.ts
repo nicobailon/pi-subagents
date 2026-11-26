@@ -12,7 +12,7 @@ const launch: ChildSessionLaunch = {
 	noSkills: true,
 	noContextFiles: true,
 	// SAFETY: the fake SDK below never reads the runtime fields left out here.
-	runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+	runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"],
 };
 
 /** Disposes a child whose SDK's `dispose()` calls `releaseInSdkRegistry`, and returns the session ids the host's registry released. */

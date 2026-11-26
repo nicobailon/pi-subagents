@@ -28,7 +28,7 @@ import { DIRS } from "../../src/shared/types.ts";
 import { makeAgent } from "../support/helpers.ts";
 
 const machine = { provider: "herdr" as const, id: "m1", label: "workmac", target: "remote.example", cwd: "/remote/repo" };
-const runtime = { runId: "run", agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false, waitTool: { enabled: true } };
+const runtime = { runId: "run", agent: "worker", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false };
 const packageVersion = (JSON.parse(fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
 function launch(remote: boolean): ChildSessionLaunch { return { cwd: remote ? machine.cwd : "/local/repo", ...(remote ? { machine, remoteResources: { agent: "worker" } } : {}), storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: true, hooks: [], noSkills: true, noContextFiles: true, tools: ["read"], runtime }; }
 const child: ChildSession = { subscribe: () => () => {}, prompt: async () => {}, steer: async () => {}, followUp: async () => {}, abort: async () => {}, dispose: async () => {}, messages: [], sessionFile: undefined, sessionId: "native", modelId: "provider/model" };
@@ -131,7 +131,7 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		try {
 			const foreground = await runSync(process.cwd(), [makeAgent("worker")], "worker", "inspect", { machine: placed, cwd: remoteCwd, acceptance: false, childSessionFactory: factory });
 			assert.equal(foreground.exitCode, 0, foreground.error);
-			const background = await runSingleStepInner({ agent: "worker", task: "inspect", machine: placed, cwd: remoteCwd, context: "fresh", inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, waitToolEnabled: false }, { cwd: process.cwd(), id: "placed-remote-cwd", flatIndex: 0, flatStepCount: 1, previousOutput: "", placeholder: "{previous}", outputFile: path.join(outputDir, "output.log"), sessionEnabled: false, childSessions: factory });
+			const background = await runSingleStepInner({ agent: "worker", task: "inspect", machine: placed, cwd: remoteCwd, context: "fresh", inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false }, { cwd: process.cwd(), id: "placed-remote-cwd", flatIndex: 0, flatStepCount: 1, previousOutput: "", placeholder: "{previous}", outputFile: path.join(outputDir, "output.log"), sessionEnabled: false, childSessions: factory });
 			assert.equal(background.exitCode, 0, background.error);
 			assert.deepEqual(launchedCwds, [remoteCwd, remoteCwd]);
 		} finally {

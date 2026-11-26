@@ -64,7 +64,7 @@ describe("Herdr local placement against a private Herdr server and a real Pi", {
 			const machine = resolveMachinePlacement({ machine: "local", cwd: project, env: paneEnv, settings: {} }).machine;
 			assert.deepEqual(machine, { provider: "herdr", id: "local", socket, session: SESSION, cwd: project });
 			const model = process.env.PI_SUBAGENTS_HERDR_SMOKE_MODEL ?? "opencode-go/glm-5.3-flash";
-			const launch: ChildSessionLaunch = { cwd: project, machine, remoteResources: { agent: "herdr-smoke" }, storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: true, hooks: [], noSkills: true, noContextFiles: true, tools: ["read"], model, runtime: { runId: "herdrsmoke", agent: "herdr-smoke", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false, waitTool: { enabled: true } } };
+			const launch: ChildSessionLaunch = { cwd: project, machine, remoteResources: { agent: "herdr-smoke" }, storage: { kind: "memory" }, extensionPaths: [], ambientExtensions: true, hooks: [], noSkills: true, noContextFiles: true, tools: ["read"], model, runtime: { runId: "herdrsmoke", agent: "herdr-smoke", childIndex: 0, fanoutChild: false, depth: 1, maxDepth: 1, inheritProjectContext: true, inheritGlobalContext: true, inheritSkills: false, fast: false } };
 			const factory = createPlacementAwareChildSessionFactory({ create: async () => { throw new Error("local factory must not run for machine 'local'"); }, dispose: async () => {} });
 			const started = Date.now();
 			const child = await factory.create(launch);

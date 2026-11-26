@@ -31,7 +31,7 @@ function launch(cwd: string, prompt: Pick<ChildSessionLaunch, "systemPrompt" | "
 		noSkills: true,
 		noContextFiles: true,
 		// SAFETY: the loader path under test reads no other runtime field.
-		runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+		runtime: { fanoutChild: false, depth: 1, fast: false } as ChildSessionLaunch["runtime"],
 		...prompt,
 	};
 }

@@ -66,7 +66,6 @@ it("keeps a resumed session on the contact_supervisor it declared, replaces an o
 		const original = SessionManager.inMemory(cwd);
 		const [first] = await run(original, [fauxAssistantMessage("ok")]);
 		assert.deepEqual(tool(first!, "subagent")?.parameters, JSON.parse(JSON.stringify(SUBAGENT_TOOL_PARAMETERS)));
-		assert.equal(tool(first!, "bg_wait"), undefined);
 
 		const older = structuredClone(original.getEntries());
 		const entry = older.find((candidate) => candidate.type === "message" && candidate.message.role === "system");

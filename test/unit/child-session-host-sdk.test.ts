@@ -189,7 +189,7 @@ describe("loadHostPiCodingAgent", () => {
 			hooks: [],
 			noSkills: true,
 			noContextFiles: true,
-			runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false },
+			runtime: { fanoutChild: false, depth: 1, fast: false },
 		}), /factory loaded host-owned SDK/);
 	});
 

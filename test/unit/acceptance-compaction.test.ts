@@ -85,8 +85,8 @@ for (const host of ["foreground", "runner"] as const) {
 			const agent: AgentConfig = { name: "reader", description: "Read marker", source: "project", filePath: join(cwd, "reader.md"), model: "baseten/acceptance", systemPrompt: "Read only.", systemPromptMode, inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false, tools: ["read"], extensions: [], allowNestedSubagents: false };
 			try {
 				const result = host === "foreground"
-					? await runSync(cwd, [agent], agent.name, task, { acceptance: explicit, structuredOutput, waitToolEnabled: false, childSessionFactory: observedFactory })
-					: await runSingleStepInner({ ...agent, agent: agent.name, task, context: "fresh", effectiveAcceptance: acceptance, structuredOutput, waitToolEnabled: false }, { cwd, id: "compact-runner", flatIndex: 0, flatStepCount: 1, previousOutput: "", placeholder: "{previous}", outputFile: join(cwd, "output.log"), sessionEnabled: false, childSessions: observedFactory });
+					? await runSync(cwd, [agent], agent.name, task, { acceptance: explicit, structuredOutput, childSessionFactory: observedFactory })
+					: await runSingleStepInner({ ...agent, agent: agent.name, task, context: "fresh", effectiveAcceptance: acceptance, structuredOutput }, { cwd, id: "compact-runner", flatIndex: 0, flatStepCount: 1, previousOutput: "", placeholder: "{previous}", outputFile: join(cwd, "output.log"), sessionEnabled: false, childSessions: observedFactory });
 				assert.equal(result.exitCode, 0, `${result.error}; ${JSON.stringify(events.filter((e) => e.type.includes("compact") || (e.type === "message_end" && e.message.role === "assistant" && e.message.stopReason === "error")))}`);
 				assert.equal(result.acceptance?.status, "checked");
 				if (structured) assert.deepEqual(result.structuredOutput, { ok: true });

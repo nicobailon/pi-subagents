@@ -221,22 +221,20 @@ describe("child tool plan declared tools", () => {
 	});
 
 	it("keeps requested native coordination tools, but honors ceilings and exclusions", () => {
-		const tools = ["read", "subagent", "contact_supervisor", "subagent_supervisor"];
+		const tools = ["read", "subagent", "contact_supervisor", "grep"];
 		const plan = resolvePiLaunchToolPlan({ tools });
 		assert.deepEqual(plan.effectiveToolAllowlist, tools);
-		assert.deepEqual(plan.requiredChildTools, ["read", "subagent", "subagent_supervisor"]);
+		assert.deepEqual(plan.requiredChildTools, ["read", "subagent", "grep"]);
 		assert.equal(plan.fanoutAuthorized, true);
 		for (const restriction of [
-			{ excludeTools: ["subagent_supervisor"] },
+			{ excludeTools: ["grep"] },
 			{ capabilityCeiling: { version: 1 as const, allowedTools: ["read", "subagent", "contact_supervisor"], denyExtensions: true, sources: ["test"] } },
 		]) {
 			const restricted = resolvePiLaunchToolPlan({ tools, ...restriction });
 			assert.equal(restricted.fanoutAuthorized, true);
-			assert.equal(restricted.effectiveToolAllowlist.includes("subagent_supervisor"), false);
+			assert.equal(restricted.effectiveToolAllowlist.includes("grep"), false);
 		}
-		const leaf = resolvePiLaunchToolPlan({ tools: ["read", "contact_supervisor"] });
-		assert.equal(leaf.fanoutAuthorized, false);
-		assert.equal(leaf.effectiveToolAllowlist.includes("subagent_supervisor"), false);
+		assert.equal(resolvePiLaunchToolPlan({ tools: ["read", "contact_supervisor"] }).fanoutAuthorized, false);
 	});
 
 	it("respects a capability ceiling", () => {
