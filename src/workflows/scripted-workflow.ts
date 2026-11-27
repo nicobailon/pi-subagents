@@ -1,6 +1,6 @@
 import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve as resolvePath } from "node:path";
+import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
 import { createWorkflowScriptWorker } from "./workflow-script-worker.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
@@ -41,8 +41,8 @@ export interface WorkflowScriptValidationResult {
 
 export interface WorkflowScriptValidationOptions {
 	maxSubagentSpawnsPerRun?: number;
-	/** Returns why launch-time resolution would reject this literal child agent name. */
-	agentNameError?: (name: string) => string | undefined;
+	/** Returns why launch-time resolution would reject this literal child agent name. `child.cwd` is the child's own literal absolute cwd and `child.agentScope` its own literal scope; launch looks the name up there, not at the workflow cwd and scope. */
+	agentNameError?: (name: string, child: { cwd?: string; agentScope?: string }) => string | undefined;
 }
 
 export interface WorkflowScriptChildResult {
@@ -918,21 +918,44 @@ function validateStaticLaneResumes(call: AstNode): WorkflowScriptValidationError
 	return errors;
 }
 
-// Children with their own cwd, agentScope, or resume resolve agents elsewhere, and a
-// spread or computed key can replace `agent`; leave those to launch-time resolution.
-function staticChildAgentNode(params: unknown): AstNode | undefined {
+interface StaticChildAgent {
+	agent: AstNode;
+	cwd?: string;
+	agentScope?: string;
+}
+// A spread or computed key can replace `agent`, a resume keeps the retained child's agent, and a cwd or
+// agentScope built at runtime could point anywhere; those stay with launch-time resolution. So does a relative
+// cwd: a foreground child resolves it against the parent cwd and a detached one against the workflow cwd, so
+// neither can be checked here without risking a false rejection. A child with its own literal absolute cwd or
+// agentScope is looked up where launch resolves it: there. A placed child's cwd names a directory on its
+// machine, so launch resolves the agent at the workflow cwd and the cwd is left out.
+function staticChildAgent(params: unknown): StaticChildAgent | undefined {
 	if (!astNode(params) || params.type !== "ObjectExpression" || !Array.isArray(params.properties)) return undefined;
 	let agent: AstNode | undefined;
+	let cwd: string | undefined;
+	let agentScope: string | undefined;
+	let placed = false;
 	for (const property of params.properties) {
 		if (!astNode(property) || property.type !== "Property") return undefined;
 		const key = staticPropertyKey(property);
-		if (key === undefined || key === "cwd" || key === "agentScope" || key === "resume") return undefined;
+		if (key === undefined || key === "resume") return undefined;
 		if (key === "agent") agent = property.kind === "init" && astNode(property.value) ? property.value : undefined;
+		else if (key === "cwd") {
+			cwd = literalString(property.value);
+			if (cwd === undefined || !isAbsolute(cwd)) return undefined;
+		} else if (key === "agentScope") {
+			agentScope = literalString(property.value);
+			if (agentScope === undefined) return undefined;
+		} else if (key === "machine") placed = true;
 	}
-	return literalString(agent) === undefined ? undefined : agent;
+	if (literalString(agent) === undefined) return undefined;
+	const staticAgent: StaticChildAgent = { agent: agent! };
+	if (cwd !== undefined && !placed) staticAgent.cwd = cwd;
+	if (agentScope !== undefined) staticAgent.agentScope = agentScope;
+	return staticAgent;
 }
 
-function validateStaticChildAgents(call: AstNode, agentNameError: (name: string) => string | undefined): WorkflowScriptValidationError[] {
+function validateStaticChildAgents(call: AstNode, agentNameError: NonNullable<WorkflowScriptValidationOptions["agentNameError"]>): WorkflowScriptValidationError[] {
 	const args = Array.isArray(call.arguments) ? call.arguments : [];
 	const children: Array<{ owner: string; params: unknown }> = directRunsCall(call, "run")
 		? [{ owner: "runs.run", params: args[1] }]
@@ -943,10 +966,11 @@ function validateStaticChildAgents(call: AstNode, agentNameError: (name: string)
 				: [];
 	const errors: WorkflowScriptValidationError[] = [];
 	for (const child of children) {
-		const agentNode = staticChildAgentNode(child.params);
-		const agentName = literalString(agentNode);
-		const error = agentName === undefined ? undefined : agentNameError(agentName);
-		if (agentNode && error) errors.push({ kind: "agent", message: `${child.owner}: ${error}`, ...nodeLocation(agentNode) });
+		const staticAgent = staticChildAgent(child.params);
+		if (!staticAgent) continue;
+		const agentName = literalString(staticAgent.agent);
+		const error = agentName === undefined ? undefined : agentNameError(agentName, { cwd: staticAgent.cwd, agentScope: staticAgent.agentScope });
+		if (error) errors.push({ kind: "agent", message: `${child.owner}: ${error}`, ...nodeLocation(staticAgent.agent) });
 	}
 	return errors;
 }

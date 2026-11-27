@@ -2708,21 +2708,35 @@ function canonicalizeAgentName(name: string, agents: AgentConfig[], diagnostics:
 	return { name: resolved.agent.name };
 }
 
-// Mirrors child launch: workflow children without their own cwd/agentScope discover agents at the workflow cwd and scope.
+// Mirrors child launch: a workflow child without its own cwd/agentScope discovers agents at the workflow cwd and scope, and one with either discovers them there.
 function workflowValidationOptions(deps: ExecutorDeps, params: SubagentParamsLike, runtimeCwd: string, parentModelProvider: () => string | undefined): Parameters<typeof validateWorkflowScript>[1] {
 	const cwd = resolveRequestedCwd(runtimeCwd, params.cwd);
 	const scope = resolveExecutionAgentScope(params.agentScope);
-	let discovered: ReturnType<ExecutorDeps["discoverAgents"]> | undefined;
+	const discovered = new Map<string, ReturnType<ExecutorDeps["discoverAgents"]>>();
 	// Validation reports every bad agent name; only the first one carries the agent list.
 	let listedAgents = false;
+	const discover = (atCwd: string, atScope: AgentScope) => {
+		const key = JSON.stringify([atCwd, atScope]);
+		let found = discovered.get(key);
+		if (!found) {
+			found = deps.discoverAgents(atCwd, atScope, parentModelProvider());
+			discovered.set(key, found);
+		}
+		return found;
+	};
 	return {
 		maxSubagentSpawnsPerRun: params.maxSubagentSpawnsPerRun ?? resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun),
-		agentNameError: (name) => {
-			discovered ??= deps.discoverAgents(cwd, scope, parentModelProvider());
-			const { agents } = discovered;
+		agentNameError: (name, child) => {
+			const childScope = child.agentScope === undefined ? scope : resolveExecutionAgentScope(child.agentScope);
+			// Mirrors resolveWorkflowChildLocalCwd: a child whose agent is a placed (machine) agent keeps the workflow cwd.
+			const childCwd = child.cwd === undefined || resolveAgentName(name, discover(cwd, childScope).agents).agent?.machine !== undefined
+				? cwd
+				: child.cwd;
+			const atChild = discover(childCwd, childScope);
+			const { agents } = atChild;
 			const resolved = resolveAgentName(name, agents);
-			if (resolved.agent || resolved.error) return canonicalizeAgentName(name, agents, discovered.agentDiagnostics, diagnosticContextFromDiscovery(discovered, cwd, scope)).error;
-			const disabled = discovered.disabledAgents?.includes(name.trim()) === true;
+			if (resolved.agent || resolved.error) return canonicalizeAgentName(name, agents, atChild.agentDiagnostics, diagnosticContextFromDiscovery(atChild, childCwd, childScope)).error;
+			const disabled = atChild.disabledAgents?.includes(name.trim()) === true;
 			const suggestion = disabled ? undefined : suggestAgentName(name, agents);
 			const problem = disabled ? `Agent '${name}' is disabled by a settings override.` : `Unknown agent '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`;
 			if (listedAgents) return problem;

@@ -629,22 +629,48 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(validateWorkflowScript(script, { maxSubagentSpawnsPerRun: 6 }), { ok: true, errors: [] });
 	});
 
-	it("checks literal child agent names that resolve from the workflow cwd and scope", () => {
-		const known = new Set(["worker", "reviewer"]);
+	it("checks literal child agent names where launch resolves them", () => {
+		const known = new Map([
+			[".|both", new Set(["worker", "reviewer", "placed-agent"])],
+			["/elsewhere/other|both", new Set(["remote-only"])],
+			[".|project", new Set(["project-only"])],
+		]);
+		const lookups: Array<[name: string, cwd: string | undefined, agentScope: string | undefined]> = [];
+		const agentNameError = (name: string, child: { cwd?: string; agentScope?: string }) => {
+			lookups.push([name, child.cwd, child.agentScope]);
+			return known.get(`${child.cwd ?? "."}|${child.agentScope ?? "both"}`)?.has(name) ? undefined : `Unknown agent '${name}'.`;
+		};
 		const result = validateWorkflowScript([
 			`const scan = await runs.run("scan", { agent: "worker", task: "Scan" });`,
 			`await runs.all([{ key: "review", agent: "reviwer", task: scan.output }]);`,
 			`await runs.lanes([{ key: "lane", stages: [{ key: "write", agent: "wroker", task: "Write" }, { key: "fix", resume: "previous", task: "Fix" }] }]);`,
-			`await runs.run("elsewhere", { agent: "remote-only", cwd: "../other", task: "Scan" });`,
+			`await runs.run("elsewhere", { agent: "remote-only", cwd: "/elsewhere/other", task: "Scan" });`,
+			`await runs.run("elsewhere-typo", { agent: "remote-onlx", cwd: "/elsewhere/other", agentScope: "project", task: "Scan" });`,
+			`await runs.run("relative", { agent: "missing", cwd: "../other", task: "Scan" });`,
+			`await runs.run("placed", { agent: "placed-agent", cwd: "/on/its/machine", machine: "remote", task: "Scan" });`,
 			`await runs.run("scoped", { agent: "project-only", agentScope: "project", task: "Scan" });`,
 			`await runs.run("spread", { agent: "missing", ...overrides });`,
+			`await runs.run("runtime-cwd", { agent: "missing", cwd: selectedDir, task: "Scan" });`,
+			`await runs.run("runtime-scope", { agent: "missing", agentScope: selectedScope, task: "Scan" });`,
 			`await runs.lanes([{ key: "replaced", stages: [{ key: "write", agent: "missing", task: "Write" }], ...laneOverrides }]);`,
 			`return runs.run("dynamic", { agent: selectedAgent, task: "Scan" });`,
-		].join("\n"), { agentNameError: (name) => known.has(name) ? undefined : `Unknown agent '${name}'.` });
+		].join("\n"), { agentNameError });
 		assert.equal(result.ok, false);
 		assert.deepEqual(result.errors.map(({ kind, message, line }) => ({ kind, message, line })), [
 			{ kind: "agent", message: "runs.all item: Unknown agent 'reviwer'.", line: 2 },
 			{ kind: "agent", message: "runs.lanes stage: Unknown agent 'wroker'.", line: 3 },
+			{ kind: "agent", message: "runs.run: Unknown agent 'remote-onlx'.", line: 5 },
+		]);
+		// A child with its own literal absolute cwd or agentScope is looked up there; a placed child keeps the workflow
+		// cwd; a relative cwd resolves differently per launch path, so it stays with launch-time resolution.
+		assert.deepEqual(lookups, [
+			["worker", undefined, undefined],
+			["reviwer", undefined, undefined],
+			["wroker", undefined, undefined],
+			["remote-only", "/elsewhere/other", undefined],
+			["remote-onlx", "/elsewhere/other", "project"],
+			["placed-agent", undefined, undefined],
+			["project-only", undefined, "project"],
 		]);
 		assert.deepEqual(validateWorkflowScript(`const runs = { run: (key) => key };\nreturn runs.run("local", { agent: "missing" });`, { agentNameError: () => "Unknown agent." }), { ok: true, errors: [] });
 	});
