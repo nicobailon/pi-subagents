@@ -4,7 +4,7 @@
 
 ### Highlights
 
-- The bundled `pi-subagents` skill is gone; the `subagent` tool's first reply now teaches it. If your AGENTS.md or prompts say to load that skill, replace it with: call `subagent({action:"guide"})`.
+- The bundled `pi-subagents` skill is gone; the `subagent` tool now explains itself in its first reply. If your AGENTS.md or prompts say to load that skill, replace it with: call `subagent({action:"guide"})`.
 
 ### Changed
 
