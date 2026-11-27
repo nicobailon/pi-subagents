@@ -729,6 +729,13 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	if (!binaryHost && !piPackageRoot) {
 		return { error: `Background children require a supported standalone Pi host or the installed npm package (${PI_CODING_AGENT_PACKAGE}); neither is available.` };
 	}
+	// The root is resolved once at load, so an upgrade that removes it mid-session must not read as missing peers.
+	if (!binaryHost && piPackageRoot && !fs.existsSync(piPackageRoot)) {
+		const fix = process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim() === piPackageRoot
+			? `${PI_CODING_AGENT_PACKAGE_ROOT_ENV} names it; point it at the current Pi install or unset it, then restart Pi`
+			: "restart Pi";
+		return { error: `Background children require the host npm package (${PI_CODING_AGENT_PACKAGE}), but its directory ${piPackageRoot} no longer exists; ${fix}.` };
+	}
 	const hostPeerAliases = !binaryHost && piPackageRoot ? resolveHostPeerAliases(piPackageRoot) : { aliases: {}, missing: [] };
 	if (hostPeerAliases.missing.length > 0) {
 		return { error: `Background children require the host npm package (${PI_CODING_AGENT_PACKAGE}) with its dependencies; ${piPackageRoot} does not provide ${hostPeerAliases.missing.join(", ")}.` };
