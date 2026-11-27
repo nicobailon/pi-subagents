@@ -255,7 +255,6 @@ describe("nested control routing", () => {
 			assert.match(text(transcript), /^Transcript target: run root-control · child 0\nSpawn budget:/);
 			assert.match(text(transcript), /LIVE_FOREGROUND_ACTIVITY/);
 
-			// A miss is an error, not a status payload: it keeps its target label and carries no budget or capacity lines.
 			const missed = await createExecutor(state).execute("status-missed", { action: "status", id: "no-such-run" }, new AbortController().signal, undefined, ctx(root));
 			assert.equal(missed.isError, true);
 			assert.match(text(missed), /^Status target: run no-such-run\nAsync run not found for 'no-such-run'\. No run matches that id or prefix\./);

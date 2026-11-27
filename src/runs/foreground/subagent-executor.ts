@@ -7465,7 +7465,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const hasDirectoryTarget = Boolean(paramsWithResolvedCwd.dir);
 				const targetLabel = action === "debug.run" ? "Debug run" : formatStatusTargetLabel(paramsWithResolvedCwd, targetRunId);
 				const withBudget = (result: AgentToolResult<Details>) => {
-					// An error is not a status payload: it keeps its target label but carries no budget or capacity lines.
+					// An error is not a status payload.
 					const budgeted = result.isError ? result : withSpawnBudgetStatus(result, deps.state, deps.config, deps.state.currentSessionId);
 					return {
 						...budgeted,
