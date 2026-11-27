@@ -630,7 +630,6 @@ describe("scripted workflow runtime", () => {
 	});
 
 	it("checks literal child agent names where launch resolves them", () => {
-		// Agents known per cwd and scope, the way discovery depends on both.
 		const known = new Map([
 			[".|both", new Set(["worker", "reviewer", "placed-agent"])],
 			["/elsewhere/other|both", new Set(["remote-only"])],

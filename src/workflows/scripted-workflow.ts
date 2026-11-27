@@ -920,7 +920,6 @@ function validateStaticLaneResumes(call: AstNode): WorkflowScriptValidationError
 
 interface StaticChildAgent {
 	agent: AstNode;
-	/** The child's own literal absolute cwd; absent when launch resolves the agent at the workflow cwd or elsewhere. */
 	cwd?: string;
 	agentScope?: string;
 }
