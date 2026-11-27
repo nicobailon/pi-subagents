@@ -253,6 +253,11 @@ describe("nested control routing", () => {
 			assert.equal(transcript.isError, undefined);
 			assert.match(text(transcript), /^Transcript target: run root-control · child 0\nSpawn budget:/);
 			assert.match(text(transcript), /LIVE_FOREGROUND_ACTIVITY/);
+
+			const missed = await createExecutor(state).execute("status-missed", { action: "status", id: "no-such-run" }, new AbortController().signal, undefined, ctx(root));
+			assert.equal(missed.isError, true);
+			assert.match(text(missed), /^Status target: run no-such-run\nAsync run not found for 'no-such-run'\. No run matches that id or prefix\./);
+			assert.doesNotMatch(text(missed), /Spawn budget|Active async capacity/);
 			for (const hasUI of [false, true]) {
 				const implicit = await createExecutor(state).execute("implicit-transcript", { action: "status", view: "transcript" }, new AbortController().signal, undefined, { ...ctx(root), hasUI });
 				assert.equal(implicit.isError, undefined);
@@ -290,9 +295,11 @@ describe("nested control routing", () => {
 			assert.match(text(result), new RegExp(`Run: ${runId}`));
 			assert.doesNotMatch(text(result), /foreground-live/);
 
+			// This run has no sessionId, so the transcript view is an ownership error: labeled, but with no budget or capacity lines.
 			const transcript = await executor.execute("transcript-dir", { action: "status", dir: asyncDir, view: "transcript" }, new AbortController().signal, undefined, ctx(root));
-			assert.ok(text(transcript).startsWith(`Transcript target: dir ${asyncDir}\nSpawn budget:`), text(transcript));
-			assert.doesNotMatch(text(transcript), /Live foreground transcript/);
+			assert.equal(transcript.isError, true);
+			assert.ok(text(transcript).startsWith(`Transcript target: dir ${asyncDir}\nTranscript view is only available for async runs owned by the current session.`), text(transcript));
+			assert.doesNotMatch(text(transcript), /Spawn budget|Active async capacity|Live foreground transcript/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 			fs.rmSync(asyncDir, { recursive: true, force: true });
@@ -313,12 +320,17 @@ describe("nested control routing", () => {
 				child: { id: "shared-nested", parentRunId: "root-outside", parentStepIndex: 0, depth: 1, path: [{ runId: "root-outside", stepIndex: 0 }], state: "running", agent: "outside" },
 			});
 
-			const result = await createExecutor(createState(), [], false, undefined, fanoutChildRuntime(allowedRoute, "root-control")).execute("status", { action: "status", id: "shared-nested" }, new AbortController().signal, undefined, ctx(root));
-
+			const executor = createExecutor(createState(), [], false, undefined, fanoutChildRuntime(allowedRoute, "root-control"));
+			const lookup = (id: string) => executor.execute("status", { action: "status", id }, new AbortController().signal, undefined, ctx(root));
+			const result = await lookup("shared-nest");
 			assert.equal(result.isError, undefined);
 			assert.match(text(result), /Nested run: shared-nested/);
 			assert.match(text(result), /Root: root-control/);
 			assert.doesNotMatch(text(result), /root-outside/);
+
+			const missed = await lookup("shared-absent");
+			assert.equal(missed.isError, true);
+			assert.equal(text(missed), "Status target: run shared-absent\nAsync run not found for 'shared-absent'. No run matches that id or prefix. Use the run id from the launch reply.");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

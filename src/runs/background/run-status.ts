@@ -363,6 +363,23 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
 	return lines.join("\n");
 }
 
+function formatMissedStatusTarget(requestedId: string | undefined, deps: RunStatusDeps): string {
+	if (!requestedId) return "Async run not found. Provide id or dir.";
+	const missed = `Async run not found for '${requestedId}'. No run matches that id or prefix.`;
+	const sessionId = deps.state?.currentSessionId;
+	if (deps.nested || !sessionId) return `${missed} Use the run id from the launch reply.`;
+	try {
+		const runs = listAsyncRuns(deps.asyncDirRoot ?? DIRS.async, {
+			states: ["queued", "running"], sessionId, resultsDir: deps.resultsDir ?? DIRS.results,
+			kill: deps.kill, now: deps.now, includeNested: false,
+		});
+		return runs.length === 0 ? `${missed} No active top-level async runs were found in this session.`
+			: `${missed} Active top-level async runs in this session: ${runs.map((run) => run.id).join(", ")}.`;
+	} catch {
+		return missed;
+	}
+}
+
 export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDeps = {}): AgentToolResult<Details> {
 	const asyncDirRoot = deps.asyncDirRoot ?? DIRS.async;
 	const resultsDir = deps.resultsDir ?? DIRS.results;
@@ -476,7 +493,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 
 	if (!asyncDir && !resultPath) {
 		return {
-			content: [{ type: "text", text: "Async run not found. Provide id or dir." }],
+			content: [{ type: "text", text: formatMissedStatusTarget(resolvedId, deps) }],
 			isError: true,
 			details: { mode: "single", results: [] },
 		};

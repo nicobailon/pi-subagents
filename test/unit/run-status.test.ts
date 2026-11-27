@@ -1041,6 +1041,40 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("names the id a status lookup misses and says what is active", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-missed-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(asyncRoot, { recursive: true });
+			fs.mkdirSync(resultsDir, { recursive: true });
+			// SAFETY: a missed lookup reads only the session id and the run maps of state.
+			const state = { currentSessionId: "session-current", asyncJobs: new Map(), foregroundControls: new Map(), foregroundRuns: new Map() } as SubagentState;
+			const inspect = () => inspectSubagentStatus({ id: "mission" }, { asyncDirRoot: asyncRoot, resultsDir, state });
+
+			const missed = inspect();
+			assert.equal(missed.isError, true);
+			assert.equal(textContent(missed), "Async run not found for 'mission'. No run matches that id or prefix. No active top-level async runs were found in this session.");
+
+			const sessionFile = path.join(root, "session.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.mkdirSync(path.join(asyncRoot, "live-run"));
+			fs.writeFileSync(path.join(asyncRoot, "live-run", "status.json"), JSON.stringify({
+				runId: "live-run", sessionId: "session-current", mode: "single", state: "running", startedAt: 100, lastUpdate: 200, sessionFile,
+				steps: [{ agent: "worker", status: "running", startedAt: 100, sessionFile }],
+			}), "utf-8");
+			updateActiveRunIndex(path.join(asyncRoot, "live-run"), "running");
+			const withActive = inspect();
+			assert.equal(withActive.isError, true);
+			assert.equal(textContent(withActive), "Async run not found for 'mission'. No run matches that id or prefix. Active top-level async runs in this session: live-run.");
+
+			const unscoped = inspectSubagentStatus({ id: "mission" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(textContent(unscoped), "Async run not found for 'mission'. No run matches that id or prefix. Use the run id from the launch reply.");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("escapes terminal control sequences in remembered foreground transcripts", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-foreground-transcript-unsafe-"));
 		try {
