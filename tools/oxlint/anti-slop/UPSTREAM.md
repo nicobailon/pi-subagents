@@ -38,7 +38,7 @@ Native Oxlint defaults that are off or configured:
 | Rule | Setting | Why |
 |---|---|---|
 | `eslint/no-control-regex` | off | Control-character validation and ANSI stripping are intentional. |
-| `eslint/no-unsafe-finally` | off | Cleanup failures in `finally` are deliberately raised (`shared/atomic-json.ts` documents it). |
+| `eslint/no-unsafe-finally` | off | `finally` blocks rethrow cleanup errors on purpose (`shared/atomic-json.ts` only when the write itself succeeded; the other sites for anything but ENOENT). |
 | `unicorn/no-useless-spread` | off | The remaining spreads take a snapshot of a live Map before a loop that mutates it. |
 | `eslint/no-unused-vars` | `ignoreRestSiblings`, `^_` patterns | `const { omitted, ...rest } = value` is the omit idiom. |
 
