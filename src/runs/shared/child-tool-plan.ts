@@ -184,7 +184,7 @@ export function formatRuntimeSnapshotMcpServersError(agentName: string | undefin
 }
 
 /** Path-like entries load extensions instead of naming tools, so Pi never reads them as modifiers. */
-function isToolExtensionPath(entry: string): boolean {
+export function isToolExtensionPath(entry: string): boolean {
 	return entry.includes("/") || entry.endsWith(".ts") || entry.endsWith(".js");
 }
 

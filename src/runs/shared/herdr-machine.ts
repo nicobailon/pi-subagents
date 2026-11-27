@@ -6,6 +6,7 @@ import type { ExternalProcessStatus, HerdrCoreLocalMachineReference, HerdrLocalM
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS } from "./external-cli-contract.ts";
 import type { runExternalCli } from "./external-cli-runner.ts";
+import { isToolExtensionPath } from "./child-tool-plan.ts";
 import { herdrLocalEnv, parseHerdrEndpoint } from "./herdr-connection.ts";
 import { REX_LOCAL_MACHINE, resolveLocalLaunchCwd, resolveRexLocalPlacement } from "./rex-machine.ts";
 export { shellQuoteRemote as shellQuote } from "./herdr-connection.ts";
@@ -61,10 +62,11 @@ export interface ResolveHerdrMachinePlacementInput {
 export interface HerdrMachinePlacement extends MachinePlacement { machine: HerdrMachineReference }
 
 /** Agent-definition capabilities that the pane-native Pi transport cannot preserve. */
-export function supportsPreferredHerdrAgent(agent: Pick<AgentConfig, "source" | "runner" | "outputSchema" | "toolBudget" | "permissions" | "extensions" | "subagentOnlyExtensions" | "excludeTools" | "mcpDirectTools" | "allowNestedSubagents" | "allowedAgents" | "launcher">): boolean {
+export function supportsPreferredHerdrAgent(agent: Pick<AgentConfig, "source" | "runner" | "tools" | "outputSchema" | "toolBudget" | "permissions" | "extensions" | "subagentOnlyExtensions" | "excludeTools" | "mcpDirectTools" | "allowNestedSubagents" | "allowedAgents" | "launcher">): boolean {
 	return agent.source !== "runtime" && (agent.runner === undefined || agent.runner.type === "pi")
 		&& agent.outputSchema === undefined && agent.toolBudget === undefined && agent.permissions === undefined
-		&& !agent.extensions?.length && !agent.subagentOnlyExtensions?.length && !agent.excludeTools?.length && !agent.mcpDirectTools?.length
+		&& agent.extensions === undefined && !agent.subagentOnlyExtensions?.length && !agent.excludeTools?.length && !agent.mcpDirectTools?.length
+		&& !agent.tools?.includes("subagent") && !agent.tools?.some(isToolExtensionPath)
 		&& !agent.allowNestedSubagents && !agent.allowedAgents?.length && !agent.launcher;
 }
 
