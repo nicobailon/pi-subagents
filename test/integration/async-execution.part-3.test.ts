@@ -2176,9 +2176,10 @@ syncBuiltinESMExports();
 		fs.mkdirSync(childCwd, { recursive: true });
 		const registration = registerRequiredChildExtensions({ sessionId: "session-123", extensions: [{ id: "host-policy", path: fileURLToPath(import.meta.url) }], requireForAllRunners: true });
 		const agents = [makeAgent("external", { runner: { type: "external-cli", command: process.execPath, args: ["-e", ""] } })];
-		// The child's own agent discovery runs after workflow admission and before its launch: dispose there.
+		// Validation discovers the child's agent at its cwd before admission; the second discovery there is the launch's, after admission: dispose there.
+		let childDiscoveries = 0;
 		const executor = makeAsyncExecutor(agents, {}, (cwd) => {
-			if (cwd === childCwd) registration.dispose();
+			if (cwd === childCwd && ++childDiscoveries === 2) registration.dispose();
 			return { agents };
 		});
 		try {
