@@ -497,7 +497,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const { startResultWatcher, transitionResultDelivery, primeExistingResults, stopResultWatcher } = resultWatcher;
 	const sessionSwitchGuard = createSessionSwitchGuard({
 		state, asyncDirRoot: DIRS.async, resultsDir: DIRS.results,
-		policy: config.sessionSwitch?.policy,
 		promptTimeoutMs: config.sessionSwitch?.promptTimeoutMs,
 		timeoutAnswer: config.sessionSwitch?.timeoutAnswer,
 		hasPendingResults: () => owedResultRunIds.size > 0 || completionNotifier.hasPendingDelivery() || resultWatcher.hasPendingResults(),

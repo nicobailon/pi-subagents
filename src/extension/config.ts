@@ -126,10 +126,7 @@ function validateSessionSwitchConfig(value: unknown): void {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.sessionSwitch must be a JSON object");
 	const config = value as Record<string, unknown>;
 	for (const key of Object.keys(config)) {
-		if (key !== "policy" && key !== "promptTimeoutMs" && key !== "timeoutAnswer") throw new Error(`config.sessionSwitch.${key} is not supported`);
-	}
-	if (config.policy !== undefined && config.policy !== "ask" && config.policy !== "take" && config.policy !== "leave" && config.policy !== "stay") {
-		throw new Error('config.sessionSwitch.policy must be "ask", "take", "leave", or "stay"');
+		if (key !== "promptTimeoutMs" && key !== "timeoutAnswer") throw new Error(`config.sessionSwitch.${key} is not supported`);
 	}
 	if (config.timeoutAnswer !== undefined && config.timeoutAnswer !== "take" && config.timeoutAnswer !== "leave" && config.timeoutAnswer !== "stay") {
 		throw new Error('config.sessionSwitch.timeoutAnswer must be "take", "leave", or "stay"');

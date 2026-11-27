@@ -48,7 +48,6 @@ function fixture(sessionSwitch: SessionSwitchConfig = {}) {
 	};
 	const guard = createSessionSwitchGuard({
 		state, asyncDirRoot, resultsDir,
-		policy: sessionSwitch.policy,
 		promptTimeoutMs: sessionSwitch.promptTimeoutMs,
 		timeoutAnswer: sessionSwitch.timeoutAnswer,
 		hasPendingResults: () => pendingResults,
@@ -221,39 +220,14 @@ describe("session switch decisions", () => {
 });
 
 describe("configured switch answers", () => {
-	it("takes the work without prompting when the policy is take", async () => {
-		const f = fixture({ policy: "take" });
-		f.writeRun("live");
-		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
-		assert.equal(f.prompts, 0);
-		assert.deepEqual(f.switchTo(), [f.source]);
-	});
-
-	it("leaves the work without prompting when the policy is leave", async () => {
-		const f = fixture({ policy: "leave" });
-		f.writeRun("live");
-		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
-		assert.equal(f.prompts, 0);
-		assert.deepEqual(f.switchTo(), []);
-	});
-
-	it("cancels without prompting when the policy is stay", async () => {
-		const f = fixture({ policy: "stay" });
-		f.writeRun("live");
-		assert.deepEqual(await f.guard.beforeSwitch("new", f.ctx), { cancel: true });
-		assert.equal(f.prompts, 0);
-	});
-
-	it("switches when the policy would refuse but nothing is outstanding", async () => {
-		const f = fixture({ policy: "stay" });
-		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
-		assert.deepEqual(f.switchTo(), [f.source]);
-	});
+	// The bound closes the dialog through its signal, as Pi's dialogs do on abort.
+	const untilClosed = async (_options: string[], opts: ExtensionUIDialogOptions) =>
+		new Promise<undefined>((resolve) => opts.signal!.addEventListener("abort", () => resolve(undefined), { once: true }));
 
 	it("takes the work when an unanswered prompt times out", async () => {
 		const f = fixture({ promptTimeoutMs: 20 });
 		f.writeRun("live");
-		f.choice = async (_options, opts) => { assert.equal(opts.timeout, 20); await sleep(30); return undefined; };
+		f.choice = untilClosed;
 		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
 		assert.equal(f.prompts, 1);
 		assert.deepEqual(f.switchTo(), [f.source]);
@@ -262,20 +236,19 @@ describe("configured switch answers", () => {
 	it("leaves the work when a timed-out prompt says to", async () => {
 		const f = fixture({ promptTimeoutMs: 20, timeoutAnswer: "leave" });
 		f.writeRun("live");
-		f.choice = async () => { await sleep(30); return undefined; };
+		f.choice = untilClosed;
 		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
 		assert.deepEqual(f.switchTo(), []);
 	});
 
-	it("cancels when the bounded prompt is dismissed before the deadline", async () => {
-		// Escape and ctrl+c resolve undefined exactly like the countdown does, so only elapsed time may answer.
-		const f = fixture({ promptTimeoutMs: 5_000 });
-		f.writeRun("live");
-		f.choice = async () => undefined;
-		assert.deepEqual(await f.guard.beforeSwitch("new", f.ctx), { cancel: true });
-		assert.equal(f.prompts, 1);
-		// A cancelled switch never reaches session_shutdown, so there is nothing for switchTo() to observe.
-		assert.equal(f.notices.length, 0);
+	it("cancels when the bounded prompt is dismissed before the deadline, even just before it", async () => {
+		for (const dismissAfterMs of [0, 250]) {
+			const f = fixture({ promptTimeoutMs: 300 });
+			f.writeRun("live");
+			f.choice = async () => { await sleep(dismissAfterMs); return undefined; };
+			assert.deepEqual(await f.guard.beforeSwitch("new", f.ctx), { cancel: true }, `dismissed after ${dismissAfterMs} ms`);
+			assert.equal(f.notices.length, 0);
+		}
 	});
 
 	it("stays without a configured timeout, as before", async () => {
@@ -290,7 +263,7 @@ describe("configured switch answers", () => {
 		const f = fixture({ promptTimeoutMs: 20 });
 		f.writeRun("live");
 		Object.assign(f.ctx, { mode: "rpc" });
-		f.choice = async (_options, opts) => { assert.equal(opts.timeout, 20); await sleep(30); return undefined; };
+		f.choice = async (options, opts) => { assert.equal(opts.timeout, undefined); return untilClosed(options, opts); };
 		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
 		assert.deepEqual(f.switchTo(), [f.source]);
 	});

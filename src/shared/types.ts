@@ -2736,10 +2736,7 @@ export interface ScheduledRunsConfig {
 export type FleetViewPlacement = "aboveEditor" | "belowEditor";
 export type AsyncWidgetLayout = "adaptive" | "rows";
 export type FastServiceTier = "priority" | "ultrafast";
-/** How a session switch with outstanding background work is answered: ask, or decide it without a prompt. */
-export type SessionSwitchPolicy = "ask" | "take" | "leave" | "stay";
-/** What an expired switch prompt does; only an answer, never another prompt. */
-export type SessionSwitchAnswer = Exclude<SessionSwitchPolicy, "ask">;
+export type SessionSwitchAnswer = "take" | "leave" | "stay";
 
 export const FLEET_KEYBINDING_ACTIONS = [
 	"close",
@@ -2781,8 +2778,6 @@ export interface ForkContextConfig {
 }
 
 export interface SessionSwitchConfig {
-	/** Answer the switch prompt without asking: "take", "leave", or "stay". Defaults to "ask". */
-	policy?: SessionSwitchPolicy;
 	/** Bound the switch prompt in milliseconds. Unset or 0 waits for an answer in a TUI. */
 	promptTimeoutMs?: number;
 	/** What a `promptTimeoutMs` expiry answers instead of waiting. Defaults to "take". */
