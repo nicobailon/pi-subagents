@@ -2736,6 +2736,7 @@ export interface ScheduledRunsConfig {
 export type FleetViewPlacement = "aboveEditor" | "belowEditor";
 export type AsyncWidgetLayout = "adaptive" | "rows";
 export type FastServiceTier = "priority" | "ultrafast";
+export type SessionSwitchAnswer = "take" | "leave" | "stay";
 
 export const FLEET_KEYBINDING_ACTIONS = [
 	"close",
@@ -2774,6 +2775,13 @@ export interface ForkContextConfig {
 	mode?: "full" | "pruned";
 	/** Required pruning model when mode is "pruned". */
 	model?: string;
+}
+
+export interface SessionSwitchConfig {
+	/** Bound the switch prompt in milliseconds. Unset or 0 waits for an answer in a TUI. */
+	promptTimeoutMs?: number;
+	/** What a `promptTimeoutMs` expiry answers instead of waiting. Defaults to "take". */
+	timeoutAnswer?: SessionSwitchAnswer;
 }
 
 export interface ActiveAsyncCapacityConfig {
@@ -2837,6 +2845,8 @@ export interface ExtensionConfig {
 	maxActiveAsyncRunsPerSession?: number;
 	/** Active-capacity cleanup policy. */
 	capacity?: ActiveAsyncCapacityConfig;
+	/** How `/new`, `/resume`, `/fork` and `/clone` answer the switch prompt while this session has background work. */
+	sessionSwitch?: SessionSwitchConfig;
 	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
 	globalConcurrencyLimit?: number;
 	/**

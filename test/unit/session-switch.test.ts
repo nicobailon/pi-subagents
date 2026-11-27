@@ -8,12 +8,14 @@ import { createSessionSwitchGuard, type SessionSwitchContext } from "../../src/e
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { createNestedRoute, nestedRunScope, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { inheritedSessionIds, recordSessionReplacement, recordSessionStart } from "../../src/shared/session-succession.ts";
-import type { AsyncJobState, SubagentState } from "../../src/shared/types.ts";
+import type { AsyncJobState, SessionSwitchConfig, SubagentState } from "../../src/shared/types.ts";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
 
-function fixture() {
+function fixture(sessionSwitch: SessionSwitchConfig = {}) {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-session-switch-"));
 	const source = path.join(root, "source.jsonl");
 	const target = path.join(root, "target.jsonl");
@@ -31,6 +33,7 @@ function fixture() {
 	const notices: string[] = [];
 	let choice: (options: string[], opts: ExtensionUIDialogOptions) => Promise<string | undefined> = async (options) => options[0];
 	let title = "";
+	let dialogOptions: ExtensionUIDialogOptions | undefined;
 	let prompts = 0;
 	let pendingResults = false;
 	let questions = false;
@@ -38,13 +41,15 @@ function fixture() {
 		mode: "tui", hasUI: true,
 		ui: {
 			select: async (text, options, opts = {}) => {
-				title = text; prompts++; return choice(options, opts);
+				title = text; prompts++; dialogOptions = opts; return choice(options, opts);
 			},
 			notify: (message: string) => notices.push(message),
 		},
 	};
 	const guard = createSessionSwitchGuard({
 		state, asyncDirRoot, resultsDir,
+		promptTimeoutMs: sessionSwitch.promptTimeoutMs,
+		timeoutAnswer: sessionSwitch.timeoutAnswer,
 		hasPendingResults: () => pendingResults,
 		hasPendingSupervisorRequest: () => questions,
 	});
@@ -68,6 +73,7 @@ function fixture() {
 	return {
 		guard, ctx, state, source, target, notices, writeRun, switchTo,
 		get prompts() { return prompts; }, get title() { return title; },
+		get dialogOptions() { return dialogOptions; },
 		set choice(value: typeof choice) { choice = value; },
 		set pendingResults(value: boolean) { pendingResults = value; },
 		set questions(value: boolean) { questions = value; },
@@ -210,5 +216,55 @@ describe("session switch decisions", () => {
 		assert.deepEqual(await f.guard.beforeSwitch("fork", f.ctx), { cancel: true });
 		f.guard.dispose();
 		assert.deepEqual(await pending, { cancel: true });
+	});
+});
+
+describe("configured switch answers", () => {
+	// The bound closes the dialog through its signal, as Pi's dialogs do on abort.
+	const untilClosed = async (_options: string[], opts: ExtensionUIDialogOptions) =>
+		new Promise<undefined>((resolve) => opts.signal!.addEventListener("abort", () => resolve(undefined), { once: true }));
+
+	it("takes the work when an unanswered prompt times out", async () => {
+		const f = fixture({ promptTimeoutMs: 20 });
+		f.writeRun("live");
+		f.choice = untilClosed;
+		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
+		assert.equal(f.prompts, 1);
+		assert.deepEqual(f.switchTo(), [f.source]);
+	});
+
+	it("leaves the work when a timed-out prompt says to", async () => {
+		const f = fixture({ promptTimeoutMs: 20, timeoutAnswer: "leave" });
+		f.writeRun("live");
+		f.choice = untilClosed;
+		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
+		assert.deepEqual(f.switchTo(), []);
+	});
+
+	it("cancels when the bounded prompt is dismissed before the deadline, even just before it", async () => {
+		for (const dismissAfterMs of [0, 250]) {
+			const f = fixture({ promptTimeoutMs: 300 });
+			f.writeRun("live");
+			f.choice = async () => { await sleep(dismissAfterMs); return undefined; };
+			assert.deepEqual(await f.guard.beforeSwitch("new", f.ctx), { cancel: true }, `dismissed after ${dismissAfterMs} ms`);
+			assert.equal(f.notices.length, 0);
+		}
+	});
+
+	it("stays without a configured timeout, as before", async () => {
+		const f = fixture();
+		f.writeRun("live");
+		f.choice = async () => undefined;
+		assert.deepEqual(await f.guard.beforeSwitch("new", f.ctx), { cancel: true });
+		assert.equal(f.dialogOptions?.timeout, undefined);
+	});
+
+	it("lets an operator-set bound replace the one-minute RPC bound", async () => {
+		const f = fixture({ promptTimeoutMs: 20 });
+		f.writeRun("live");
+		Object.assign(f.ctx, { mode: "rpc" });
+		f.choice = async (options, opts) => { assert.equal(opts.timeout, undefined); return untilClosed(options, opts); };
+		assert.equal(await f.guard.beforeSwitch("new", f.ctx), undefined);
+		assert.deepEqual(f.switchTo(), [f.source]);
 	});
 });

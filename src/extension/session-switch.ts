@@ -5,13 +5,14 @@ import { reconcileNestedAsyncDescendants } from "../runs/background/stale-run-re
 import { ownsRun } from "../runs/shared/run-ownership.ts";
 import { collectNestedRuns, projectNestedEvents } from "../runs/shared/nested-events.ts";
 import { keepSessionWork, releaseSessionWork } from "../shared/session-succession.ts";
-import type { NestedRouteInfo, SubagentState } from "../shared/types.ts";
+import type { NestedRouteInfo, SessionSwitchAnswer, SubagentState } from "../shared/types.ts";
 import { readStatus } from "../shared/utils.ts";
 
 const STAY = "Stay here";
 const TAKE = "Switch and take the work";
 const LEAVE = "Switch and leave the work here";
 const RPC_PROMPT_TIMEOUT_MS = 60_000;
+const ANSWER_LABELS: Record<SessionSwitchAnswer, string> = { take: TAKE, leave: LEAVE, stay: STAY };
 
 type SwitchReason = "new" | "resume" | "fork";
 
@@ -23,13 +24,17 @@ interface SessionSwitchDeps {
 	state: SubagentState;
 	asyncDirRoot: string;
 	resultsDir: string;
+	promptTimeoutMs?: number;
+	timeoutAnswer?: SessionSwitchAnswer;
 	hasPendingResults(): boolean;
 	hasPendingSupervisorRequest(): boolean;
 }
 
 /**
  * Asks what happens to this session's outstanding background work when a UI session switches away. Without a UI or
- * outstanding work the switch proceeds and the next session inherits the work. The prompt never enters model history.
+ * outstanding work the switch proceeds and the next session inherits the work. A configured
+ * `sessionSwitch.promptTimeoutMs` answers a prompt nobody replies to, so an unattended switch never waits forever.
+ * The prompt never enters model history.
  */
 export function createSessionSwitchGuard(deps: SessionSwitchDeps) {
 	let leave: { sessionId: string; reason: SwitchReason } | undefined;
@@ -94,10 +99,23 @@ export function createSessionSwitchGuard(deps: SessionSwitchDeps) {
 					...(results ? ["  Undelivered results"] : []),
 					...(questions ? ["  Questions awaiting a reply"] : []),
 				].join("\n");
-				const choice = await ctx.ui.select(title, [STAY, TAKE, LEAVE], { signal: lifetime.signal, timeout: ctx.mode === "rpc" ? RPC_PROMPT_TIMEOUT_MS : undefined });
+				const configuredTimeoutMs = deps.promptTimeoutMs !== undefined && deps.promptTimeoutMs > 0 ? deps.promptTimeoutMs : undefined;
+				// `ui.select` resolves undefined for a dismissal and for its own countdown, which Pi's TUI rounds up to whole
+				// seconds, so an operator-set bound is this guard's timer: only it firing answers `timeoutAnswer`.
+				const deadline = configuredTimeoutMs === undefined ? undefined : new AbortController();
+				const timer = deadline ? setTimeout(() => deadline.abort(), configuredTimeoutMs) : undefined;
+				let choice: string | undefined;
+				try {
+					choice = await ctx.ui.select(title, [STAY, TAKE, LEAVE], deadline
+						? { signal: AbortSignal.any([lifetime.signal, deadline.signal]) }
+						: { signal: lifetime.signal, timeout: ctx.mode === "rpc" ? RPC_PROMPT_TIMEOUT_MS : undefined });
+				} finally {
+					clearTimeout(timer);
+				}
 				if (lifetime.signal.aborted || deps.state.currentSessionId !== sessionId) return { cancel: true };
-				if (choice === TAKE) return;
-				if (choice === LEAVE) {
+				const answer = choice ?? (deadline?.signal.aborted ? ANSWER_LABELS[deps.timeoutAnswer ?? "take"] : undefined);
+				if (answer === TAKE) return;
+				if (answer === LEAVE) {
 					leave = { sessionId, reason };
 					return;
 				}

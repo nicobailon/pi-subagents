@@ -121,6 +121,25 @@ function validateRunnerLaunchersConfig(value: unknown): void {
 	}
 }
 
+function validateSessionSwitchConfig(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.sessionSwitch must be a JSON object");
+	const config = value as Record<string, unknown>;
+	for (const key of Object.keys(config)) {
+		if (key !== "promptTimeoutMs" && key !== "timeoutAnswer") throw new Error(`config.sessionSwitch.${key} is not supported`);
+	}
+	if (config.timeoutAnswer !== undefined && config.timeoutAnswer !== "take" && config.timeoutAnswer !== "leave" && config.timeoutAnswer !== "stay") {
+		throw new Error('config.sessionSwitch.timeoutAnswer must be "take", "leave", or "stay"');
+	}
+	if (config.promptTimeoutMs !== undefined
+		&& (typeof config.promptTimeoutMs !== "number"
+			|| !Number.isInteger(config.promptTimeoutMs)
+			|| config.promptTimeoutMs < 0
+			|| config.promptTimeoutMs > 2_147_483_647)) {
+		throw new Error("config.sessionSwitch.promptTimeoutMs must be a non-negative integer no larger than 2147483647");
+	}
+}
+
 function validateOrcaProgressTabsConfig(value: unknown): void {
 	if (value === undefined) return;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.orcaProgressTabs must be a JSON object");
@@ -231,6 +250,7 @@ function validateConfig(config: Record<string, unknown>): void {
 	validateFleetKeybindingsConfig(config.fleetKeybindings);
 	validateArtifactConfig(config.artifactConfig);
 	validateCapacityConfig(config.capacity);
+	validateSessionSwitchConfig(config.sessionSwitch);
 	if (config.modelExclusions !== undefined) throw new Error("config.modelExclusions was removed; model failures are no longer persisted or used for automatic switching");
 	validateModelResponseAliases(config.modelResponseAliases);
 	validateMainWindowRendererConfig(config.mainWindowRenderer);

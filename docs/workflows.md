@@ -60,6 +60,8 @@ When a session with a UI has queued or running async work, live nested children,
 
 Without outstanding work, or without a UI (`pi -p`, SDK sessions), there is no prompt and the new session takes the work over. Over RPC the prompt is a select dialog that counts as **Stay here** if the host does not answer within one minute. The prompt never enters model history.
 
+In a TUI the prompt waits for a keypress, so a switch nobody answers, such as a `/new` an agent starts while you are away, waits until someone does; [`sessionSwitch`](configuration.md#sessionswitch) bounds it and picks the answer.
+
 ## Prompt shortcuts
 
 The package includes reusable prompt templates for common workflows. You do not need them, but they are handy when you want the same shape every time:
