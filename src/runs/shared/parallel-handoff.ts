@@ -324,7 +324,7 @@ export function isTerminalParallelHandoffChildStatus(status: unknown): boolean {
 	return status === "completed" || status === "complete" || status === "failed" || status === "paused" || status === "stopped" || status === "rejected";
 }
 
-function hasValidStoredLaneShape(manifest: ParallelHandoffManifest): boolean {
+function hasValidStoredLanes(manifest: ParallelHandoffManifest): boolean {
 	if (!manifest || typeof manifest !== "object" || manifest.version !== 1 || typeof manifest.runId !== "string" || !manifest.runId.trim() || !Array.isArray(manifest.groups) || manifest.groups.length === 0) return false;
 	let hasManagedTask = false;
 	const valid = manifest.groups.every((group) => {
@@ -340,12 +340,12 @@ function hasValidStoredLaneShape(manifest: ParallelHandoffManifest): boolean {
 
 function trustedStoredCleanupEligibility(manifest: ParallelHandoffManifest): CleanupEligibility {
 	const eligibility = normalizeStoredCleanupEligibility(manifest.cleanupEligibility);
-	if (!hasValidStoredLaneShape(manifest)) return { state: "unknown" };
+	if (!hasValidStoredLanes(manifest)) return { state: "unknown" };
 	if (hasActiveChildren(manifest)) return { state: "active" };
 	if (eligibility.state === "active") return cleanupEligibilityForEvidence(manifest);
 	if (eligibility.state === "terminal-eligible" || eligibility.state === "superseded-eligible") {
 		const current = cleanupEligibilityForEvidence(manifest);
-		if (current.state === eligibility.state || (current.state === "terminal-blocked" && / evidence is stale$/.test(current.reason))) return current;
+		if (current.state === eligibility.state || (current.state === "terminal-blocked" && current.reason.endsWith(" evidence is stale"))) return current;
 		return { state: "unknown" };
 	}
 	return eligibility;
@@ -366,7 +366,7 @@ function hasManagedWorktreeTasks(manifest: ParallelHandoffManifest): boolean {
 
 function validateManifestForLaneEvidence(manifest: ParallelHandoffManifest, laneId: string): void {
 	if (manifest.runId !== laneId) throw new Error(`Lane '${laneId}' does not match manifest run '${manifest.runId}'.`);
-	if (!hasValidStoredLaneShape(manifest)) throw new Error("Lane manifest is malformed.");
+	if (!hasValidStoredLanes(manifest)) throw new Error("Lane manifest is malformed.");
 	if (!manifest.groups.length || !hasManagedWorktreeTasks(manifest)) throw new Error("Lane manifest has no managed worktree tasks.");
 	if (hasActiveChildren(manifest)) throw new Error("Lane has an active child owner; merge evidence must be recorded after local reconciliation.");
 	for (const group of manifest.groups) {

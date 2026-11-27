@@ -50,7 +50,7 @@ const fitsMessageBudget = (value: unknown) => Buffer.byteLength(JSON.stringify(v
 const omittedText = (what: string, bytes: number) => `[${what} omitted by the pi-subagents bridge: ${bytes} bytes did not fit in one bridge frame]`;
 function boundedMessage(message: AgentMessage): AgentMessage {
 	if (fitsMessageBudget(message)) return message;
-	const record = message as unknown as Record<string, unknown>;
+	const record = message as Record<string, unknown>;
 	const content = Array.isArray(record.content) ? record.content.map((block: Record<string, unknown>) => {
 		if (block.type === "image") return { type: "text", text: omittedText(`Image (${String(block.mimeType)})`, Buffer.byteLength(String(block.data))) };
 		if (block.type === "text" && typeof block.text === "string" && block.text.length > 65_536) return { type: "text", text: `${block.text.slice(0, 65_536)}\n${omittedText("The rest of this text", Buffer.byteLength(block.text.slice(65_536)))}` };
@@ -59,9 +59,9 @@ function boundedMessage(message: AgentMessage): AgentMessage {
 		return block;
 	}) : record.content;
 	const shrunk = { ...record, content, details: undefined };
-	if (fitsMessageBudget(shrunk)) return shrunk as unknown as AgentMessage;
+	if (fitsMessageBudget(shrunk)) return shrunk as AgentMessage;
 	const kept = Object.fromEntries(["role", "toolCallId", "toolName", "isError", "api", "provider", "model", "usage", "stopReason", "timestamp"].filter((key) => key in record).map((key) => [key, record[key]]));
-	return { ...kept, ...(typeof record.errorMessage === "string" ? { errorMessage: record.errorMessage.slice(0, 4096) } : {}), content: [{ type: "text", text: omittedText("This message", Buffer.byteLength(JSON.stringify(message))) }] } as unknown as AgentMessage;
+	return { ...kept, ...(typeof record.errorMessage === "string" ? { errorMessage: record.errorMessage.slice(0, 4096) } : {}), content: [{ type: "text", text: omittedText("This message", Buffer.byteLength(JSON.stringify(message))) }] } as AgentMessage;
 }
 
 export function resolveRemoteHerdrResources(cwd: string, resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false }, remoteDefaultTools: string[] = []): { agent: string; skills: string[]; tools: string[]; systemPrompt: string; inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean } {
@@ -86,7 +86,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 	const manifestPath = path.join(runDir, "manifest.json");
 	// An in-process SDK session (createAgentSession without a resourceLoader) runs this factory again in the same child and may
 	// start its own session, so the factory touches no files: the first session to start claims the runtime directory for the process.
-	const claims = ((globalThis as unknown as Record<symbol, Set<string>>)[Symbol.for("pi-subagents.herdr-bridge-claims")] ??= new Set<string>());
+	const claims = ((globalThis as Record<symbol, Set<string>>)[Symbol.for("pi-subagents.herdr-bridge-claims")] ??= new Set<string>());
 	let claimed = false;
 	let client: net.Socket | undefined;
 	let context: BridgeContext | undefined;
@@ -130,7 +130,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		pending.delete(requestId);
 		if (sessionId(ctx) !== nativeSessionId) throw new Error("Native Pi session identity changed.");
 		send({ type: "accepted", requestId, operation: request.operation, nativeSessionId });
-		const api = pi as unknown as { sendUserMessage(text: string, options?: { deliverAs?: "steer" | "followUp" }): void };
+		const api = pi as { sendUserMessage(text: string, options?: { deliverAs?: "steer" | "followUp" }): void };
 		if (request.operation === "prompt") { activeRequestId = requestId; finalAssistant = undefined; api.sendUserMessage(request.text ?? ""); }
 		else if (request.operation === "steer") api.sendUserMessage(request.text ?? "", { deliverAs: "steer" });
 		else if (request.operation === "follow-up") api.sendUserMessage(request.text ?? "", { deliverAs: "followUp" });
@@ -142,7 +142,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		}
 		send({ type: "control-ack", requestId, operation: request.operation, nativeSessionId });
 	};
-	pi.registerCommand("pi-subagents-bridge", { description: "Internal pane-native request dispatch", handler: (args, ctx) => execute(args.trim(), ctx as unknown as BridgeContext) });
+	pi.registerCommand("pi-subagents-bridge", { description: "Internal pane-native request dispatch", handler: (args, ctx) => execute(args.trim(), ctx as BridgeContext) });
 
 	const on = pi.on as unknown as (name: string, handler: (event: Record<string, unknown>, ctx: BridgeContext) => unknown) => void;
 	on("before_agent_start", (event) => {

@@ -66,7 +66,7 @@ export const resolveEffectiveOutputSchema = (agentConfig: AgentConfig, override?
 type OutputSchemaStep = { agent: string; outputSchema?: JsonSchemaObject | false };
 export function projectChainOutputSchemas<S extends OutputSchemaStep, R = S, G = { parallel: R[] | R }>(chain: readonly (S | { parallel: S[] | S })[], agents: AgentConfig[], projectStep?: (step: S, outputSchema: JsonSchemaObject | undefined) => R, projectGroup?: (step: { parallel: S[] | S }, parallel: R[] | R) => G): Array<R | G> {
 	const project = (step: S): R => { const agent = agents.find((candidate) => candidate.name === step.agent); if (!agent && !projectStep) return step as unknown as R; const outputSchema = agent && resolveEffectiveOutputSchema(agent, step.outputSchema); return projectStep ? projectStep(step, outputSchema) : { ...step, outputSchema } as unknown as R; };
-	return chain.map((step) => { if (!("parallel" in step)) return project(step as S); const parallel = Array.isArray(step.parallel) ? step.parallel.map(project) : project(step.parallel as S); return projectGroup ? projectGroup(step, parallel) : { ...step, parallel } as unknown as G; });
+	return chain.map((step) => { if (!("parallel" in step)) return project(step as S); const parallel = Array.isArray(step.parallel) ? step.parallel.map(project) : project(step.parallel as S); return projectGroup ? projectGroup(step, parallel) : { ...step, parallel } as G; });
 }
 
 export function resolveStepBehavior(

@@ -55,6 +55,9 @@ jobs:
       - name: Typecheck
         if: matrix.typecheck
         run: npm run typecheck
+      - name: Lint
+        if: matrix.typecheck
+        run: npm run lint
       - name: Unit tests
         run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test ${{ matrix.testArgs }} test/unit/*.test.ts
       - name: Integration tests

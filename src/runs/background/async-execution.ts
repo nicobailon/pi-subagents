@@ -432,7 +432,7 @@ export function formatAsyncStartedMessage(headline: string, interactive: boolean
 			"One-shot check: subagent({ action: \"status\", id: \"...\" }).",
 		]
 		: [
-			`Detached non-interactive run: Pi auto-drains current-session subagent work at agent_end. Do not run sleep timers or polling loops. Use ${waitCall()} only when this turn needs the result, and subagent({ action: \"status\", id: \"...\" }) for a one-shot check.`,
+			`Detached non-interactive run: Pi auto-drains current-session subagent work at agent_end. Do not run sleep timers or polling loops. Use ${waitCall()} only when this turn needs the result, and subagent({ action: "status", id: "..." }) for a one-shot check.`,
 		];
 	return [headline, "", ...guidance].join("\n");
 }

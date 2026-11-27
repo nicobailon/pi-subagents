@@ -108,7 +108,7 @@ function routeIndexPath(rootRunId: string, capabilityToken: string): string {
 	return path.join(routeIndexDir(rootRunId), `${encodeURIComponent(capabilityToken)}.json`);
 }
 
-function validateRouteShape(route: NestedRoute): void {
+function validateRoute(route: NestedRoute): void {
 	assertSafeId("rootRunId", route.rootRunId);
 	assertSafeId("capabilityToken", route.capabilityToken);
 	if (!containedPath(NESTED_EVENTS_DIR, route.eventSink)) throw new Error("Nested event sink is outside the subagent nested event root.");
@@ -134,7 +134,7 @@ export function createNestedRoute(rootRunId: string): NestedRoute {
 /** Validate a route handed to an in-process child against its on-disk metadata. */
 export function resolveNestedRoute(route: NestedRoute): NestedRoute {
 	const { rootRunId, capabilityToken } = route;
-	validateRouteShape(route);
+	validateRoute(route);
 	const routeFile = path.join(commonRouteRoot(route), ROUTE_FILE);
 	const metadata = JSON.parse(fs.readFileSync(routeFile, "utf-8")) as { rootRunId?: unknown; capabilityToken?: unknown };
 	if (metadata.rootRunId !== rootRunId || metadata.capabilityToken !== capabilityToken) {
@@ -554,7 +554,7 @@ function routeFromIndexEntry(rootRunId: string, filePath: string): NestedRoute |
 			controlInbox: path.join(routeRoot, "controls"),
 			capabilityToken: metadata.capabilityToken,
 		};
-		validateRouteShape(route);
+		validateRoute(route);
 		if (!fs.statSync(route.eventSink).isDirectory() || !fs.statSync(route.controlInbox).isDirectory()) return undefined;
 		const routeFilePath = path.join(routeRoot, ROUTE_FILE);
 		try {
@@ -708,7 +708,7 @@ export function findNestedRunById(id: string): { rootRunId: string; run: NestedR
 }
 
 export function readNestedRegistry(route: NestedRoute): NestedRegistry {
-	validateRouteShape(route);
+	validateRoute(route);
 	try {
 		const parsed = JSON.parse(fs.readFileSync(registryPath(route), "utf-8")) as NestedRegistry;
 		return {
@@ -724,7 +724,7 @@ export function readNestedRegistry(route: NestedRoute): NestedRegistry {
 }
 
 export function projectNestedEvents(route: NestedRoute): NestedRegistry {
-	validateRouteShape(route);
+	validateRoute(route);
 	let registry = readNestedRegistry(route);
 	const seen = new Set(registry.processedEvents);
 	let changed = false;
@@ -801,7 +801,7 @@ function writeRouteRecord(dir: string, ts: number, payload: object): string {
 }
 
 export function writeNestedEvent(route: NestedRoute, event: Omit<NestedEventRecord, "rootRunId" | "capabilityToken">): void {
-	validateRouteShape(route);
+	validateRoute(route);
 	const record: NestedEventRecord = {
 		...event,
 		rootRunId: route.rootRunId,
@@ -868,7 +868,7 @@ function parseControlResult(content: string, route: NestedRoute): NestedControlR
 }
 
 export function writeNestedControlRequest(route: NestedRoute, request: Omit<NestedControlRequestRecord, "type" | "rootRunId" | "capabilityToken">): string {
-	validateRouteShape(route);
+	validateRoute(route);
 	assertSafeId("requestId", request.requestId);
 	assertSafeId("targetRunId", request.targetRunId);
 	const record: NestedControlRequestRecord = {
@@ -883,7 +883,7 @@ export function writeNestedControlRequest(route: NestedRoute, request: Omit<Nest
 }
 
 export function readNestedControlRequests(route: NestedRoute): Array<NestedControlRequestRecord & { filePath: string }> {
-	validateRouteShape(route);
+	validateRoute(route);
 	let entries: string[] = [];
 	try {
 		entries = fs.readdirSync(route.controlInbox).filter((entry) => entry.endsWith(".json")).sort();
@@ -907,7 +907,7 @@ export function readNestedControlRequests(route: NestedRoute): Array<NestedContr
 }
 
 export function writeNestedControlResult(route: NestedRoute, result: Omit<NestedControlResultRecord, "type" | "rootRunId" | "capabilityToken">): void {
-	validateRouteShape(route);
+	validateRoute(route);
 	assertSafeId("requestId", result.requestId);
 	assertSafeId("targetRunId", result.targetRunId);
 	const record: NestedControlResultRecord = {
@@ -935,7 +935,7 @@ function readControlResultsFromFile(route: NestedRoute, eventPath: string): Nest
 }
 
 function listNestedEventFiles(route: NestedRoute): string[] {
-	validateRouteShape(route);
+	validateRoute(route);
 	try {
 		return fs.readdirSync(route.eventSink).filter((entry) => entry.endsWith(".json") || entry.endsWith(".jsonl"));
 	} catch (error) {

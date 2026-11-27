@@ -94,7 +94,7 @@ export class SocketRpcClient implements HerdrRpcClient {
 		return new Promise((resolve, reject) => {
 			const socket = net.createConnection(this.#socketPath); let bytes = 0; let data = Buffer.alloc(0); let finished = false; const id = String(++this.#next);
 			const timer = setTimeout(() => finish(new HerdrTransportError(`Herdr RPC '${method}' timed out.`)), timeoutMs); timer.unref?.();
-			const finish = (error?: Error, value?: T) => { if (finished) return; finished = true; clearTimeout(timer); socket.destroy(); error ? reject(error) : resolve(value as T); };
+			const finish = (error?: Error, value?: T) => { if (finished) return; finished = true; clearTimeout(timer); socket.destroy(); if (error) reject(error); else resolve(value as T); };
 			socket.on("connect", () => socket.write(`${JSON.stringify({ id, method, params })}\n`));
 			socket.on("data", (chunk: Buffer) => {
 				bytes += chunk.byteLength; if (bytes > MAX_RPC_BYTES) { finish(new Error("Herdr RPC response exceeded its byte bound.")); return; }

@@ -83,8 +83,8 @@ function convertField(key: string, value: unknown, schema: TSchema, workflowCall
 	if (typeof value !== "string" || !/^\s*[[{]/.test(value)) return value;
 	const parsed = parseJsonText(value);
 	if (parsed === undefined) {
-		const shape = type === "array" ? "a list" : "an object";
-		throw new Error(`subagent: '${key}' must be ${shape}, and its text is not valid JSON. Pass the value itself, e.g. ${key}: ${shape === "a list" ? "[...]" : "{...}"}, not a string.`);
+		const expected = type === "array" ? "a list" : "an object";
+		throw new Error(`subagent: '${key}' must be ${expected}, and its text is not valid JSON. Pass the value itself, e.g. ${key}: ${expected === "a list" ? "[...]" : "{...}"}, not a string.`);
 	}
 	return parsed;
 }

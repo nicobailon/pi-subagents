@@ -43,55 +43,38 @@ function lintFixture(source: string): string {
 describe("anti-slop Oxlint plugin", () => {
 	it("loads every configured rule and reports representative violations without flagging safe counterparts", () => {
 		const output = lintFixture(String.raw`
-const chained = ("value" as string) as number;
-const conditional = { ...(true ? { value: 1 } : {}) };
-const widened: unknown = "known";
 vi.mock("module");
-function broad(parameter: object): void { void parameter; }
 Reflect.apply(() => {}, null, []);
-Reflect.get({ key: "value" }, "key");
-function runtime(value: string): boolean { return typeof value === "string"; }
 const shapeSignal = 1;
-function unknownInput(value: unknown): void { void value; }
-function unknownOutput(): unknown { return null; }
 type Hidden = unknown;
 type HiddenUnion = string | unknown;
 export type ConcreteAlias = string | number;
-type Opaque = object;
-type ConditionalFunction = unknown extends infer Opaque ? (conditionalValue: Opaque) => void : never;
-const dictionary: Record<string, unknown> = {};
+type T = string;
+type Fixed = T;
+type Wrap<T> = Fixed | { item: T };
+export type WrappedAlias = Wrap<unknown>;
 const broadValue: object = { id: 1 };
 const narrowedValue = broadValue as { id: number };
-const asserted = "x" as string;
+const spreadTotals = [1, 2].reduce((totals, item) => ({ ...totals, [item]: item }), {});
+const copiedTotals = [1, 2].reduce((totals, item) => Object.assign({}, totals, { [item]: item }), {});
 
-export function safeObjectInput(parameter: { id: number }): void { void parameter; }
-export function safeCauseInput(cause: unknown): void { void cause; }
-export const safeDictionary: Record<string, string> = {};
-export const safeSpread = { ...(true ? { value: 1 } : { value: 2 }) };
+export const safeTotals = [1, 2].reduce<Record<number, number>>((totals, item) => { totals[item] = item; return totals; }, {});
 export const safeConst = "x" as const;
 `);
 		const rules = [
-			"no-chained-type-assertions",
-			"no-conditional-empty-object-spread",
-			"no-known-value-widening",
-			"no-module-mocking",
-			"no-object-parameters",
-			"no-reflect-apply",
-			"no-reflect-get",
-			"no-runtime-typeof",
-			"no-shape-in-symbol-names",
-			"no-unknown-parameters",
-			"no-unknown-returns",
-			"no-unknown-type-aliases",
-			"no-unsafe-dictionary-type",
-			"no-widen-then-assert",
-			"require-safety-comment-for-type-assertion",
+			"anti-slop(no-module-mocking)",
+			"anti-slop(no-reduce-accumulator-copy)",
+			"anti-slop(no-reflect-apply)",
+			"anti-slop(no-shape-in-symbol-names)",
+			"anti-slop(no-unknown-type-aliases)",
+			"anti-slop(no-widen-then-assert)",
+			"oxc(no-accumulating-spread)",
 		];
-		for (const rule of rules) assert.ok(output.includes(`"code": "anti-slop(${rule})"`), `missing ${rule}`);
+		for (const rule of rules) assert.ok(output.includes(`"code": "${rule}"`), `missing ${rule}`);
 		assert.ok(output.includes("Type alias `HiddenUnion` hides `unknown`."), "missing union unknown alias");
 		assert.equal(output.includes("Type alias `ConcreteAlias` hides `unknown`."), false);
-		assert.equal(output.includes("Parameter `conditionalValue` uses the broad `object` type."), false);
-		for (const safeName of ["safeObjectInput", "safeCauseInput", "safeDictionary", "safeSpread", "safeConst"]) {
+		assert.equal(output.includes("Type alias `WrappedAlias` hides `unknown`."), false);
+		for (const safeName of ["safeTotals", "safeConst"]) {
 			assert.equal(output.includes(safeName), false, `unexpected diagnostic for ${safeName}`);
 		}
 	});

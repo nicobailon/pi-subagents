@@ -179,7 +179,7 @@ export function hasDynamicFanoutFields(step: unknown): boolean {
 		&& (Object.prototype.hasOwnProperty.call(step, "expand") || Object.prototype.hasOwnProperty.call(step, "collect"));
 }
 
-export function validateDynamicStepShape(step: DynamicParallelStep, stepIndex: number, config: DynamicFanoutConfig = {}): void {
+export function validateDynamicStep(step: DynamicParallelStep, stepIndex: number, config: DynamicFanoutConfig = {}): void {
 	const prefix = `Dynamic chain step ${stepIndex + 1}`;
 	assertOnlyKeys(step, config.allowRunnerFields ? RUNNER_DYNAMIC_STEP_KEYS : DYNAMIC_STEP_KEYS, prefix);
 	if (!step.expand || !step.expand.from) throw new DynamicFanoutError(`${prefix} requires expand.from.`);
@@ -214,7 +214,7 @@ export function validateDynamicStepShape(step: DynamicParallelStep, stepIndex: n
 }
 
 export function resolveDynamicFanoutItems(step: DynamicParallelStep, outputs: ChainOutputMap, stepIndex: number, config: DynamicFanoutConfig = {}): DynamicMaterializedItem[] {
-	validateDynamicStepShape(step, stepIndex, config);
+	validateDynamicStep(step, stepIndex, config);
 	const sourceName = step.expand.from.output;
 	const source = outputs[sourceName];
 	if (!source) throw new DynamicFanoutError(`Dynamic chain step ${stepIndex + 1} references unknown output '${sourceName}'.`);

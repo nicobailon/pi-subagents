@@ -74,8 +74,8 @@ export async function rewritePromptWithGuidance(input: {
 	const streamFn: StreamFn = (nextModel, context, streamOptions) => baseStreamFn(nextModel, context, {
 		...streamOptions,
 		...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
-		env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
-		headers: { ...opencodeSessionHeaders(nextModel, sessionId), ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
+		env: auth.env || streamOptions?.env ? { ...auth.env, ...streamOptions?.env } : undefined,
+		headers: { ...opencodeSessionHeaders(nextModel, sessionId), ...streamOptions?.headers, ...auth.headers },
 	});
 	const ctxThinking = (input.ctx as { getThinkingLevel?: () => ThinkingLevel }).getThinkingLevel?.();
 	const agent = new Agent({

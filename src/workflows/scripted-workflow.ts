@@ -5,7 +5,7 @@ import { createWorkflowScriptWorker } from "./workflow-script-worker.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../runs/shared/parallel-utils.ts";
 import { HOST_STEP_MAX_COUNT } from "../runs/shared/host-step-status.ts";
 import { describeGateAcceptanceConflict, parseGateInput } from "../runs/shared/acceptance.ts";
-import { REQUIRE_LAUNCHER_SHAPE_ERROR } from "../runs/shared/runner-launcher.ts";
+import { REQUIRE_LAUNCHER_SCOPE_ERROR } from "../runs/shared/runner-launcher.ts";
 import type { AcceptanceRecoveryMetadata, HostStepNode, SingleResult, WorkflowScriptFailureKind } from "../shared/types.ts";
 import { normalizeWorkflowHostCommandParams, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "./host-command.ts";
 
@@ -1198,12 +1198,12 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 				if (keys.size === 0) continue;
 				const args = Array.isArray(declaration.init.argument.arguments) ? declaration.init.argument.arguments : [];
 				const itemCount = arrayElements(args[0]).length;
-				const arrayResultShape = Array.from({ length: itemCount });
+				const orderedResults = Array.from({ length: itemCount });
 				for (const later of laterStatements) {
 					walkAstWithoutShadowedIdentifier(later, name, (node) => {
 						if (node.type !== "MemberExpression" || !astNode(node.object) || node.object.type !== "Identifier" || node.object.name !== name) return;
 						const property = node.computed === true ? literalString(node.property) : astNode(node.property) && node.property.type === "Identifier" ? node.property.name as string : undefined;
-						if (property && keys.has(property) && !(property in arrayResultShape)) errors.push({ message: `runs.all returns an ordered array; '${name}.${property}' is keyed access. Use an index, destructuring, or map(...).`, ...nodeLocation(node) });
+						if (property && keys.has(property) && !(property in orderedResults)) errors.push({ message: `runs.all returns an ordered array; '${name}.${property}' is keyed access. Use an index, destructuring, or map(...).`, ...nodeLocation(node) });
 					});
 					if (statement.kind !== "const" && astNode(later) && later.type === "ExpressionStatement" && definitelyReassignsBinding(later.expression, name)) break;
 				}
@@ -1811,7 +1811,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			if (options.oneUsePermit && params.resume !== undefined) return respond(Promise.reject(new Error("Workflow child permit does not support retained resume.")));
 			if (params.action !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') accepts execution params only; management action is not allowed.`)));
 			// Before admission, which resolves a resume target; the executor would only see this after that.
-			if (params.requireLauncher !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}'): ${REQUIRE_LAUNCHER_SHAPE_ERROR}`)));
+			if (params.requireLauncher !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}'): ${REQUIRE_LAUNCHER_SCOPE_ERROR}`)));
 			if (params.workflowScript !== undefined) return respond(Promise.reject(new Error(`runs.run('${key}') cannot start a nested workflow script.`)));
 			if (params.tasks !== undefined || params.chain !== undefined || params.parallel !== undefined || params.concurrency !== undefined || params.chainDir !== undefined) {
 				return respond(Promise.reject(new Error(`runs.run('${key}') accepts one child via { agent, task }; use runs.all(...) and JavaScript control flow for orchestration.`)));

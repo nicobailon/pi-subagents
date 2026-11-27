@@ -230,7 +230,7 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 		summary,
 		children: results,
 		baseResult: {
-			...(existing ?? {}),
+			...existing,
 			id: next.runId,
 			runId: next.runId,
 			toolCallId: next.toolCallId,

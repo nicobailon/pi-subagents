@@ -755,7 +755,7 @@ export function createResultWatcher(
 				scheduleResult(file, true);
 				resultFileCoalescer.flush(file);
 			}
-			await Promise.allSettled([...handling]);
+			await Promise.allSettled(handling);
 		} finally {
 			deliveringPending -= 1;
 		}

@@ -236,7 +236,7 @@ export class MainWatchdogRuntime {
 				...(this.sessionOverrideEnabled === undefined ? {} : { enabled: this.sessionOverrideEnabled }),
 				main: {
 					...(this.sessionOverrideEnabled === undefined ? {} : { enabled: this.sessionOverrideEnabled }),
-					...(this.sessionModelOverride ?? {}),
+					...this.sessionModelOverride,
 				},
 			};
 		this.configResult = this.resolveConfig(this.cwd, session === undefined ? undefined : { session });
@@ -260,7 +260,7 @@ export class MainWatchdogRuntime {
 	}
 
 	setSessionModel(patch: { model?: string | null; thinking?: WatchdogEndpointConfig["thinking"] | null }, cwd = this.cwd): WatchdogRuntimeSnapshot {
-		const next = { ...(this.sessionModelOverride ?? {}) };
+		const next = { ...this.sessionModelOverride };
 		if (patch.model === null) delete next.model;
 		else if (patch.model !== undefined) next.model = patch.model;
 		if (patch.thinking === null) delete next.thinking;

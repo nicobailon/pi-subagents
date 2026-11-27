@@ -314,7 +314,7 @@ function translatePluginStdioServer(
 	pluginRoot: string,
 	raw: Record<string, unknown>,
 ): McpServerDefinition | undefined {
-	if ([...Object.keys(raw)].some((key) => !PLUGIN_STDIO_FIELDS.has(key))) return undefined;
+	if (Object.keys(raw).some((key) => !PLUGIN_STDIO_FIELDS.has(key))) return undefined;
 	if (typeof raw.command !== "string" || !raw.command) return undefined;
 	if (!isBareCommand(raw.command) && !raw.command.startsWith("./")) return undefined;
 	const args = stringArray(raw.args);
@@ -344,7 +344,7 @@ function translatePluginStdioServer(
 }
 
 function translatePluginHttpServer(raw: Record<string, unknown>): McpServerDefinition | undefined {
-	if ([...Object.keys(raw)].some((key) => !PLUGIN_HTTP_FIELDS.has(key))) return undefined;
+	if (Object.keys(raw).some((key) => !PLUGIN_HTTP_FIELDS.has(key))) return undefined;
 	if (typeof raw.url !== "string" || !isValidPluginUrl(raw.url)) return undefined;
 	const headers = stringRecord(raw.headers);
 	if (raw.headers !== undefined && !headers) return undefined;

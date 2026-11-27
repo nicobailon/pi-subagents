@@ -163,7 +163,7 @@ function pinsFor(pi: ExtensionAPI): Pins {
 export function registerPinnedTool<TParams extends TSchema, TDetails>(pi: ExtensionAPI, tool: ToolDefinition<TParams, TDetails>): void {
 	const pins = pinsFor(pi);
 	// SAFETY: Pinning reads only model-facing fields and re-registers every runtime field unchanged.
-	pins.current.set(tool.name, tool as unknown as PinnableTool);
+	pins.current.set(tool.name, tool as PinnableTool);
 	pins.registered.delete(tool.name);
 	register(pi, pins, tool.name);
 }

@@ -1,7 +1,7 @@
 import { isDynamicParallelStep, isParallelStep, type ChainStep, type SequentialStep } from "../../shared/settings.ts";
 import type { ChainOutputMap, ChainOutputMapEntry, SingleResult } from "../../shared/types.ts";
 import { getSingleResultOutput } from "../../shared/utils.ts";
-import { DynamicFanoutError, hasDynamicFanoutFields, type DynamicFanoutConfig, validateDynamicStepShape } from "./dynamic-fanout.ts";
+import { DynamicFanoutError, hasDynamicFanoutFields, type DynamicFanoutConfig, validateDynamicStep } from "./dynamic-fanout.ts";
 
 const OUTPUT_REF_PATTERN = /\{outputs\.([^}]*)\}/g;
 const SAFE_OUTPUT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -46,7 +46,7 @@ export function validateChainOutputBindingsWithContext(
 				throw new ChainOutputValidationError(`Dynamic chain step ${displayStepIndex} requires expand, a single parallel template object, and collect; dynamic expand/collect cannot be mixed with static parallel arrays.`);
 			}
 			try {
-				validateDynamicStepShape(step, displayStepIndex - 1, dynamicFanoutConfig);
+				validateDynamicStep(step, displayStepIndex - 1, dynamicFanoutConfig);
 			} catch (error) {
 				if (error instanceof DynamicFanoutError) throw new ChainOutputValidationError(error.message);
 				throw error;

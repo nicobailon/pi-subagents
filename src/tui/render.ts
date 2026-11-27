@@ -2043,7 +2043,7 @@ function buildMultiProgressLabel(details: Pick<Details, "mode" | "results" | "pr
 
 	if (details.mode === "parallel") {
 		const totalCount = details.totalSteps ?? details.results.length;
-		const statuses = new Array(totalCount).fill("pending") as Array<"pending" | "running" | "completed" | "failed" | "stopped" | "detached">;
+		const statuses: Array<"pending" | "running" | "completed" | "failed" | "stopped" | "detached"> = Array.from({ length: totalCount }, () => "pending");
 		for (const progress of details.progress ?? []) {
 			if (progress.index >= 0 && progress.index < totalCount) statuses[progress.index] = progress.status;
 		}
@@ -2941,11 +2941,11 @@ const asyncWidgetUpdates = new WeakMap<ExtensionContext["ui"], (jobs: AsyncJobSt
 const inlineWorkflowCoverage = new WeakMap<ExtensionContext["ui"], ReadonlyMap<string, string>>();
 const asyncWidgetInvalidations = new WeakMap<ExtensionContext["ui"], () => void>();
 
-function inlineWorkflowDescendantShape(children: AsyncJobState["nestedChildren"]): unknown {
-	return children?.map((child) => [child.id, child.agent, inlineWorkflowDescendantShape(child.children)]);
+function inlineWorkflowDescendantKey(children: AsyncJobState["nestedChildren"]): unknown {
+	return children?.map((child) => [child.id, child.agent, inlineWorkflowDescendantKey(child.children)]);
 }
 
-function inlineWorkflowRowShape(job: AsyncJobState): unknown[] {
+function inlineWorkflowRowKey(job: AsyncJobState): unknown[] {
 	return [
 		job.asyncId,
 		job.parentWorkflowRunId,
@@ -2962,9 +2962,9 @@ function inlineWorkflowRowShape(job: AsyncJobState): unknown[] {
 			step.agent,
 			step.status,
 			Boolean(step.runner),
-			inlineWorkflowDescendantShape(step.children),
+			inlineWorkflowDescendantKey(step.children),
 		]),
-		inlineWorkflowDescendantShape(job.nestedChildren),
+		inlineWorkflowDescendantKey(job.nestedChildren),
 		job.hostSteps?.map((row) => [row.id, row.monitorKind, row.label]),
 		Boolean(job.workflowGraph),
 	];
@@ -2972,7 +2972,7 @@ function inlineWorkflowRowShape(job: AsyncJobState): unknown[] {
 
 /** Structural identity of the workflow rows that Fleet can cover. */
 export function inlineWorkflowRenderKey(job: AsyncJobState, children: AsyncJobState[]): string {
-	return JSON.stringify([inlineWorkflowRowShape(job), children.map(inlineWorkflowRowShape)]);
+	return JSON.stringify([inlineWorkflowRowKey(job), children.map(inlineWorkflowRowKey)]);
 }
 
 /** Presentation-only coverage from the mounted inline Fleet roster, never configuration. */

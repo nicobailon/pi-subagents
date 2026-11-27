@@ -1092,7 +1092,7 @@ function reportEvidenceStatus(report: AcceptanceReport, kind: AcceptanceEvidence
 		case "no-staged-files": return report.noStagedFiles === true ? "passed" : "failed";
 		case "diff-summary": return typeof report.diffSummary === "string" && report.diffSummary.trim().length > 0 ? "passed" : "failed";
 		case "review-findings": return isStringArray(report.reviewFindings) ? "passed" : "failed";
-		case "manual-notes": return Boolean((report.manualNotes ?? report.notes)?.trim()) ? "passed" : "failed";
+		case "manual-notes": return (report.manualNotes ?? report.notes)?.trim() ? "passed" : "failed";
 	}
 }
 
@@ -1161,7 +1161,7 @@ function effectiveVerifyEnv(env: Record<string, string> | undefined): Record<str
 	const inherited = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => {
 		return typeof value === "string" ? [[key, value]] : [];
 	}));
-	return { ...inherited, ...(env ?? {}) };
+	return { ...inherited, ...env };
 }
 
 function verifyRedactionEnv(env: Record<string, string> | undefined): Record<string, string> {

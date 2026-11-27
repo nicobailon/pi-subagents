@@ -286,14 +286,13 @@ async function runWatchdogAttempt(ctx: ExtensionContext, request: WatchdogReview
 		return baseStreamFn(model, context, {
 			...streamOptions,
 			...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
-			env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
-			headers: { ...opencodeSessionHeaders(model, sessionId), ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
+			env: auth.env || streamOptions?.env ? { ...auth.env, ...streamOptions?.env } : undefined,
+			headers: { ...opencodeSessionHeaders(model, sessionId), ...streamOptions?.headers, ...auth.headers },
 		});
 	};
 	const diffBaseline = await options.diffBaseline?.();
 	let clarification: { question: string; evidence: string } | undefined;
 	let warned = false;
-	let toolCount = 0;
 	const warnRequest = request.allowClarification ? { ...request, emitWarning: (warning: WatchdogWarning) => {
 		if (clarification) return false;
 		const accepted = request.emitWarning(warning);
@@ -341,8 +340,6 @@ async function runWatchdogAttempt(ctx: ExtensionContext, request: WatchdogReview
 			: { block: true, reason: `Watchdog reviews are read-only; tool '${toolCall.name}' is not allowed.` },
 		toolExecution: "sequential",
 	});
-	// Include rejected/invalid calls as well as read-only work and findings.
-	agent.subscribe((event) => { if (event.type === "tool_execution_start") toolCount++; });
 	const abort = () => agent.abort();
 	ctx.signal?.addEventListener("abort", abort, { once: true });
 	request.signal?.addEventListener("abort", abort, { once: true });

@@ -99,8 +99,8 @@ export function createWatchdogPermissionArbiter(options: WatchdogPermissionArbit
 				const streamFn: StreamFn = (model, context, streamOptions) => baseStreamFn(model, context, {
 					...streamOptions,
 					...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
-					env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
-					headers: { ...opencodeSessionHeaders(model, sessionId), ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
+					env: auth.env || streamOptions?.env ? { ...auth.env, ...streamOptions?.env } : undefined,
+					headers: { ...opencodeSessionHeaders(model, sessionId), ...streamOptions?.headers, ...auth.headers },
 				});
 				const systemPrompt = [
 					"You are the pi-subagents watchdog permission arbiter.",

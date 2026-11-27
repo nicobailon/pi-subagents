@@ -6,7 +6,7 @@ import {
 	collectDynamicResults,
 	materializeDynamicParallelStep,
 	resolveJsonPointer,
-	validateDynamicStepShape,
+	validateDynamicStep,
 } from "../../src/runs/shared/dynamic-fanout.ts";
 import { validateDynamicCollection } from "../../src/runs/background/subagent-runner.ts";
 import type { ChainStep } from "../../src/shared/settings.ts";
@@ -132,12 +132,12 @@ describe("dynamic fanout helpers", () => {
 			parallel: { agent: "reviewer", task: "Review {item.path}", parentSessionId: "session-parent", requiredExtensions: [{ id: "provider", path: "/private/provider.mjs" }] },
 			collect: { as: "reviews" },
 		};
-		assert.doesNotThrow(() => validateDynamicStepShape(runnerStep, 1, { allowRunnerFields: true }));
+		assert.doesNotThrow(() => validateDynamicStep(runnerStep, 1, { allowRunnerFields: true }));
 		const materialized = materializeDynamicParallelStep(runnerStep, outputs, 1, { allowRunnerFields: true });
 		assert.ok(materialized.parallel[0] && "requiredExtensions" in materialized.parallel[0]);
 		assert.deepEqual(materialized.parallel[0].requiredExtensions, [{ id: "provider", path: "/private/provider.mjs" }]);
 		assert.throws(
-			() => validateDynamicStepShape(runnerStep, 1),
+			() => validateDynamicStep(runnerStep, 1),
 			(error: unknown) => error instanceof DynamicFanoutError && /parentSessionId/.test(error.message),
 		);
 	});
@@ -147,9 +147,9 @@ describe("dynamic fanout helpers", () => {
 			expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
 			parallel: { agent: "reviewer", task: "Review {item.path}", fast: true, toolBudget: { hard: 3 } },
 			collect: { as: "reviews" },
-		} as unknown as Parameters<typeof validateDynamicStepShape>[0];
+		} as unknown as Parameters<typeof validateDynamicStep>[0];
 
-		assert.doesNotThrow(() => validateDynamicStepShape(step, 1));
+		assert.doesNotThrow(() => validateDynamicStep(step, 1));
 		assert.deepEqual(materializeDynamicParallelStep(step, outputs, 1).parallel.map((item) => item.fast), [true, true]);
 	});
 

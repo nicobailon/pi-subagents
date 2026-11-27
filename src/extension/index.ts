@@ -586,7 +586,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 
 	for (const customType of SUBAGENT_MESSAGE_TYPES) pi.registerMessageRenderer(customType, renderSubagentMessage);
-	const registerEntryRenderer = (pi as unknown as {
+	const registerEntryRenderer = (pi as {
 		registerEntryRenderer?: (customType: string, renderer: (entry: { customType: string; data?: unknown }, options: { expanded: boolean }, theme: ExtensionContext["ui"]["theme"]) => Component | undefined) => void;
 	}).registerEntryRenderer;
 	if (typeof registerEntryRenderer === "function") {

@@ -341,7 +341,7 @@ export function projectWorkflowChecklist(input: WorkflowChecklistInput): Workflo
 	const usedSteps = new Set<number>();
 	const hostById = new Map((input.hostSteps ?? []).map((host) => [host.id, host]));
 	const graphKeys = new Set(nodes.map((node) => node.id));
-	const stepKeys = new Set([...stepsByKey.keys()]);
+	const stepKeys = new Set(stepsByKey.keys());
 	const hostKeys = new Set(hostById.keys());
 
 	for (const node of nodes) {
