@@ -14,7 +14,7 @@ Set `preferHerdrPlacement` in `~/.pi/agent/extensions/subagent/config.json` to m
 }
 ```
 
-This is a soft preference. An explicit `machine` still wins, and a child stays in the normal local runner when placement cannot preserve its requested capabilities, including a foreground session, runtime-registered agent, managed worktree, forked or nested context, external runner, launcher, extensions, permission or tool budget, MCP tools, structured output, or fast service tier. Foreground children remain unplaced because they intentionally omit ambient extensions while a placed Pi process loads them. Outside Herdr the setting changes nothing. See [running a Pi child on this machine](agents.md#running-a-pi-child-on-this-machine-herdr-core-rex-or-legacy-herdr).
+This is a soft preference. An explicit `machine` still wins, and a child stays in the normal local runner when placement cannot preserve its requested capabilities, including a foreground session, runtime-registered or user-only agent definition, private skill path, managed worktree, forked or nested context, external runner, launcher, extensions, permission or tool budget, MCP tools, structured output, or fast service tier. Foreground children remain unplaced because they intentionally omit ambient extensions while a placed Pi process loads them. Outside Herdr the setting changes nothing. See [running a Pi child on this machine](agents.md#running-a-pi-child-on-this-machine-herdr-core-rex-or-legacy-herdr).
 
 ## Project root resolution (settings)
 

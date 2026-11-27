@@ -46,6 +46,7 @@ describe("Herdr Core local placement", { skip: process.platform === "win32" }, (
 		assert.equal(supportsPreferredHerdrAgent({ source: "builtin" }), true);
 		const incompatible = [
 			{ source: "runtime" as const },
+			{ source: "user" as const },
 			{ source: "builtin" as const, runner: { type: "external-cli" as const, command: "codex" } },
 			{ source: "builtin" as const, outputSchema: { type: "object" as const } },
 			{ source: "builtin" as const, toolBudget: { maxCalls: 1 } },
@@ -55,6 +56,7 @@ describe("Herdr Core local placement", { skip: process.platform === "win32" }, (
 			{ source: "builtin" as const, subagentOnlyExtensions: ["extension.ts"] },
 			{ source: "builtin" as const, tools: ["subagent", "read"] },
 			{ source: "builtin" as const, tools: ["./extension.ts"] },
+			{ source: "builtin" as const, skillPath: ["./private-skills"] },
 			{ source: "builtin" as const, excludeTools: ["bash"] },
 			{ source: "builtin" as const, mcpDirectTools: ["mcp__docs__read"] },
 			{ source: "builtin" as const, allowNestedSubagents: true },

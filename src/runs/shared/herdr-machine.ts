@@ -62,11 +62,11 @@ export interface ResolveHerdrMachinePlacementInput {
 export interface HerdrMachinePlacement extends MachinePlacement { machine: HerdrMachineReference }
 
 /** Agent-definition capabilities that the pane-native Pi transport cannot preserve. */
-export function supportsPreferredHerdrAgent(agent: Pick<AgentConfig, "source" | "runner" | "tools" | "outputSchema" | "toolBudget" | "permissions" | "extensions" | "subagentOnlyExtensions" | "excludeTools" | "mcpDirectTools" | "allowNestedSubagents" | "allowedAgents" | "launcher">): boolean {
-	return agent.source !== "runtime" && (agent.runner === undefined || agent.runner.type === "pi")
+export function supportsPreferredHerdrAgent(agent: Pick<AgentConfig, "source" | "runner" | "tools" | "skillPath" | "outputSchema" | "toolBudget" | "permissions" | "extensions" | "subagentOnlyExtensions" | "excludeTools" | "mcpDirectTools" | "allowNestedSubagents" | "allowedAgents" | "launcher">): boolean {
+	return agent.source !== "runtime" && agent.source !== "user" && (agent.runner === undefined || agent.runner.type === "pi")
 		&& agent.outputSchema === undefined && agent.toolBudget === undefined && agent.permissions === undefined
 		&& agent.extensions === undefined && !agent.subagentOnlyExtensions?.length && !agent.excludeTools?.length && !agent.mcpDirectTools?.length
-		&& !agent.tools?.includes("subagent") && !agent.tools?.some(isToolExtensionPath)
+		&& !agent.tools?.includes("subagent") && !agent.tools?.some(isToolExtensionPath) && !agent.skillPath?.length
 		&& !agent.allowNestedSubagents && !agent.allowedAgents?.length && !agent.launcher;
 }
 
