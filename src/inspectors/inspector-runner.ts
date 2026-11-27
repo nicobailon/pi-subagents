@@ -117,23 +117,24 @@ export function submitInspectorControl(options: RunnerOptions, line: string): st
 	return queueInspectorSteer(options, status, command);
 }
 
-export function runInspector(argv = process.argv.slice(2)): void {
+export function runInspector(argv = process.argv.slice(2), io: { input: NodeJS.ReadableStream; output: NodeJS.WritableStream } = { input: process.stdin, output: process.stdout }): void {
 	const options = parseArgs(argv);
 	let notice = "";
 	let timer: ReturnType<typeof setInterval> | undefined;
 	const render = () => {
 		const status = readStatus(options.asyncDir);
 		if (!status || status.runId !== options.runId) {
-			process.stdout.write(`\x1b[2J\x1b[Hpi-subagents inspector\n\nLifecycle status for ${options.runId} is unavailable.\n`);
+			io.output.write(`\x1b[2J\x1b[Hpi-subagents inspector\n\nLifecycle status for ${options.runId} is unavailable.\n`);
 			return;
 		}
-		process.stdout.write(`\x1b[2J\x1b[H${formatInspectorDashboard({ status, asyncDir: options.asyncDir, index: options.index, mission: readMission(options.missionPath), allowSteer: options.allowSteer, allowStop: options.allowStop, sessionRoots: options.sessionRoots })}${notice ? `\n\n${notice}` : ""}\n> `);
+		io.output.write(`\x1b[2J\x1b[H${formatInspectorDashboard({ status, asyncDir: options.asyncDir, index: options.index, mission: readMission(options.missionPath), allowSteer: options.allowSteer, allowStop: options.allowStop, sessionRoots: options.sessionRoots })}${notice ? `\n\n${notice}` : ""}\n${"\n".repeat(rl.getCursorPos().rows)}`);
+		rl.prompt(true);
 		if (isTerminal(status) && timer) {
 			clearInterval(timer);
 			timer = undefined;
 		}
 	};
-	const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
+	const rl = readline.createInterface({ input: io.input, output: io.output, prompt: "> " });
 	rl.on("line", (line) => {
 		try { notice = submitInspectorControl(options, line); } catch (cause) { notice = `Control error: ${cause instanceof Error ? cause.message : String(cause)}`; }
 		render();

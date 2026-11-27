@@ -9,7 +9,7 @@ import { readHerdrInspectorBinding } from "../../src/inspectors/herdr/actions.ts
 import { handleInspectorAction } from "../../src/inspectors/actions.ts";
 import { createHerdrInspectorPlugin } from "../../src/inspectors/herdr/plugin.ts";
 import { createHerdrClient, detectHerdr, parseHerdrVersion, supportsRawPanes, type HerdrClient } from "../../src/inspectors/herdr/client.ts";
-import { formatInspectorDashboard, submitInspectorControl } from "../../src/inspectors/inspector-runner.ts";
+import { formatInspectorDashboard, runInspector, submitInspectorControl } from "../../src/inspectors/inspector-runner.ts";
 import { createProjectPaneManager, handleHerdrProjectPaneAction, listHerdrProjectPaneRoots, readHerdrProjectPaneBinding, restoreHerdrProjectPaneSnapshots } from "../../src/inspectors/herdr/project-panes.ts";
 import { decodeSessionRoots } from "../../src/inspectors/session-roots-codec.ts";
 import { consumeSteerRequests, consumeStopRequest } from "../../src/runs/background/control-channel.ts";
@@ -383,6 +383,35 @@ describe("Herdr inspector", () => {
 			assert.throws(() => submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500, allowSteer: false }, "steer bypass"), /Authority policy/);
 			assert.throws(() => submitInspectorControl({ asyncDir, runId: "run-123", refreshMs: 1_500, allowStop: false }, "stop"), /Authority policy/);
 		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a partly typed control line on screen when the dashboard refreshes", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-herdr-typed-line-"));
+		const input = new PassThrough();
+		const output = Object.assign(new PassThrough(), { isTTY: true, columns: 80 });
+		let screen = "";
+		output.on("data", (chunk: Buffer) => { screen += chunk.toString(); });
+		const nextRedraw = () => new Promise<void>((resolve) => {
+			const onData = (chunk: Buffer) => {
+				if (!chunk.toString().includes("\x1b[2J")) return;
+				output.off("data", onData);
+				setImmediate(resolve);
+			};
+			output.on("data", onData);
+		});
+		try {
+			const { asyncDir, status } = writeRun(root);
+			runInspector(["--async-dir", asyncDir, "--run-id", "run-123", "--refresh-ms", "250"], { input, output });
+			input.write("steer keep going");
+			await nextRedraw();
+			assert.match(screen.slice(screen.lastIndexOf("\x1b[2J")), /> steer keep going/);
+
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({ ...status, state: "complete" }), "utf-8");
+			await nextRedraw();
+		} finally {
+			input.end();
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
