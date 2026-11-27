@@ -135,7 +135,6 @@ export function runInspector(argv = process.argv.slice(2), io: { input: NodeJS.R
 		}
 	};
 	const rl = readline.createInterface({ input: io.input, output: io.output, prompt: "> " });
-	rl.on("SIGINT", () => rl.close());
 	rl.on("line", (line) => {
 		try { notice = submitInspectorControl(options, line); } catch (cause) { notice = `Control error: ${cause instanceof Error ? cause.message : String(cause)}`; }
 		render();
