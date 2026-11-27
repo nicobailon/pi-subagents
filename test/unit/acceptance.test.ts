@@ -313,14 +313,27 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("preserves inline backticks in fenced acceptance evidence", () => {
+		const commandsRun = [{ command: "grep -c '^```mermaid' notes.md", result: "passed", summary: "counted diagrams" }];
+		for (const tag of ["acceptance-report", "json"]) {
+			const output = report({ commandsRun }, tag).replaceAll("\n", "\r\n");
+			const parsed = parseAcceptanceReport(output);
+			assert.deepEqual(parsed.report?.commandsRun, commandsRun, parsed.error);
+			assert.equal(stripAcceptanceReport(output), "done");
+		}
+	});
+
 	it("recovers a valid report from an unterminated explicit fence only", () => {
-		const recovered = parseAcceptanceReport(`done\n\`\`\`acceptance-report\n${JSON.stringify(reportData())}`);
-		assert.deepEqual(recovered.report?.changedFiles, ["src/file.ts"]);
+		const notes = "Counted ```mermaid blocks";
+		const body = JSON.stringify(reportData({ notes }));
+		const recovered = parseAcceptanceReport(`done\n\`\`\`acceptance-report\n${body}`);
+		assert.equal(recovered.report?.notes, notes);
 		assert.equal(recovered.error, undefined);
+		assert.equal(parseAcceptanceReport(`\`\`\`json\n${body}`).report, undefined);
 
 		for (const invalid of [
 			"```acceptance-report\n{ not json",
-			`\`\`\`acceptance-report\n${JSON.stringify(reportData())}\ntrailing prose`,
+			`\`\`\`acceptance-report\n${body}\ntrailing prose`,
 			`\`\`\`acceptance-report\n${JSON.stringify({ changedFiles: false })}`,
 		]) {
 			const parsed = parseAcceptanceReport(invalid);
@@ -349,12 +362,10 @@ describe("acceptance gates", () => {
 			"```",
 			"done",
 			"```json",
-			JSON.stringify(reportData()),
-			"```",
+			JSON.stringify(reportData({ notes: "The text contains ```acceptance-report, not another fence" })),
+			"  ```  ",
 		].join("\n");
-		const parsed = parseAcceptanceReport(output);
-
-		assert.ok(parsed.report);
+		assert.ok(parseAcceptanceReport(output).report);
 		assert.equal(stripAcceptanceReport(output), [
 			"metadata",
 			"```json",
@@ -362,6 +373,11 @@ describe("acceptance gates", () => {
 			"```",
 			"done",
 		].join("\n"));
+	});
+
+	it("keeps unrelated output following a closed report", () => {
+		const output = [report(), "Example to keep:", "```json", '{"example":"```mermaid"}', "```"].join("\n");
+		assert.equal(stripAcceptanceReport(output), output);
 	});
 
 	it("unwraps every accepted report wrapper", () => {
