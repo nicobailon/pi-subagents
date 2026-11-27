@@ -1526,6 +1526,7 @@ function appendStepToAsyncChain(input: {
 		validateOutputBindings: false,
 		capabilityCeiling: intersectSubagentCapabilityCeilings(status.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(asyncCtx.parentSessionId)),
 		requiredExtensions: retainedRequiredExtensions,
+		preferHerdrPlacement: input.deps.config.preferHerdrPlacement,
 	}));
 	if ("error" in built) {
 		return {
@@ -2246,6 +2247,7 @@ async function resumeAsyncRun(input: {
 			chain,
 			task: workflowTask,
 			goal,
+			preferHerdrPlacement: input.deps.config.preferHerdrPlacement,
 			attachRoot: {
 				runId: target.runId,
 				asyncDir: target.asyncDir ?? path.join(DIRS.async, target.runId),
@@ -3753,6 +3755,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			cwd: effectiveCwd,
 			requestedCwd: data.requestedCwd,
 			machine: params.machine,
+			preferHerdrPlacement: deps.config.preferHerdrPlacement,
 			machineCwd: params.machineCwd,
 			requireLauncher: params.requireLauncher,
 			maxOutput: params.maxOutput,
@@ -4260,8 +4263,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		};
 	}
 	let foregroundMachine: import("../../shared/types.ts").PlacementMachineReference | undefined;
-	const requestedMachine = params.machine ?? agentConfig.machine;
 	const requiredExtensions = data.requiredExtensions ?? deps.childRuntime?.requiredExtensions ?? resolveRequiredChildExtensions(data.parentPiSessionId);
+	// Foreground children intentionally do not load ambient extensions, while a placed Pi process does.
+	// Keep the soft preference on background launches until placement can preserve that tool/hook surface.
+	const requestedMachine = params.machine ?? agentConfig.machine;
 	if (requestedMachine) {
 		try {
 			assertRequiredChildExtensionsAdmitted([requiredExtensions], { agent: agentConfig.name, runnerType: agentConfig.runner?.type, machine: requestedMachine });

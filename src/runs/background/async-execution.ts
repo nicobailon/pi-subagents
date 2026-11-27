@@ -12,7 +12,7 @@ import { childCacheRetentionEnv } from "../../shared/child-cache-retention.ts";
 import { buildEffectiveSystemPrompt } from "../shared/effective-system-prompt.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, projectChainOutputSchemas, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
-import { formatHerdrMachineRunnerUnsupported, PLACED_RESTORE_UNSUPPORTED, resolveMachinePlacement } from "../shared/herdr-machine.ts";
+import { formatHerdrMachineRunnerUnsupported, PLACED_RESTORE_UNSUPPORTED, resolveMachinePlacement, resolvePreferredHerdrMachine, supportsPreferredHerdrAgent } from "../shared/herdr-machine.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
 import { assertClaudeCodeModelScope, isClaudeCodeAdapterId, resolveClaudeCodeOverride, type ClaudeCodeOverride } from "../shared/claude-code-adapter.ts";
 import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
@@ -223,6 +223,7 @@ interface AsyncChainParams {
 	cwd?: string;
 	maxOutput?: MaxOutputConfig;
 	machine?: string;
+	preferHerdrPlacement?: boolean;
 	/** Launch cwd as typed when a machine is set: a path on that machine, never resolved locally. */
 	machineCwd?: string;
 	artifactsDir?: string;
@@ -287,6 +288,7 @@ interface AsyncSingleParams {
 	cwd?: string;
 	requestedCwd?: string;
 	machine?: string;
+	preferHerdrPlacement?: boolean;
 	/** Launch cwd as typed when a machine is set: a path on that machine, never resolved locally. */
 	machineCwd?: string;
 	/** The launcher and agent definition digest the call requires; checked here, on what this launch spawns. */
@@ -382,6 +384,7 @@ export interface AsyncRunnerStepBuildParams {
 	availableModels?: AvailableModelInfo[];
 	cwd?: string;
 	machine?: string;
+	preferHerdrPlacement?: boolean;
 	machineCwd?: string;
 	chainSkills?: string[];
 	sessionFilesByFlatIndex?: (string | undefined)[];
@@ -1105,14 +1108,25 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number, parallelOutputNamespace?: { stepIndex: number; taskIndex?: number }, runFanoutPath?: string) => {
 		const a = agents.find((x) => x.name === s.agent)!;
 		const effectiveBehavior = resolvedBehavior ?? suppressProgressForReadOnlyTask(resolveStepBehavior(a, buildStepOverrides(s), chainSkills), s.task, originalTask);
-		const requestedMachine = s.machine ?? launchMachine ?? a.machine;
 		const externalRunner = a.runner?.type === "external-cli" || a.runner?.type === "external-job";
 		const externalRunnerType = a.runner?.type;
+		const registeredExtensions = resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
+		const configuredMachine = s.machine ?? launchMachine ?? a.machine;
+		const requestedMachine = resolvePreferredHerdrMachine({
+			requested: configuredMachine,
+			enabled: params.preferHerdrPlacement,
+			compatible: () => supportsPreferredHerdrAgent(a)
+				&& s.worktree !== true && params.contextForAgent?.(a.name) !== "fork"
+				&& effectiveBehavior.outputSchema === undefined
+				&& s.toolBudget === undefined && params.toolBudget === undefined && params.configToolBudget === undefined
+				&& !ctx.permissions
+				&& !(params.requiredExtensions?.length || ctx.childRuntime?.requiredExtensions?.length || registeredExtensions.length)
+				&& !ctx.childRuntime && (s.fast ?? params.fast ?? a.fast) !== true,
+		});
 		const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: a.name, runnerType: a.runner?.type, adapter: a.runner?.type === "external-cli" ? a.runner.adapter : undefined, worktree: s.worktree });
 		if (machineUnsupported) throw new AsyncStartValidationError(machineUnsupported);
 		const launcherError = runnerLauncherPlacementError(a, requestedMachine);
 		if (launcherError) throw new AsyncStartValidationError(launcherError);
-		const registeredExtensions = resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
 		try {
 			assertRequiredChildExtensionsAdmitted([params.requiredExtensions, ctx.childRuntime?.requiredExtensions, registeredExtensions], { agent: a.name, runnerType: a.runner?.type, machine: requestedMachine });
 		} catch (error) {
@@ -1126,7 +1140,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				machine = placement.machine;
 				machineEnv = placement.env;
 			} catch (error) {
-				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+				if (configuredMachine !== undefined) throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+				// A soft preference must not turn stale or incomplete Herdr state into a failed normal launch.
 			}
 		}
 		// A code-owned Claude Code adapter owns its argv, but it does accept an explicit
@@ -1571,6 +1586,7 @@ export function executeAsyncChain(
 		cwd,
 		chainSkills: params.chainSkills,
 		machine: params.machine,
+		preferHerdrPlacement: params.preferHerdrPlacement,
 		machineCwd: params.machineCwd,
 		sessionFilesByFlatIndex,
 		thinkingOverridesByFlatIndex,
@@ -1928,7 +1944,19 @@ export function executeAsyncSingle(
 		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 	}
 	const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
-	const requestedMachine = params.machine ?? agentConfig.machine;
+	const registeredExtensions = resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
+	const configuredMachine = params.machine ?? agentConfig.machine;
+	const requestedMachine = resolvePreferredHerdrMachine({
+		requested: configuredMachine,
+		enabled: params.preferHerdrPlacement,
+		compatible: () => supportsPreferredHerdrAgent(agentConfig)
+			&& params.worktree !== true && !params.revivalLease && params.context !== "fork"
+			&& params.structuredOutputSchema === undefined
+			&& params.toolBudget === undefined && params.configToolBudget === undefined
+			&& !permissionRules && extensionBindings === undefined && !params.requireLauncher
+			&& !(params.requiredExtensions?.length || ctx.childRuntime?.requiredExtensions?.length || registeredExtensions.length)
+			&& !ctx.childRuntime && (params.fast ?? agentConfig.fast) !== true,
+	});
 	const machineUnsupported = formatHerdrMachineRunnerUnsupported({ machine: requestedMachine, agentName: agentConfig.name, runnerType: agentConfig.runner?.type, adapter: agentConfig.runner?.type === "external-cli" ? agentConfig.runner.adapter : undefined, worktree: params.worktree });
 	if (machineUnsupported) return formatAsyncStartError("single", machineUnsupported);
 	// Refuse before the runner starts; the placed launch would refuse only after the run exists.
@@ -1942,7 +1970,6 @@ export function executeAsyncSingle(
 		// The launch records the digest it checked, not a second hash of an agent file that may have changed since.
 		agentConfig = { ...agentConfig, definitionDigest: required.definitionDigest };
 	}
-	const registeredExtensions = resolveRequiredChildExtensions(ctx.parentSessionId ?? ctx.currentSessionId ?? undefined);
 	try {
 		assertRequiredChildExtensionsAdmitted([params.requiredExtensions, ctx.childRuntime?.requiredExtensions, registeredExtensions], { agent: agentConfig.name, runnerType: agentConfig.runner?.type, machine: requestedMachine });
 	} catch (error) {
@@ -1956,7 +1983,8 @@ export function executeAsyncSingle(
 			machine = placement.machine;
 			machineEnv = placement.env;
 		} catch (error) {
-			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+			if (configuredMachine !== undefined) return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+			// A soft preference must not turn stale or incomplete Herdr state into a failed normal launch.
 		}
 	}
 	let managedWorktreeProvider: "native" | "worktrunk" | undefined;

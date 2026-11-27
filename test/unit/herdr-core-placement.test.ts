@@ -6,7 +6,7 @@ import * as net from "node:net";
 import { describe, it } from "node:test";
 import { HerdrCorePlacedRunOwner, herdrCoreHost, reconcileHerdrCoreRun, type HerdrCoreConnection } from "../../src/runs/shared/herdr-core-host.ts";
 import { SocketRpcClient } from "../../src/runs/shared/herdr-connection.ts";
-import { resolveMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
+import { resolveMachinePlacement, resolvePreferredHerdrMachine, supportsPreferredHerdrAgent } from "../../src/runs/shared/herdr-machine.ts";
 import type { HerdrRunIdentity } from "../../src/runs/shared/herdr-placed-run.ts";
 import type { HerdrCoreLocalMachineReference } from "../../src/shared/types.ts";
 
@@ -28,6 +28,39 @@ function connection(calls: Array<{ method: string; params: Record<string, unknow
 const identity: HerdrRunIdentity = { runId: "run", machineId: "local", target: "t1", session: null, workspaceId: "t2", tabId: "t2", paneId: "t2", terminalId: "t2", agentName: "pi-run", nativeSessionId: "native", cwd: "/repo", runtimeDir: "/tmp/run" };
 
 describe("Herdr Core local placement", { skip: process.platform === "win32" }, () => {
+	it("prefers local Herdr placement only for compatible unplaced children", () => {
+		const env = { HC_TERMINAL_ID: "t1", HC_TERMINAL_SOCKET: "/tmp/core.sock" };
+		assert.equal(resolvePreferredHerdrMachine({ requested: undefined, enabled: true, compatible: () => true, env }), "local");
+		assert.equal(resolvePreferredHerdrMachine({ requested: undefined, enabled: true, compatible: () => false, env }), undefined);
+		let compatibilityChecks = 0;
+		const compatible = () => { compatibilityChecks++; return true; };
+		assert.equal(resolvePreferredHerdrMachine({ requested: "workmac", enabled: true, compatible, env }), "workmac");
+		assert.equal(resolvePreferredHerdrMachine({ requested: undefined, enabled: false, compatible, env }), undefined);
+		assert.equal(resolvePreferredHerdrMachine({ requested: undefined, enabled: true, compatible, env: {} }), undefined);
+		assert.equal(resolvePreferredHerdrMachine({ requested: undefined, enabled: true, compatible, env: { HC_TERMINAL_ID: "t1" } }), undefined);
+		assert.equal(resolvePreferredHerdrMachine({ requested: undefined, enabled: true, compatible, env: { HC_TERMINAL_ID: "t1", HC_TERMINAL_SOCKET: "relative.sock" } }), undefined);
+		assert.equal(compatibilityChecks, 0, "non-preferred paths do not evaluate compatibility");
+	});
+
+	it("rejects every unsupported agent-level capability from preferred placement", () => {
+		assert.equal(supportsPreferredHerdrAgent({ source: "builtin" }), true);
+		const incompatible = [
+			{ source: "runtime" as const },
+			{ source: "builtin" as const, runner: { type: "external-cli" as const, command: "codex" } },
+			{ source: "builtin" as const, outputSchema: { type: "object" as const } },
+			{ source: "builtin" as const, toolBudget: { maxCalls: 1 } },
+			{ source: "builtin" as const, permissions: {} },
+			{ source: "builtin" as const, extensions: ["extension.ts"] },
+			{ source: "builtin" as const, subagentOnlyExtensions: ["extension.ts"] },
+			{ source: "builtin" as const, excludeTools: ["bash"] },
+			{ source: "builtin" as const, mcpDirectTools: ["mcp__docs__read"] },
+			{ source: "builtin" as const, allowNestedSubagents: true },
+			{ source: "builtin" as const, allowedAgents: ["worker"] },
+			{ source: "builtin" as const, launcher: "sandbox" },
+		];
+		for (const agent of incompatible) assert.equal(supportsPreferredHerdrAgent(agent as Parameters<typeof supportsPreferredHerdrAgent>[0]), false);
+	});
+
 	it("prefers a confirmed live HC parent over an inherited Rex session", () => {
 		const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hc-placement-")));
 		const hc = path.join(dir, "hc");

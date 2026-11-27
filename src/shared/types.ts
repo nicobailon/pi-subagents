@@ -2783,6 +2783,8 @@ export interface ActiveAsyncCapacityConfig {
 
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
+	/** Prefer machine:"local" for compatible native Pi children when the parent runs in Herdr. */
+	preferHerdrPlacement?: boolean;
 	/** Relaunch this session's interrupted async workflows when the session is reopened or reloaded (default true). */
 	autoResume?: boolean;
 	/** Set the context for launches that omit an explicit context. */

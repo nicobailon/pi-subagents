@@ -4,6 +4,18 @@
 
 Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `defaultSubagentOnlyExtensions`, `defaultInheritGlobalContext`, `agentOverrides`, `machines`, `agentScanDirs`, `agentExcludeDirs`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, `allow: ["inherit"]` permits the current parent model, and `allow: ["scoped"]` permits the parent session's scoped models (the parent model when the session is unscoped). See [models.md](models.md), [agents.md](agents.md), and [watchdog.md](watchdog.md).
 
+## Prefer compatible background children in Herdr
+
+Set `preferHerdrPlacement` in `~/.pi/agent/extensions/subagent/config.json` to make a compatible unplaced background Pi child use `machine: "local"` automatically when its parent runs in Herdr:
+
+```json
+{
+  "preferHerdrPlacement": true
+}
+```
+
+This is a soft preference. An explicit `machine` still wins, and a child stays in the normal local runner when placement cannot preserve its requested capabilities, including a foreground session, runtime-registered agent, managed worktree, forked or nested context, external runner, launcher, extensions, permission or tool budget, MCP tools, structured output, or fast service tier. Foreground children remain unplaced because they intentionally omit ambient extensions while a placed Pi process loads them. Outside Herdr the setting changes nothing. See [running a Pi child on this machine](agents.md#running-a-pi-child-on-this-machine-herdr-core-rex-or-legacy-herdr).
+
 ## Project root resolution (settings)
 
 By default, project settings resolve from the nearest parent directory that contains `.pi` or `.agents`, preserving existing nested-project behavior. Discovery stops at the user home directory, including when the home is reached through a filesystem alias such as a symlink or Windows junction, so home-level `.pi` and `.agents` remain user configuration rather than project configuration. In monorepos or git worktrees where an incidental nested `.pi` directory should not shadow the repository-level config, set this in the repository root `.pi/settings.json`:

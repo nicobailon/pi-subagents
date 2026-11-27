@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { AgentConfig } from "../../agents/agents.ts";
 import type { ExternalProcessStatus, HerdrCoreLocalMachineReference, HerdrLocalMachineReference, HerdrMachineReference, PlacementMachineReference } from "../../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_IDS } from "./external-cli-contract.ts";
@@ -58,6 +59,26 @@ export interface ResolveHerdrMachinePlacementInput {
 }
 
 export interface HerdrMachinePlacement extends MachinePlacement { machine: HerdrMachineReference }
+
+/** Agent-definition capabilities that the pane-native Pi transport cannot preserve. */
+export function supportsPreferredHerdrAgent(agent: Pick<AgentConfig, "source" | "runner" | "outputSchema" | "toolBudget" | "permissions" | "extensions" | "subagentOnlyExtensions" | "excludeTools" | "mcpDirectTools" | "allowNestedSubagents" | "allowedAgents" | "launcher">): boolean {
+	return agent.source !== "runtime" && (agent.runner === undefined || agent.runner.type === "pi")
+		&& agent.outputSchema === undefined && agent.toolBudget === undefined && agent.permissions === undefined
+		&& !agent.extensions?.length && !agent.subagentOnlyExtensions?.length && !agent.excludeTools?.length && !agent.mcpDirectTools?.length
+		&& !agent.allowNestedSubagents && !agent.allowedAgents?.length && !agent.launcher;
+}
+
+/** Applies the operator's soft Herdr preference without overriding an explicit machine or evaluating incompatible-run policy off the Herdr path. */
+export function resolvePreferredHerdrMachine(input: { requested?: string; enabled?: boolean; compatible(): boolean; env?: NodeJS.ProcessEnv }): string | undefined {
+	if (input.requested !== undefined) return input.requested;
+	if (!input.enabled) return undefined;
+	const env = input.env ?? process.env;
+	const coreSocket = env.HC_TERMINAL_SOCKET?.trim();
+	const inCore = Boolean(env.HC_TERMINAL_ID?.trim() && coreSocket && path.isAbsolute(coreSocket));
+	const inLegacyHerdr = env.HERDR_ENV === "1" && Boolean(env.HERDR_PANE_ID?.trim());
+	if (!inCore && !inLegacyHerdr) return undefined;
+	return input.compatible() ? REX_LOCAL_MACHINE : undefined;
+}
 
 /** A resolved `machine` value: a Herdr saved machine, a Rex SSH host, or the reserved `local` (a child of the Herdr, Herdr Core or Rex terminal this Pi runs in). */
 export interface MachinePlacement {
