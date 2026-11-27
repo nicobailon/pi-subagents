@@ -33,7 +33,6 @@ import registerSubagentPromptRuntime, {
 	stripInheritedSkills,
 	stripParentOnlySubagentMessages,
 	stripProjectContext,
-	stripSubagentOrchestrationSkill,
 } from "../../src/runs/shared/subagent-prompt-runtime.ts";
 
 function childConfig(overrides: Partial<ChildRuntimeConfig> = {}): ChildRuntimeConfig {
@@ -291,7 +290,7 @@ const watchdogConfig: ChildWatchdogConfig = {
 	cadence: { everyNTools: null },
 } as ChildWatchdogConfig;
 
-const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
+const SKILLS_SECTION = "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n</available_skills>";
 
 const BASE_PROMPT = [
 	"You are a subagent.",
@@ -881,26 +880,6 @@ describe("subagent prompt runtime", () => {
 		assert.ok(!rewritten.includes("# Project Context"));
 	});
 
-	it("strips the subagent orchestration skill even when inherited skills remain", () => {
-		const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
-			inheritProjectContext: true,
-			inheritGlobalContext: true,
-			inheritSkills: true,
-		});
-
-		assert.ok(rewritten.includes("<name>safe-bash</name>"));
-		assert.ok(!rewritten.includes("<name>pi-subagents</name>"));
-		assert.ok(!rewritten.includes("delegate to subagents"));
-	});
-
-	it("strips explicit pi-subagents skill injection from child prompts", () => {
-		const prompt = "Before\n\n<skill name=\"pi-subagents\">\nDo not keep this.\n</skill>\n\n<skill name=\"safe-bash\">\nKeep this.\n</skill>\nAfter";
-		const rewritten = stripSubagentOrchestrationSkill(prompt);
-
-		assert.ok(!rewritten.includes("Do not keep this"));
-		assert.ok(rewritten.includes("<skill name=\"safe-bash\">"));
-	});
-
 	it("strips parent-only subagent custom messages from a child's context outside inherited fork history", () => {
 		const user = { role: "user", content: "Task" };
 		const instruction = { role: "custom", customType: "subagent-orchestration-instructions", content: "Subagent orchestration is enabled." };
@@ -1205,10 +1184,10 @@ describe("subagent prompt runtime", () => {
 			getAllTools: () => [],
 		} as never, childConfig({ inheritProjectContext: true, inheritGlobalContext: false, inheritSkills: true }));
 		const options = {
-			customPrompt: `Role.\n\n<skill name="pi-subagents">\nOrchestrate.\n</skill>\n\n${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}`,
+			customPrompt: `Role.\n\n${CHILD_FANOUT_BOUNDARY_INSTRUCTIONS}`,
 			appendSystemPrompt: `Extra.\n\n${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}`,
 			contextFiles: [{ path: path.join(getAgentDir(), "AGENTS.md"), content: "Global" }, { path: "/repo/AGENTS.md", content: "Repo" }],
-			skills: [{ name: "pi-subagents" }, { name: "safe-bash" }],
+			skills: [{ name: "safe-bash" }],
 			sections: {},
 		};
 
