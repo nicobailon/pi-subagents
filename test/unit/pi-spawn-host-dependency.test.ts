@@ -75,7 +75,7 @@ function writePeers(pi: string): void {
 }
 
 let launchId = 0;
-async function captureBackground(t: TestContext, tmp: string) {
+async function captureBackground(t: TestContext, tmp: string, afterImport?: () => void) {
 	const spawn = t.mock.method(childProcess, "spawn", () => { throw new Error("spawn boundary captured"); });
 	syncBuiltinESMExports();
 	try {
@@ -83,6 +83,7 @@ async function captureBackground(t: TestContext, tmp: string) {
 		const modulePromise = import(`../../src/runs/background/async-execution.ts?host-dependency=${++launchId}`);
 		await assert.doesNotReject(modulePromise, "background module import must not require a working SDK");
 		const { executeAsyncSingle } = await modulePromise;
+		afterImport?.();
 		const result = await executeAsyncSingle(`host-dependency-${launchId}`, {
 			agent: "worker", task: "Check discovery", agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tmp, currentSessionId: "host-dependency" },
@@ -241,6 +242,22 @@ test("selected host SDK missing entry, blocked export and import errors never lo
 	await assert.rejects(loadHostPiCodingAgent(), /missing-host-sdk-dependency/);
 	fs.unlinkSync(path.join(pi, "cli.mjs"));
 	assert.throws(() => getPiSpawnCommand([], { platform: "linux" }), /no runnable CLI script/);
+});
+
+test("a host root removed after load is reported as gone, not as missing its peers", async (t) => {
+	const { tmp, pi } = fixture(t);
+	const override = path.join(tmp, "override");
+	for (const [root, fix] of [[pi, /; restart Pi\.$/], [override, new RegExp(`; ${PI_CODING_AGENT_PACKAGE_ROOT_ENV} names it;`)]] as const) {
+		writePackage(root);
+		writePeers(root);
+		if (root === override) process.env[PI_CODING_AGENT_PACKAGE_ROOT_ENV] = override;
+		const { result, calls } = await captureBackground(t, tmp, () => fs.rmSync(root, { recursive: true }));
+		assert.equal(calls.length, 0);
+		const text = result.content[0]!.text;
+		assert.ok(text.includes(`its directory ${root} no longer exists`), text);
+		assert.match(text, fix);
+		assert.doesNotMatch(text, /does not provide/);
+	}
 });
 
 test("missing host argv falls back to the extension install, and blank override does not mask the host", (t) => {
