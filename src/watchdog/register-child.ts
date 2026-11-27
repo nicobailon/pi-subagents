@@ -94,7 +94,7 @@ export function registerChildWatchdog(
 	const rememberContext = (ctx: ExtensionContext) => {
 		currentContext = ctx;
 	};
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => void;
+	const onRuntimeEvent = pi.on as (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => void;
 	onRuntimeEvent("session_start", (_event, ctx) => {
 		rememberContext(ctx);
 		diffBaseline = startWatchdogDiffBaselineCapture(ctx.cwd);

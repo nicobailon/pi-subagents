@@ -1552,7 +1552,7 @@ function applyBuiltinOverride(
 		...meta,
 		base: agent.override?.base ?? cloneOverrideBase(agent),
 		fields: [...new Set([...(agent.override?.fields ?? []), ...Object.keys(override)])].sort(),
-		fieldScopes: Object.fromEntries(Object.entries({ ...(agent.override?.fieldScopes ?? {}) }).map(([field, scopes]) => [field, [...scopes]])),
+		fieldScopes: Object.fromEntries(Object.entries({ ...agent.override?.fieldScopes }).map(([field, scopes]) => [field, [...scopes]])),
 		paths: { ...agent.override?.paths, [meta.scope]: meta.path },
 	};
 	for (const field of Object.keys(override)) {

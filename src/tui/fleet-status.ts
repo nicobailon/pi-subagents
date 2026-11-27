@@ -994,7 +994,7 @@ export class SubagentFleetStatus {
 	private editorHasFocus(): boolean {
 		// pi-tui exposes focus mutation but no focus getter, so inspect the focused
 		// component structurally. instanceof is unreliable across jiti module boundaries.
-		const focused = (this.tui as unknown as { focusedComponent?: unknown } | undefined)?.focusedComponent;
+		const focused = (this.tui as { focusedComponent?: unknown } | undefined)?.focusedComponent;
 		if (!focused || typeof focused !== "object") return false;
 		const candidate = focused as Partial<EditorComponent>;
 		return typeof candidate.render === "function"

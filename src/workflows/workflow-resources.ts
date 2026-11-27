@@ -243,7 +243,7 @@ function resolveResource(nameValue: unknown, argsValue?: unknown, sessionId?: st
 	const normalizedArgs = normalizeWorkflowArgs(argsValue);
 	if ("error" in normalizedArgs) return { ok: false, error: normalizedArgs.error };
 	const resolved = resource.resolve(normalizedArgs.args);
-	if (resolved && typeof (resolved as unknown as { then?: unknown }).then === "function") {
+	if (resolved && typeof (resolved as { then?: unknown }).then === "function") {
 		void Promise.resolve(resolved).catch(() => {});
 		throw new Error("Workflow resource resolve must be synchronous.");
 	}

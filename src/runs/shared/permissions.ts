@@ -39,7 +39,7 @@ export function validatePermissionConfig(value: unknown, label = "config.permiss
 }
 
 export function resolvePermissionRules(globalConfig?: PermissionConfig, agentRules?: PermissionRules): PermissionRules | undefined {
-	const merged = { ...(globalConfig?.rules ?? {}), ...(agentRules ?? {}) };
+	const merged = { ...globalConfig?.rules, ...agentRules };
 	for (const [tool, decision] of Object.entries(merged)) if (decision === "allow") delete merged[tool];
 	return Object.keys(merged).length ? merged : undefined;
 }

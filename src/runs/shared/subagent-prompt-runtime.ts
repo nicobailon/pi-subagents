@@ -90,7 +90,7 @@ function registerRuntimeExtensionAcknowledgements(pi: ExtensionAPI, sink: ((ids:
 	try {
 		const events = (pi as { events?: { on?: (event: string, handler: (payload: unknown) => unknown) => unknown } }).events;
 		events?.on?.(RUNTIME_EXTENSION_ACK_EVENT, acknowledge);
-		const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event?: unknown, ctx?: unknown) => unknown) => void;
+		const onRuntimeEvent = pi.on as (event: string, handler: (event?: unknown, ctx?: unknown) => unknown) => void;
 		onRuntimeEvent("agent_end", finalize);
 		onRuntimeEvent("session_shutdown", finalize);
 	} catch {
@@ -578,7 +578,7 @@ export function registerPermissionGate(
 	if (!rules || Object.keys(rules).length === 0) return;
 	const rawWatchdogConfig = childWatchdog ? JSON.stringify(childWatchdog) : undefined;
 	const timeoutMs = childWatchdog?.agentEndTimeoutMs ?? 30_000;
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: ExtensionContext) => unknown) => void;
+	const onRuntimeEvent = pi.on as (event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: ExtensionContext) => unknown) => void;
 	onRuntimeEvent("tool_call", async (event, ctx) => {
 		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
 		const decision = permissionDecision(rules, toolName);
@@ -622,7 +622,7 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 	let toolCount = 0;
 	let softNudged = false;
 	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }).sendUserMessage;
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: { toolName?: string }) => unknown) => void;
+	const onRuntimeEvent = pi.on as (event: string, handler: (event: { toolName?: string }) => unknown) => void;
 	onRuntimeEvent("tool_call", (event) => {
 		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
 		toolCount++;
@@ -643,7 +643,7 @@ function registerStructuredOutputTool(pi: ExtensionAPI, structured: NonNullable<
 	const terminalState = structured.terminalState ??= { captured: false };
 	const required = structured.acceptanceReport === "required";
 	const parameters = createStructuredOutputToolParameters(structured.schema, { acceptanceReport: structured.acceptanceReport });
-	const registerTool = pi.registerTool as unknown as (tool: {
+	const registerTool = pi.registerTool as (tool: {
 		name: string;
 		label: string;
 		description: string;
@@ -737,7 +737,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI, config?:
 		nativeSupervisorClientRegistered = true;
 		registerNativeSupervisorClient(pi, supervisorMetadata);
 	};
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: ExtensionContext) => unknown) => void;
+	const onRuntimeEvent = pi.on as (event: string, handler: (event: unknown, ctx?: ExtensionContext) => unknown) => void;
 	onRuntimeEvent("session_start", (_event: unknown, ctx?: ExtensionContext) => {
 		const sessionManager = (ctx as { sessionManager?: Parameters<typeof resolveCurrentSessionId>[0] } | undefined)?.sessionManager;
 		waitState.currentSessionId = sessionManager ? resolveCurrentSessionId(sessionManager) : null;

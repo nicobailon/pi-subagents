@@ -1129,18 +1129,15 @@ export async function runSingleStepInner(
 			})
 			: undefined;
 		let watchdogSink: ((event: ChildWatchdogStatusEvent) => void) | undefined;
-		let launch: ReturnType<typeof buildRunnerChildLaunch>;
-		try {
-			launch = buildRunnerChildLaunch(step, ctx, {
-				sessionEnabled,
-				sessionDir,
-				model: candidate,
-				sessionName: childSessionName,
-				structuredOutput: effectiveStructuredOutput,
-				childWatchdog,
-				watchdogStatus: (event) => watchdogSink?.(event),
-			});
-		} catch (error) { throw error; }
+		const launch = buildRunnerChildLaunch(step, ctx, {
+			sessionEnabled,
+			sessionDir,
+			model: candidate,
+			sessionName: childSessionName,
+			structuredOutput: effectiveStructuredOutput,
+			childWatchdog,
+			watchdogStatus: (event) => watchdogSink?.(event),
+		});
 		if (effectiveStructuredOutput && launch.config.structuredOutput) {
 			// The runner reads the value back from the runtime's files after the run.
 			launch.config.structuredOutput.capture = createStructuredOutputFileCapture(effectiveStructuredOutput);

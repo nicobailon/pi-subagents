@@ -37,6 +37,6 @@ export function pinChildCacheRetention(agent: { streamFunction: StreamFn } | und
 	agent.streamFunction = (model, context, options) =>
 		base(model, context, {
 			...options,
-			env: { ...(options?.env ?? {}), PI_CACHE_RETENTION: retention },
+			env: { ...options?.env, PI_CACHE_RETENTION: retention },
 		});
 }

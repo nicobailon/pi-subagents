@@ -793,7 +793,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			}
 			lines.push(formatResumeGuidance(runId, children, data.sessionFile, { stopped: status === "stopped", otherSession: foreign(data.sessionId) }));
 			if (data.summary) lines.push("", capSummaryOutputs(data.summary, data.results));
-			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);
+			const workflowChildren = parseWorkflowChildSummary((data as Record<string, unknown>).workflowChildren);
 			if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match the result run id.");
 			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", ...(runId ? { runId } : {}), ...(data.toolCallId ? { toolCallId: data.toolCallId } : {}), results: [], ...(workflowReceiptPath ? { workflowReceiptPath } : {}), ...(workflowChildren ? { workflowChildren } : {}) } };
 		} catch (error) {

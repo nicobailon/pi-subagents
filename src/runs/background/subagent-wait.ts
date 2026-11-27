@@ -153,7 +153,7 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
 		}
 		signal?.addEventListener("abort", done, { once: true });
 		try {
-			for (const channel of [...new Set([...WAKE_CHANNELS, ...providerChannels])]) {
+			for (const channel of new Set([...WAKE_CHANNELS, ...providerChannels])) {
 				unsubs.push(events.on(channel, done));
 			}
 		} catch (error) {

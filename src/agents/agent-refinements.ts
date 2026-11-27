@@ -369,7 +369,7 @@ export function collectBoundedRefinementEvidence(cwd: string, agentName: string,
 			continue;
 		}
 		for (const [index, step] of matchingSteps.entries()) {
-			const stepRecord = step as unknown as Record<string, unknown>;
+			const stepRecord = step as Record<string, unknown>;
 			pushCapped(items, {
 				id: `live:${job.asyncId}:${index}`,
 				source: "live-state",

@@ -29,7 +29,7 @@ function failureText(execError: Error, stderr?: string): string {
 	const direct = stderr?.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
 	if (direct) return direct;
 	const lines = execError.message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-	const withoutPrefix = lines.filter((line) => !/^Command failed:/.test(line));
+	const withoutPrefix = lines.filter((line) => !line.startsWith("Command failed:"));
 	return withoutPrefix[0] ?? "tmux failed.";
 }
 

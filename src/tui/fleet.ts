@@ -1383,7 +1383,7 @@ export class SubagentFleetComponent implements Component, Focusable {
 					? this.theme.fg("accent", line)
 					: /^(Output|Session|Transcript file|Artifacts):/.test(line)
 						? this.theme.fg("muted", line)
-						: /^Transcript preview warning:/.test(line)
+						: line.startsWith("Transcript preview warning:")
 							? this.theme.fg("warning", line)
 							: line;
 			const wrapped = wrapTextWithAnsi(styled, Math.max(1, width));

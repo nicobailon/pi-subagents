@@ -120,7 +120,7 @@ import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest, externalJobStableJson } from "../shared/external-job-runner.ts";
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { formatHerdrMachineRunnerUnsupported, resolveMachinePlacement } from "../shared/herdr-machine.ts";
-import { checkRequiredRunnerLauncher, lookupRunnerLauncher, REQUIRE_LAUNCHER_SHAPE_ERROR, resolveAgentRunnerLauncher } from "../shared/runner-launcher.ts";
+import { checkRequiredRunnerLauncher, lookupRunnerLauncher, REQUIRE_LAUNCHER_SCOPE_ERROR, resolveAgentRunnerLauncher } from "../shared/runner-launcher.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { handleMissionAction, MISSION_ACTIONS } from "../../missions/actions.ts";
 import { attachMissionToLaunchResult, missionAcceptanceStatus, prepareMissionLaunch, writeMissionAsyncBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
@@ -5250,7 +5250,7 @@ export function prepareWorkflowLaunchParams(
 	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; awaitDetachedChild?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; externalAsyncRequired?: boolean; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; outputClaimPath?: string } = {},
 ): SubagentParamsLike {
 	// Before the resume branch below, which rebuilds params field by field and would drop the requirement.
-	if (childParams.requireLauncher !== undefined || workflowDefaults.requireLauncher !== undefined) throw new Error(REQUIRE_LAUNCHER_SHAPE_ERROR);
+	if (childParams.requireLauncher !== undefined || workflowDefaults.requireLauncher !== undefined) throw new Error(REQUIRE_LAUNCHER_SCOPE_ERROR);
 	const { globalConcurrencyLimit: _globalConcurrencyLimit, maxSubagentSpawnsPerRun: _maxSubagentSpawnsPerRun, ...workflowDefaultsWithoutCapacity } = workflowDefaults;
 	const { globalConcurrencyLimit: _childGlobalConcurrencyLimit, maxSubagentSpawnsPerRun: _childMaxSubagentSpawnsPerRun, ...childParamsWithoutCapacity } = childParams;
 	workflowDefaults = workflowDefaultsWithoutCapacity;
@@ -7029,7 +7029,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],
-					details: compactOptional<Details>({ mode: "workflow", runId: foregroundWorkflowRunId, results: workflowDetailsResults(workflow.children), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: finalPreflightTrace, emits: workflow.emits, console: workflow.console, ...(workflowArgsEvidence ?? {}), ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
+					details: compactOptional<Details>({ mode: "workflow", runId: foregroundWorkflowRunId, results: workflowDetailsResults(workflow.children), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: finalPreflightTrace, emits: workflow.emits, console: workflow.console, ...workflowArgsEvidence, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
 				}, workflowFanoutBudget));
 			} catch (error) {
 				const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
@@ -7062,7 +7062,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return attachWorkflowMission(withRunFanoutBudget({
 					content: [{ type: "text", text: displayText }],
 					isError: true,
-					details: compactOptional<Details>({ mode: "workflow", runId: foregroundWorkflowRunId, results: workflowDetailsResults(partial.children), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(error instanceof WorkflowScriptError && error.errorKind ? { failureKind: error.errorKind } : {}), ...(workflowArgsEvidence ?? {}), ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
+					details: compactOptional<Details>({ mode: "workflow", runId: foregroundWorkflowRunId, results: workflowDetailsResults(partial.children), ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: finalPreflightTrace, emits: partial.emits, console: partial.console, ...(error instanceof WorkflowScriptError && error.errorKind ? { failureKind: error.errorKind } : {}), ...workflowArgsEvidence, ...(workflowResource ? { resource: workflowResource.provenance } : {}), ...(finalPreflightWarnings.length ? { preflightWarnings: finalPreflightWarnings } : {}), receipt }, chatProgress }),
 				}, workflowFanoutBudget));
 			} finally {
 				workflowProgressClosed = true;
@@ -7989,7 +7989,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		// Refused here, before admission; executeAsyncSingle checks again on the exact agent and launcher it spawns.
 		if (effectiveParams.requireLauncher !== undefined) {
 			if (!effectiveParams.requireLauncher || typeof effectiveParams.requireLauncher !== "object") return buildRequestedModeError(effectiveParams, "requireLauncher must be { name, definitionDigest }.");
-			if (!hasSingle || effectiveParams.resume !== undefined || effectiveParams.workflowParentRunId !== undefined) return buildRequestedModeError(effectiveParams, REQUIRE_LAUNCHER_SHAPE_ERROR);
+			if (!hasSingle || effectiveParams.resume !== undefined || effectiveParams.workflowParentRunId !== undefined) return buildRequestedModeError(effectiveParams, REQUIRE_LAUNCHER_SCOPE_ERROR);
 			const required = selectedAgents[0] ? checkRequiredRunnerLauncher(selectedAgents[0], selectedAgents[0].launcher, effectiveParams.requireLauncher) : undefined;
 			if (required?.error) return buildRequestedModeError(effectiveParams, required.error);
 		}

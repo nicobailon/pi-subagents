@@ -590,7 +590,7 @@ function writeReply(request: PendingSupervisorRequest, message: string): Supervi
 }
 
 function appendSupervisorReplyEntry(pi: ExtensionAPI, request: PendingSupervisorRequest, reply: SupervisorReply): void {
-	const appendEntry = (pi as unknown as {
+	const appendEntry = (pi as {
 		appendEntry?: (customType: string, data?: SupervisorReplyEntryData) => void;
 	}).appendEntry;
 	if (typeof appendEntry !== "function") return;
