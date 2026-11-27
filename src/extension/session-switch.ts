@@ -90,14 +90,6 @@ export function createSessionSwitchGuard(deps: SessionSwitchDeps) {
 				const results = deps.hasPendingResults();
 				const questions = deps.hasPendingSupervisorRequest();
 				if (runs === 0 && !nested && !results && !questions) return;
-				const decide = (answer: string | undefined): { cancel: true } | undefined => {
-					if (answer === TAKE) return;
-					if (answer === LEAVE) {
-						leave = { sessionId, reason };
-						return;
-					}
-					return { cancel: true };
-				};
 				const title = [
 					"pi-subagents: switch sessions?",
 					"",
@@ -121,7 +113,13 @@ export function createSessionSwitchGuard(deps: SessionSwitchDeps) {
 					clearTimeout(timer);
 				}
 				if (lifetime.signal.aborted || deps.state.currentSessionId !== sessionId) return { cancel: true };
-				return decide(choice ?? (deadline?.signal.aborted ? ANSWER_LABELS[deps.timeoutAnswer ?? "take"] : undefined));
+				const answer = choice ?? (deadline?.signal.aborted ? ANSWER_LABELS[deps.timeoutAnswer ?? "take"] : undefined);
+				if (answer === TAKE) return;
+				if (answer === LEAVE) {
+					leave = { sessionId, reason };
+					return;
+				}
+				return { cancel: true };
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				// Pi ignores thrown switch hooks; always return cancel, even if the UI is stale.
