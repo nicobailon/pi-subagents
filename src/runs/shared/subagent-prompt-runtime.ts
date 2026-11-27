@@ -65,7 +65,6 @@ const PARENT_ONLY_CUSTOM_MESSAGE_TYPES = new Set([
 	"subagent-control",
 	"subagent-control-notice",
 ]);
-const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/name>/;
 const PROJECT_CONTEXT_XML_HEADER = "\n\n<project_context>\n\n";
 const PROJECT_CONTEXT_LEGACY_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
 const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
@@ -193,12 +192,6 @@ export function stripInheritedSkills(prompt: string): string {
 	return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
 }
 
-export function stripSubagentOrchestrationSkill(prompt: string): string {
-	return prompt
-		.replace(/\n{0,2}<skill\s+name=["']pi-subagents["'][^>]*>[\s\S]*?<\/skill>\n{0,2}/g, "\n\n")
-		.replace(/[ \t]*<skill>\s*[\s\S]*?<\/skill>\s*/g, (block) => SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN.test(block) ? "" : block);
-}
-
 function stripChildBoundaryInstructions(prompt: string): string {
 	let rewritten = prompt;
 	for (const instructions of [CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, CHILD_FANOUT_BOUNDARY_INSTRUCTIONS, STRUCTURED_OUTPUT_INSTRUCTIONS]) {
@@ -221,7 +214,7 @@ function stripInheritedPromptText(prompt: string, options: InheritedPromptOption
 	if (!options.inheritSkills) {
 		rewritten = stripInheritedSkills(rewritten);
 	}
-	return stripChildBoundaryInstructions(stripSubagentOrchestrationSkill(rewritten));
+	return stripChildBoundaryInstructions(rewritten);
 }
 
 function childBoundary(options: ChildBoundaryOptions): string {
@@ -242,7 +235,7 @@ export function rewriteSubagentPrompt(prompt: string, options: InheritedPromptOp
 function filterChildPromptOptions(options: BeforeAgentStartEvent["systemPromptOptions"], inherited: InheritedPromptOptions): void {
 	if (!inherited.inheritProjectContext) options.contextFiles = [];
 	else if (!inherited.inheritGlobalContext) options.contextFiles = options.contextFiles.filter((file) => !isGlobalContextFile(file.path));
-	options.skills = inherited.inheritSkills ? options.skills.filter((skill) => skill.name !== "pi-subagents") : [];
+	if (!inherited.inheritSkills) options.skills = [];
 	// Role prompts can embed context, skill catalogs, or an earlier child's boundary as text.
 	if (options.customPrompt) options.customPrompt = stripInheritedPromptText(options.customPrompt, inherited);
 	if (options.appendSystemPrompt) options.appendSystemPrompt = stripInheritedPromptText(options.appendSystemPrompt, inherited);

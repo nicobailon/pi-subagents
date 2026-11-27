@@ -18,7 +18,6 @@ A background child awaited by an `async: false` workflow cannot receive a superv
 
 Child-safety boundaries are enforced at runtime:
 
-- Fresh (non-fork) child sessions never receive a skill named `pi-subagents`; a fork keeps the parent's prompt, skills included.
 - Child context filtering removes parent-only subagent artifacts (hidden orchestration-instruction messages, slash/status/control messages, and `subagent` tool-call/tool-result history) while preserving ordinary prose and unrelated tool calls/results. A forked child sends the history it inherited exactly as the parent sent it, so its first request can reuse the parent's prompt cache; it still cannot run `subagent`.
 - By default, a child's `subagent` tool can only wait for its own background work, and the child receives boundary instructions that it is not the parent orchestrator and must not propose or run subagents.
 - The explicit exception is an agent whose resolved builtin `tools` includes `subagent`; that child gets a child-safe `subagent` tool for the fanout work the parent assigned, still bounded by `maxSubagentDepth`.

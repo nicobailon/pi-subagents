@@ -11,7 +11,7 @@ import { createStructuredOutputRuntime } from "../../src/runs/shared/structured-
 import { CHILD_FANOUT_BOUNDARY_INSTRUCTIONS, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, rewriteSubagentPrompt } from "../../src/runs/shared/subagent-prompt-runtime.ts";
 
 type Flags = { inheritProjectContext: boolean; inheritGlobalContext: boolean; inheritSkills: boolean };
-type Fixture = { globalContext?: boolean; repoContext?: boolean; orchestrationSkill?: boolean };
+type Fixture = { globalContext?: boolean; repoContext?: boolean };
 type Run = { flags: Flags; fixture?: Fixture; unsetFlags?: boolean; fanout?: boolean; structured?: boolean; prompts?: string[]; toolTurn?: boolean; hooks?: Array<(pi: ExtensionAPI) => void> };
 
 const count = (text: string, part: string) => text.split(part).length - 1;
@@ -43,11 +43,10 @@ describe("child provider system prompt", () => {
 		fs.writeFileSync(path.join(agentDir, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: ${name} skill.\n---\nBody`);
 	}
 
-	function setFixture({ globalContext = true, repoContext = true, orchestrationSkill = false }: Fixture): void {
+	function setFixture({ globalContext = true, repoContext = true }: Fixture): void {
 		const toggle = (file: string, present: boolean, write: () => void) => present ? write() : fs.rmSync(file, { recursive: true, force: true });
 		toggle(path.join(agentDir, "AGENTS.md"), globalContext, () => fs.writeFileSync(path.join(agentDir, "AGENTS.md"), "GLOBAL-CONTEXT-MARKER"));
 		toggle(path.join(repo, "AGENTS.md"), repoContext, () => fs.writeFileSync(path.join(repo, "AGENTS.md"), "REPO-CONTEXT-MARKER"));
-		toggle(path.join(agentDir, "skills", "pi-subagents"), orchestrationSkill, () => writeSkill("pi-subagents"));
 	}
 
 	/** Runs a real SDK child, one run per prompt, and returns the system prompt of every provider request. */
@@ -123,7 +122,6 @@ describe("child provider system prompt", () => {
 		["context and skills not loaded", { flags: { inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false } }, {}],
 		["global context removed", { flags: noGlobal }, { globalContext: false }],
 		["the only context file removed", { flags: noGlobal, fixture: { repoContext: false } }, { globalContext: false }],
-		["pi-subagents skill removed next to another skill", { flags: inheritAll, fixture: { orchestrationSkill: true } }, { orchestrationSkill: false }],
 		["structured output", { flags: noGlobal, structured: true }, { globalContext: false }],
 	] as Array<[string, Run, Fixture]>) {
 		it(`sends a child without other extensions Pi's render of the launch without the removed resources, plus the boundary (${label})`, async () => {
