@@ -9,6 +9,7 @@
 
 - `shared/lexical-type-parameters.ts` reads node keys with `Object.getOwnPropertyDescriptor` instead of a `Record` cast. Upstream left the file unchanged since `6d53855`, so the local version is kept.
 - `rules/no-unknown-type-aliases.ts` had a local check for unions that hide `unknown`. Upstream now covers that case through `shared/type-alias-resolution.ts`, so the upstream file replaced the local edit.
+- `shared/type-alias-resolution.ts` `aliasSubstitutions` starts each alias with only its own type parameters (`new Map()`, not `new Map(base)`). Upstream let a caller's parameter replace a same-named module alias inside an unrelated alias, so `type T = string; type Fixed = T; type Wrap<T> = Fixed | { item: T }; type R = Wrap<unknown>` was reported as hiding `unknown`.
 
 ## Rules
 
@@ -44,4 +45,4 @@ Native Oxlint defaults that are off or configured:
 
 ## Next update
 
-Use `6d53855` as the base for the two local deviations above, and `63dbb09` for everything else.
+Use `6d53855` as the base for `lexical-type-parameters.ts`, and `63dbb09` for everything else, including the `aliasSubstitutions` fix.

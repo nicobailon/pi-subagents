@@ -49,6 +49,10 @@ const shapeSignal = 1;
 type Hidden = unknown;
 type HiddenUnion = string | unknown;
 export type ConcreteAlias = string | number;
+type T = string;
+type Fixed = T;
+type Wrap<T> = Fixed | { item: T };
+export type WrappedAlias = Wrap<unknown>;
 const broadValue: object = { id: 1 };
 const narrowedValue = broadValue as { id: number };
 const spreadTotals = [1, 2].reduce((totals, item) => ({ ...totals, [item]: item }), {});
@@ -69,6 +73,7 @@ export const safeConst = "x" as const;
 		for (const rule of rules) assert.ok(output.includes(`"code": "${rule}"`), `missing ${rule}`);
 		assert.ok(output.includes("Type alias `HiddenUnion` hides `unknown`."), "missing union unknown alias");
 		assert.equal(output.includes("Type alias `ConcreteAlias` hides `unknown`."), false);
+		assert.equal(output.includes("Type alias `WrappedAlias` hides `unknown`."), false);
 		for (const safeName of ["safeTotals", "safeConst"]) {
 			assert.equal(output.includes(safeName), false, `unexpected diagnostic for ${safeName}`);
 		}
