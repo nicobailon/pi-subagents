@@ -244,6 +244,20 @@ Workflow script calls use background execution when the request omits `async`. S
 
 Default `true`. When a session is reopened (`pi -c`, `pi --session`, `/resume`) or reloaded (`/reload`), its own async workflows that a Pi exit or a reload interrupted in the last 24 hours are resumed once, without delaying session start; set `autoResume` to `false` to resume them only by hand. A one-shot `pi -p` run does not auto-resume, so it does not wait on the workflow. See [Workflows](workflows.md).
 
+## `sessionSwitch`
+
+```json
+{ "sessionSwitch": { "policy": "ask", "promptTimeoutMs": 60000, "timeoutAnswer": "take" } }
+```
+
+Answers the **pi-subagents: switch sessions?** prompt that `/new`, `/resume`, `/fork` and `/clone` show while this session has queued or running background work, live nested children, undelivered results, or supervisor questions. See [Workflows](workflows.md#switching-sessions-with-background-work).
+
+- `policy`: `"ask"` (default) shows the prompt as before. `"take"`, `"leave"` or `"stay"` answers it without showing it, with the same result as choosing **Switch and take the work**, **Switch and leave the work here** or **Stay here**. A switch with nothing outstanding is not affected, so `"stay"` never cancels an ordinary switch.
+- `promptTimeoutMs`: bounds the prompt in a TUI, in milliseconds, so an unattended switch cannot wait forever. Unset or `0` waits for a keypress, as before. An operator-set value also replaces RPC's built-in one-minute bound.
+- `timeoutAnswer`: `"take"` (default), `"leave"` or `"stay"`, used only when an operator-set `promptTimeoutMs` expires. Dismissing the prompt before the deadline (Escape, ctrl+c) still cancels the switch, so an unattended bound never turns a keypress into an answer. RPC's built-in one-minute bound still counts as **Stay here**, because the host never chose an answer.
+
+Sessions without a UI (`pi -p`, SDK sessions) never prompt and always hand the work over, so this setting does not change them.
+
 ## `runnerLaunchers`
 
 ```json

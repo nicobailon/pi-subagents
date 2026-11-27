@@ -322,6 +322,25 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh" or "fork"/);
 	});
 
+	it("loads a session switch policy and fails config load on any other shape", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		const sessionSwitch = { policy: "leave", promptTimeoutMs: 60_000, timeoutAnswer: "take" };
+		writeFile(configPath, JSON.stringify({ sessionSwitch }));
+		assert.deepEqual(loadConfig().sessionSwitch, sessionSwitch);
+		for (const policy of ["ask", "take", "leave", "stay"]) {
+			writeFile(configPath, JSON.stringify({ sessionSwitch: { policy } }));
+			assert.equal(loadConfig().sessionSwitch?.policy, policy);
+		}
+		for (const promptTimeoutMs of [0, 1, 2_147_483_647]) {
+			writeFile(configPath, JSON.stringify({ sessionSwitch: { promptTimeoutMs } }));
+			assert.equal(loadConfig().sessionSwitch?.promptTimeoutMs, promptTimeoutMs);
+		}
+		for (const invalid of [null, [], "leave", { policy: "wait" }, { timeoutAnswer: "ask" }, { promptTimeoutMs: -1 }, { promptTimeoutMs: 1.5 }, { promptTimeoutMs: 2_147_483_648 }, { promptTimeoutMs: "60000" }, { policy: "leave", switches: [] }]) {
+			writeFile(configPath, JSON.stringify({ sessionSwitch: invalid }));
+			assert.throws(() => updateConfig((config) => config), /config\.sessionSwitch/);
+		}
+	});
+
 	it("accepts valid global checkpoint offsets and rejects invalid config before execution", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		for (const checkpointBeforeDeadlineMs of [undefined, 1, 300_000, 2_147_483_647]) {

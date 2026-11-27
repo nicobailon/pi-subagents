@@ -61,6 +61,15 @@ When a session with a UI has queued or running async work, live nested children,
 
 Without outstanding work, or without a UI (`pi -p`, SDK sessions), there is no prompt and the new session takes the work over. Over RPC the prompt is a select dialog that counts as **Stay here** if the host does not answer within one minute. The prompt never enters model history.
 
+A switch that nobody can answer, such as a handoff or `/new` launched by an agent while the operator is away, would wait in a TUI until someone presses a key, and **Stay here** is the default highlighted answer. Two optional settings in `~/.pi/agent/extensions/subagent/config.json` remove that wait, and leave the prompt exactly as it is when unset:
+
+```json
+{ "sessionSwitch": { "policy": "take", "promptTimeoutMs": 60000, "timeoutAnswer": "take" } }
+```
+
+- `policy` answers the prompt without showing it: `"take"`, `"leave"`, or `"stay"`. It defaults to `"ask"`. It only replaces the prompt, so a policy of `"stay"` still lets a switch with nothing outstanding start the new session.
+- `promptTimeoutMs` bounds the TUI prompt too. When it expires, `timeoutAnswer` (`"take"`, `"leave"`, or `"stay"`, default `"take"`) answers instead of staying. Unset or `0` keeps the TUI prompt waiting for a keypress, and keeps RPC's one-minute bound, which still counts as **Stay here**.
+
 ## Prompt shortcuts
 
 The package includes reusable prompt templates for common workflows. You do not need them, but they are handy when you want the same shape every time:
