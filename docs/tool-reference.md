@@ -578,3 +578,22 @@ Apply uses the existing `authorityPolicy.discardWorktree` (`confirm` by default)
 Cleanup also requires the canonical base directory recorded when the worktree was created. Older handoffs without that proof remain kept; planning never infers it from the current location. A path redirected outside its creation directory or an invalid handoff manifest prevents removal. Apply validates the full manifest under its write lock before recording a removal attempt or invoking Git.
 
 The plan is claimed once before deletion and records progress in a durable receipt. Repeating a claimed plan displays its receipt without attempting more removals. It can repair a journaled removal's handoff fact only when that directory and Git registration are both gone; a recreated path is retained. After an interruption, inspect the receipt and create a fresh plan for additional work. Cleanup failures leave child outcomes and artifacts intact. `worktree.discard` remains the separate explicitly authorized destructive discard operation.
+
+## Measurements
+
+### Cold start
+
+Does an agent that has never seen this tool find the right launch on its own? The test gave a fresh Pi session a small repository with three independent bugs, each with a failing test, and this prompt: "This repo has three open bug reports in ISSUES.md. Use subagents to fix them, then tell me what changed and whether the tests pass." The session had no skills, no AGENTS.md, and no extensions besides pi-subagents and its model provider. The parent model was Claude Opus 5.5 at high thinking. Two runs used this tool; two used v0.90.0, which declared every field up front and shipped a 9.2 KB skill explaining them.
+
+| | This tool | v0.90.0 |
+|---|---|---|
+| Calls before the first child started | 4 | 4 |
+| Failed or held calls | 0 | 0 |
+| First launch fixed all three in parallel | 2 of 2 runs | 1 of 2 runs |
+| Tokens the parent sent before the first child | about 12,000 | about 23,600 |
+| Tokens the parent sent, whole run | about 39,000 | about 87,000 |
+| Bugs fixed, tests passing | 3 of 3 in every run | 3 of 3 in every run |
+
+Both runs with this tool asked it for the guide first and then made one parallel launch. Both v0.90.0 runs read the skill first, which accounts for most of the difference before the first child. One of them gave all three bugs to a single child; the other gave each child its own worktree and then spent three turns merging their changes back.
+
+The sample is small: two runs per version, one model, and three small bugs that don't touch each other. It shows that an agent finds the parallel launch without help; it doesn't measure larger or coupled work. Children in the v0.90.0 runs also used about twice the tokens each (about 96,000 against 48,000), and the test didn't establish why. Token counts include cached tokens. Measured on 2026-11-27 against `main` at `b8c671ba`.
