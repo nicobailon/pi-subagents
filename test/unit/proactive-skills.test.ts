@@ -70,10 +70,10 @@ describe("proactive skill subagent recommendations", () => {
 		assert.deepEqual(recommendations.map((entry) => entry.skill), ["visible-skill"]);
 	});
 
-	it("filters unavailable orchestration skills and honors config bounds", () => {
+	it("honors config bounds", () => {
 		const recommendations = recommendProactiveSkillSubagents({
 			agents: [
-				agent("delegate", ["pi-subagents", "alpha", "beta"]),
+				agent("delegate", ["alpha", "beta"]),
 				agent("one", ["alpha", "beta"]),
 				agent("two", ["gamma"]),
 				agent("three", ["gamma"]),

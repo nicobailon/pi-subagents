@@ -3914,26 +3914,6 @@ if (!fs.existsSync(${JSON.stringify(holdPath)})) { console.log('{}'); } else {
 		assert.equal(result.skillsWarning, undefined);
 	});
 
-	it("fails foreground runs on explicit unavailable pi-subagents skill requests without spawning", async () => {
-		const agents = [makeAgent("worker")];
-
-		const result = await runSync(tempDir, agents, "worker", "Task", { skills: ["pi-subagents"] });
-
-		assert.equal(result.exitCode, 1);
-		assert.equal(result.error, "Skills not found: pi-subagents");
-		assert.equal(mockPi.callCount(), 0);
-	});
-
-	it("fails foreground runs when an agent default requests pi-subagents skill", async () => {
-		const agents = [makeAgent("worker", { skills: ["pi-subagents"] })];
-
-		const result = await runSync(tempDir, agents, "worker", "Task", {});
-
-		assert.equal(result.exitCode, 1);
-		assert.equal(result.error, "Skills not found: pi-subagents");
-		assert.equal(mockPi.callCount(), 0);
-	});
-
 	it("writes artifacts without retaining the effective prompt", async () => {
 		mockPi.onCall({
 			output: "Result text",

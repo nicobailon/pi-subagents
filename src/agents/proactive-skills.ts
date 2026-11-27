@@ -1,7 +1,6 @@
 import type { AgentConfig, ChainConfig, ChainStepConfig } from "./agents.ts";
 import type { ProactiveSkillSubagentsConfig } from "../shared/types.ts";
 
-const SUBAGENT_ORCHESTRATION_SKILL = "pi-subagents";
 const DEFAULT_MIN_REFERENCES = 2;
 const DEFAULT_MAX_RECOMMENDATIONS = 3;
 const DEFAULT_PREFERRED_AGENT = "reviewer";
@@ -100,7 +99,6 @@ function chooseRecommendationAgent(agents: AgentConfig[], preferredAgent: string
 }
 
 function addSource(counts: Map<string, Set<string>>, skill: string, source: string): void {
-	if (skill === SUBAGENT_ORCHESTRATION_SKILL) return;
 	const sources = counts.get(skill) ?? new Set<string>();
 	sources.add(source);
 	counts.set(skill, sources);

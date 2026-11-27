@@ -2366,56 +2366,6 @@ syncBuiltinESMExports();
 		assert.equal(prompts.filter((prompt) => /two async local skill/.test(prompt) && !/one async local skill/.test(prompt)).length, 1);
 	});
 
-	it("background single runs report unavailable pi-subagents skill requests", () => {
-		const id = `async-pi-subagents-skill-${Date.now().toString(36)}`;
-		const result = executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Do work",
-			agentConfig: makeAgent("worker"),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			cwd: tempDir,
-			artifactConfig: {
-				enabled: false,
-				includeInput: false,
-				includeOutput: false,
-				includeJsonl: false,
-				includeMetadata: false,
-				cleanupDays: 7,
-			},
-			shareEnabled: false,
-			sessionRoot: path.join(tempDir, "sessions"),
-			skills: ["pi-subagents"],
-			maxSubagentDepth: 2,
-		});
-
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Skills not found: pi-subagents/);
-	});
-
-	it("background chains report unavailable pi-subagents skill requests", () => {
-		const id = `async-chain-pi-subagents-skill-${Date.now().toString(36)}`;
-		const result = executeAsyncChain(id, {
-			chain: [{ agent: "worker", task: "Do work", skill: ["pi-subagents"] }],
-			agents: [makeAgent("worker")],
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			cwd: tempDir,
-			artifactConfig: {
-				enabled: false,
-				includeInput: false,
-				includeOutput: false,
-				includeJsonl: false,
-				includeMetadata: false,
-				cleanupDays: 7,
-			},
-			shareEnabled: false,
-			sessionRoot: path.join(tempDir, "sessions"),
-			maxSubagentDepth: 2,
-		});
-
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Skills not found: pi-subagents/);
-	});
-
 	it("background chains resolve relative step cwd values against the shared cwd", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Done asynchronously" });
 		const chainCwd = createTempDir("pi-subagent-async-chain-cwd-");
