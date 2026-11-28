@@ -330,6 +330,22 @@ describe("guide first", () => {
 		assert.ok(replies[2]!.includes(warning("fixer")), replies[2]);
 	});
 
+	it("teaches workflow scripts on the first call that brings one, not on a named workflow", async () => {
+		const tasks = [{ agent: "probe", task: "Inspect" }];
+		const [named, script, again] = await launchesWith(() => ({}), [
+			{ workflow: "parallel", args: { tasks } },
+			{ workflow: true },
+			{ workflow: "./scan.js" },
+		]);
+		assert.ok(!named!.includes(EVENT_NOTES.workflow), named);
+		assert.ok(script!.includes(EVENT_NOTES.workflow), script);
+		assert.ok(!again!.includes(EVENT_NOTES.workflow), "the lesson comes once per session");
+		for (const first of [{ workflow: "./scan.js" }, { options: { script: "return 1;" } }]) {
+			const [reply] = await launchesWith(() => ({}), [first]);
+			assert.ok(reply!.includes(EVENT_NOTES.workflow), reply);
+		}
+	});
+
 	it("holds every launch in the batch that brought the guide, with the workflow:true wording", { timeout: 60_000 }, async () => {
 		mockPi.reset();
 		const session = await startParent([[{}, { agent: "probe", task: "Inspect", async: true }, { workflow: true }], "held"]);

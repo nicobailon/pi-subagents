@@ -7,6 +7,7 @@ import { disabledFeatureSectionNotice, type DisabledFeatureSurface } from "../sh
 import { isStaleExtensionContextError } from "../shared/extension-context.ts";
 import type { Details, GuideSummary } from "../shared/types.ts";
 import { finalizeToolResult } from "./tool-result.ts";
+import { isWorkflowScriptPath } from "./public-execution.ts";
 import { readReplyWorkflowScript } from "./reply-workflow-script.ts";
 import { isBlankValue, liftArgsFields, prepareSubagentToolArguments } from "./subagent-options.ts";
 
@@ -350,6 +351,12 @@ export interface CallFacts {
 	fork?: { sessionBytes: number; folder: string; freeBytes?: number };
 }
 
+/** The call carries a script the model wrote: the reply's ```js block, a script path, or options.script; a named workflow such as "parallel" carries none. */
+function suppliesWorkflowScript(request: SubagentParamsLike): boolean {
+	const { workflow } = request;
+	return request.workflowScript !== undefined || workflow === true || workflow === "true" || (typeof workflow === "string" && isWorkflowScriptPath(workflow));
+}
+
 export function callNotes(request: SubagentParamsLike, result: AgentToolResult<Details>, facts: CallFacts): TeachingNote[] {
 	if (result.isError) return [];
 	const notes: TeachingNote[] = [];
@@ -364,7 +371,7 @@ export function callNotes(request: SubagentParamsLike, result: AgentToolResult<D
 		}
 		if (facts.fork) notes.push({ key: "event:fork", text: forkNote(facts.fork) });
 		if (request.worktree === true) notes.push({ key: "event:worktree", text: EVENT_NOTES.worktree });
-		if (request.workflow !== undefined || request.workflowScript !== undefined) notes.push({ key: "event:workflow", text: EVENT_NOTES.workflow });
+		if (suppliesWorkflowScript(request)) notes.push({ key: "event:workflow", text: EVENT_NOTES.workflow });
 		if (facts.liveRunsInCwd && facts.liveRunsInCwd.runs.length > 0) {
 			const { cwd, runs } = facts.liveRunsInCwd;
 			const listed = runs.slice(0, 5).map((run) => `${run.label} ${run.id}`);
