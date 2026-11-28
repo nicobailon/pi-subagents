@@ -243,12 +243,12 @@ You can override selected agent fields without copying the whole agent. Override
 }
 ```
 
-Supported override fields: `description`, `machine`, `output`, `outputMode`, `defaultReads`, `model`, `defaultProvider`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritGlobalContext`, `inheritSkills`, `defaultContext`, `acceptanceRole`, `disabled`, `skills`, `tools`, and `systemPrompt`.
+Supported override fields: `description`, `machine`, `output`, `outputMode`, `defaultReads`, `model`, `defaultProvider`, `fast`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritGlobalContext`, `inheritSkills`, `defaultContext`, `acceptanceRole`, `disabled`, `systemPrompt`, `skills`, `tools`, `excludeTools`, `allowNestedSubagents`, `allowedAgents`, `extensions`, `subagentOnlyExtensions`, `mutationTools`, and `toolBudget`.
 
 `launcher` is not a supported override field, and an override that sets it is rejected. To run a builtin under a launcher, copy it into a user agent file (for example with `eject`) and set `launcher` there.
 
 - `description` replaces the discovered description for builtin and custom agents, which lets list output show deployment-specific routing or model metadata.
-- Use `output: false`, `defaultReads: false`, `defaultContext: false`, `acceptanceRole: false`, or `machine: false` to clear an inherited value.
+- Use `output: false`, `defaultReads: false`, `defaultContext: false`, `acceptanceRole: false`, `machine: false`, `extensions: false`, or `subagentOnlyExtensions: false` to clear an inherited value.
 - Use `tools: "inherit"` when that one role should omit its bundled or frontmatter tool allowlist and receive Pi's normal builtins (plus ambient extensions when it runs as a background child).
 - Project overrides beat user overrides field by field: a project override replaces only the fields it sets, and fields set only in the user override still apply.
 - Matching package, user, and project agents also receive override fields, which replace the same fields declared in their frontmatter. This lets a shared agent keep its persona while local settings choose the effective model, context, tools, or other supported options.
@@ -616,6 +616,18 @@ When `extensions` is present, normal discovered extensions are disabled. The lis
 Use `subagentOnlyExtensions` when a custom extension tool should exist only inside child sessions. It is scoped by agent config: every run of that agent receives those extension paths, while other agents do not unless they declare the same field. The current model does not have a separate named-subagent audience inside one agent definition.
 
 To apply a shared extension policy to every agent that does not declare its own, set `subagents.defaultExtensions` for an ambient-disabling allowlist or `subagents.defaultSubagentOnlyExtensions` for child-only paths that preserve ambient discovery (see [configuration.md](configuration.md)).
+
+A guard extension installed in the parent, such as a `tool_call` hook that blocks `git reset --hard` or reads of secret files, protects background children, because they load ambient extensions, but not foreground children, which load none of them. To keep the guard on in every child, builtins included, add its path to `subagents.defaultSubagentOnlyExtensions`. For a package, use the path `pi list` prints under it; a background child then loads the same file once, not a second copy:
+
+```json
+{
+  "subagents": {
+    "defaultSubagentOnlyExtensions": ["/home/me/.pi/agent/npm/node_modules/cc-safety-net"]
+  }
+}
+```
+
+An agent with its own `subagentOnlyExtensions` (frontmatter or `agentOverrides`) does not get the default, so list the guard there too.
 
 Before the first model turn, the child runtime compares every explicit tool name with Pi's final filtered registry. A missing provider fails the run with the unavailable names and concrete `subagentOnlyExtensions`/`extensions` guidance, instead of letting a direct or chained child silently continue without its requested tools.
 
