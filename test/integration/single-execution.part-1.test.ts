@@ -202,9 +202,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 	}
 
-	it("emits successful async workflow child settlements without provider turns", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("keeps successful children of a running async workflow out of the parent's context and wakes it for a failed one", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ matchArgIncludes: "Child A", output: "A done" });
 		mockPi.onCall({ matchArgIncludes: "Child B", output: "B done" });
+		mockPi.onCall({ matchArgIncludes: "Child C", createError: "launch failed" });
 		const sent: Array<{ message: { customType?: string; content?: string; details?: unknown }; options?: { triggerTurn?: boolean } }> = [];
 		const sendMessage = (message: unknown, options?: unknown) => {
 			sent.push({
@@ -215,23 +216,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, sendMessage);
 		const launch = await executor.execute("workflow-child-wakes", {
 			async: true,
-			workflowScript: `return await runs.all([{ key: "a", agent: "echo", task: "Child A" }, { key: "b", agent: "echo", task: "Child B" }]);`,
+			workflowScript: `await runs.all([{ key: "a", agent: "echo", task: "Child A" }, { key: "b", agent: "echo", task: "Child B" }]); return await runs.run("c", { agent: "echo", task: "Child C" });`,
 		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
 
 		const childMessages = () => sent.filter(({ message }) => message.customType === "subagent-incremental-child-notify");
-		for (let attempt = 0; attempt < 250 && childMessages().length < 2; attempt++) {
+		for (let attempt = 0; attempt < 250 && !childMessages().some(({ message }) => message.content?.includes("**c**")); attempt++) {
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		assert.deepEqual(
-			childMessages().map(({ message }) => message.content?.split("\n", 1)[0]).sort(),
-			["Workflow child completed: **a**", "Workflow child completed: **b**"],
-		);
-		assert.deepEqual(
-			childMessages().map(({ message }) => message.details).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
-			[{ childKey: "a", outcome: "completed" }, { childKey: "b", outcome: "completed" }],
-		);
-		assert.ok(childMessages().every(({ options }) => options?.triggerTurn === false));
+		// a and b settled before c launched, so any notice of theirs would already be here.
+		assert.deepEqual(childMessages().map(({ message }) => message.content?.split("\n", 1)[0]), ["Workflow child failed: **c**"]);
+		assert.equal(childMessages()[0]!.options?.triggerTurn, true);
+		assert.match(childMessages()[0]!.message.content ?? "", /Status: workflow still running/);
 	});
 
 	it("spawns agent and captures output", async () => {
