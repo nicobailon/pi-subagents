@@ -107,6 +107,8 @@ export interface ResolvePiLaunchToolPlanInput {
 	allowNestedSubagents?: boolean;
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
+	/** Settings-derived `subagents.ambientExtensions` entries; loaded in every local native child and enforced at load time. */
+	ambientExtensionPaths?: string[];
 	requiredExtensions?: RequiredChildExtensionSnapshot;
 	mcpDirectTools?: string[];
 	cwd?: string;
@@ -149,6 +151,8 @@ export interface PiLaunchToolPlan {
 	configuredExtensions: string[];
 	requiredExtensions: RequiredChildExtensionSnapshot;
 	extensionArgs: string[];
+	/** Ambient entries that must load successfully; a load failure fails the launch (see the child session's enforced checks). */
+	enforcedExtensionPaths?: string[];
 	disableAmbientExtensions: boolean;
 	capabilityAudit?: SubagentCapabilityAudit;
 }
@@ -297,6 +301,13 @@ export function resolvePiLaunchToolPlan(
 	if (requiredExtensions.length > 0 && capabilityCeiling?.denyExtensions) {
 		throw new Error(`Capability ceiling from ${capabilityCeiling.sources.join(", ") || "unknown source"} denies extensions but this host requires: ${requiredExtensions.map(({ id }) => id).join(", ")}.`);
 	}
+	// `subagents.ambientExtensions` is a policy perimeter: rather than silently
+	// launching children without the guard, a ceiling that denies extensions and
+	// still asks for ambient entries fails the launch loudly.
+	const ambientExtensionPaths = input.ambientExtensionPaths ?? [];
+	if (ambientExtensionPaths.length > 0 && capabilityCeiling?.denyExtensions) {
+		throw new Error(`Capability ceiling from ${capabilityCeiling.sources.join(", ") || "unknown source"} denies extensions but 'subagents.ambientExtensions' requires: ${ambientExtensionPaths.join(", ")}. Remove the conflicting entries or the denyExtensions ceiling.`);
+	}
 	const allowedToolSet =
 		capabilityCeiling?.allowedTools === undefined
 			? undefined
@@ -411,6 +422,7 @@ export function resolvePiLaunchToolPlan(
 				...toolExtensionPaths,
 				...(input.extensions ?? []),
 				...(input.subagentOnlyExtensions ?? []),
+				...ambientExtensionPaths,
 			];
 	const ordinaryExtensionArgs = disableAmbientExtensions
 		? [...new Set([...runtimeExtensions, ...configuredExtensions])]
@@ -419,6 +431,7 @@ export function resolvePiLaunchToolPlan(
 					...runtimeExtensions,
 					...toolExtensionPaths,
 					...(input.subagentOnlyExtensions ?? []),
+					...ambientExtensionPaths,
 				]),
 			];
 	// Host-required paths have final precedence and cannot be removed by agent defaults or overrides.
@@ -485,6 +498,7 @@ export function resolvePiLaunchToolPlan(
 		configuredExtensions,
 		requiredExtensions,
 		extensionArgs,
+		...(ambientExtensionPaths.length > 0 ? { enforcedExtensionPaths: [...ambientExtensionPaths] } : {}),
 		disableAmbientExtensions,
 		...(capabilityAudit ? { capabilityAudit } : {}),
 	};

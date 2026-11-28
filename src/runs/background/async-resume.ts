@@ -329,7 +329,7 @@ export function readAsyncRecoveryDescriptor(runsRoot: string, runId: string): St
 	const parsed = value as Record<string, unknown>;
 	const allowedFields = new Set([
 		"modelResponseAliases", "version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "modelOrigin", "fast", "thinking", "thinkingCeiling", "tools", "allowNestedSubagents", "allowedAgents", "extensions",
-		"subagentOnlyExtensions", "mcpDirectTools", "excludeTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
+		"subagentOnlyExtensions", "ambientExtensionPaths", "mcpDirectTools", "excludeTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
 		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef", "launcher", "requiredLauncher", "sessionId", "managedWorktree",
@@ -390,7 +390,7 @@ export function readAsyncRecoveryDescriptor(runsRoot: string, runId: string): St
 		catch (error) { throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${error instanceof Error ? error.message : String(error)}`); }
 	}
 	if (!Number.isInteger(parsed.maxSubagentDepth) || (parsed.maxSubagentDepth as number) < 0) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': maxSubagentDepth must be a non-negative integer.`);
-	for (const field of ["tools", "excludeTools", "extensions", "subagentOnlyExtensions", "mcpDirectTools", "mutationTools", "skills", "skillPath"] as const) {
+	for (const field of ["tools", "excludeTools", "extensions", "subagentOnlyExtensions", "ambientExtensionPaths", "mcpDirectTools", "mutationTools", "skills", "skillPath"] as const) {
 		const item = parsed[field];
 		if (item !== undefined && (!Array.isArray(item) || item.some((entry) => typeof entry !== "string" || !entry.trim()))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must contain non-empty strings.`);
 	}
@@ -698,6 +698,8 @@ export function applySteeringRecoveryAgentConfig(agentConfig: AgentConfig, descr
 		allowedAgents: descriptor.allowedAgents === undefined ? undefined : [...descriptor.allowedAgents],
 		extensions: descriptor.extensions ? [...descriptor.extensions] : undefined,
 		subagentOnlyExtensions: descriptor.subagentOnlyExtensions ? [...descriptor.subagentOnlyExtensions] : undefined,
+		// A descriptor written before ambientExtensionPaths existed re-resolves the knob from settings instead.
+		ambientExtensionPaths: descriptor.ambientExtensionPaths ? [...descriptor.ambientExtensionPaths] : agentConfig.ambientExtensionPaths,
 		mcpDirectTools: descriptor.mcpDirectTools ? [...descriptor.mcpDirectTools] : undefined,
 		mutationTools: descriptor.mutationTools ? [...descriptor.mutationTools] : undefined,
 		systemPrompt: descriptor.systemPrompt ?? agentConfig.systemPrompt,

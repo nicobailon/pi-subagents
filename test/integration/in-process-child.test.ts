@@ -604,6 +604,76 @@ describe("default child session factory", () => {
 		assert.deepEqual(pendingRuntime?.pendingProviderRegistrations, []);
 	});
 
+	it("fails the launch when an enforced ambient extension reports a load error", async () => {
+		const pi = stubPi();
+		pi.DefaultResourceLoader = class {
+			async reload() {}
+			getExtensions() {
+				return { extensions: [], errors: [{ path: "/tmp/guard.ts", error: new Error("boom") }], runtime: {} };
+			}
+		} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		await assert.rejects(
+			factory.create({ ...stubLaunch, enforcedExtensionPaths: ["/tmp/guard.ts"] }),
+			/Enforced extension \('subagents\.ambientExtensions'\) failed to load: .*guard\.ts.*boom/,
+		);
+	});
+
+	it("fails the launch when an enforced ambient extension never loads, and starts the child for an ordinary failure", async () => {
+		const pi = stubPi();
+		pi.DefaultResourceLoader = class {
+			async reload() {}
+			getExtensions() {
+				return { extensions: [], errors: [{ path: "/tmp/ordinary.ts", error: new Error("ordinary failure") }], runtime: {} };
+			}
+		} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		// An enforced entry that never appears in the loaded registry fails the launch.
+		await assert.rejects(
+			factory.create({ ...stubLaunch, enforcedExtensionPaths: ["/tmp/guard.ts"] }),
+			/Enforced extension \('subagents\.ambientExtensions'\) did not load: \/tmp\/guard\.ts/,
+		);
+		// An ordinary subagentOnlyExtensions/extensionPaths failure still starts the child (existing contract).
+		const child = await factory.create({ ...stubLaunch, extensionPaths: ["/tmp/ordinary.ts"] });
+		assert.ok(child);
+	});
+
+	it("fails the launch when an enforced ambient extension's provider registration fails", async () => {
+		const pi = stubPi();
+		pi.ModelRuntime = { create: async () => ({ registerProvider: () => { throw new Error("provider boom"); }, refresh: async () => {} }) } as unknown as PiCodingAgentModule["ModelRuntime"];
+		pi.DefaultResourceLoader = class {
+			async reload() {}
+			getExtensions() {
+				return { extensions: [], errors: [], runtime: { pendingProviderRegistrations: [{ name: "guard-provider", config: {}, extensionPath: "/tmp/guard.ts" }] } };
+			}
+		} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		await assert.rejects(
+			factory.create({ ...stubLaunch, enforcedExtensionPaths: ["/tmp/guard.ts"] }),
+			/Required child extension provider registration failed for '\/tmp\/guard\.ts'/,
+		);
+	});
+
+	it("fails the launch when an enforced ambient extension fails during startup", async () => {
+		const pi = stubPi({
+			bindExtensions: async (options: { onError: (error: { extensionPath: string; event: string; error: Error }) => void }) => {
+				options.onError({ extensionPath: "/tmp/guard.ts", event: "session_start", error: new Error("start boom") });
+			},
+		});
+		pi.DefaultResourceLoader = class {
+			async reload() {}
+			getExtensions() {
+				// The guard reports as loaded, so the identity check passes and the startup failure is the one under test.
+				return { extensions: [{ path: "/tmp/guard.ts", resolvedPath: "/tmp/guard.ts" }], errors: [], runtime: {} };
+			}
+		} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		await assert.rejects(
+			factory.create({ ...stubLaunch, enforcedExtensionPaths: ["/tmp/guard.ts"] }),
+			/Required child extension failed during startup: \/tmp\/guard\.ts \(session_start\): Error: start boom/,
+		);
+	});
+
 	it("reports a missing extension cache reset when the child loads extension files", async () => {
 		const errors: string[] = [];
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() });

@@ -58,6 +58,8 @@ export interface RunnerSubagentStep {
 	allowedAgents?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
+	/** `subagents.ambientExtensions` entries; local native children only. */
+	ambientExtensionPaths?: string[];
 	/** Private immutable host policy snapshot serialized to the native runner. */
 	requiredExtensions?: import("../../shared/required-child-extensions.ts").RequiredChildExtensionSnapshot;
 	mcpDirectTools?: string[];

@@ -177,6 +177,8 @@ export interface AgentConfig {
 	extensions?: string[];
 	extensionsFromDefault?: boolean;
 	subagentOnlyExtensions?: string[];
+	/** Settings-derived `subagents.ambientExtensions` entries; never declared by agents and never serialized into agent files. */
+	ambientExtensionPaths?: string[];
 	mutationTools?: string[];
 	output?: string;
 	outputMode?: OutputMode;
@@ -217,6 +219,7 @@ interface SubagentSettings {
 	maxThinking?: ThinkingLevel;
 	defaultExtensions?: string[];
 	defaultSubagentOnlyExtensions?: string[];
+	ambientExtensions?: string[];
 	defaultInheritGlobalContext?: boolean;
 	disableBuiltins?: boolean;
 	disableThinking?: boolean;
@@ -1233,6 +1236,67 @@ function parseBuiltinOverrideEntry(
 	return Object.keys(override).length > 0 ? override : undefined;
 }
 
+/**
+ * Parse and validate `subagents.ambientExtensions`. Shared by `readSubagentSettings`
+ * (in-scope settings parsing) and the scope-independent ambient resolver, so the
+ * knob's validation is identical everywhere. Entries must be existing extension
+ * files: enforced-load identity checks key on file identity, relative entries
+ * would resolve against each child's cwd, and `npm:` specs would double-load in
+ * background children (ambient discovery plus the temporary install root).
+ */
+function parseAmbientExtensions(subagentsObject: Record<string, unknown>, filePath: string): string[] | undefined {
+	if (!("ambientExtensions" in subagentsObject)) return undefined;
+	const value = subagentsObject.ambientExtensions;
+	const invalid = (reason: string, cause?: unknown) => new Error(`Subagent settings in '${filePath}' have invalid 'ambientExtensions'; ${reason}`, { cause: cause instanceof Error ? cause : undefined });
+	if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+		throw invalid("expected an array of non-empty strings.");
+	}
+	return value.map((item) => {
+		const trimmed = item.trim();
+		const expanded = expandHomePath(trimmed);
+		if (!path.isAbsolute(expanded)) {
+			throw invalid(`'${trimmed}' must be an absolute path or start with '~'; relative paths, bare package names, and 'npm:' specs cannot resolve identically in foreground and background children.`);
+		}
+		let stat: fs.Stats;
+		try {
+			stat = fs.statSync(expanded);
+		} catch (error) {
+			const code = error && typeof error === "object" && "code" in error ? String((error as NodeJS.ErrnoException).code) : "unknown error";
+			throw invalid(`'${trimmed}' must be an existing extension file (${code}); point at the package's 'pi.extensions' entry file.`, error);
+		}
+		if (!stat.isFile()) {
+			throw invalid(`'${trimmed}' must be an extension file, not a directory; point at the package's 'pi.extensions' entry file.`);
+		}
+		return expanded;
+	});
+}
+
+/**
+ * Resolve `subagents.ambientExtensions` from the user and project settings files,
+ * independent of the discovery scope: the knob is a policy perimeter, so every
+ * projection and launch carries both scopes' entries. The project file is only
+ * consulted when a trust-gated path exists for it (`projectSettingsPath` is null
+ * for untrusted projects). A malformed settings file is tolerated — its entries
+ * are skipped, matching the out-of-scope-file tolerance of scoped projections —
+ * while a bad `ambientExtensions` value stays a loud settings error.
+ */
+function ambientExtensionScopeEntries(userSettingsPath: string, projectSettingsPath: string | null): string[] {
+	const entries: string[] = [];
+	for (const filePath of [userSettingsPath, ...(projectSettingsPath ? [projectSettingsPath] : [])]) {
+		let settings: Record<string, unknown>;
+		try {
+			settings = readSettingsFileStrict(filePath);
+		} catch {
+			continue;
+		}
+		const subagents = settings.subagents;
+		if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) continue;
+		const parsed = parseAmbientExtensions(subagents as Record<string, unknown>, filePath);
+		if (parsed) entries.push(...parsed);
+	}
+	return [...new Set(entries)];
+}
+
 function readSubagentSettings(filePath: string | null): SubagentSettings {
 	if (!filePath) return EMPTY_SUBAGENT_SETTINGS;
 	const settings = readSettingsFileStrict(filePath);
@@ -1303,6 +1367,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		}
 		defaultSubagentOnlyExtensions = subagentsObject.defaultSubagentOnlyExtensions.map((item) => item.trim());
 	}
+	const ambientExtensions = parseAmbientExtensions(subagentsObject, filePath);
 	let agentScanDirs: string[] | undefined;
 	if ("agentScanDirs" in subagentsObject) {
 		if (!Array.isArray(subagentsObject.agentScanDirs)
@@ -1334,6 +1399,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(maxThinking !== undefined ? { maxThinking } : {}),
 		...(defaultExtensions !== undefined ? { defaultExtensions } : {}),
 		...(defaultSubagentOnlyExtensions !== undefined ? { defaultSubagentOnlyExtensions } : {}),
+		...(ambientExtensions !== undefined ? { ambientExtensions } : {}),
 		...(defaultInheritGlobalContext !== undefined ? { defaultInheritGlobalContext } : {}),
 		...(agentScanDirs !== undefined ? { agentScanDirs } : {}),
 		...(agentExcludeDirs !== undefined ? { agentExcludeDirs } : {}),
@@ -1490,6 +1556,18 @@ function applySubagentDefaultSubagentOnlyExtensions(agents: AgentConfig[], defau
 	});
 }
 
+function applySubagentDefaultAmbientExtensions(agents: AgentConfig[], ambientExtensionPaths: string[]): AgentConfig[] {
+	if (ambientExtensionPaths.length === 0) return agents;
+	return agents.map((agent) => {
+		const merged = [...new Set([...(agent.ambientExtensionPaths ?? []), ...ambientExtensionPaths])];
+		if (arraysEqual(merged, agent.ambientExtensionPaths)) return agent;
+		const next = { ...agent, ambientExtensionPaths: merged };
+		const frontmatterFields = agentFrontmatterFields.get(agent);
+		if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
+		return next;
+	});
+}
+
 function resolveSubagentDefaultInheritGlobalContext(
 	userSettings: SubagentSettings,
 	projectSettings: SubagentSettings,
@@ -1519,16 +1597,20 @@ function applySubagentDefaults(
 	defaultExtensions: string[] | undefined,
 	defaultSubagentOnlyExtensions: string[] | undefined,
 	defaultInheritGlobalContext: boolean | undefined,
+	ambientExtensionPaths: string[] = [],
 ): AgentConfig[] {
-	return applySubagentDefaultInheritGlobalContext(
-		applySubagentDefaultSubagentOnlyExtensions(
-			applySubagentDefaultExtensions(
-				applySubagentDefaultThinking(applySubagentDefaultModel(agents, defaultModel, defaultProvider), defaultThinking),
-				defaultExtensions,
+	return applySubagentDefaultAmbientExtensions(
+		applySubagentDefaultInheritGlobalContext(
+			applySubagentDefaultSubagentOnlyExtensions(
+				applySubagentDefaultExtensions(
+					applySubagentDefaultThinking(applySubagentDefaultModel(agents, defaultModel, defaultProvider), defaultThinking),
+					defaultExtensions,
+				),
+				defaultSubagentOnlyExtensions,
 			),
-			defaultSubagentOnlyExtensions,
+			defaultInheritGlobalContext,
 		),
-		defaultInheritGlobalContext,
+		ambientExtensionPaths,
 	);
 }
 
@@ -1726,6 +1808,8 @@ function runtimeAgentOverrides(settings: SubagentSettings): SubagentSettings {
  * `fast`, and `thinking` fields of `agentOverrides.<name>`, user then project,
  * provider-scoped overrides included. Other override fields are ignored for
  * runtime agents. A definition `model` still wins over `defaultModel`.
+ * `subagents.ambientExtensions` is a settings perimeter, not an override, and
+ * applies to runtime-registered agents too.
  */
 export function applyRuntimeAgentSettings(agents: AgentConfig[], context: RuntimeAgentSettingsContext): AgentConfig[] {
 	if (agents.length === 0) return agents;
@@ -1734,7 +1818,14 @@ export function applyRuntimeAgentSettings(agents: AgentConfig[], context: Runtim
 	const defaultProvider = resolveSubagentDefaultProvider(user, project, sources.projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(user, project, sources.userSettingsPath, sources.projectSettingsPath, defaultProvider);
 	const defaultThinking = resolveSubagentDefaultThinking(user, project, sources.projectSettingsPath);
-	const withDefaults = applySubagentDefaultThinking(applySubagentDefaultModel(agents, defaultModel, defaultProvider), defaultThinking);
+	// `subagents.ambientExtensions` is an operator perimeter, not an override: it
+	// applies to runtime-registered agents too, from both scopes, trust-gated via
+	// sources.projectSettingsPath. This intentionally extends the contract above.
+	const ambientExtensionPaths = sources.ambientExtensionPaths;
+	const withDefaults = applySubagentDefaultAmbientExtensions(
+		applySubagentDefaultThinking(applySubagentDefaultModel(agents, defaultModel, defaultProvider), defaultThinking),
+		ambientExtensionPaths,
+	);
 	return applyCustomAgentOverrides(withDefaults, runtimeAgentOverrides(user), runtimeAgentOverrides(project), sources.userSettingsPath, sources.projectSettingsPath);
 }
 
@@ -2648,6 +2739,8 @@ interface AgentDiscoverySources {
 	projectChainDir: string | null;
 	userSettingsPath: string;
 	projectSettingsPath: string | null;
+	/** Scope-independent `subagents.ambientExtensions` resolution for this sources set; memoized with it. */
+	ambientExtensionPaths: string[];
 	userSettings?: SubagentSettings;
 	projectSettings?: SubagentSettings;
 	packageSubagentPaths: PackageSubagentPaths;
@@ -2775,6 +2868,7 @@ function buildAgentDiscoverySources(cwd: string, preferredModelProvider: string 
 	const { readDirs: projectChainDirs, preferredDir: projectChainDir } = projectTrusted ? resolveNearestProjectChainDirs(effectiveCwd) : { readDirs: [], preferredDir: null };
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = projectTrusted ? getProjectAgentSettingsPath(effectiveCwd) : null;
+	const ambientExtensionPaths = ambientExtensionScopeEntries(userSettingsPath, projectSettingsPath);
 	const packageSubagentPaths = collectPackageSubagentPaths(effectiveCwd, { includeUser: true, includeProject: true, globalNpmRoot, projectTrusted });
 	const exclusionRoots = agentExclusionRoots(userSettingsPath, projectSettingsPath);
 	const isExcluded = agentExclusions(exclusionRoots);
@@ -2827,6 +2921,7 @@ function buildAgentDiscoverySources(cwd: string, preferredModelProvider: string 
 		projectChainDir,
 		userSettingsPath,
 		projectSettingsPath,
+		ambientExtensionPaths,
 		packageSubagentPaths,
 		builtinLoaded,
 		userLoaded,
@@ -2918,6 +3013,7 @@ function configuredAgentsForScope(sources: AgentDiscoverySources, scope: AgentSc
 	modelScope?: ModelScopeConfig;
 } {
 	const { user: userSettings, project: projectSettings } = settingsForScope(sources, settingsScope);
+	const ambientExtensionPaths = sources.ambientExtensionPaths;
 	const defaultProvider = resolveSubagentDefaultProvider(userSettings, projectSettings, sources.projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, sources.userSettingsPath, sources.projectSettingsPath, defaultProvider);
 	const defaultThinking = resolveSubagentDefaultThinking(userSettings, projectSettings, sources.projectSettingsPath);
@@ -2925,7 +3021,7 @@ function configuredAgentsForScope(sources: AgentDiscoverySources, scope: AgentSc
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, sources.projectSettingsPath);
 	const defaultSubagentOnlyExtensions = resolveSubagentDefaultSubagentOnlyExtensions(userSettings, projectSettings, sources.projectSettingsPath);
 	const defaultInheritGlobalContext = resolveSubagentDefaultInheritGlobalContext(userSettings, projectSettings, sources.projectSettingsPath);
-	const applyDefaults = (agents: AgentConfig[]): AgentConfig[] => applySubagentDefaults(agents, defaultModel, defaultProvider, defaultThinking, defaultExtensions, defaultSubagentOnlyExtensions, defaultInheritGlobalContext);
+	const applyDefaults = (agents: AgentConfig[]): AgentConfig[] => applySubagentDefaults(agents, defaultModel, defaultProvider, defaultThinking, defaultExtensions, defaultSubagentOnlyExtensions, defaultInheritGlobalContext, ambientExtensionPaths);
 	const builtin = applyBuiltinOverrides(applyDefaults(sources.builtinLoaded.agents), userSettings, projectSettings, sources.userSettingsPath, sources.projectSettingsPath);
 	const user = applyCustomAgentOverrides(
 		applyDefaults(scope === "project" ? [] : sources.userLoaded.flatMap((loaded) => loaded.loaded.agents)),
@@ -3077,6 +3173,10 @@ function discoverAgentsUncached(cwd: string, scope: AgentScope, preferredModelPr
 	const projectSettingsPath = getProjectAgentSettingsPath(effectiveCwd);
 	const userSettings = selectProviderOverrides(scope === "project" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(userSettingsPath), preferredModelProvider);
 	const projectSettings = selectProviderOverrides(scope === "user" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(projectSettingsPath), preferredModelProvider);
+	// Ambient extensions are a scope-independent perimeter: both scopes' entries
+	// apply even when this projection only covers one scope. The dedicated read
+	// tolerates malformed files and leaves the scoped settings above untouched.
+	const ambientExtensionPaths = ambientExtensionScopeEntries(userSettingsPath, projectSettingsPath);
 	const defaultProvider = resolveSubagentDefaultProvider(userSettings, projectSettings, projectSettingsPath);
 	const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath, defaultProvider);
 	const defaultThinking = resolveSubagentDefaultThinking(userSettings, projectSettings, projectSettingsPath);
@@ -3089,7 +3189,7 @@ function discoverAgentsUncached(cwd: string, scope: AgentScope, preferredModelPr
 	const isExcluded = agentExclusions(agentExclusionRoots(userSettingsPath, projectSettingsPath));
 	const directories: AgentDefinitionDirectoryReport[] = [reportAgentDefinitionDirectory("builtin", BUILTIN_AGENTS_DIR, BUILTIN_AGENT_DEFINITION_INSPECTION)];
 	const builtinLoaded = loadAgentsFromDefinitionFiles(BUILTIN_AGENT_DEFINITION_FILES, "builtin");
-	const applyDefaults = (agents: AgentConfig[]): AgentConfig[] => applySubagentDefaults(agents, defaultModel, defaultProvider, defaultThinking, defaultExtensions, defaultSubagentOnlyExtensions, defaultInheritGlobalContext);
+	const applyDefaults = (agents: AgentConfig[]): AgentConfig[] => applySubagentDefaults(agents, defaultModel, defaultProvider, defaultThinking, defaultExtensions, defaultSubagentOnlyExtensions, defaultInheritGlobalContext, ambientExtensionPaths);
 	const builtinAgents = applyBuiltinOverrides(applyDefaults(builtinLoaded.agents), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
 	const userScanDirs = settingsAgentScanDirs(userSettings.agentScanDirs ?? [], isExcluded);
 	const projectScanDirs = settingsAgentScanDirs(projectSettings.agentScanDirs ?? [], isExcluded);

@@ -280,6 +280,44 @@ Project prompt.
 		if (!invalid.ok) assert.equal(invalid.code, "invalid_extension_bindings");
 	});
 
+	it("carries subagents.ambientExtensions and agentOverrides extensions into the launch plan", async () => {
+		const cwd = path.join(tempDir, "repo-ambient");
+		fs.mkdirSync(cwd, { recursive: true });
+		const agentDir = process.env.PI_CODING_AGENT_DIR;
+		assert.equal(typeof agentDir, "string");
+		fs.mkdirSync(agentDir, { recursive: true });
+		const guard = path.join(agentDir, "guard.ts");
+		fs.writeFileSync(guard, "export default true;\n", "utf-8");
+		const overrideExtension = path.join(agentDir, "override.ts");
+		fs.writeFileSync(overrideExtension, "export default true;\n", "utf-8");
+		writeJson(path.join(agentDir, "settings.json"), {
+			subagents: {
+				ambientExtensions: [guard],
+				agentOverrides: { scout: { extensions: [overrideExtension] } },
+			},
+		});
+		const result = await resolveSubagentLaunchContract({ agent: "scout", cwd });
+		assert.equal(result.ok, true);
+		assert.ok(result.contract.tools.extensionArgs.includes(guard), "ambient guard must reach the launch plan");
+		assert.ok(result.contract.tools.extensionArgs.includes(overrideExtension), "agentOverrides extensions reach the launch plan (issue #3395 request 1)");
+		assert.equal(result.contract.tools.disableAmbientExtensions, true);
+	});
+
+	it("keeps ambient entries out of an external runner's launch plan", async () => {
+		const cwd = path.join(tempDir, "repo-external-ambient");
+		fs.mkdirSync(cwd, { recursive: true });
+		const agentDir = process.env.PI_CODING_AGENT_DIR;
+		assert.equal(typeof agentDir, "string");
+		fs.mkdirSync(agentDir, { recursive: true });
+		const guard = path.join(agentDir, "guard.ts");
+		fs.writeFileSync(guard, "export default true;\n", "utf-8");
+		writeJson(path.join(agentDir, "settings.json"), { subagents: { ambientExtensions: [guard] } });
+		writeAgent(path.join(cwd, ".pi", "agents", "external.md"), `---\nname: external\ndescription: External\nrunner:\n  type: external-cli\n  command: ${JSON.stringify(process.execPath)}\n---\nPrompt.\n`);
+		const result = await resolveSubagentLaunchContract({ agent: "external", cwd });
+		assert.equal(result.ok, true);
+		assert.ok(!result.contract.tools.extensionArgs.includes(guard), "external runners cannot load local extension paths");
+	});
+
 	it("uses the parent provider for provider-scoped agent overrides", async () => {
 		const cwd = path.join(tempDir, "provider-overrides");
 		fs.mkdirSync(cwd, { recursive: true });
