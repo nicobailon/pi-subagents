@@ -132,7 +132,7 @@ import { handleInspectorAction, INSPECTOR_ACTIONS } from "../../inspectors/actio
 import { getInspectorPlugins } from "../../inspectors/plugins.ts";
 import { handleHerdrProjectPaneAction, HERDR_PROJECT_PANE_ACTIONS } from "../../inspectors/herdr/project-panes.ts";
 import { previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
-import { formatIncrementalChildCompletion, incrementalChildCompletionTriggersTurn } from "../background/notify.ts";
+import { formatIncrementalChildCompletion, scheduledCompletionTriggersTurn } from "../background/notify.ts";
 import { COMPLETION_ACTION, STATUS_ACTION } from "../../shared/parent-wake.ts";
 import { appendWorkflowChildJournal, claimedWorkflowRunRefusal, findWorkflowReuseSource, matchWorkflowReuse, readNamedWorkflowReuseSource, WORKFLOW_RUNTIME_REPLACED_STOP_NOTICE, workflowChildFingerprint, workflowScriptDigest, workflowStopCause } from "../../workflows/workflow-reuse.ts";
 import { claimWorkflowResume, recordWorkflowResumeRefusal, releaseWorkflowResumeClaim, resumedRunStarted } from "../../workflows/workflow-resume-claim.ts";
@@ -6540,21 +6540,26 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									outcome: notification.outcome,
 									workflowRunning: notification.workflowRunning,
 								});
-								try {
-									const triggerTurn = incrementalChildCompletionTriggersTurn(notification, requestParams.scheduleOrigin);
-									const content = formatIncrementalChildCompletion(notification);
-									(deps.parentWake ?? deps.pi).sendMessage(
-										{
-											customType: "subagent-incremental-child-notify",
-											content: triggerTurn ? `${content}\n\nParent action: ${COMPLETION_ACTION}` : content,
-											display: notification.outcome !== "completed",
-											// Render-only: Pi does not send details to the model.
-											details: { childKey: notification.childKey, outcome: notification.outcome },
-										},
-										{ triggerTurn },
-									);
-								} catch (sendError) {
-									console.error(`Failed to send incremental child completion notification for '${notification.childKey}':`, sendError);
+								// A successful child of a running workflow needs no decision: status and the workflow's final notice carry it.
+								// One model-visible message per child grows the parent's context, and a burst of them moves the cache
+								// breakpoint past the provider's lookback, so the next request misses the cache (#3392).
+								if (notification.outcome !== "completed" || !notification.workflowRunning) {
+									try {
+										const triggerTurn = scheduledCompletionTriggersTurn(requestParams.scheduleOrigin, notification.outcome);
+										const content = formatIncrementalChildCompletion(notification);
+										(deps.parentWake ?? deps.pi).sendMessage(
+											{
+												customType: "subagent-incremental-child-notify",
+												content: triggerTurn ? `${content}\n\nParent action: ${COMPLETION_ACTION}` : content,
+												display: notification.outcome !== "completed",
+												// Render-only: Pi does not send details to the model.
+												details: { childKey: notification.childKey, outcome: notification.outcome },
+											},
+											{ triggerTurn },
+										);
+									} catch (sendError) {
+										console.error(`Failed to send incremental child completion notification for '${notification.childKey}':`, sendError);
+									}
 								}
 								deps.refreshResultDelivery?.();
 							},
