@@ -462,6 +462,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			allowNestedSubagents: agent.allowNestedSubagents,
 			extensions: agent.extensions,
 			subagentOnlyExtensions: agent.subagentOnlyExtensions,
+			ambientExtensionPaths: externalRunner ? undefined : agent.ambientExtensionPaths,
 			requiredExtensions,
 			mcpDirectTools: agent.mcpDirectTools,
 			cwd: effectiveCwd,

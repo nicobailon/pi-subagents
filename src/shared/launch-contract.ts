@@ -59,6 +59,7 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 		mcpDirectTools: agent.mcpDirectTools,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
+		ambientExtensionPaths: agent.ambientExtensionPaths,
 		mutationTools: agent.mutationTools,
 		skills: agent.skills,
 		skillPath: agent.skillPath,

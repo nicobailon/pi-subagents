@@ -871,6 +871,7 @@ export interface SteeringRecoveryDescriptor {
 	allowedAgents?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
+	ambientExtensionPaths?: string[];
 	mcpDirectTools?: string[];
 	mutationTools?: string[];
 	systemPrompt?: string;

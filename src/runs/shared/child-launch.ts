@@ -85,6 +85,8 @@ export interface BuildInProcessChildLaunchInput {
 	excludeTools?: string[];
 	extensions?: string[];
 	subagentOnlyExtensions?: string[];
+	/** Settings-derived `subagents.ambientExtensions` entries; skipped for machine-placed children like non-mandatory required entries. */
+	ambientExtensionPaths?: string[];
 	/** Serialized launch snapshot; omitted only for a top-level parent-process lookup. */
 	requiredExtensions?: RequiredChildExtensionSnapshot;
 	systemPrompt?: string | null;
@@ -206,6 +208,8 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		allowNestedSubagents: input.allowNestedSubagents,
 		extensions: input.extensions,
 		subagentOnlyExtensions: input.subagentOnlyExtensions,
+		// A placed child cannot load local extension paths, so ambient entries are skipped here like non-mandatory required ones.
+		ambientExtensionPaths: input.machine ? undefined : input.ambientExtensionPaths,
 		requiredExtensions,
 		mcpDirectTools: input.mcpDirectTools,
 		builtinMcpTools: input.builtinMcpTools,
@@ -220,9 +224,13 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		permissionRules: input.permissionRules,
 		runtimeSnapshotHost: input.runtimeSnapshotHost,
 	});
-	// Foreground children load no ambient extensions, so only their required extensions' registerMcpServer() runs in them.
+	// Foreground children load no ambient extensions, so only their required and
+	// enforced (`subagents.ambientExtensions`) extensions' registerMcpServer() runs in them.
 	if (input.host === "parent" && input.runtimeSnapshotHost && toolPlan.builtinMcpTools?.length) {
-		const requiredExtensionIdentity = createRequiredChildExtensionIdentity(toolPlan.requiredExtensions.map(({ path }) => path));
+		const requiredExtensionIdentity = createRequiredChildExtensionIdentity([
+			...toolPlan.requiredExtensions.map(({ path }) => path),
+			...(toolPlan.enforcedExtensionPaths ?? []),
+		]);
 		// Pi treats a session without a trust decision as trusted.
 		const servers = extensionOnlyMcpServers(toolPlan.effectiveMcpSelections, input.runtimeSnapshotHost, input.cwd, input.projectTrusted !== false, (extensionPath) => requiredExtensionIdentity(extensionPath) !== undefined);
 		if (servers.length) throw new Error(`Agent '${input.childAgentName}' selects MCP tools from servers that extensions registered (${servers.join(", ")}). Only background children (async: true) load those extensions; run the agent in the background or add the server to the global mcp.json or a trusted project's .pi/mcp.json.`);
@@ -337,6 +345,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(!toolPlan.explicitToolAllowlist && toolPlan.excludeTools.length > 0 ? { excludeTools: toolPlan.excludeTools } : {}),
 		extensionPaths,
 		requiredExtensions: toolPlan.requiredExtensions,
+		...(toolPlan.enforcedExtensionPaths?.length ? { enforcedExtensionPaths: toolPlan.enforcedExtensionPaths } : {}),
 		ambientExtensions,
 		hooks: capturedHooks.hooks,
 		// A foreground child gets only its own bindings, so it never sees those of the session that launched it.

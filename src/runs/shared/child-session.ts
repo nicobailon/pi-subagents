@@ -83,6 +83,8 @@ export interface ChildSessionLaunch {
 	extensionPaths: string[];
 	/** Canonical required paths and safe evidence identities for fail-closed loading. */
 	requiredExtensions?: RequiredChildExtensionSnapshot;
+	/** `subagents.ambientExtensions` entries; a load or registration failure fails the launch like a required extension. */
+	enforcedExtensionPaths?: string[];
 	/**
 	 * Discover the ambient extensions (agent dir, project, settings) the way a
 	 * `pi` process would. False loads only `extensionPaths` and `hooks`.
@@ -545,7 +547,13 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					},
 				})) }]
 				: [];
-			const requiredPaths = new Set((launch.requiredExtensions ?? []).map(({ path }) => path));
+			// Host-required paths fail the launch on load errors; enforced paths
+			// (`subagents.ambientExtensions`) join the same fail-closed checks so a
+			// policy-perimeter guard can never silently start unloaded.
+			const requiredPaths = new Set([
+				...(launch.requiredExtensions ?? []).map(({ path }) => path),
+				...(launch.enforcedExtensionPaths ?? []),
+			]);
 			const requiredExtensionIdentity = createRequiredChildExtensionIdentity(requiredPaths);
 			const resolvedExtensionPaths = new Map<string, string>();
 			// Pi reports failures by source path, without resolvedPath. A source Pi never loaded is classified by the
@@ -602,12 +610,22 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				if (requiredPaths.size > 0) for (const extension of loader.getExtensions().extensions) resolvedExtensionPaths.set(extension.path, extension.resolvedPath);
 				const loadErrors = requiredPaths.size > 0
 					? loader.getExtensions().errors.filter(({ path }) => isRequiredSource(path)) : [];
-				if (loadErrors.length > 0) throw new Error(`Required child extension failed to load: ${loadErrors.map(({ path, error }) => `${path}: ${error}`).join("; ")}`);
+				if (loadErrors.length > 0) {
+					const enforcedOnly = new Set(launch.enforcedExtensionPaths ?? []);
+					const hostRequired = loadErrors.filter(({ path }) => !enforcedOnly.has(path));
+					if (hostRequired.length > 0) throw new Error(`Required child extension failed to load: ${hostRequired.map(({ path, error }) => `${path}: ${error}`).join("; ")}`);
+					throw new Error(`Enforced extension ('subagents.ambientExtensions') failed to load: ${loadErrors.map(({ path, error }) => `${path}: ${error}`).join("; ")}`);
+				}
 				const queued = flushQueuedProviderRegistrations(loader, modelRuntime, launch.onExtensionError, isRequiredSource);
 				if (requiredPaths.size > 0) {
 					const loadedIdentities = new Set(loader.getExtensions().extensions.map(({ resolvedPath }) => requiredExtensionIdentity(resolvedPath)));
 					const missing = [...requiredPaths].filter((extensionPath) => !loadedIdentities.has(requiredExtensionIdentity(extensionPath)));
-					if (missing.length) throw new Error(`Required child extension failed to load: ${missing.join(", ")}`);
+					if (missing.length) {
+						const enforcedOnly = new Set(launch.enforcedExtensionPaths ?? []);
+						const hostRequired = missing.filter((extensionPath) => !enforcedOnly.has(extensionPath));
+						if (hostRequired.length > 0) throw new Error(`Required child extension failed to load: ${hostRequired.join(", ")}`);
+						throw new Error(`Enforced extension ('subagents.ambientExtensions') did not load: ${missing.join(", ")}`);
+					}
 				}
 				if (launch.parentProviderRegistry) inheritedProviders = inheritParentProviders(modelRuntime, launch.parentProviderRegistry, queued.claimedProviderIds, launch.onExtensionError);
 				if (queued.registered || inheritedProviders.size > 0) {

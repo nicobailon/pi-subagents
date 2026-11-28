@@ -123,6 +123,21 @@ describe("dynamic fanout helpers", () => {
 		}
 	});
 
+	it("threads the settings-derived ambientExtensionPaths step field through runner-side fan-out only", () => {
+		const runnerStep = {
+			expand: { from: { output: "targets", path: "/items" }, maxItems: 4 },
+			parallel: { agent: "reviewer", task: "Review {item.path}", ambientExtensionPaths: ["/tmp/guard.ts"] },
+			collect: { as: "reviews" },
+		};
+		assert.doesNotThrow(() => validateDynamicStep(runnerStep, 1, { allowRunnerFields: true }));
+		const materialized = materializeDynamicParallelStep(runnerStep, outputs, 1, { allowRunnerFields: true });
+		assert.deepEqual(materialized.parallel[0]?.ambientExtensionPaths, ["/tmp/guard.ts"]);
+		assert.throws(
+			() => validateDynamicStep(runnerStep, 1),
+			/does not support field 'ambientExtensionPaths'/,
+		);
+	});
+
 	it("preserves runner-injected parent authority without admitting it in user-facing validation", () => {
 		// Regression: the async runner threads parentSessionId onto the dynamic parallel
 		// template for permission-system forwarding. It must pass runner-internal validation

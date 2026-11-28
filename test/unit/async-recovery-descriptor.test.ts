@@ -131,6 +131,25 @@ describe("async recovery descriptor", () => {
 		}
 	});
 
+	it("reads recorded ambient extension paths and keeps the agent's list when the descriptor omits them", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-ambient-"));
+		const write = (ambientExtensionPaths: unknown) => writeFileCreatingDir(recoveryDescriptorPath(path.join(root, "runs"), "run"), JSON.stringify({
+			version: 1, ambientExtensionPaths, runFanoutBudget: runFanoutBudget("run-ambient"), sourceRunId: "run-ambient", agent: "worker", cwd: root,
+			systemPromptMode: "replace", inheritGlobalContext: false, inheritProjectContext: false, inheritSkills: false, outputMode: "inline", maxSubagentDepth: 2, share: false,
+		}), "utf-8");
+		try {
+			const agent = makeAgent("worker", { ambientExtensionPaths: ["/tmp/from-agent.ts"] });
+			write(["/tmp/recorded.ts"]);
+			assert.deepEqual(applySteeringRecoveryAgentConfig(agent, readAsyncRecoveryDescriptor(path.join(root, "runs"), "run")!).ambientExtensionPaths, ["/tmp/recorded.ts"]);
+			write(undefined);
+			assert.deepEqual(applySteeringRecoveryAgentConfig(agent, readAsyncRecoveryDescriptor(path.join(root, "runs"), "run")!).ambientExtensionPaths, ["/tmp/from-agent.ts"], "a descriptor that predates the knob keeps the agent file's ambient list");
+			write(["", 7]);
+			assert.throws(() => readAsyncRecoveryDescriptor(path.join(root, "runs"), "run"), /ambientExtensionPaths must contain non-empty strings/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("reads a recorded launcher name or null and rejects an invalid one", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-launcher-"));
 		const write = (launcher: unknown) => writeFileCreatingDir(recoveryDescriptorPath(path.join(root, "runs"), "run"), JSON.stringify({

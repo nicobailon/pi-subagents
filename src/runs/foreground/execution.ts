@@ -418,6 +418,7 @@ async function runSingleAttempt(
 		descendantAllowedAgents: agent.allowedAgents,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
+		ambientExtensionPaths: agent.ambientExtensionPaths,
 		// Exact terminal protocol belongs to session resources, not compactable history.
 		systemPrompt: shared.acceptancePrompt ? `${shared.systemPrompt}\n${shared.acceptancePrompt}` : shared.systemPrompt,
 		mcpDirectTools: agent.mcpDirectTools,

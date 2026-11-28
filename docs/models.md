@@ -166,6 +166,22 @@ Set `subagents.defaultSubagentOnlyExtensions` to give agents without a `subagent
 
 The two defaults resolve independently, with an explicitly present project value winning over the user value. If both are set, `defaultExtensions` still disables ambient discovery and the child-only paths are loaded alongside its allowlist. Both reject non-arrays, non-string or blank entries with an error naming the setting and source file. Extension paths execute trusted code, so use project defaults only for trusted repositories and extensions.
 
+### Ambient extensions (policy perimeter)
+
+```json
+{
+  "subagents": {
+    "ambientExtensions": ["/absolute/path/to/safety-guard.ts"]
+  }
+}
+```
+
+Set `subagents.ambientExtensions` to load an extension in **every local native child session**, foreground and background — a tool-call guard registered in the parent stays active in children, which the other knobs cannot guarantee. The entries merge into each child's effective extension set and cannot be dropped by agent configuration: agent frontmatter (including `extensions: []` and `subagentOnlyExtensions`), `agentOverrides`, `defaultExtensions`, and `defaultSubagentOnlyExtensions` all load alongside them. User and project entries merge (user first); a scoped launch such as `agentScope: "project"` still carries both scopes, and an untrusted project contributes nothing. Runtime-registered agents receive the entries too.
+
+Loading is fail-closed: an entry that fails to load, is missing on disk, or throws while starting fails the child launch instead of starting the guard-less child. A capability ceiling that denies extensions conflicts with the knob and rejects the launch; remove the entries or the ceiling. Entries must be absolute paths or `~`-prefixed paths to existing extension files (a package's `pi.extensions` entry file, not its directory). Relative paths, bare package names, and `npm:` specs are rejected at settings load: relative entries would resolve against each child's working directory, and `npm:` entries would load twice in background children (ambient discovery plus the temporary install root). Settings load fails loudly when an entry is invalid.
+
+Coverage boundary: external CLI and job runners, machine-placed children, and pane-native remote foreground children never load local extension paths, so the knob does not apply to them (a placed child skips the entries like non-mandatory required extensions). An enforced extension that registers MCP servers counts as loaded by the foreground child, so its servers pass the foreground MCP pre-check; runtime-snapshot MCP definitions are still not transferred to in-process children. Like every settings default, the entries are never serialized into agent files.
+
 ## Global context default
 
 Set `subagents.defaultInheritGlobalContext: true` to give every builtin, package, user and project agent your global context file (such as `~/.pi/agent/AGENTS.md`). An agent that declares `inheritGlobalContext` in its frontmatter keeps its own value, and `agentOverrides.<name>.inheritGlobalContext` still wins over both, so `false` in either place opts that agent out. A project value wins over the user value. The setting only matters for agents with `inheritProjectContext: true` (every builtin agent has it); without project context a child gets no context files at all. Runtime-registered agents keep their extension's value. A non-boolean value is rejected with an error naming the settings file.
