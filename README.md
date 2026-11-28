@@ -12,7 +12,7 @@
 
 https://github.com/user-attachments/assets/859acad5-2fc0-4d10-b915-77c184de5c12
 
-The tool descriptions and skill are gone, replaced by one self-teaching subagent tool: its first call returns a guide, and each feature's first use comes back with a tip. It takes about 5x less context than 0.90 once your agent delegates, with every feature kept. Background runs no longer stop at 30 minutes; your agent gets a check-in instead. If your instructions load the `pi-subagents` skill, use `subagent({action:"guide"})` instead. See the [changelog](CHANGELOG.md) for everything else.
+The tool descriptions and skill are gone, replaced by one self-teaching subagent tool: its first call returns a guide, and each feature's first use comes back with a tip. It takes about 5x less context than 0.90 once your agent delegates, with every feature kept. In an interactive session, background runs without a `timeoutMs` no longer stop at 30 minutes; your agent gets a check-in instead. If your instructions load the `pi-subagents` skill, use `subagent({action:"guide"})` instead. See the [changelog](CHANGELOG.md) for everything else.
 
 ## Install
 
